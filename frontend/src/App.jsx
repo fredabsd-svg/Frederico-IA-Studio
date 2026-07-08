@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square } from 'lucide-react';
+import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, PanelRight } from 'lucide-react';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
@@ -61,6 +61,7 @@ export default function App() {
   const [statusText, setStatusText] = useState('');
   const [nowTick, setNowTick] = useState(0);
   const [dark, setDark] = useState(true);
+  const [showFiles, setShowFiles] = useState(true);
   const endRef = useRef(null);
 
   useEffect(() => { init(); loadModels(); loadAssistants(); loadMemory(); }, []);
@@ -137,6 +138,14 @@ export default function App() {
     if (!id) return;
     const res = await fetch(`${API}/api/conversations/${id}/files`);
     setFiles(await res.json());
+  }
+
+  async function deleteFile(f) {
+    if (!current) return;
+    if (!confirm(`Excluir o arquivo "${f.name}"?`)) return;
+    const encoded = f.path.split('/').map(encodeURIComponent).join('/');
+    await fetch(`${API}/api/conversations/${current.id}/files/${encoded}`, { method: 'DELETE' });
+    await loadFiles();
   }
 
   async function uploadFiles(e) {
@@ -287,7 +296,7 @@ export default function App() {
 
   const currentAssistant = assistants.find(a => a.id === assistantId);
 
-  return <div className="app">
+  return <div className={`app ${showFiles ? '' : 'noFiles'}`}>
     <aside className="sidebar">
       <div className="brand">Frederico <span>AI Studio</span></div>
       <button className="new" onClick={createConversation}><Plus size={16}/> Nova conversa</button>
@@ -314,6 +323,7 @@ export default function App() {
             {assistants.map(a => <option key={a.id} value={a.id}>{a.emoji || '🤖'} {a.name}</option>)}
           </select>
           <button className="gear" onClick={() => currentAssistant ? openStudioEdit(currentAssistant) : openStudioNew()} title="Editar assistente" disabled={team}><Settings size={16}/></button>
+          <button className={`gear ${showFiles ? 'on' : ''}`} onClick={() => setShowFiles(s => !s)} title={showFiles ? 'Ocultar painel de arquivos' : 'Mostrar painel de arquivos'}><PanelRight size={16}/></button>
           <select value={model} onChange={e => setModel(e.target.value)} title="Modelo de IA">
             <optgroup label="✅ Geram arquivos (recomendados)">
               {allModels.filter(m => m.tools !== false).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
@@ -356,11 +366,14 @@ export default function App() {
     </main>
 
     <aside className="artifacts">
-      <h3>Arquivos</h3>
+      <div className="artHead"><h3>Arquivos</h3><button className="artClose" onClick={() => setShowFiles(false)} title="Ocultar"><X size={16}/></button></div>
       {files.length === 0 && <p className="muted">Uploads e outputs aparecerão aqui.</p>}
-      {files.map(f => <a className="file" key={`${f.path}-${f.id}`} href={`${API}/api/conversations/${current?.id}/download/${f.path}`} target="_blank">
-        <FileText size={18}/><span>{f.name}</span><small>{Math.ceil((f.size || 0)/1024)} KB</small><Download size={16}/>
-      </a>)}
+      {files.map(f => <div className="fileRow" key={`${f.path}-${f.id}`}>
+        <a className="file" href={`${API}/api/conversations/${current?.id}/download/${f.path}`} target="_blank">
+          <FileText size={18}/><span>{f.name}</span><small>{Math.ceil((f.size || 0)/1024)} KB</small><Download size={16}/>
+        </a>
+        <button className="fileDel" onClick={() => deleteFile(f)} title="Excluir arquivo" aria-label="Excluir arquivo"><Trash2 size={15}/></button>
+      </div>)}
     </aside>
 
     {studioOpen && <div className="modalOverlay" onClick={() => setStudioOpen(false)}>

@@ -194,6 +194,16 @@ app.get('/api/conversations/:id/files', (req, res) => {
   res.json([...uploaded, ...outputFiles]);
 });
 
+app.delete('/api/conversations/:id/files/*', (req, res) => {
+  const ws = workspaceFor(req.params.id);
+  const rel = req.params[0];
+  const target = path.resolve(ws.base, rel);
+  if (!target.startsWith(path.resolve(ws.base))) return res.status(400).json({ error: 'Caminho inválido' });
+  try { fs.rmSync(target, { force: true }); } catch {}
+  db.prepare('DELETE FROM files WHERE conversation_id=? AND path=?').run(req.params.id, rel.replaceAll('\\', '/'));
+  res.json({ ok: true });
+});
+
 app.get('/api/conversations/:id/download/*', (req, res) => {
   const ws = workspaceFor(req.params.id);
   const rel = req.params[0];
