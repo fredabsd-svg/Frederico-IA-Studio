@@ -35,7 +35,7 @@ const TEMPLATES = [
   { key: 'geral', label: 'Uso geral', emoji: '🤖', prompt: 'Você é um assistente pessoal versátil e prestativo. Responda em português do Brasil, de forma clara e útil. Quando o usuário pedir arquivos (Excel, Word, PDF), gere-os de verdade usando as ferramentas disponíveis.' }
 ];
 
-const emptyForm = () => ({ id: null, name: '', emoji: '🤖', model: '', system_prompt: '', tools: TOOL_INFO.map(t => t.name), personality: { form: 50, det: 50, criat: 20 } });
+const emptyForm = () => ({ id: null, name: '', emoji: '🤖', model: '', system_prompt: '', template: '', tools: TOOL_INFO.map(t => t.name), personality: { form: 50, det: 50, criat: 20 } });
 
 export default function App() {
   const [conversations, setConversations] = useState([]);
@@ -154,8 +154,8 @@ export default function App() {
   }
   function applyTemplate(key) {
     const t = TEMPLATES.find(x => x.key === key);
-    if (!t) return;
-    setForm(f => ({ ...f, system_prompt: t.prompt, emoji: f.emoji === '🤖' ? t.emoji : f.emoji, name: f.name || t.label }));
+    if (!t) { setForm(f => ({ ...f, template: '' })); return; }
+    setForm(f => ({ ...f, template: key, system_prompt: t.prompt, emoji: f.emoji === '🤖' ? t.emoji : f.emoji, name: f.name || t.label }));
   }
   function toggleTool(name) {
     setForm(f => ({ ...f, tools: f.tools.includes(name) ? f.tools.filter(t => t !== name) : [...f.tools, name] }));
@@ -328,7 +328,7 @@ export default function App() {
           </label>
 
           <label>Começar de um template
-            <select value="" onChange={e => applyTemplate(e.target.value)}>
+            <select value={form.template || ''} onChange={e => applyTemplate(e.target.value)}>
               <option value="">— escolher um modelo pronto —</option>
               {TEMPLATES.map(t => <option key={t.key} value={t.key}>{t.emoji} {t.label}</option>)}
             </select>
