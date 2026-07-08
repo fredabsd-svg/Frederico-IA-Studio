@@ -518,11 +518,20 @@ export default function App() {
                 : <ReactMarkdown key={i} remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{b.content || ''}</ReactMarkdown>)
               : <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{m.content || ''}</ReactMarkdown>}
             {m.files?.length > 0 && <div className="filecards">
-              {m.files.map(f => <a className="filecard" key={f.id || f.path} href={`${API}/api/conversations/${current?.id}/download/${f.path}`} target="_blank" rel="noreferrer">
-                <span className="fcicon"><FileText size={20}/></span>
-                <span className="fcinfo"><b>{f.name}</b><small>{Math.ceil((f.size || 0) / 1024)} KB</small></span>
-                <span className="fcdl"><Download size={16}/> Baixar</span>
-              </a>)}
+              {m.files.map(f => {
+                const url = `${API}/api/conversations/${current?.id}/download/${f.path}`;
+                const isImg = /\.(png|jpe?g|gif|webp)$/i.test(f.name);
+                return isImg
+                  ? <a className="imgcard" key={f.id || f.path} href={url} target="_blank" rel="noreferrer" title={`${f.name} — clique para abrir`}>
+                      <img src={url} alt={f.name} loading="lazy"/>
+                      <span>{f.name} · {Math.ceil((f.size || 0) / 1024)} KB</span>
+                    </a>
+                  : <a className="filecard" key={f.id || f.path} href={url} target="_blank" rel="noreferrer">
+                      <span className="fcicon"><FileText size={20}/></span>
+                      <span className="fcinfo"><b>{f.name}</b><small>{Math.ceil((f.size || 0) / 1024)} KB</small></span>
+                      <span className="fcdl"><Download size={16}/> Baixar</span>
+                    </a>;
+              })}
             </div>}
           </div>
         ))}

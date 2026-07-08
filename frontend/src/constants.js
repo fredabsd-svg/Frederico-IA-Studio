@@ -21,7 +21,8 @@ export const TOOL_INFO = [
   { name: 'write_file', label: 'Escrever arquivos' },
   { name: 'read_file', label: 'Ler arquivos' },
   { name: 'list_files', label: 'Listar arquivos' },
-  { name: 'zip_outputs', label: 'Compactar (.zip)' }
+  { name: 'zip_outputs', label: 'Compactar (.zip)' },
+  { name: 'generate_image', label: 'Gerar/editar imagens (IA)' }
 ];
 
 // Templates prontos de system prompt

@@ -6,6 +6,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libmagic1 fonts-dejavu fonts-liberation \
     # Ghostscript: exigido pelo ocrmypdf e pelo camelot (leitura de PDF)
     ghostscript \
+    # ffmpeg: edição de vídeo e áudio (cortar, juntar, converter, extrair)
+    ffmpeg \
     # Dependências de runtime do WeasyPrint (Pango/Cairo/GDK-Pixbuf).
     # Sem elas, "import weasyprint" falha com erro de biblioteca compartilhada.
     libpango-1.0-0 libpangocairo-1.0-0 libpangoft2-1.0-0 \

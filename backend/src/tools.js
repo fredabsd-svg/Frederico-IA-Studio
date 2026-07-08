@@ -70,6 +70,48 @@ async function webFetch(url) {
   return { url, status: r.status, content: text.slice(0, 8000) };
 }
 
+// Geração/edição de IMAGENS com IA — roda no backend, usando o mesmo provedor
+// (OpenRouter) e a mesma chave do chat. O modelo de imagem é configurável.
+export const imageToolDefinitions = [
+  { type: 'function', function: { name: 'generate_image', description: 'Gera uma IMAGEM nova com IA a partir de uma descrição, ou EDITA uma imagem existente (passe input_image com o caminho, ex.: uploads/foto.png). A imagem final é salva em outputs/ e exibida ao usuário automaticamente. Descreva o prompt em detalhes (estilo, cores, composição).', parameters: { type: 'object', properties: { prompt: { type: 'string', description: 'Descrição detalhada da imagem desejada ou da edição a fazer' }, input_image: { type: 'string', description: '(opcional) caminho de uma imagem do workspace para editar, ex.: uploads/logo.png' }, file_name: { type: 'string', description: '(opcional) nome do arquivo de saída, sem extensão' } }, required: ['prompt'] } } }
+];
+
+async function generateImage(ws, args) {
+  const model = process.env.IMAGE_MODEL || 'google/gemini-2.5-flash-image';
+  const base = (process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com').replace(/\/$/, '');
+  const content = [];
+  if (args.input_image) {
+    const src = safeJoin(ws.base, args.input_image);
+    if (!fs.existsSync(src)) throw new Error(`Imagem de entrada não encontrada: ${args.input_image}`);
+    const ext = path.extname(src).slice(1).toLowerCase().replace('jpg', 'jpeg') || 'png';
+    content.push({ type: 'image_url', image_url: { url: `data:image/${ext};base64,${fs.readFileSync(src).toString('base64')}` } });
+  }
+  content.push({ type: 'text', text: args.prompt || '' });
+  const r = await fetchWithTimeout(`${base}/chat/completions`, 120000, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}` },
+    body: JSON.stringify({ model, messages: [{ role: 'user', content }], modalities: ['image', 'text'] })
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(`Geração de imagem falhou (HTTP ${r.status}). Verifique se o provedor é o OpenRouter e se o modelo de imagem "${model}" está disponível.`);
+  const images = data.choices?.[0]?.message?.images || [];
+  if (!images.length) return { error: 'O modelo não retornou imagem. Resposta: ' + String(data.choices?.[0]?.message?.content || '').slice(0, 200) };
+  const saved = [];
+  images.forEach((img, i) => {
+    const url = img?.image_url?.url || img?.url || '';
+    const m = /^data:image\/(\w+);base64,(.+)$/s.exec(url);
+    if (!m) return;
+    const cleanName = (args.file_name || 'imagem').replace(/[^a-zA-Z0-9._-]/g, '_').replace(/\.(png|jpe?g|webp|gif)$/i, '');
+    const fname = `${cleanName}${images.length > 1 ? '-' + (i + 1) : ''}.${m[1] === 'jpeg' ? 'jpg' : m[1]}`;
+    const target = path.join(ws.outputs, fname);
+    fs.writeFileSync(target, Buffer.from(m[2], 'base64'));
+    try { fs.chownSync(target, 1000, 1000); } catch {}
+    saved.push(`outputs/${fname}`);
+  });
+  if (!saved.length) return { error: 'Não foi possível decodificar a imagem retornada pelo modelo.' };
+  return { ok: true, saved, note: 'Imagem salva em outputs — o sistema exibirá a prévia e o download ao usuário.' };
+}
+
 const blocked = ['rm -rf /', 'mkfs', ':(){', 'shutdown', 'reboot', 'docker ', 'sudo ', 'su ', 'curl ', 'wget ', 'ssh ', 'scp '];
 function guardCommand(command) {
   const lower = String(command).toLowerCase();
@@ -80,6 +122,7 @@ export async function runTool(conversationId, name, args = {}) {
   if (name === 'web_search') return JSON.stringify(await webSearch(args.query || ''));
   if (name === 'web_fetch') return JSON.stringify(await webFetch(args.url || ''));
   const ws = workspaceFor(conversationId);
+  if (name === 'generate_image') return JSON.stringify(await generateImage(ws, args));
   if (name === 'run_python') {
     const script = safeJoin(ws.base, `.tmp_${Date.now()}.py`);
     fs.writeFileSync(script, args.code || '', 'utf8');

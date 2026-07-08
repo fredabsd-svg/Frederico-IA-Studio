@@ -1,7 +1,7 @@
 import OpenAI from 'openai';
 import fs from 'fs';
 import path from 'path';
-import { toolDefinitions, webToolDefinitions, runTool } from './tools.js';
+import { toolDefinitions, webToolDefinitions, imageToolDefinitions, runTool } from './tools.js';
 import { workspaceFor } from './sandbox.js';
 import { db, now } from './db.js';
 import { nanoid } from 'nanoid';
@@ -98,16 +98,19 @@ REGRAS DO SANDBOX (muito importante):
 - Cada execução de run_python é um processo NOVO e independente. Variáveis NÃO persistem entre chamadas — o que você definiu numa execução some na seguinte.
 - Resolva a tarefa preferencialmente em UM ÚNICO script run_python, completo e autossuficiente: ler os arquivos, processar e salvar o resultado final de uma vez.
 - Se precisar mesmo dividir em etapas, salve os dados intermediários em arquivo (JSON/CSV em /workspace) e leia de volta no próximo script — nunca dependa de variáveis da execução anterior.
-- Evite muitas execuções exploratórias; planeje e faça de uma vez. Salve os arquivos finais em /workspace/outputs.`;
+- Evite muitas execuções exploratórias; planeje e faça de uma vez. Salve os arquivos finais em /workspace/outputs.
+- O sandbox tem ffmpeg instalado: use-o (via bash ou run_python) para EDITAR vídeos e áudios enviados pelo usuário — cortar, juntar, converter formato, extrair áudio, redimensionar, legendar. Salve o resultado em /workspace/outputs.
+- Para GERAR ou EDITAR IMAGENS com IA, use a ferramenta generate_image (não tente desenhar via matplotlib quando o usuário pedir uma imagem artística/realista).`;
 
 function promptFor(assistant) {
   const base = assistant ? (assistant.system_prompt || AGENTS.contabil.prompt) : AGENTS.contabil.prompt;
   return base + personalitySuffix(assistant?.personality) + SANDBOX_RULES;
 }
 function toolsFor(assistant) {
+  const all = [...toolDefinitions, ...imageToolDefinitions];
   const allowed = assistant?.tools;
-  if (!Array.isArray(allowed) || !allowed.length) return toolDefinitions;
-  return toolDefinitions.filter(t => allowed.includes(t.function.name));
+  if (!Array.isArray(allowed) || !allowed.length) return all;
+  return all.filter(t => allowed.includes(t.function.name));
 }
 
 // Memória: a global (todos os assistentes) + a específica do assistente atual
