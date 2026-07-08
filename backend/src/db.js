@@ -52,6 +52,11 @@ CREATE TABLE IF NOT EXISTS memory (
   content TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS clients (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS templates (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -71,7 +76,8 @@ CREATE TABLE IF NOT EXISTS usage (
 );
 `);
 
-// Migração p/ bancos antigos: adiciona a coluna message_id se ainda não existir
+// Migrações p/ bancos antigos: adiciona colunas se ainda não existirem
 try { db.exec('ALTER TABLE files ADD COLUMN message_id TEXT'); } catch {}
+try { db.exec('ALTER TABLE conversations ADD COLUMN client_id TEXT'); } catch {}
 
 export function now() { return new Date().toISOString(); }

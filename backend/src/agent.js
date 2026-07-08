@@ -114,10 +114,18 @@ function toolsFor(assistant) {
   return all.filter(t => allowed.includes(t.function.name));
 }
 
-// Memória: a global (todos os assistentes) + a específica do assistente atual
-function memoryNote(assistantId) {
+// Memória: global (todos) + do assistente atual + do cliente da conversa
+function clientScopeFor(conversationId) {
+  try {
+    const conv = db.prepare('SELECT client_id FROM conversations WHERE id=?').get(conversationId);
+    return conv?.client_id ? `client:${conv.client_id}` : null;
+  } catch { return null; }
+}
+
+function memoryNote(assistantId, clientScope) {
   const scopes = ['global'];
   if (assistantId) scopes.push(assistantId);
+  if (clientScope) scopes.push(clientScope);
   let rows = [];
   try {
     const ph = scopes.map(() => '?').join(',');
@@ -125,9 +133,11 @@ function memoryNote(assistantId) {
   } catch {}
   if (!rows.length) return null;
   const global = rows.filter(r => r.scope === 'global').map(r => `- ${r.content}`);
-  const mine = rows.filter(r => r.scope !== 'global').map(r => `- ${r.content}`);
+  const client = rows.filter(r => r.scope === clientScope && clientScope).map(r => `- ${r.content}`);
+  const mine = rows.filter(r => r.scope === assistantId && assistantId).map(r => `- ${r.content}`);
   let out = '';
   if (global.length) out += `Informações permanentes sobre o usuário/empresa:\n${global.join('\n')}`;
+  if (client.length) out += `${out ? '\n\n' : ''}Informações sobre o CLIENTE desta conversa:\n${client.join('\n')}`;
   if (mine.length) out += `${out ? '\n\n' : ''}Memória específica deste assistente:\n${mine.join('\n')}`;
   return out || null;
 }
@@ -192,7 +202,7 @@ export async function runAgent({ conversationId, userText, model, assistant, web
     ) ORDER BY created_at ASC`).all(conversationId, historyLimit);
   const messages = [{ role: 'system', content: chosenPrompt }];
   if (webSearch) messages.push({ role: 'system', content: 'O usuário ATIVOU a pesquisa na internet. Você pode usar web_search (buscar) e web_fetch (ler uma página). Use quando a pergunta envolver informações atuais ou externas (legislação, notícias, tabelas, cotações, prazos) e cite as fontes (links) na resposta.' });
-  const memory = memoryNote(assistant?.id);
+  const memory = memoryNote(assistant?.id, clientScopeFor(conversationId));
   if (memory) messages.push({ role: 'system', content: memory });
   const note = uploadsNote(conversationId);
   if (note) messages.push({ role: 'system', content: note });
@@ -316,7 +326,7 @@ export async function runOrchestrator({ conversationId, userText, model, assista
   const control = initControl(conversationId);
   const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
   const coordModel = model || process.env.DEEPSEEK_MODEL || 'deepseek-chat';
-  const memory = memoryNote();
+  const memory = memoryNote(null, clientScopeFor(conversationId));
   const perspectives = [];
   let stopped = false;
 

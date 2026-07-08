@@ -140,6 +140,27 @@ app.delete('/api/assistants/:id', (req, res) => {
   res.json({ ok: true });
 });
 
+// ---- Clientes / Projetos ----
+app.get('/api/clients', (_, res) => {
+  res.json(db.prepare('SELECT * FROM clients ORDER BY name ASC').all());
+});
+
+app.post('/api/clients', (req, res) => {
+  const name = (req.body?.name || '').trim();
+  if (!name) return res.status(400).json({ error: 'Nome do cliente é obrigatório.' });
+  const id = nanoid();
+  db.prepare('INSERT INTO clients (id,name,created_at) VALUES (?,?,?)').run(id, name, now());
+  res.json({ id, name });
+});
+
+app.delete('/api/clients/:id', (req, res) => {
+  // Não destrutivo: as conversas do cliente voltam para "Geral"
+  db.prepare('UPDATE conversations SET client_id=NULL WHERE client_id=?').run(req.params.id);
+  db.prepare("DELETE FROM memory WHERE scope=?").run(`client:${req.params.id}`);
+  db.prepare('DELETE FROM clients WHERE id=?').run(req.params.id);
+  res.json({ ok: true });
+});
+
 // ---- Templates de pedido ----
 app.get('/api/templates', (_, res) => {
   res.json(db.prepare('SELECT * FROM templates ORDER BY created_at ASC').all());
@@ -191,8 +212,11 @@ app.get('/api/analytics', (_, res) => {
   res.json({ totals, byAssistant, byModel });
 });
 
-app.get('/api/conversations', (_, res) => {
-  const rows = db.prepare('SELECT * FROM conversations ORDER BY updated_at DESC').all();
+app.get('/api/conversations', (req, res) => {
+  const clientId = req.query.client || null;
+  const rows = clientId
+    ? db.prepare('SELECT * FROM conversations WHERE client_id=? ORDER BY updated_at DESC').all(clientId)
+    : db.prepare('SELECT * FROM conversations WHERE client_id IS NULL ORDER BY updated_at DESC').all();
   res.json(rows);
 });
 
@@ -201,9 +225,10 @@ app.post('/api/conversations', (req, res) => {
   const t = now();
   const title = req.body?.title || 'Nova conversa';
   const model = req.body?.model || process.env.DEEPSEEK_MODEL || 'deepseek-chat';
-  db.prepare('INSERT INTO conversations (id,title,model,created_at,updated_at) VALUES (?,?,?,?,?)').run(id,title,model,t,t);
+  const clientId = req.body?.clientId || null;
+  db.prepare('INSERT INTO conversations (id,title,model,client_id,created_at,updated_at) VALUES (?,?,?,?,?,?)').run(id, title, model, clientId, t, t);
   workspaceFor(id);
-  res.json({ id, title, model, created_at: t, updated_at: t });
+  res.json({ id, title, model, client_id: clientId, created_at: t, updated_at: t });
 });
 
 app.get('/api/conversations/:id', (req, res) => {

@@ -42,6 +42,8 @@ export default function App() {
   const [copiedIdx, setCopiedIdx] = useState(null);
   const [tplOpen, setTplOpen] = useState(false);
   const [templates, setTemplates] = useState([]);
+  const [clients, setClients] = useState([]);
+  const [clientId, setClientId] = useState(() => localStorage.getItem('fred_client') || '');
   const endRef = useRef(null);
   const inputRef = useRef(null);
   const recognitionRef = useRef(null);
@@ -122,10 +124,44 @@ export default function App() {
       loadModels();
       loadAssistants();
       loadMemory();
+      loadClients();
     } catch (err) {
       if (err?.auth) setNeedLogin(true);
       else setConnError(true);
     }
+  }
+
+  // ---- Clientes / Projetos ----
+  async function loadClients() {
+    try { setClients(await (await fetch(`${API}/api/clients`)).json()); } catch {}
+  }
+  async function switchClient(id) {
+    localStorage.setItem('fred_client', id);
+    setClientId(id);
+    try {
+      const rows = await fetchConversations(id);
+      if (rows.length) openConversation(rows[0].id);
+      else createConversation(id);
+    } catch {}
+  }
+  async function addClient() {
+    const name = prompt('Nome do cliente ou projeto:');
+    if (!name?.trim()) return;
+    try {
+      const c = await (await fetch(`${API}/api/clients`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name.trim() }) })).json();
+      await loadClients();
+      if (c?.id) switchClient(c.id);
+    } catch { showToast('Não foi possível criar o cliente.'); }
+  }
+  async function removeClient() {
+    if (!clientId) return;
+    const c = clients.find(x => x.id === clientId);
+    if (!confirm(`Remover o cliente "${c?.name || ''}"? As conversas dele NÃO são apagadas — voltam para "Geral".`)) return;
+    try {
+      await fetch(`${API}/api/clients/${clientId}`, { method: 'DELETE' });
+      await loadClients();
+      switchClient('');
+    } catch { showToast('Não foi possível remover o cliente.'); }
   }
 
   async function doLogin(e) {
@@ -165,17 +201,17 @@ export default function App() {
     } catch {}
   }
 
-  async function fetchConversations() {
-    const res = await fetch(`${API}/api/conversations`);
+  async function fetchConversations(cid = clientId) {
+    const res = await fetch(`${API}/api/conversations${cid ? `?client=${encodeURIComponent(cid)}` : ''}`);
     if (res.status === 401) { const e = new Error('auth'); e.auth = true; throw e; }
     const rows = await res.json();
     setConversations(rows);
     return rows;
   }
 
-  async function createConversation() {
+  async function createConversation(cid = clientId) {
     try {
-      const res = await fetch(`${API}/api/conversations`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'Nova conversa', model }) });
+      const res = await fetch(`${API}/api/conversations`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'Nova conversa', model, clientId: cid || null }) });
       const c = await res.json();
       setConversations(prev => [c, ...prev]);
       setCurrent(c);
@@ -475,7 +511,15 @@ export default function App() {
     {menuOpen && <div className="scrim" onClick={() => setMenuOpen(false)}/>}
     <aside className={`sidebar ${menuOpen ? 'open' : ''}`}>
       <div className="brand">Frederico <span>AI Studio</span></div>
-      <button className="new" onClick={createConversation}><Plus size={16}/> Nova conversa</button>
+      <div className="clientRow">
+        <select value={clientId} onChange={e => switchClient(e.target.value)} title="Cliente / Projeto ativo">
+          <option value="">🗂️ Geral (sem cliente)</option>
+          {clients.map(c => <option key={c.id} value={c.id}>👤 {c.name}</option>)}
+        </select>
+        <button onClick={addClient} title="Novo cliente/projeto" aria-label="Novo cliente"><Plus size={14}/></button>
+        {clientId && <button className="clientDel" onClick={removeClient} title="Remover cliente (conversas voltam para Geral)" aria-label="Remover cliente"><Trash2 size={14}/></button>}
+      </div>
+      <button className="new" onClick={() => createConversation()}><Plus size={16}/> Nova conversa</button>
       <div className="convList">
         {conversations.length === 0 && <p className="muted small">Suas conversas aparecerão aqui.</p>}
         {conversations.map(c => (
@@ -635,10 +679,11 @@ export default function App() {
       <label>Onde guardar
         <select value={memoryScope} onChange={e => changeMemoryScope(e.target.value)}>
           <option value="global">🌐 Global — todos os assistentes lembram</option>
+          {clientId && <option value={`client:${clientId}`}>👤 Só do cliente: {clients.find(c => c.id === clientId)?.name || 'atual'}</option>}
           {assistants.map(a => <option key={a.id} value={a.id}>{a.emoji || '🤖'} Só do assistente: {a.name}</option>)}
         </select>
       </label>
-      <p className="muted" style={{ margin: 0 }}>{memoryScope === 'global' ? 'Informações que TODOS os assistentes lembram em todas as conversas (ex.: CNPJ, regime tributário, preferências).' : 'Memória exclusiva deste assistente — só ele usa (ex.: decisões técnicas, particularidades do setor).'}</p>
+      <p className="muted" style={{ margin: 0 }}>{memoryScope === 'global' ? 'Informações que TODOS os assistentes lembram em todas as conversas (ex.: CNPJ, regime tributário, preferências).' : memoryScope.startsWith('client:') ? 'Memória deste CLIENTE — lembrada em todas as conversas dele, por qualquer assistente (ex.: CNPJ do cliente, regime, particularidades).' : 'Memória exclusiva deste assistente — só ele usa (ex.: decisões técnicas, particularidades do setor).'}</p>
       <div className="memAdd">
         <input value={memoryInput} onChange={e => setMemoryInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addMemory(); } }} placeholder="Ex.: Minha empresa é a Frederico Assessoria, CNPJ 00.000.000/0001-00, Simples Nacional."/>
         <button className="primary" onClick={addMemory}>Adicionar</button>
