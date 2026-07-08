@@ -27,7 +27,12 @@ function uploadsNote(conversationId) {
 ${list}
 
 Não peça para o usuário reenviar. Para lê-los, use as ferramentas:
-- PDF: run_python com pdfplumber (texto) ou pypdf; para PDFs escaneados, use pytesseract (OCR, idioma "por").
+- PDF — siga esta ORDEM de estratégias até obter texto legível:
+  1) PyMuPDF: import fitz; doc = fitz.open(caminho); page.get_text() — o extrator mais robusto.
+  2) bash: pdftotext -layout arquivo.pdf - (preserva colunas de relatórios financeiros).
+  3) Tabelas com linhas: camelot.read_pdf(caminho, pages='all') ou pdfplumber .extract_tables().
+  4) PDF escaneado ou texto ilegível/sobreposto: OCR — bash: ocrmypdf -l por --force-ocr entrada.pdf saida.pdf e extraia da saída; ou pdf2image + pytesseract (lang='por').
+  Valide a qualidade: se o texto sair embaralhado, tente a próxima estratégia em vez de insistir.
 - Excel/CSV: run_python com pandas (pd.read_excel / pd.read_csv).
 - Texto simples: read_file.
 Sempre comece analisando o arquivo antes de responder.`;
