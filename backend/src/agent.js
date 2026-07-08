@@ -85,13 +85,29 @@ function toolsFor(assistant) {
   return toolDefinitions.filter(t => allowed.includes(t.function.name));
 }
 
-// Memória global: fatos que o usuário quer que TODOS os assistentes lembrem
-function memoryNote() {
+// Memória: a global (todos os assistentes) + a específica do assistente atual
+function memoryNote(assistantId) {
+  const scopes = ['global'];
+  if (assistantId) scopes.push(assistantId);
   let rows = [];
-  try { rows = db.prepare("SELECT content FROM memory WHERE scope='global' ORDER BY created_at ASC").all(); } catch {}
+  try {
+    const ph = scopes.map(() => '?').join(',');
+    rows = db.prepare(`SELECT scope, content FROM memory WHERE scope IN (${ph}) ORDER BY created_at ASC`).all(...scopes);
+  } catch {}
   if (!rows.length) return null;
-  const list = rows.map(r => `- ${r.content}`).join('\n');
-  return `Informações permanentes sobre o usuário/empresa (leve-as em conta em todas as respostas):\n${list}`;
+  const global = rows.filter(r => r.scope === 'global').map(r => `- ${r.content}`);
+  const mine = rows.filter(r => r.scope !== 'global').map(r => `- ${r.content}`);
+  let out = '';
+  if (global.length) out += `Informações permanentes sobre o usuário/empresa:\n${global.join('\n')}`;
+  if (mine.length) out += `${out ? '\n\n' : ''}Memória específica deste assistente:\n${mine.join('\n')}`;
+  return out || null;
+}
+
+function addUsage(acc, u) {
+  if (!u) return;
+  acc.prompt_tokens += u.prompt_tokens || 0;
+  acc.completion_tokens += u.completion_tokens || 0;
+  acc.total_tokens += u.total_tokens || 0;
 }
 
 export async function runAgent({ conversationId, userText, model, assistant, onEvent }) {
@@ -106,12 +122,13 @@ export async function runAgent({ conversationId, userText, model, assistant, onE
       WHERE conversation_id=? ORDER BY created_at DESC LIMIT 40
     ) ORDER BY created_at ASC`).all(conversationId);
   const messages = [{ role: 'system', content: chosenPrompt }];
-  const memory = memoryNote();
+  const memory = memoryNote(assistant?.id);
   if (memory) messages.push({ role: 'system', content: memory });
   const note = uploadsNote(conversationId);
   if (note) messages.push({ role: 'system', content: note });
   messages.push(...history.map(m => ({ role: m.role, content: m.content })));
 
+  const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
   let finalText = '';
   for (let step = 0; step < 8; step++) {
     onEvent({ type: 'status', content: step === 0 ? 'Pensando...' : 'Executando ferramentas...' });
@@ -121,6 +138,7 @@ export async function runAgent({ conversationId, userText, model, assistant, onE
       ...(tools.length ? { tools, tool_choice: 'auto' } : {}),
       temperature
     });
+    addUsage(usage, completion.usage);
     const msg = completion.choices[0].message;
     // Reenvia só o que a API espera (evita campos extras como reasoning_content)
     messages.push({ role: 'assistant', content: msg.content ?? '', tool_calls: msg.tool_calls });
@@ -144,7 +162,53 @@ export async function runAgent({ conversationId, userText, model, assistant, onE
 
   if (!finalText.trim()) finalText = 'Concluído.';
   saveMessage(conversationId, 'assistant', finalText);
-  return finalText;
+  return { text: finalText, usage, model: chosenModel };
+}
+
+// Orquestrador: aciona vários assistentes e um coordenador une as respostas
+export async function runOrchestrator({ conversationId, userText, model, assistants = [], onEvent }) {
+  saveMessage(conversationId, 'user', userText);
+  const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+  const coordModel = model || process.env.DEEPSEEK_MODEL || 'deepseek-chat';
+  const memory = memoryNote();
+  const perspectives = [];
+
+  for (const a of assistants) {
+    onEvent({ type: 'status', content: `${a.emoji || '🧑'} ${a.name} analisando...` });
+    onEvent({ type: 'tool_start', name: a.name });
+    const sys = `${a.system_prompt}\n\nDê APENAS a sua perspectiva especializada e resumida sobre o pedido, focando na sua área. Não gere arquivos nem execute código.`;
+    const msgs = [{ role: 'system', content: sys }];
+    if (memory) msgs.push({ role: 'system', content: memory });
+    msgs.push({ role: 'user', content: userText });
+    try {
+      const c = await client.chat.completions.create({ model: a.model || coordModel, messages: msgs, temperature: 0.3 });
+      addUsage(usage, c.usage);
+      const text = c.choices[0].message.content || '';
+      perspectives.push({ name: a.name, emoji: a.emoji, text });
+      onEvent({ type: 'tool_result', name: a.name, content: text.slice(0, 600) });
+    } catch (err) {
+      onEvent({ type: 'tool_result', name: a.name, content: `erro: ${err.message}` });
+    }
+  }
+
+  onEvent({ type: 'status', content: 'Compilando a resposta final da equipe...' });
+  const combined = perspectives.map(p => `### ${p.emoji || ''} ${p.name}\n${p.text}`).join('\n\n');
+  const synthMsgs = [
+    { role: 'system', content: 'Você é o coordenador de uma equipe de assistentes especializados. Combine as perspectivas abaixo em UMA resposta única, organizada e coesa, em português do Brasil, sem repetições. Use títulos por área quando ajudar e feche com um resumo prático.' },
+    { role: 'user', content: `Pedido do usuário:\n${userText}\n\nPerspectivas da equipe:\n${combined}` }
+  ];
+  let finalText = '';
+  try {
+    const synth = await client.chat.completions.create({ model: coordModel, messages: synthMsgs, temperature: 0.3 });
+    addUsage(usage, synth.usage);
+    finalText = synth.choices[0].message.content || '';
+  } catch (err) {
+    finalText = `Não foi possível compilar a resposta final: ${err.message}`;
+  }
+  if (!finalText.trim()) finalText = 'Concluído.';
+  onEvent({ type: 'delta', content: finalText });
+  saveMessage(conversationId, 'assistant', finalText);
+  return { text: finalText, usage, model: coordModel };
 }
 
 export function saveMessage(conversationId, role, content) {

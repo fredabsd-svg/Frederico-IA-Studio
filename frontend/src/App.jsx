@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X } from 'lucide-react';
+import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users } from 'lucide-react';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
@@ -52,6 +52,10 @@ export default function App() {
   const [memoryOpen, setMemoryOpen] = useState(false);
   const [memoryItems, setMemoryItems] = useState([]);
   const [memoryInput, setMemoryInput] = useState('');
+  const [memoryScope, setMemoryScope] = useState('global');
+  const [team, setTeam] = useState(false);
+  const [analyticsOpen, setAnalyticsOpen] = useState(false);
+  const [analytics, setAnalytics] = useState(null);
   const [busy, setBusy] = useState(false);
   const [dark, setDark] = useState(true);
   const endRef = useRef(null);
@@ -179,20 +183,27 @@ export default function App() {
     if (assistantId === form.id) pickAssistant(rows[0]?.id || null);
   }
 
-  // ---- Memória global ----
-  async function loadMemory() {
-    try { setMemoryItems(await (await fetch(`${API}/api/memory`)).json()); } catch {}
+  // ---- Memória (global ou por assistente) ----
+  async function loadMemory(scope = memoryScope) {
+    try { setMemoryItems(await (await fetch(`${API}/api/memory?scope=${encodeURIComponent(scope)}`)).json()); } catch {}
   }
+  function changeMemoryScope(scope) { setMemoryScope(scope); loadMemory(scope); }
   async function addMemory() {
     const content = memoryInput.trim();
     if (!content) return;
     setMemoryInput('');
-    await fetch(`${API}/api/memory`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content }) });
+    await fetch(`${API}/api/memory`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content, scope: memoryScope }) });
     await loadMemory();
   }
   async function removeMemory(id) {
     await fetch(`${API}/api/memory/${id}`, { method: 'DELETE' });
     await loadMemory();
+  }
+
+  // ---- Analytics ----
+  async function openAnalytics() {
+    setAnalyticsOpen(true);
+    try { setAnalytics(await (await fetch(`${API}/api/analytics`)).json()); } catch {}
   }
 
   async function sendMessage() {
@@ -203,8 +214,11 @@ export default function App() {
     const assistantMsgId = `local-${Date.now()}`;
     setMessages(prev => [...prev, { role: 'user', content: text }, { id: assistantMsgId, role: 'assistant', content: '' }]);
 
+    const body = team
+      ? { message: text, model, orchestrate: true, orchestrateIds: assistants.map(a => a.id) }
+      : { message: text, model, assistantId };
     const res = await fetch(`${API}/api/conversations/${current.id}/chat`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: text, model, assistantId })
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
     });
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
@@ -245,18 +259,20 @@ export default function App() {
         ))}
       </div>
       <button className="studio" onClick={openStudioNew}><Bot size={16}/> Criar assistente</button>
-      <button className="studio memoryBtn" onClick={() => setMemoryOpen(true)}><Brain size={16}/> Memória global</button>
+      <button className="studio" onClick={() => { setMemoryScope('global'); loadMemory('global'); setMemoryOpen(true); }}><Brain size={16}/> Memória</button>
+      <button className="studio" onClick={openAnalytics}><BarChart3 size={16}/> Análises</button>
       <button className="theme" onClick={() => setDark(!dark)}>{dark ? <Sun size={16}/> : <Moon size={16}/>} Tema</button>
     </aside>
 
     <main className="chat">
       <header className="topbar">
-        <div className="titleblock"><strong>{current?.title || 'Conversa'}</strong><small>{currentAssistant ? `${currentAssistant.emoji || '🤖'} ${currentAssistant.name}` : 'Assistente'} · {model}</small></div>
+        <div className="titleblock"><strong>{current?.title || 'Conversa'}</strong><small>{team ? `🧑‍🤝‍🧑 Equipe (${assistants.length} assistentes)` : (currentAssistant ? `${currentAssistant.emoji || '🤖'} ${currentAssistant.name}` : 'Assistente')} · {model}</small></div>
         <div className="pickers">
-          <select value={assistantId || ''} onChange={e => pickAssistant(e.target.value)} title="Assistente">
+          <button className={`teamBtn ${team ? 'on' : ''}`} onClick={() => setTeam(t => !t)} title="Modo Equipe: aciona todos os assistentes e junta as respostas"><Users size={15}/> Equipe</button>
+          <select value={assistantId || ''} onChange={e => pickAssistant(e.target.value)} disabled={team} title="Assistente">
             {assistants.map(a => <option key={a.id} value={a.id}>{a.emoji || '🤖'} {a.name}</option>)}
           </select>
-          <button className="gear" onClick={() => currentAssistant ? openStudioEdit(currentAssistant) : openStudioNew()} title="Editar assistente"><Settings size={16}/></button>
+          <button className="gear" onClick={() => currentAssistant ? openStudioEdit(currentAssistant) : openStudioNew()} title="Editar assistente" disabled={team}><Settings size={16}/></button>
           <select value={model} onChange={e => setModel(e.target.value)} title="Modelo de IA">
             <optgroup label="✅ Geram arquivos (recomendados)">
               {allModels.filter(m => m.tools !== false).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
@@ -353,11 +369,17 @@ export default function App() {
     {memoryOpen && <div className="modalOverlay" onClick={() => setMemoryOpen(false)}>
       <div className="modal" onClick={e => e.stopPropagation()}>
         <div className="modalHead">
-          <h2><Brain size={18}/> Memória global</h2>
+          <h2><Brain size={18}/> Memória</h2>
           <button className="x" onClick={() => setMemoryOpen(false)} aria-label="Fechar">✕</button>
         </div>
         <div className="modalBody">
-          <p className="muted" style={{ margin: 0 }}>Tudo que você guardar aqui é lembrado por <strong>todos os assistentes</strong>, em todas as conversas. Ex.: nome e CNPJ da empresa, regime tributário, setor, preferências de resposta.</p>
+          <label>Onde guardar
+            <select value={memoryScope} onChange={e => changeMemoryScope(e.target.value)}>
+              <option value="global">🌐 Global — todos os assistentes lembram</option>
+              {assistants.map(a => <option key={a.id} value={a.id}>{a.emoji || '🤖'} Só do assistente: {a.name}</option>)}
+            </select>
+          </label>
+          <p className="muted" style={{ margin: 0 }}>{memoryScope === 'global' ? 'Informações que TODOS os assistentes lembram em todas as conversas (ex.: CNPJ, regime tributário, preferências).' : 'Memória exclusiva deste assistente — só ele usa (ex.: decisões técnicas, particularidades do setor).'}</p>
           <div className="memAdd">
             <input value={memoryInput} onChange={e => setMemoryInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addMemory(); } }} placeholder="Ex.: Minha empresa é a Frederico Assessoria, CNPJ 00.000.000/0001-00, Simples Nacional."/>
             <button className="primary" onClick={addMemory}>Adicionar</button>
@@ -371,6 +393,40 @@ export default function App() {
               </div>
             ))}
           </div>
+        </div>
+      </div>
+    </div>}
+
+    {analyticsOpen && <div className="modalOverlay" onClick={() => setAnalyticsOpen(false)}>
+      <div className="modal" onClick={e => e.stopPropagation()}>
+        <div className="modalHead">
+          <h2><BarChart3 size={18}/> Análises de uso</h2>
+          <button className="x" onClick={() => setAnalyticsOpen(false)} aria-label="Fechar">✕</button>
+        </div>
+        <div className="modalBody">
+          {!analytics && <p className="muted">Carregando...</p>}
+          {analytics && <>
+            <div className="statRow">
+              <div className="stat"><b>{analytics.totals?.messages || 0}</b><span>mensagens</span></div>
+              <div className="stat"><b>{(analytics.totals?.tokens || 0).toLocaleString('pt-BR')}</b><span>tokens no total</span></div>
+              <div className="stat"><b>{(analytics.totals?.prompt_tokens || 0).toLocaleString('pt-BR')}</b><span>tokens de entrada</span></div>
+            </div>
+            <div className="field">
+              <span className="fieldLabel">Por assistente</span>
+              <table className="atable"><thead><tr><th>Assistente</th><th>Msgs</th><th>Tokens</th></tr></thead>
+                <tbody>{(analytics.byAssistant || []).map((r, i) => <tr key={i}><td>{r.emoji ? `${r.emoji} ` : ''}{r.name}</td><td>{r.messages}</td><td>{(r.tokens || 0).toLocaleString('pt-BR')}</td></tr>)}
+                {(!analytics.byAssistant || !analytics.byAssistant.length) && <tr><td colSpan={3} className="muted">Sem dados ainda.</td></tr>}</tbody>
+              </table>
+            </div>
+            <div className="field">
+              <span className="fieldLabel">Por modelo de IA</span>
+              <table className="atable"><thead><tr><th>Modelo</th><th>Msgs</th><th>Tokens</th></tr></thead>
+                <tbody>{(analytics.byModel || []).map((r, i) => <tr key={i}><td>{r.model}</td><td>{r.messages}</td><td>{(r.tokens || 0).toLocaleString('pt-BR')}</td></tr>)}
+                {(!analytics.byModel || !analytics.byModel.length) && <tr><td colSpan={3} className="muted">Sem dados ainda.</td></tr>}</tbody>
+              </table>
+            </div>
+            <p className="muted" style={{ margin: 0, fontSize: 12 }}>Tokens são a medida de consumo dos modelos. O custo em R$/US$ depende do preço de cada modelo no OpenRouter.</p>
+          </>}
         </div>
       </div>
     </div>}

@@ -47,8 +47,19 @@ CREATE TABLE IF NOT EXISTS assistants (
 );
 CREATE TABLE IF NOT EXISTS memory (
   id TEXT PRIMARY KEY,
-  scope TEXT NOT NULL DEFAULT 'global',  -- 'global' (compartilhada por todos os assistentes)
+  scope TEXT NOT NULL DEFAULT 'global',  -- 'global' ou o id de um assistente
   content TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS usage (
+  id TEXT PRIMARY KEY,
+  conversation_id TEXT,
+  assistant_id TEXT,
+  model TEXT,
+  kind TEXT DEFAULT 'chat',            -- 'chat' ou 'orquestrador'
+  prompt_tokens INTEGER DEFAULT 0,
+  completion_tokens INTEGER DEFAULT 0,
+  total_tokens INTEGER DEFAULT 0,
   created_at TEXT NOT NULL
 );
 `);

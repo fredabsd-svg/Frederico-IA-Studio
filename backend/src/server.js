@@ -6,7 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import { nanoid } from 'nanoid';
 import { db, now } from './db.js';
-import { runAgent, AGENTS } from './agent.js';
+import { runAgent, runOrchestrator, AGENTS } from './agent.js';
 import { workspaceFor, destroyConversation } from './sandbox.js';
 
 const app = express();
@@ -99,22 +99,36 @@ app.delete('/api/assistants/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-// ---- Memória global (compartilhada por todos os assistentes) ----
-app.get('/api/memory', (_, res) => {
-  res.json(db.prepare("SELECT id, content, created_at FROM memory WHERE scope='global' ORDER BY created_at ASC").all());
+// ---- Memória (scope 'global' ou id de um assistente) ----
+app.get('/api/memory', (req, res) => {
+  const scope = req.query.scope || 'global';
+  res.json(db.prepare('SELECT id, content, created_at FROM memory WHERE scope=? ORDER BY created_at ASC').all(scope));
 });
 
 app.post('/api/memory', (req, res) => {
   const content = (req.body?.content || '').trim();
+  const scope = req.body?.scope || 'global';
   if (!content) return res.status(400).json({ error: 'Conteúdo vazio.' });
   const id = nanoid();
-  db.prepare("INSERT INTO memory (id, scope, content, created_at) VALUES (?, 'global', ?, ?)").run(id, content, now());
+  db.prepare('INSERT INTO memory (id, scope, content, created_at) VALUES (?, ?, ?, ?)').run(id, scope, content, now());
   res.json({ id, content });
 });
 
 app.delete('/api/memory/:id', (req, res) => {
   db.prepare('DELETE FROM memory WHERE id=?').run(req.params.id);
   res.json({ ok: true });
+});
+
+// ---- Analytics de uso (mensagens e tokens) ----
+app.get('/api/analytics', (_, res) => {
+  const totals = db.prepare('SELECT COUNT(*) messages, COALESCE(SUM(total_tokens),0) tokens, COALESCE(SUM(prompt_tokens),0) prompt_tokens, COALESCE(SUM(completion_tokens),0) completion_tokens FROM usage').get();
+  const byAssistant = db.prepare(`
+    SELECT COALESCE(a.name,'(sem assistente / equipe)') name, a.emoji,
+           COUNT(*) messages, COALESCE(SUM(u.total_tokens),0) tokens
+    FROM usage u LEFT JOIN assistants a ON a.id=u.assistant_id
+    GROUP BY u.assistant_id ORDER BY tokens DESC`).all();
+  const byModel = db.prepare('SELECT model, COUNT(*) messages, COALESCE(SUM(total_tokens),0) tokens FROM usage GROUP BY model ORDER BY tokens DESC').all();
+  res.json({ totals, byAssistant, byModel });
 });
 
 app.get('/api/conversations', (_, res) => {
@@ -202,8 +216,20 @@ app.post('/api/conversations/:id/chat', async (req, res) => {
       const autoTitle = text.trim().replace(/\s+/g, ' ').slice(0, 40);
       if (autoTitle) db.prepare('UPDATE conversations SET title=? WHERE id=?').run(autoTitle, req.params.id);
     }
-    const assistant = loadAssistant(req.body?.assistantId);
-    await runAgent({ conversationId: req.params.id, userText: text, model: req.body?.model, assistant, onEvent: send });
+    let result, kind = 'chat', usageAssistantId = req.body?.assistantId || null;
+    if (req.body?.orchestrate) {
+      const assistants = (req.body?.orchestrateIds || []).map(loadAssistant).filter(Boolean);
+      kind = 'orquestrador'; usageAssistantId = null;
+      result = await runOrchestrator({ conversationId: req.params.id, userText: text, model: req.body?.model, assistants, onEvent: send });
+    } else {
+      const assistant = loadAssistant(req.body?.assistantId);
+      result = await runAgent({ conversationId: req.params.id, userText: text, model: req.body?.model, assistant, onEvent: send });
+    }
+    // Registra o consumo de tokens para o painel de análises
+    if (result?.usage) {
+      db.prepare('INSERT INTO usage (id,conversation_id,assistant_id,model,kind,prompt_tokens,completion_tokens,total_tokens,created_at) VALUES (?,?,?,?,?,?,?,?,?)')
+        .run(nanoid(), req.params.id, usageAssistantId, result.model, kind, result.usage.prompt_tokens, result.usage.completion_tokens, result.usage.total_tokens, now());
+    }
     send({ type: 'done' });
   } catch (err) {
     send({ type: 'error', content: err.message });
