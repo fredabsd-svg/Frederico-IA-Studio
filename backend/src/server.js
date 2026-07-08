@@ -6,7 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import { nanoid } from 'nanoid';
 import { db, now } from './db.js';
-import { runAgent, runOrchestrator, setControl, AGENTS } from './agent.js';
+import { runAgent, runOrchestrator, setControl, friendlyApiError, AGENTS } from './agent.js';
 import { workspaceFor, destroyConversation, insideBase } from './sandbox.js';
 import { authEnabled, makeToken, verifyToken, getCookie, passwordMatches, loginRateLimited } from './auth.js';
 
@@ -281,7 +281,7 @@ app.post('/api/conversations/:id/chat', async (req, res) => {
     send({ type: 'done' });
   } catch (err) {
     console.error('[chat]', err);
-    send({ type: 'error', content: String(err.message || 'Erro inesperado').slice(0, 300) });
+    send({ type: 'error', content: friendlyApiError(err) });
   } finally {
     res.end();
   }

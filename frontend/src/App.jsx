@@ -443,8 +443,13 @@ export default function App() {
           <button className="gear" onClick={() => currentAssistant ? openStudioEdit(currentAssistant) : openStudioNew()} title="Editar assistente" disabled={team}><Settings size={16}/></button>
           <select value={model} onChange={e => setModel(e.target.value)} title="Modelo de IA">
             <optgroup label="✅ Geram arquivos (recomendados)">
-              {allModels.filter(m => m.tools !== false).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+              {allModels.filter(m => m.tools !== false && !m.id.endsWith(':free')).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
             </optgroup>
+            {allModels.some(m => m.tools !== false && m.id.endsWith(':free')) && (
+              <optgroup label="🆓 Gratuitos — sujeitos a fila e limites (erro 429)">
+                {allModels.filter(m => m.tools !== false && m.id.endsWith(':free')).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+              </optgroup>
+            )}
             {allModels.some(m => m.tools === false) && (
               <optgroup label="💬 Só conversa (não geram arquivos)">
                 {allModels.filter(m => m.tools === false).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}

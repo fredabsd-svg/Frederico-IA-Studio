@@ -135,6 +135,18 @@ function addUsage(acc, u) {
   acc.total_tokens += u.total_tokens || 0;
 }
 
+// Traduz erros comuns da API do provedor em mensagens claras em português
+export function friendlyApiError(err) {
+  const status = err?.status || err?.response?.status;
+  const raw = String(err?.message || '');
+  if (status === 401) return 'Chave da API inválida ou expirada. Confira a DEEPSEEK_API_KEY no arquivo .env.';
+  if (status === 402) return 'Sem créditos no provedor (OpenRouter/DeepSeek). Adicione créditos na sua conta e tente de novo.';
+  if (status === 429) return 'Limite de uso atingido (erro 429). Modelos GRATUITOS têm cota pequena e fila compartilhada — aguarde alguns minutos ou, melhor, escolha um modelo pago (ex.: DeepSeek Chat, que custa centavos).';
+  if (status === 404) return 'Modelo não encontrado no provedor. Escolha outro modelo no seletor.';
+  if (status >= 500) return 'O provedor do modelo está instável neste momento. Tente novamente em instantes.';
+  return raw.slice(0, 300) || 'Erro inesperado ao falar com o modelo.';
+}
+
 // ---- Controle de execução (pausar / continuar / parar) ----
 const controls = new Map(); // conversationId -> { paused, stopped }
 export function setControl(conversationId, action) {
