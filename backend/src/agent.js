@@ -75,9 +75,19 @@ function temperatureFor(p) {
   const c = p && typeof p.criat === 'number' ? p.criat : 20;
   return Math.min(0.9, Math.max(0.1, 0.1 + (c / 100) * 0.8));
 }
+// Regras aplicadas a TODOS os assistentes: evitam que o modelo perca trabalho
+// por assumir um "kernel" persistente que na verdade não existe.
+const SANDBOX_RULES = `
+
+REGRAS DO SANDBOX (muito importante):
+- Cada execução de run_python é um processo NOVO e independente. Variáveis NÃO persistem entre chamadas — o que você definiu numa execução some na seguinte.
+- Resolva a tarefa preferencialmente em UM ÚNICO script run_python, completo e autossuficiente: ler os arquivos, processar e salvar o resultado final de uma vez.
+- Se precisar mesmo dividir em etapas, salve os dados intermediários em arquivo (JSON/CSV em /workspace) e leia de volta no próximo script — nunca dependa de variáveis da execução anterior.
+- Evite muitas execuções exploratórias; planeje e faça de uma vez. Salve os arquivos finais em /workspace/outputs.`;
+
 function promptFor(assistant) {
-  if (!assistant) return AGENTS.contabil.prompt;
-  return (assistant.system_prompt || AGENTS.contabil.prompt) + personalitySuffix(assistant.personality);
+  const base = assistant ? (assistant.system_prompt || AGENTS.contabil.prompt) : AGENTS.contabil.prompt;
+  return base + personalitySuffix(assistant?.personality) + SANDBOX_RULES;
 }
 function toolsFor(assistant) {
   const allowed = assistant?.tools;
@@ -140,11 +150,12 @@ export async function runAgent({ conversationId, userText, model, assistant, onE
   const tools = toolsFor(assistant);
   const temperature = temperatureFor(assistant?.personality);
   saveMessage(conversationId, 'user', userText);
+  const historyLimit = Number(process.env.AGENT_HISTORY_LIMIT || 60);
   const history = db.prepare(`
     SELECT role, content FROM (
       SELECT role, content, created_at FROM messages
-      WHERE conversation_id=? ORDER BY created_at DESC LIMIT 40
-    ) ORDER BY created_at ASC`).all(conversationId);
+      WHERE conversation_id=? ORDER BY created_at DESC LIMIT ?
+    ) ORDER BY created_at ASC`).all(conversationId, historyLimit);
   const messages = [{ role: 'system', content: chosenPrompt }];
   const memory = memoryNote(assistant?.id);
   if (memory) messages.push({ role: 'system', content: memory });
@@ -154,9 +165,11 @@ export async function runAgent({ conversationId, userText, model, assistant, onE
 
   const control = initControl(conversationId);
   const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+  const maxSteps = Number(process.env.AGENT_MAX_STEPS || 30);
   let finalText = '';
   let stopped = false;
-  for (let step = 0; step < 8; step++) {
+  let completedNaturally = false;
+  for (let step = 0; step < maxSteps; step++) {
     if (await gate(control, onEvent)) { stopped = true; break; }
     onEvent({ type: 'status', content: step === 0 ? 'Pensando...' : 'Continuando...' });
     // Streaming: o texto é enviado token a token para a interface (tela viva)
@@ -190,7 +203,7 @@ export async function runAgent({ conversationId, userText, model, assistant, onE
     // Reenvia só o que a API espera (evita campos extras como reasoning_content)
     messages.push({ role: 'assistant', content: content ?? '', ...(stepToolCalls.length ? { tool_calls: stepToolCalls } : {}) });
     if (stopped) break;
-    if (!stepToolCalls.length) break;
+    if (!stepToolCalls.length) { completedNaturally = true; break; }
     for (const call of stepToolCalls) {
       if (await gate(control, onEvent)) { stopped = true; break; }
       const name = call.function.name;
@@ -208,7 +221,12 @@ export async function runAgent({ conversationId, userText, model, assistant, onE
   controls.delete(conversationId);
 
   if (stopped) { onEvent({ type: 'status', content: 'Interrompido pelo usuário' }); if (!finalText.trim()) finalText = '_Processamento interrompido pelo usuário._'; }
-  else if (!finalText.trim()) finalText = 'Concluído.';
+  else if (!completedNaturally) {
+    // Atingiu o limite de etapas ainda usando ferramentas: avisa o usuário
+    const note = `\n\n_⚠️ Atingi o limite de ${maxSteps} etapas de processamento nesta tarefa. Ela ficou muito longa — provavelmente pela dificuldade de extrair os dados. Sugestão: peça em partes (ex.: 1º "extraia os lançamentos do Razão para um CSV", depois "gere a planilha DFC a partir do CSV")._`;
+    finalText += note;
+    onEvent({ type: 'delta', content: note });
+  } else if (!finalText.trim()) finalText = 'Concluído.';
   saveMessage(conversationId, 'assistant', finalText);
   return { text: finalText, usage, model: chosenModel };
 }
