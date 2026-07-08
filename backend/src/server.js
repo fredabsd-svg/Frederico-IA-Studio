@@ -56,6 +56,23 @@ function seedAssistants() {
 }
 seedAssistants();
 
+// Biblioteca inicial de templates de pedido (o usuário pode criar os seus)
+function seedTemplates() {
+  if (db.prepare('SELECT COUNT(*) c FROM templates').get().c > 0) return;
+  const seeds = [
+    { name: '📊 DFC (Demonstração do Fluxo de Caixa)', content: 'Analise o arquivo enviado (razão/extratos) e gere uma planilha Excel com a DFC pelo método direto: abas Resumo, DFC (Operacional, Investimento e Financiamento) e Lançamentos classificados. Valide que os líquidos por atividade batem entre as abas, que o saldo final = saldo inicial + variação, e que não há erros de fórmula. Formate profissionalmente (moeda R$, datas dd/mm/aaaa, cabeçalhos congelados) e inclua gráficos da evolução do caixa.' },
+    { name: '💰 Fluxo de caixa projetado 12 meses', content: 'Gere uma planilha Excel de fluxo de caixa projetado para 12 meses, com seções de entradas e saídas por categoria, totais mensais, saldo acumulado, formatação profissional em tons de azul e um gráfico de linha com a evolução do saldo. Inclua uma aba de premissas editável.' },
+    { name: '📄 Proposta comercial', content: 'Crie um documento Word com uma proposta comercial profissional contendo: capa com título e data, apresentação da empresa, escopo dos serviços, cronograma, investimento (tabela de valores), condições de pagamento, validade da proposta e espaço para assinaturas. Use linguagem formal e formatação elegante.' },
+    { name: '⚖️ Petição (estrutura)', content: 'Crie um documento Word com a estrutura de uma petição: endereçamento, qualificação das partes, título da ação, seção DOS FATOS, seção DO DIREITO com espaço para fundamentação, DOS PEDIDOS numerados, valor da causa e fechamento com local, data e assinatura do advogado (nome e OAB). Deixe marcadores [PREENCHER] nos pontos que dependem do caso concreto.' },
+    { name: '📝 Contrato de prestação de serviços', content: 'Crie um documento Word com um contrato de prestação de serviços completo: qualificação das partes (CONTRATANTE e CONTRATADA com espaços para dados), objeto, obrigações de cada parte, valor e forma de pagamento, prazo e vigência, rescisão, multas, confidencialidade, foro e assinaturas com testemunhas. Linguagem jurídica clara.' },
+    { name: '📈 Relatório mensal', content: 'Analise os arquivos enviados e gere um relatório mensal em PDF com: capa, sumário executivo com os principais números, análise por seção com tabelas e gráficos, destaques e pontos de atenção do período, e conclusão com recomendações. Visual profissional e limpo.' }
+  ];
+  const stmt = db.prepare('INSERT INTO templates (id,name,content,created_at) VALUES (?,?,?,?)');
+  const t = now();
+  for (const s of seeds) stmt.run(nanoid(), s.name, s.content, t);
+}
+seedTemplates();
+
 function ensureConversation(id, model) {
   const existing = db.prepare('SELECT * FROM conversations WHERE id=?').get(id);
   if (existing) return existing;
@@ -120,6 +137,25 @@ app.put('/api/assistants/:id', (req, res) => {
 
 app.delete('/api/assistants/:id', (req, res) => {
   db.prepare('DELETE FROM assistants WHERE id=?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+// ---- Templates de pedido ----
+app.get('/api/templates', (_, res) => {
+  res.json(db.prepare('SELECT * FROM templates ORDER BY created_at ASC').all());
+});
+
+app.post('/api/templates', (req, res) => {
+  const name = (req.body?.name || '').trim();
+  const content = (req.body?.content || '').trim();
+  if (!name || !content) return res.status(400).json({ error: 'Nome e conteúdo são obrigatórios.' });
+  const id = nanoid();
+  db.prepare('INSERT INTO templates (id,name,content,created_at) VALUES (?,?,?,?)').run(id, name, content, now());
+  res.json({ id, name, content });
+});
+
+app.delete('/api/templates/:id', (req, res) => {
+  db.prepare('DELETE FROM templates WHERE id=?').run(req.params.id);
   res.json({ ok: true });
 });
 

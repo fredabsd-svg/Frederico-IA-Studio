@@ -52,6 +52,12 @@ CREATE TABLE IF NOT EXISTS memory (
   content TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS templates (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  content TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS usage (
   id TEXT PRIMARY KEY,
   conversation_id TEXT,

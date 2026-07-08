@@ -96,6 +96,19 @@ export function Slider({ label, hintA, hintB, value, onChange }) {
   </div>;
 }
 
+// Mensagens longas ficam recolhidas com botão "Mostrar tudo"
+export function Collapsible({ text, limit = 700, children }) {
+  const [open, setOpen] = useState(false);
+  const t = text || '';
+  if (t.length <= limit) return children(t);
+  return <div className="clamp">
+    {children(open ? t : t.slice(0, limit).trimEnd() + '…')}
+    <button className="clampBtn" onClick={() => setOpen(o => !o)}>
+      {open ? '▲ Recolher' : `▼ Mostrar tudo (${(t.length / 1000).toFixed(1)} mil caracteres)`}
+    </button>
+  </div>;
+}
+
 // Casca padrão dos modais (overlay + cabeçalho com fechar)
 export function Modal({ title, icon, onClose, children }) {
   return <div className="modalOverlay" onClick={onClose}>

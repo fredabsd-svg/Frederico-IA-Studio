@@ -2,9 +2,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil } from 'lucide-react';
+import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus } from 'lucide-react';
 import { API, FALLBACK_MODELS, TOOL_INFO, TEMPLATES, SUGGESTIONS, emptyForm } from './constants.js';
-import { ToolStep, Slider, Modal, ModelPicker } from './components.jsx';
+import { ToolStep, Slider, Modal, ModelPicker, Collapsible } from './components.jsx';
 
 export default function App() {
   const [conversations, setConversations] = useState([]);
@@ -40,6 +40,8 @@ export default function App() {
   const [loginError, setLoginError] = useState('');
   const [toast, setToast] = useState(null);
   const [copiedIdx, setCopiedIdx] = useState(null);
+  const [tplOpen, setTplOpen] = useState(false);
+  const [templates, setTemplates] = useState([]);
   const endRef = useRef(null);
   const inputRef = useRef(null);
   const recognitionRef = useRef(null);
@@ -71,6 +73,26 @@ export default function App() {
     } catch {
       showToast('Não foi possível copiar (permita o acesso à área de transferência).');
     }
+  }
+
+  // ---- Templates de pedido ----
+  async function loadTemplates() {
+    try { setTemplates(await (await fetch(`${API}/api/templates`)).json()); } catch {}
+  }
+  function openTemplates() { loadTemplates(); setTplOpen(true); }
+  function useTemplate(t) { setInput(t.content); setTplOpen(false); inputRef.current?.focus(); }
+  async function saveAsTemplate(m) {
+    const name = prompt('Nome do template:', (m.content || '').slice(0, 40));
+    if (!name?.trim()) return;
+    try {
+      await fetch(`${API}/api/templates`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name.trim(), content: m.content }) });
+      showToast(`Template "${name.trim()}" salvo! Acesse em Templates, na barra lateral.`);
+    } catch { showToast('Não foi possível salvar o template.'); }
+  }
+  async function deleteTemplate(id, e) {
+    e.stopPropagation();
+    if (!confirm('Excluir este template?')) return;
+    try { await fetch(`${API}/api/templates/${id}`, { method: 'DELETE' }); await loadTemplates(); } catch {}
   }
 
   async function editMessage(m, idx) {
@@ -464,6 +486,7 @@ export default function App() {
         ))}
       </div>
       <button className="studio" onClick={openStudioNew}><Bot size={16}/> Criar assistente</button>
+      <button className="studio" onClick={openTemplates}><BookMarked size={16}/> Templates</button>
       <button className="studio" onClick={() => { setMemoryScope('global'); loadMemory('global'); setMemoryOpen(true); }}><Brain size={16}/> Memória</button>
       <button className="studio" onClick={openAnalytics}><BarChart3 size={16}/> Análises</button>
       <button className="theme" onClick={() => setDark(!dark)}>{dark ? <Sun size={16}/> : <Moon size={16}/>} Tema</button>
@@ -496,13 +519,16 @@ export default function App() {
           <div key={m.id || idx} className={`msg ${m.role}`}>
             <div className="msgActions">
               {m.role === 'user' && !busy && <button onClick={() => editMessage(m, idx)} title="Editar e regravar a conversa a partir daqui" aria-label="Editar mensagem"><Pencil size={13}/></button>}
+              {m.role === 'user' && <button onClick={() => saveAsTemplate(m)} title="Salvar como template reutilizável" aria-label="Salvar como template"><BookmarkPlus size={13}/></button>}
               <button onClick={() => copyMessage(m, idx)} title="Copiar a mensagem inteira" aria-label="Copiar mensagem">{copiedIdx === idx ? <Check size={13}/> : <Copy size={13}/>}</button>
             </div>
             {m.blocks
               ? m.blocks.map((b, i) => b.type === 'tool'
                 ? <ToolStep key={i} step={b} nowTick={nowTick}/>
                 : <ReactMarkdown key={i} remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{b.content || ''}</ReactMarkdown>)
-              : <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{m.content || ''}</ReactMarkdown>}
+              : (m.role === 'user'
+                ? <Collapsible text={m.content}>{t => <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{t}</ReactMarkdown>}</Collapsible>
+                : <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{m.content || ''}</ReactMarkdown>)}
             {m.files?.length > 0 && <div className="filecards">
               {m.files.map(f => {
                 const url = `${API}/api/conversations/${current?.id}/download/${f.path}`;
@@ -652,6 +678,20 @@ export default function App() {
         </div>
         <p className="muted" style={{ margin: 0, fontSize: 12 }}>Tokens são a medida de consumo dos modelos. O custo em R$/US$ depende do preço de cada modelo no OpenRouter.</p>
       </>}
+    </Modal>}
+
+    {tplOpen && <Modal title="Templates de pedido" icon={<BookMarked size={18}/>} onClose={() => setTplOpen(false)}>
+      <p className="muted" style={{ margin: 0 }}>Clique num template para usá-lo na conversa. Para criar o seu, passe o mouse numa mensagem sua no chat e clique no ícone de marcador.</p>
+      <div className="memList">
+        {templates.length === 0 && <p className="muted">Nenhum template ainda.</p>}
+        {templates.map(t => (
+          <button className="tplItem" key={t.id} onClick={() => useTemplate(t)} title="Usar este template">
+            <span className="tplName">{t.name}</span>
+            <span className="tplPreview">{t.content.slice(0, 110)}{t.content.length > 110 ? '…' : ''}</span>
+            <span className="memDel tplDel" onClick={(e) => deleteTemplate(t.id, e)} role="button" aria-label="Excluir template"><X size={15}/></span>
+          </button>
+        ))}
+      </div>
     </Modal>}
   </div>;
 }
