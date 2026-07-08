@@ -1,9 +1,19 @@
 import OpenAI from 'openai';
 import fs from 'fs';
+import path from 'path';
 import { toolDefinitions, runTool } from './tools.js';
 import { workspaceFor } from './sandbox.js';
 import { db, now } from './db.js';
 import { nanoid } from 'nanoid';
+
+// Lista os arquivos da pasta outputs (para detectar os que foram gerados)
+function listOutputs(conversationId) {
+  const ws = workspaceFor(conversationId);
+  const acc = [];
+  const walk = (dir) => { try { for (const d of fs.readdirSync(dir, { withFileTypes: true })) { const full = path.join(dir, d.name); d.isDirectory() ? walk(full) : acc.push(full); } } catch {} };
+  walk(ws.outputs);
+  return acc.map(f => { const st = fs.statSync(f); return { path: path.relative(ws.base, f).replaceAll('\\', '/'), name: path.basename(f), size: st.size, mtimeMs: st.mtimeMs }; });
+}
 
 // Lista os arquivos enviados pelo usuário para avisar o modelo que eles já
 // existem no sandbox (senão o modelo pede para "reenviar" um arquivo que já
@@ -166,6 +176,7 @@ export async function runAgent({ conversationId, userText, model, assistant, onE
   const control = initControl(conversationId);
   const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
   const maxSteps = Number(process.env.AGENT_MAX_STEPS || 30);
+  const outputsBefore = new Map(listOutputs(conversationId).map(f => [f.path, f.mtimeMs]));
   let finalText = '';
   let stopped = false;
   let completedNaturally = false;
@@ -227,7 +238,15 @@ export async function runAgent({ conversationId, userText, model, assistant, onE
     finalText += note;
     onEvent({ type: 'delta', content: note });
   } else if (!finalText.trim()) finalText = 'Concluído.';
-  saveMessage(conversationId, 'assistant', finalText);
+  const msgId = saveMessage(conversationId, 'assistant', finalText);
+  // Detecta os arquivos gerados NESTA resposta e os anexa à mensagem
+  const newFiles = listOutputs(conversationId).filter(f => outputsBefore.get(f.path) !== f.mtimeMs);
+  if (newFiles.length) {
+    const stmt = db.prepare('INSERT INTO files (id,conversation_id,message_id,kind,name,path,size,created_at) VALUES (?,?,?,?,?,?,?,?)');
+    const cards = [];
+    for (const f of newFiles) { const id = nanoid(); stmt.run(id, conversationId, msgId, 'output', f.name, f.path, f.size, now()); cards.push({ id, name: f.name, path: f.path, size: f.size }); }
+    onEvent({ type: 'files', files: cards });
+  }
   return { text: finalText, usage, model: chosenModel };
 }
 
@@ -294,7 +313,9 @@ export async function runOrchestrator({ conversationId, userText, model, assista
 }
 
 export function saveMessage(conversationId, role, content) {
+  const id = nanoid();
   db.prepare('INSERT INTO messages (id, conversation_id, role, content, created_at) VALUES (?,?,?,?,?)')
-    .run(nanoid(), conversationId, role, content, now());
+    .run(id, conversationId, role, content, now());
   db.prepare('UPDATE conversations SET updated_at=? WHERE id=?').run(now(), conversationId);
+  return id;
 }

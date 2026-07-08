@@ -150,6 +150,12 @@ app.get('/api/conversations/:id', (req, res) => {
   ensureConversation(req.params.id);
   const conversation = db.prepare('SELECT * FROM conversations WHERE id=?').get(req.params.id);
   const messages = db.prepare('SELECT * FROM messages WHERE conversation_id=? ORDER BY created_at ASC').all(req.params.id);
+  // Anexa a cada mensagem os arquivos que ela gerou
+  const byMsg = {};
+  for (const f of db.prepare('SELECT id,name,path,size,message_id FROM files WHERE conversation_id=? AND message_id IS NOT NULL').all(req.params.id)) {
+    (byMsg[f.message_id] ||= []).push(f);
+  }
+  messages.forEach(m => { m.files = byMsg[m.id] || []; });
   res.json({ conversation, messages });
 });
 

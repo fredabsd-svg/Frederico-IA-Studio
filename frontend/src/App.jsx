@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, PanelRight } from 'lucide-react';
+import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic } from 'lucide-react';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
@@ -61,8 +61,9 @@ export default function App() {
   const [statusText, setStatusText] = useState('');
   const [nowTick, setNowTick] = useState(0);
   const [dark, setDark] = useState(true);
-  const [showFiles, setShowFiles] = useState(true);
+  const [listening, setListening] = useState(false);
   const endRef = useRef(null);
+  const recognitionRef = useRef(null);
 
   useEffect(() => { init(); loadModels(); loadAssistants(); loadMemory(); }, []);
   useEffect(() => { document.body.className = dark ? 'dark' : 'light'; }, [dark]);
@@ -138,6 +139,32 @@ export default function App() {
     if (!id) return;
     const res = await fetch(`${API}/api/conversations/${id}/files`);
     setFiles(await res.json());
+  }
+
+  // ---- Ditado por voz (Web Speech API) ----
+  function toggleMic() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { alert('Seu navegador não suporta ditado por voz. Use o Google Chrome ou o Microsoft Edge.'); return; }
+    if (listening) { recognitionRef.current?.stop(); return; }
+    const rec = new SR();
+    rec.lang = 'pt-BR';
+    rec.interimResults = true;
+    rec.continuous = true;
+    let base = input;
+    rec.onresult = (e) => {
+      let finalT = '', interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) finalT += t; else interim += t;
+      }
+      if (finalT) base = (base ? base + ' ' : '') + finalT.trim();
+      setInput((base + (interim ? ' ' + interim : '')).trim());
+    };
+    rec.onend = () => setListening(false);
+    rec.onerror = () => setListening(false);
+    recognitionRef.current = rec;
+    rec.start();
+    setListening(true);
   }
 
   async function deleteFile(f) {
@@ -236,6 +263,7 @@ export default function App() {
   async function sendMessage() {
     const text = input.trim();
     if (!text || busy || !current) return;
+    if (listening) recognitionRef.current?.stop();
     setInput('');
     setBusy(true);
     setPaused(false);
@@ -277,6 +305,7 @@ export default function App() {
             for (let i = blocks.length - 1; i >= 0; i--) { if (blocks[i].type === 'tool' && blocks[i].status === 'running') { blocks[i] = { ...blocks[i], status: 'done', ended: Date.now() }; break; } }
             return { ...m, blocks };
           });
+          if (ev.type === 'files') update(m => ({ ...m, files: [...(m.files || []), ...ev.files] }));
           if (ev.type === 'error') update(m => ({ ...m, blocks: [...(m.blocks || []), { type: 'text', content: `\n\n**Erro:** ${ev.content}` }] }));
         }
       }
@@ -295,8 +324,9 @@ export default function App() {
   }
 
   const currentAssistant = assistants.find(a => a.id === assistantId);
+  const uploads = files.filter(f => f.kind === 'upload');
 
-  return <div className={`app ${showFiles ? '' : 'noFiles'}`}>
+  return <div className="app">
     <aside className="sidebar">
       <div className="brand">Frederico <span>AI Studio</span></div>
       <button className="new" onClick={createConversation}><Plus size={16}/> Nova conversa</button>
@@ -323,7 +353,6 @@ export default function App() {
             {assistants.map(a => <option key={a.id} value={a.id}>{a.emoji || '🤖'} {a.name}</option>)}
           </select>
           <button className="gear" onClick={() => currentAssistant ? openStudioEdit(currentAssistant) : openStudioNew()} title="Editar assistente" disabled={team}><Settings size={16}/></button>
-          <button className={`gear ${showFiles ? 'on' : ''}`} onClick={() => setShowFiles(s => !s)} title={showFiles ? 'Ocultar painel de arquivos' : 'Mostrar painel de arquivos'}><PanelRight size={16}/></button>
           <select value={model} onChange={e => setModel(e.target.value)} title="Modelo de IA">
             <optgroup label="✅ Geram arquivos (recomendados)">
               {allModels.filter(m => m.tools !== false).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
@@ -344,6 +373,13 @@ export default function App() {
                 ? <ToolStep key={i} step={b} nowTick={nowTick}/>
                 : <ReactMarkdown key={i} remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{b.content || ''}</ReactMarkdown>)
               : <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{m.content || ''}</ReactMarkdown>}
+            {m.files?.length > 0 && <div className="filecards">
+              {m.files.map(f => <a className="filecard" key={f.id || f.path} href={`${API}/api/conversations/${current?.id}/download/${f.path}`} target="_blank">
+                <span className="fcicon"><FileText size={20}/></span>
+                <span className="fcinfo"><b>{f.name}</b><small>{Math.ceil((f.size || 0) / 1024)} KB</small></span>
+                <span className="fcdl"><Download size={16}/> Baixar</span>
+              </a>)}
+            </div>}
           </div>
         ))}
         {busy && <div className="working">
@@ -358,23 +394,21 @@ export default function App() {
         </div>}
         <div ref={endRef}/>
       </section>
-      <footer className="composer">
-        <label className="upload"><Upload size={18}/><input type="file" multiple onChange={uploadFiles}/></label>
-        <textarea value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }} placeholder="Peça para analisar arquivos, gerar Word, Excel, PDF..." />
-        <button onClick={sendMessage} disabled={busy}><Send size={18}/></button>
+      <footer className="composerWrap">
+        {uploads.length > 0 && <div className="attachChips">
+          {uploads.map(f => <span className="attachChip" key={f.id}>
+            <FileText size={13}/><span className="chipname" title={f.name}>{f.name}</span>
+            <button onClick={() => deleteFile(f)} aria-label="Remover anexo"><X size={12}/></button>
+          </span>)}
+        </div>}
+        <div className="composer">
+          <label className="upload" title="Anexar arquivo"><Upload size={18}/><input type="file" multiple onChange={uploadFiles}/></label>
+          <textarea value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }} placeholder={listening ? 'Ouvindo... fale agora' : 'Peça para analisar arquivos, gerar Word, Excel, PDF...'} />
+          <button className={`mic ${listening ? 'on' : ''}`} onClick={toggleMic} title="Falar (ditado por voz)" aria-label="Ditado por voz"><Mic size={18}/></button>
+          <button onClick={sendMessage} disabled={busy}><Send size={18}/></button>
+        </div>
       </footer>
     </main>
-
-    <aside className="artifacts">
-      <div className="artHead"><h3>Arquivos</h3><button className="artClose" onClick={() => setShowFiles(false)} title="Ocultar"><X size={16}/></button></div>
-      {files.length === 0 && <p className="muted">Uploads e outputs aparecerão aqui.</p>}
-      {files.map(f => <div className="fileRow" key={`${f.path}-${f.id}`}>
-        <a className="file" href={`${API}/api/conversations/${current?.id}/download/${f.path}`} target="_blank">
-          <FileText size={18}/><span>{f.name}</span><small>{Math.ceil((f.size || 0)/1024)} KB</small><Download size={16}/>
-        </a>
-        <button className="fileDel" onClick={() => deleteFile(f)} title="Excluir arquivo" aria-label="Excluir arquivo"><Trash2 size={15}/></button>
-      </div>)}
-    </aside>
 
     {studioOpen && <div className="modalOverlay" onClick={() => setStudioOpen(false)}>
       <div className="modal" onClick={e => e.stopPropagation()}>

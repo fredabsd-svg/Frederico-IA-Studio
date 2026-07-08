@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE TABLE IF NOT EXISTS files (
   id TEXT PRIMARY KEY,
   conversation_id TEXT NOT NULL,
+  message_id TEXT,
   kind TEXT NOT NULL,
   name TEXT NOT NULL,
   path TEXT NOT NULL,
@@ -63,5 +64,8 @@ CREATE TABLE IF NOT EXISTS usage (
   created_at TEXT NOT NULL
 );
 `);
+
+// Migração p/ bancos antigos: adiciona a coluna message_id se ainda não existir
+try { db.exec('ALTER TABLE files ADD COLUMN message_id TEXT'); } catch {}
 
 export function now() { return new Date().toISOString(); }
