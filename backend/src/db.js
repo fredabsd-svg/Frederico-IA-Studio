@@ -34,6 +34,17 @@ CREATE TABLE IF NOT EXISTS files (
   created_at TEXT NOT NULL,
   FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
 );
+CREATE TABLE IF NOT EXISTS assistants (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  emoji TEXT,
+  model TEXT,
+  system_prompt TEXT NOT NULL,
+  tools TEXT,          -- JSON: lista de ferramentas permitidas
+  personality TEXT,    -- JSON: { form, det, criat }
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
 `);
 
 export function now() { return new Date().toISOString(); }

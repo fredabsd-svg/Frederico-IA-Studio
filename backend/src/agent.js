@@ -63,9 +63,33 @@ Nunca invente links de download: o sistema exibe os arquivos automaticamente.`
 // Mantido por compatibilidade
 export const systemPrompt = AGENTS.contabil.prompt;
 
-export async function runAgent({ conversationId, userText, model, mode, onEvent }) {
-  const chosenModel = model || process.env.DEEPSEEK_MODEL || 'deepseek-chat';
-  const chosenPrompt = AGENTS[mode]?.prompt || AGENTS.contabil.prompt;
+// Ajusta o prompt conforme os sliders de personalidade do assistente
+function personalitySuffix(p) {
+  if (!p) return '';
+  const parts = [];
+  if (typeof p.form === 'number') parts.push(p.form >= 66 ? 'Use um tom bastante formal e profissional.' : p.form <= 33 ? 'Use um tom informal e descontraído.' : 'Use um tom cordial e profissional.');
+  if (typeof p.det === 'number') parts.push(p.det >= 66 ? 'Dê respostas detalhadas, completas e bem explicadas.' : p.det <= 33 ? 'Seja conciso e direto ao ponto.' : 'Equilibre concisão e detalhe conforme a pergunta.');
+  return parts.length ? `\n\nEstilo de resposta: ${parts.join(' ')}` : '';
+}
+function temperatureFor(p) {
+  const c = p && typeof p.criat === 'number' ? p.criat : 20;
+  return Math.min(0.9, Math.max(0.1, 0.1 + (c / 100) * 0.8));
+}
+function promptFor(assistant) {
+  if (!assistant) return AGENTS.contabil.prompt;
+  return (assistant.system_prompt || AGENTS.contabil.prompt) + personalitySuffix(assistant.personality);
+}
+function toolsFor(assistant) {
+  const allowed = assistant?.tools;
+  if (!Array.isArray(allowed) || !allowed.length) return toolDefinitions;
+  return toolDefinitions.filter(t => allowed.includes(t.function.name));
+}
+
+export async function runAgent({ conversationId, userText, model, assistant, onEvent }) {
+  const chosenModel = model || assistant?.model || process.env.DEEPSEEK_MODEL || 'deepseek-chat';
+  const chosenPrompt = promptFor(assistant);
+  const tools = toolsFor(assistant);
+  const temperature = temperatureFor(assistant?.personality);
   saveMessage(conversationId, 'user', userText);
   const history = db.prepare(`
     SELECT role, content FROM (
@@ -83,9 +107,8 @@ export async function runAgent({ conversationId, userText, model, mode, onEvent 
     const completion = await client.chat.completions.create({
       model: chosenModel,
       messages,
-      tools: toolDefinitions,
-      tool_choice: 'auto',
-      temperature: 0.2
+      ...(tools.length ? { tools, tool_choice: 'auto' } : {}),
+      temperature
     });
     const msg = completion.choices[0].message;
     // Reenvia só o que a API espera (evita campos extras como reasoning_content)

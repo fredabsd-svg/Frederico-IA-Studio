@@ -2,14 +2,10 @@ import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2 } from 'lucide-react';
+import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot } from 'lucide-react';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
-// Modelos do OpenRouter. Todos os listados suportam "ferramentas" (tool calling),
-// requisito para gerar Excel/Word/PDF. Você pode acrescentar outros IDs do
-// catálogo em https://openrouter.ai/models — evite modelos de "raciocínio"
-// (ex.: deepseek/deepseek-r1), que não geram arquivos.
 // Lista de reserva, usada só se a busca do catálogo do provedor falhar.
 const FALLBACK_MODELS = [
   { id: 'deepseek/deepseek-chat', name: 'DeepSeek Chat', tools: true },
@@ -19,11 +15,27 @@ const FALLBACK_MODELS = [
   { id: 'google/gemini-flash-1.5', name: 'Gemini 1.5 Flash', tools: true }
 ];
 
-// Modos de assistente (devem casar com AGENTS no backend)
-const MODES = [
-  { id: 'contabil', label: 'Contábil / Fiscal' },
-  { id: 'codigo', label: 'Programação (Codex)' }
+// Ferramentas que um assistente pode ter acesso
+const TOOL_INFO = [
+  { name: 'run_python', label: 'Executar Python' },
+  { name: 'bash', label: 'Comandos bash' },
+  { name: 'write_file', label: 'Escrever arquivos' },
+  { name: 'read_file', label: 'Ler arquivos' },
+  { name: 'list_files', label: 'Listar arquivos' },
+  { name: 'zip_outputs', label: 'Compactar (.zip)' }
 ];
+
+// Templates prontos de system prompt
+const TEMPLATES = [
+  { key: 'contabil', label: 'Contábil / Fiscal', emoji: '📊', prompt: 'Você é um assistente contábil e fiscal brasileiro. Domine regimes tributários (Simples, Lucro Presumido e Real), obrigações acessórias, SPED, escrituração e conciliações. Responda em português do Brasil, cite a base legal quando relevante e gere planilhas/relatórios reais quando pedido.' },
+  { key: 'juridico', label: 'Jurídico', emoji: '⚖️', prompt: 'Você é um assistente jurídico brasileiro. Ajude com análise de contratos, petições, pareceres e pesquisa de legislação. Responda em português do Brasil, seja preciso, cite artigos e leis, e sempre recomende a revisão por um advogado responsável.' },
+  { key: 'rh', label: 'Recursos Humanos', emoji: '👥', prompt: 'Você é um assistente de RH e Departamento Pessoal no Brasil. Ajude com folha de pagamento, admissões/demissões, eSocial, férias, benefícios e legislação trabalhista (CLT). Responda em português do Brasil, de forma clara e prática.' },
+  { key: 'marketing', label: 'Marketing', emoji: '📣', prompt: 'Você é um assistente de marketing e conteúdo. Ajude a criar textos, campanhas, posts, e-mails e estratégias. Responda em português do Brasil, com tom persuasivo e criativo, adaptando a linguagem ao público-alvo.' },
+  { key: 'dev', label: 'Programação', emoji: '💻', prompt: 'Você é um engenheiro de software sênior com um sandbox Linux real. Escreva, execute e teste código (Python/shell) usando as ferramentas, verifique o resultado e corrija erros antes de responder. A sandbox NÃO tem internet: use a biblioteca padrão e os pacotes já instalados. Responda em português do Brasil, objetivo e técnico.' },
+  { key: 'geral', label: 'Uso geral', emoji: '🤖', prompt: 'Você é um assistente pessoal versátil e prestativo. Responda em português do Brasil, de forma clara e útil. Quando o usuário pedir arquivos (Excel, Word, PDF), gere-os de verdade usando as ferramentas disponíveis.' }
+];
+
+const emptyForm = () => ({ id: null, name: '', emoji: '🤖', model: '', system_prompt: '', tools: TOOL_INFO.map(t => t.name), personality: { form: 50, det: 50, criat: 20 } });
 
 export default function App() {
   const [conversations, setConversations] = useState([]);
@@ -33,12 +45,15 @@ export default function App() {
   const [input, setInput] = useState('');
   const [allModels, setAllModels] = useState(FALLBACK_MODELS);
   const [model, setModel] = useState(FALLBACK_MODELS[0].id);
-  const [mode, setMode] = useState(MODES[0].id);
+  const [assistants, setAssistants] = useState([]);
+  const [assistantId, setAssistantId] = useState(null);
+  const [studioOpen, setStudioOpen] = useState(false);
+  const [form, setForm] = useState(emptyForm());
   const [busy, setBusy] = useState(false);
   const [dark, setDark] = useState(true);
   const endRef = useRef(null);
 
-  useEffect(() => { init(); loadModels(); }, []);
+  useEffect(() => { init(); loadModels(); loadAssistants(); }, []);
   useEffect(() => { document.body.className = dark ? 'dark' : 'light'; }, [dark]);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
@@ -48,22 +63,28 @@ export default function App() {
     else createConversation();
   }
 
-  // Busca o catálogo completo de modelos do provedor (ex.: OpenRouter)
   async function loadModels() {
     try {
       const res = await fetch(`${API}/api/models`);
       const data = await res.json();
       if (data.models?.length) {
         setAllModels(data.models);
-        // Mantém o modelo atual se ele existir; senão, escolhe um que gere arquivos
-        setModel(prev => data.models.some(m => m.id === prev)
-          ? prev
-          : (data.models.find(m => m.tools !== false)?.id || data.models[0].id));
+        setModel(prev => data.models.some(m => m.id === prev) ? prev : (data.models.find(m => m.tools !== false)?.id || data.models[0].id));
       }
     } catch {}
   }
 
-  // Só atualiza a lista da barra lateral (sem trocar de conversa)
+  async function loadAssistants() {
+    try {
+      const res = await fetch(`${API}/api/assistants`);
+      const rows = await res.json();
+      setAssistants(rows);
+      setAssistantId(prev => (prev && rows.some(a => a.id === prev)) ? prev : (rows[0]?.id || null));
+      const chosen = rows.find(a => a.id === assistantId) || rows[0];
+      if (chosen?.model) setModel(chosen.model);
+    } catch {}
+  }
+
   async function fetchConversations() {
     const res = await fetch(`${API}/api/conversations`);
     const rows = await res.json();
@@ -93,10 +114,7 @@ export default function App() {
     if (!confirm('Apagar esta conversa e todos os seus arquivos? Esta ação não pode ser desfeita.')) return;
     await fetch(`${API}/api/conversations/${id}`, { method: 'DELETE' });
     const rows = await fetchConversations();
-    if (current?.id === id) {
-      if (rows.length) openConversation(rows[0].id);
-      else createConversation();
-    }
+    if (current?.id === id) { rows.length ? openConversation(rows[0].id) : createConversation(); }
   }
 
   async function loadFiles(id = current?.id) {
@@ -108,11 +126,54 @@ export default function App() {
   async function uploadFiles(e) {
     const selected = [...e.target.files];
     if (!selected.length || !current) return;
-    const form = new FormData();
-    selected.forEach(f => form.append('files', f));
-    await fetch(`${API}/api/conversations/${current.id}/upload`, { method: 'POST', body: form });
+    const fd = new FormData();
+    selected.forEach(f => fd.append('files', f));
+    await fetch(`${API}/api/conversations/${current.id}/upload`, { method: 'POST', body: fd });
     await loadFiles();
     e.target.value = '';
+  }
+
+  function pickAssistant(id) {
+    setAssistantId(id);
+    const a = assistants.find(x => x.id === id);
+    if (a?.model) setModel(a.model);
+  }
+
+  // ---- Assistant Studio ----
+  function openStudioNew() { setForm(emptyForm()); setStudioOpen(true); }
+  function openStudioEdit(a) {
+    setForm({ id: a.id, name: a.name, emoji: a.emoji || '🤖', model: a.model || model, system_prompt: a.system_prompt || '', tools: a.tools?.length ? a.tools : TOOL_INFO.map(t => t.name), personality: { form: 50, det: 50, criat: 20, ...(a.personality || {}) } });
+    setStudioOpen(true);
+  }
+  function applyTemplate(key) {
+    const t = TEMPLATES.find(x => x.key === key);
+    if (!t) return;
+    setForm(f => ({ ...f, system_prompt: t.prompt, emoji: f.emoji === '🤖' ? t.emoji : f.emoji, name: f.name || t.label }));
+  }
+  function toggleTool(name) {
+    setForm(f => ({ ...f, tools: f.tools.includes(name) ? f.tools.filter(t => t !== name) : [...f.tools, name] }));
+  }
+  function setSlider(key, val) { setForm(f => ({ ...f, personality: { ...f.personality, [key]: Number(val) } })); }
+
+  async function saveAssistant() {
+    if (!form.name.trim() || !form.system_prompt.trim()) { alert('Preencha o nome e as instruções do assistente.'); return; }
+    const payload = { name: form.name, emoji: form.emoji, model: form.model || model, system_prompt: form.system_prompt, tools: form.tools, personality: form.personality };
+    const url = form.id ? `${API}/api/assistants/${form.id}` : `${API}/api/assistants`;
+    const saved = await (await fetch(url, { method: form.id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })).json();
+    await loadAssistants();
+    if (saved?.id) pickAssistant(saved.id);
+    setStudioOpen(false);
+  }
+
+  async function deleteAssistant() {
+    if (!form.id) return;
+    if (!confirm('Excluir este assistente?')) return;
+    await fetch(`${API}/api/assistants/${form.id}`, { method: 'DELETE' });
+    setStudioOpen(false);
+    const res = await fetch(`${API}/api/assistants`);
+    const rows = await res.json();
+    setAssistants(rows);
+    if (assistantId === form.id) pickAssistant(rows[0]?.id || null);
   }
 
   async function sendMessage() {
@@ -120,11 +181,11 @@ export default function App() {
     if (!text || busy || !current) return;
     setInput('');
     setBusy(true);
-    const assistantId = `local-${Date.now()}`;
-    setMessages(prev => [...prev, { role: 'user', content: text }, { id: assistantId, role: 'assistant', content: '' }]);
+    const assistantMsgId = `local-${Date.now()}`;
+    setMessages(prev => [...prev, { role: 'user', content: text }, { id: assistantMsgId, role: 'assistant', content: '' }]);
 
     const res = await fetch(`${API}/api/conversations/${current.id}/chat`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: text, model, mode })
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: text, model, assistantId })
     });
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
@@ -138,24 +199,19 @@ export default function App() {
       for (const part of parts) {
         if (!part.startsWith('data:')) continue;
         const ev = JSON.parse(part.slice(5));
-        if (ev.type === 'delta') {
-          setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, content: (m.content || '') + ev.content } : m));
-        }
-        if (ev.type === 'tool_start') {
-          setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, content: (m.content || '') + `\n\n> Executando ferramenta: ${ev.name}\n` } : m));
-        }
-        if (ev.type === 'error') {
-          setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, content: (m.content || '') + `\n\nErro: ${ev.content}` } : m));
-        }
+        if (ev.type === 'delta') setMessages(prev => prev.map(m => m.id === assistantMsgId ? { ...m, content: (m.content || '') + ev.content } : m));
+        if (ev.type === 'tool_start') setMessages(prev => prev.map(m => m.id === assistantMsgId ? { ...m, content: (m.content || '') + `\n\n> Executando ferramenta: ${ev.name}\n` } : m));
+        if (ev.type === 'error') setMessages(prev => prev.map(m => m.id === assistantMsgId ? { ...m, content: (m.content || '') + `\n\nErro: ${ev.content}` } : m));
       }
     }
     setBusy(false);
     await loadFiles();
-    // Atualiza a barra lateral para refletir o título automático da conversa
     const rows = await fetchConversations();
     const updated = rows.find(c => c.id === current.id);
     if (updated) setCurrent(updated);
   }
+
+  const currentAssistant = assistants.find(a => a.id === assistantId);
 
   return <div className="app">
     <aside className="sidebar">
@@ -169,17 +225,19 @@ export default function App() {
           </div>
         ))}
       </div>
+      <button className="studio" onClick={openStudioNew}><Bot size={16}/> Criar assistente</button>
       <button className="theme" onClick={() => setDark(!dark)}>{dark ? <Sun size={16}/> : <Moon size={16}/>} Tema</button>
     </aside>
 
     <main className="chat">
       <header className="topbar">
-        <div className="titleblock"><strong>{current?.title || 'Conversa'}</strong><small>Modelo ativo: {model}</small></div>
+        <div className="titleblock"><strong>{current?.title || 'Conversa'}</strong><small>{currentAssistant ? `${currentAssistant.emoji || '🤖'} ${currentAssistant.name}` : 'Assistente'} · {model}</small></div>
         <div className="pickers">
-          <select value={mode} onChange={e => setMode(e.target.value)} title="Tipo de assistente">
-            {MODES.map(m => <option key={m.id} value={m.id}>Assistente: {m.label}</option>)}
+          <select value={assistantId || ''} onChange={e => pickAssistant(e.target.value)} title="Assistente">
+            {assistants.map(a => <option key={a.id} value={a.id}>{a.emoji || '🤖'} {a.name}</option>)}
           </select>
-          <select value={model} onChange={e => setModel(e.target.value)} title="Escolha a IA">
+          <button className="gear" onClick={() => currentAssistant ? openStudioEdit(currentAssistant) : openStudioNew()} title="Editar assistente"><Settings size={16}/></button>
+          <select value={model} onChange={e => setModel(e.target.value)} title="Modelo de IA">
             <optgroup label="✅ Geram arquivos (recomendados)">
               {allModels.filter(m => m.tools !== false).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
             </optgroup>
@@ -210,5 +268,74 @@ export default function App() {
         <FileText size={18}/><span>{f.name}</span><small>{Math.ceil((f.size || 0)/1024)} KB</small><Download size={16}/>
       </a>)}
     </aside>
+
+    {studioOpen && <div className="modalOverlay" onClick={() => setStudioOpen(false)}>
+      <div className="modal" onClick={e => e.stopPropagation()}>
+        <div className="modalHead">
+          <h2><Bot size={18}/> {form.id ? 'Editar assistente' : 'Novo assistente'}</h2>
+          <button className="x" onClick={() => setStudioOpen(false)} aria-label="Fechar">✕</button>
+        </div>
+        <div className="modalBody">
+          <div className="frow">
+            <label className="grow">Nome
+              <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Ex.: Assistente Contábil"/>
+            </label>
+            <label className="emojiField">Ícone
+              <input value={form.emoji} onChange={e => setForm(f => ({ ...f, emoji: e.target.value }))} maxLength={2}/>
+            </label>
+          </div>
+
+          <label>Modelo de IA padrão
+            <select value={form.model || model} onChange={e => setForm(f => ({ ...f, model: e.target.value }))}>
+              {allModels.filter(m => m.tools !== false).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+            </select>
+          </label>
+
+          <label>Começar de um template
+            <select value="" onChange={e => applyTemplate(e.target.value)}>
+              <option value="">— escolher um modelo pronto —</option>
+              {TEMPLATES.map(t => <option key={t.key} value={t.key}>{t.emoji} {t.label}</option>)}
+            </select>
+          </label>
+
+          <label>Instruções do assistente (system prompt)
+            <textarea rows={7} value={form.system_prompt} onChange={e => setForm(f => ({ ...f, system_prompt: e.target.value }))} placeholder="Descreva em linguagem natural o papel, a especialidade e o comportamento esperado do assistente."/>
+          </label>
+
+          <div className="field">
+            <span className="fieldLabel">Ferramentas disponíveis</span>
+            <div className="tools">
+              {TOOL_INFO.map(t => (
+                <label key={t.name} className="chk">
+                  <input type="checkbox" checked={form.tools.includes(t.name)} onChange={() => toggleTool(t.name)}/> {t.label}
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div className="field">
+            <span className="fieldLabel">Personalidade</span>
+            <Slider label="Formalidade" hintA="Informal" hintB="Formal" value={form.personality.form} onChange={v => setSlider('form', v)}/>
+            <Slider label="Detalhamento" hintA="Conciso" hintB="Detalhado" value={form.personality.det} onChange={v => setSlider('det', v)}/>
+            <Slider label="Criatividade" hintA="Preciso" hintB="Criativo" value={form.personality.criat} onChange={v => setSlider('criat', v)}/>
+          </div>
+
+          <div className="modalActions">
+            {form.id && <button className="danger" onClick={deleteAssistant}>Excluir</button>}
+            <div className="spacer"/>
+            <button onClick={() => setStudioOpen(false)}>Cancelar</button>
+            <button className="primary" onClick={saveAssistant}>Salvar assistente</button>
+          </div>
+        </div>
+      </div>
+    </div>}
+  </div>;
+}
+
+function Slider({ label, hintA, hintB, value, onChange }) {
+  return <div className="slider">
+    <div className="sliderTop"><span>{label}</span><b>{value}</b></div>
+    <input type="range" min="0" max="100" value={value} onChange={e => onChange(e.target.value)}/>
+    <div className="sliderHints"><span>{hintA}</span><span>{hintB}</span></div>
   </div>;
 }

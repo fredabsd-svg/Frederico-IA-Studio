@@ -6,7 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import { nanoid } from 'nanoid';
 import { db, now } from './db.js';
-import { runAgent } from './agent.js';
+import { runAgent, AGENTS } from './agent.js';
 import { workspaceFor, destroyConversation } from './sandbox.js';
 
 const app = express();
@@ -15,6 +15,27 @@ app.use(cors({ origin: process.env.FRONTEND_URL || '*' }));
 app.use(express.json({ limit: '10mb' }));
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+
+function safeParse(s, fallback) { try { return JSON.parse(s); } catch { return fallback; } }
+function loadAssistant(id) {
+  const a = id && db.prepare('SELECT * FROM assistants WHERE id=?').get(id);
+  if (!a) return null;
+  return { ...a, tools: safeParse(a.tools, []), personality: safeParse(a.personality, {}) };
+}
+
+// Cria os assistentes padrão na primeira execução
+function seedAssistants() {
+  if (db.prepare('SELECT COUNT(*) c FROM assistants').get().c > 0) return;
+  const defaultModel = process.env.DEEPSEEK_MODEL || 'deepseek/deepseek-chat';
+  const defaults = [
+    { name: 'Contábil / Fiscal', emoji: '📊', prompt: AGENTS.contabil.prompt },
+    { name: 'Programação (Codex)', emoji: '💻', prompt: AGENTS.codigo.prompt }
+  ];
+  const stmt = db.prepare('INSERT INTO assistants (id,name,emoji,model,system_prompt,tools,personality,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)');
+  const t = now();
+  for (const d of defaults) stmt.run(nanoid(), d.name, d.emoji, defaultModel, d.prompt, JSON.stringify([]), JSON.stringify({ form: 50, det: 50, criat: 20 }), t, t);
+}
+seedAssistants();
 
 function ensureConversation(id, model) {
   const existing = db.prepare('SELECT * FROM conversations WHERE id=?').get(id);
@@ -46,6 +67,36 @@ app.get('/api/models', async (_, res) => {
   } catch (err) {
     res.json({ models: [], error: err.message });
   }
+});
+
+// ---- Assistentes (Assistant Studio) ----
+app.get('/api/assistants', (_, res) => {
+  res.json(db.prepare('SELECT * FROM assistants ORDER BY created_at ASC').all()
+    .map(a => ({ ...a, tools: safeParse(a.tools, []), personality: safeParse(a.personality, {}) })));
+});
+
+app.post('/api/assistants', (req, res) => {
+  const b = req.body || {};
+  if (!b.name?.trim() || !b.system_prompt?.trim()) return res.status(400).json({ error: 'Nome e instruções são obrigatórios.' });
+  const id = nanoid();
+  const t = now();
+  db.prepare('INSERT INTO assistants (id,name,emoji,model,system_prompt,tools,personality,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)')
+    .run(id, b.name.trim(), b.emoji || '🤖', b.model || process.env.DEEPSEEK_MODEL || 'deepseek/deepseek-chat', b.system_prompt, JSON.stringify(b.tools || []), JSON.stringify(b.personality || {}), t, t);
+  res.json(loadAssistant(id));
+});
+
+app.put('/api/assistants/:id', (req, res) => {
+  const b = req.body || {};
+  const existing = db.prepare('SELECT id FROM assistants WHERE id=?').get(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Assistente não encontrado' });
+  db.prepare('UPDATE assistants SET name=?, emoji=?, model=?, system_prompt=?, tools=?, personality=?, updated_at=? WHERE id=?')
+    .run(b.name?.trim() || 'Assistente', b.emoji || '🤖', b.model || null, b.system_prompt || '', JSON.stringify(b.tools || []), JSON.stringify(b.personality || {}), now(), req.params.id);
+  res.json(loadAssistant(req.params.id));
+});
+
+app.delete('/api/assistants/:id', (req, res) => {
+  db.prepare('DELETE FROM assistants WHERE id=?').run(req.params.id);
+  res.json({ ok: true });
 });
 
 app.get('/api/conversations', (_, res) => {
@@ -133,7 +184,8 @@ app.post('/api/conversations/:id/chat', async (req, res) => {
       const autoTitle = text.trim().replace(/\s+/g, ' ').slice(0, 40);
       if (autoTitle) db.prepare('UPDATE conversations SET title=? WHERE id=?').run(autoTitle, req.params.id);
     }
-    await runAgent({ conversationId: req.params.id, userText: text, model: req.body?.model, mode: req.body?.mode, onEvent: send });
+    const assistant = loadAssistant(req.body?.assistantId);
+    await runAgent({ conversationId: req.params.id, userText: text, model: req.body?.model, assistant, onEvent: send });
     send({ type: 'done' });
   } catch (err) {
     send({ type: 'error', content: err.message });
