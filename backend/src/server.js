@@ -8,11 +8,30 @@ import { nanoid } from 'nanoid';
 import { db, now } from './db.js';
 import { runAgent, runOrchestrator, setControl, AGENTS } from './agent.js';
 import { workspaceFor, destroyConversation, insideBase } from './sandbox.js';
+import { authEnabled, makeToken, verifyToken, getCookie, passwordMatches, loginRateLimited } from './auth.js';
 
 const app = express();
 const port = process.env.PORT || 3001;
 app.use(cors({ origin: process.env.FRONTEND_URL || '*' }));
 app.use(express.json({ limit: '10mb' }));
+
+// ---- Autenticação (ativa somente quando APP_PASSWORD está definida) ----
+app.post('/api/login', (req, res) => {
+  if (!authEnabled()) return res.json({ ok: true, auth: false });
+  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress || '?';
+  if (loginRateLimited(ip)) return res.status(429).json({ error: 'Muitas tentativas. Aguarde 15 minutos.' });
+  if (!passwordMatches(req.body?.password)) return res.status(401).json({ error: 'Senha incorreta.' });
+  const secure = req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : '';
+  res.setHeader('Set-Cookie', `fred_session=${makeToken()}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${30 * 86400}${secure}`);
+  res.json({ ok: true });
+});
+
+app.use('/api', (req, res, next) => {
+  if (!authEnabled()) return next();
+  if (req.path === '/login' || req.path === '/health') return next();
+  if (verifyToken(getCookie(req, 'fred_session'))) return next();
+  res.status(401).json({ error: 'Não autenticado' });
+});
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 

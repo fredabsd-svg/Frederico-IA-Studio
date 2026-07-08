@@ -1,6 +1,9 @@
 // Configuração e dados estáticos da interface
 
-export const API = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+// Em produção o frontend é servido pelo mesmo domínio que a API (proxy),
+// então a base é vazia (mesma origem). Em desenvolvimento, o compose define
+// VITE_API_URL; sem ela, cai no localhost:3001.
+export const API = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:3001' : '');
 
 // Lista de reserva, usada só se a busca do catálogo do provedor falhar.
 export const FALLBACK_MODELS = [

@@ -1,0 +1,44 @@
+# PRODUÇÃO (VPS): docker compose -f docker-compose.prod.yml up -d --build
+# Requer no .env: DEEPSEEK_API_KEY, APP_PASSWORD e DOMAIN (ex.: app.seusite.com.br)
+services:
+  sandbox-image:
+    build: ./sandbox
+    image: frederico-ai-sandbox:latest
+    command: ["true"]
+    restart: "no"
+
+  backend:
+    build: .
+    restart: unless-stopped
+    # SEM "ports": o backend só é alcançável pelo proxy (web), nunca direto.
+    env_file:
+      - .env
+    environment:
+      - WORKSPACE_ROOT=/app/workspaces
+      - DB_PATH=/app/data/app.sqlite
+      - HOST_WORKSPACE_ROOT=${PWD}/workspaces
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./workspaces:/app/workspaces
+      - ./data:/app/data
+    depends_on:
+      sandbox-image:
+        condition: service_completed_successfully
+
+  web:
+    build: ./frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - DOMAIN=${DOMAIN:-:80}
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+
+volumes:
+  caddy_data:
+  caddy_config:

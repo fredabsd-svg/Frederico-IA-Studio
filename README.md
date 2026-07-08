@@ -94,6 +94,12 @@ docker compose up --build
 
 Acesse **http://localhost:5173** (backend em `http://localhost:3001/api/health`).
 
+### Publicar na internet (VPS)
+
+Para acessar de qualquer lugar por um site com HTTPS e senha, siga o guia
+**[VPS-DEPLOY.md](VPS-DEPLOY.md)** — usa o `docker-compose.prod.yml` (frontend
+compilado + proxy Caddy + login obrigatório).
+
 ### 3. Atualizar para uma versão nova
 
 ```bash

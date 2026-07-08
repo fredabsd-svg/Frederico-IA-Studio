@@ -35,6 +35,9 @@ export default function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [loadingConv, setLoadingConv] = useState(false);
   const [connError, setConnError] = useState(false);
+  const [needLogin, setNeedLogin] = useState(false);
+  const [password, setPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
   const [toast, setToast] = useState(null);
   const endRef = useRef(null);
   const recognitionRef = useRef(null);
@@ -65,8 +68,24 @@ export default function App() {
       loadModels();
       loadAssistants();
       loadMemory();
+    } catch (err) {
+      if (err?.auth) setNeedLogin(true);
+      else setConnError(true);
+    }
+  }
+
+  async function doLogin(e) {
+    e?.preventDefault();
+    setLoginError('');
+    try {
+      const res = await fetch(`${API}/api/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { setLoginError(data.error || 'Senha incorreta.'); return; }
+      setPassword('');
+      setNeedLogin(false);
+      init();
     } catch {
-      setConnError(true);
+      setLoginError('Não foi possível conectar ao servidor.');
     }
   }
 
@@ -94,6 +113,7 @@ export default function App() {
 
   async function fetchConversations() {
     const res = await fetch(`${API}/api/conversations`);
+    if (res.status === 401) { const e = new Error('auth'); e.auth = true; throw e; }
     const rows = await res.json();
     setConversations(rows);
     return rows;
@@ -317,6 +337,7 @@ export default function App() {
       const res = await fetch(`${API}/api/conversations/${current.id}/chat`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
       });
+      if (res.status === 401) { setBusy(false); setStatusText(''); setNeedLogin(true); return; }
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
@@ -365,6 +386,19 @@ export default function App() {
 
   const currentAssistant = assistants.find(a => a.id === assistantId);
   const uploads = files.filter(f => f.kind === 'upload');
+
+  // Tela de login (produção com APP_PASSWORD definida)
+  if (needLogin) {
+    return <div className="connError">
+      <form className="connErrorCard" onSubmit={doLogin}>
+        <div className="brand" style={{ marginBottom: 0 }}>Frederico <span>AI Studio</span></div>
+        <p>Digite a senha de acesso para entrar.</p>
+        <input className="loginInput" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Senha" autoFocus/>
+        {loginError && <p className="loginError">{loginError}</p>}
+        <button className="primary" type="submit">Entrar</button>
+      </form>
+    </div>;
+  }
 
   // Tela de erro de conexão (backend fora do ar)
   if (connError) {

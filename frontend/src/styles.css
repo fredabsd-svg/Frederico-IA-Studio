@@ -27,7 +27,11 @@
 .connErrorCard h2{margin:0;font-size:19px}
 .connErrorCard p{margin:0;color:var(--muted);line-height:1.5}
 .connErrorCard code{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:1px 6px}
-.connErrorCard .primary{background:var(--accent);color:#fff;border-color:var(--accent);display:flex;gap:8px;align-items:center;font-weight:600}
+.connErrorCard .primary{background:var(--accent);color:#fff;border-color:var(--accent);display:flex;gap:8px;align-items:center;font-weight:600;justify-content:center}
+.loginInput{width:100%;border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:10px;padding:12px 14px;font:inherit;outline:none;text-align:center}
+.loginInput:focus{border-color:var(--accent)}
+.loginError{color:#ef4444;font-size:13.5px;margin:0}
+.connErrorCard button.primary{width:100%}
 
 .muted.small{font-size:12.5px}
 .hamburger{display:none;flex:none;align-items:center;justify-content:center;padding:9px 11px;margin-right:10px}
