@@ -134,6 +134,16 @@ export async function execInSandbox(conversationId, cmd, timeoutMs = Number(proc
   });
 }
 
+// Remove o sandbox e o diretório de workspace de uma conversa (usado ao apagar)
+export async function destroyConversation(conversationId) {
+  const entry = sessions.get(conversationId);
+  if (entry) {
+    sessions.delete(conversationId);
+    try { await entry.container.remove({ force: true }); } catch {}
+  }
+  try { fs.rmSync(path.join(root, conversationId), { recursive: true, force: true }); } catch {}
+}
+
 export function safeJoin(base, userPath) {
   const clean = String(userPath || '').replace(/^\/+/, '');
   const full = path.resolve(base, clean);

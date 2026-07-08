@@ -7,7 +7,7 @@ import path from 'path';
 import { nanoid } from 'nanoid';
 import { db, now } from './db.js';
 import { runAgent } from './agent.js';
-import { workspaceFor } from './sandbox.js';
+import { workspaceFor, destroyConversation } from './sandbox.js';
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -47,6 +47,15 @@ app.get('/api/conversations/:id', (req, res) => {
   const conversation = db.prepare('SELECT * FROM conversations WHERE id=?').get(req.params.id);
   const messages = db.prepare('SELECT * FROM messages WHERE conversation_id=? ORDER BY created_at ASC').all(req.params.id);
   res.json({ conversation, messages });
+});
+
+app.delete('/api/conversations/:id', async (req, res) => {
+  const id = req.params.id;
+  const existing = db.prepare('SELECT id FROM conversations WHERE id=?').get(id);
+  if (!existing) return res.status(404).json({ error: 'Conversa não encontrada' });
+  db.prepare('DELETE FROM conversations WHERE id=?').run(id); // cascade: messages + files
+  await destroyConversation(id); // remove container e pasta do workspace
+  res.json({ ok: true });
 });
 
 app.post('/api/conversations/:id/upload', upload.array('files'), (req, res) => {
@@ -94,6 +103,12 @@ app.post('/api/conversations/:id/chat', async (req, res) => {
   const send = (event) => res.write(`data: ${JSON.stringify(event)}\n\n`);
   try {
     const text = req.body?.message || '';
+    // Título automático: usa o início da 1ª mensagem em vez de "Nova conversa"
+    const conv = db.prepare('SELECT title FROM conversations WHERE id=?').get(req.params.id);
+    if (conv && (!conv.title?.trim() || conv.title === 'Nova conversa')) {
+      const autoTitle = text.trim().replace(/\s+/g, ' ').slice(0, 40);
+      if (autoTitle) db.prepare('UPDATE conversations SET title=? WHERE id=?').run(autoTitle, req.params.id);
+    }
     await runAgent({ conversationId: req.params.id, userText: text, model: req.body?.model, onEvent: send });
     send({ type: 'done' });
   } catch (err) {

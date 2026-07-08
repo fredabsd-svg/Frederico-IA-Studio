@@ -2,9 +2,21 @@ import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Download, FileText, Plus, Send, Upload, Moon, Sun } from 'lucide-react';
+import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2 } from 'lucide-react';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+
+// Modelos do OpenRouter. Todos os listados suportam "ferramentas" (tool calling),
+// requisito para gerar Excel/Word/PDF. Você pode acrescentar outros IDs do
+// catálogo em https://openrouter.ai/models — evite modelos de "raciocínio"
+// (ex.: deepseek/deepseek-r1), que não geram arquivos.
+const MODELS = [
+  { id: 'deepseek/deepseek-chat', label: 'DeepSeek Chat — econômico, gera arquivos' },
+  { id: 'openai/gpt-4o-mini', label: 'GPT-4o mini — rápido e barato (OpenAI)' },
+  { id: 'openai/gpt-4o', label: 'GPT-4o — mais capaz (OpenAI)' },
+  { id: 'anthropic/claude-3.5-sonnet', label: 'Claude 3.5 Sonnet — ótimo em texto' },
+  { id: 'google/gemini-flash-1.5', label: 'Gemini 1.5 Flash — Google' }
+];
 
 export default function App() {
   const [conversations, setConversations] = useState([]);
@@ -12,27 +24,36 @@ export default function App() {
   const [messages, setMessages] = useState([]);
   const [files, setFiles] = useState([]);
   const [input, setInput] = useState('');
-  const [model, setModel] = useState('deepseek-chat');
+  const [model, setModel] = useState(MODELS[0].id);
   const [busy, setBusy] = useState(false);
   const [dark, setDark] = useState(true);
   const endRef = useRef(null);
 
-  useEffect(() => { loadConversations(); }, []);
+  useEffect(() => { init(); }, []);
   useEffect(() => { document.body.className = dark ? 'dark' : 'light'; }, [dark]);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
-  async function loadConversations() {
+  async function init() {
+    const rows = await fetchConversations();
+    if (rows.length) openConversation(rows[0].id);
+    else createConversation();
+  }
+
+  // Só atualiza a lista da barra lateral (sem trocar de conversa)
+  async function fetchConversations() {
     const res = await fetch(`${API}/api/conversations`);
     const rows = await res.json();
-    if (rows.length) { setConversations(rows); openConversation(rows[0].id); }
-    else createConversation();
+    setConversations(rows);
+    return rows;
   }
 
   async function createConversation() {
     const res = await fetch(`${API}/api/conversations`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'Nova conversa', model }) });
     const c = await res.json();
     setConversations(prev => [c, ...prev]);
-    openConversation(c.id);
+    setCurrent(c);
+    setMessages([]);
+    setFiles([]);
   }
 
   async function openConversation(id) {
@@ -41,6 +62,17 @@ export default function App() {
     setCurrent(data.conversation);
     setMessages(data.messages || []);
     loadFiles(id);
+  }
+
+  async function deleteConversation(id, e) {
+    e.stopPropagation();
+    if (!confirm('Apagar esta conversa e todos os seus arquivos? Esta ação não pode ser desfeita.')) return;
+    await fetch(`${API}/api/conversations/${id}`, { method: 'DELETE' });
+    const rows = await fetchConversations();
+    if (current?.id === id) {
+      if (rows.length) openConversation(rows[0].id);
+      else createConversation();
+    }
   }
 
   async function loadFiles(id = current?.id) {
@@ -56,6 +88,7 @@ export default function App() {
     selected.forEach(f => form.append('files', f));
     await fetch(`${API}/api/conversations/${current.id}/upload`, { method: 'POST', body: form });
     await loadFiles();
+    e.target.value = '';
   }
 
   async function sendMessage() {
@@ -94,22 +127,32 @@ export default function App() {
     }
     setBusy(false);
     await loadFiles();
+    // Atualiza a barra lateral para refletir o título automático da conversa
+    const rows = await fetchConversations();
+    const updated = rows.find(c => c.id === current.id);
+    if (updated) setCurrent(updated);
   }
 
   return <div className="app">
     <aside className="sidebar">
       <div className="brand">Frederico <span>AI Studio</span></div>
       <button className="new" onClick={createConversation}><Plus size={16}/> Nova conversa</button>
-      <div className="convList">{conversations.map(c => <button key={c.id} onClick={() => openConversation(c.id)} className={current?.id === c.id ? 'active' : ''}>{c.title}</button>)}</div>
+      <div className="convList">
+        {conversations.map(c => (
+          <div key={c.id} className={`convItem ${current?.id === c.id ? 'active' : ''}`}>
+            <button className="convOpen" onClick={() => openConversation(c.id)} title={c.title}>{c.title}</button>
+            <button className="convDel" onClick={(e) => deleteConversation(c.id, e)} title="Apagar conversa" aria-label="Apagar conversa"><Trash2 size={15}/></button>
+          </div>
+        ))}
+      </div>
       <button className="theme" onClick={() => setDark(!dark)}>{dark ? <Sun size={16}/> : <Moon size={16}/>} Tema</button>
     </aside>
 
     <main className="chat">
       <header className="topbar">
-        <div><strong>{current?.title || 'Conversa'}</strong><small>Sandbox Linux + DeepSeek + geração de arquivos</small></div>
-        <select value={model} onChange={e => setModel(e.target.value)}>
-          <option value="deepseek-chat">deepseek-chat</option>
-          <option value="deepseek-reasoner">deepseek-reasoner</option>
+        <div><strong>{current?.title || 'Conversa'}</strong><small>Modelo ativo: {model}</small></div>
+        <select value={model} onChange={e => setModel(e.target.value)} title="Escolha a IA (OpenRouter)">
+          {MODELS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
         </select>
       </header>
       <section className="messages">
