@@ -276,7 +276,10 @@ app.post('/api/conversations/:id/chat', async (req, res) => {
   const send = (event) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(event)}\n\n`); };
   // Se o navegador desconectar (aba fechada/rede), interrompe a execução
   // para não continuar gastando tokens sem ninguém assistindo.
-  req.on('close', () => setControl(req.params.id, 'stop'));
+  // IMPORTANTE: usar o 'close' da RESPOSTA (res), não do pedido (req) — o
+  // 'close' do req dispara assim que o corpo do POST termina de chegar, o
+  // que interrompia toda resposta logo no primeiro token.
+  res.on('close', () => { if (!res.writableEnded) setControl(req.params.id, 'stop'); });
   try {
     const text = req.body?.message || '';
     // Título automático: usa o início da 1ª mensagem em vez de "Nova conversa"
