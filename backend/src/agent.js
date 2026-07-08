@@ -110,6 +110,30 @@ function addUsage(acc, u) {
   acc.total_tokens += u.total_tokens || 0;
 }
 
+// ---- Controle de execução (pausar / continuar / parar) ----
+const controls = new Map(); // conversationId -> { paused, stopped }
+export function setControl(conversationId, action) {
+  const c = controls.get(conversationId) || { paused: false, stopped: false };
+  if (action === 'pause') c.paused = true;
+  else if (action === 'resume') c.paused = false;
+  else if (action === 'stop') { c.stopped = true; c.paused = false; }
+  controls.set(conversationId, c);
+  return c;
+}
+function initControl(id) { const c = { paused: false, stopped: false }; controls.set(id, c); return c; }
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+// Espera enquanto pausado; retorna true se deve PARAR
+async function gate(control, onEvent) {
+  if (control.stopped) return true;
+  if (control.paused) {
+    onEvent({ type: 'status', content: 'Pausado' });
+    while (control.paused && !control.stopped) await sleep(250);
+    if (control.stopped) return true;
+    onEvent({ type: 'status', content: 'Retomando...' });
+  }
+  return false;
+}
+
 export async function runAgent({ conversationId, userText, model, assistant, onEvent }) {
   const chosenModel = model || assistant?.model || process.env.DEEPSEEK_MODEL || 'deepseek-chat';
   const chosenPrompt = promptFor(assistant);
@@ -128,9 +152,12 @@ export async function runAgent({ conversationId, userText, model, assistant, onE
   if (note) messages.push({ role: 'system', content: note });
   messages.push(...history.map(m => ({ role: m.role, content: m.content })));
 
+  const control = initControl(conversationId);
   const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
   let finalText = '';
+  let stopped = false;
   for (let step = 0; step < 8; step++) {
+    if (await gate(control, onEvent)) { stopped = true; break; }
     onEvent({ type: 'status', content: step === 0 ? 'Pensando...' : 'Executando ferramentas...' });
     const completion = await client.chat.completions.create({
       model: chosenModel,
@@ -148,6 +175,7 @@ export async function runAgent({ conversationId, userText, model, assistant, onE
     }
     if (!msg.tool_calls?.length) break;
     for (const call of msg.tool_calls) {
+      if (await gate(control, onEvent)) { stopped = true; break; }
       const name = call.function.name;
       let args = {};
       try { args = JSON.parse(call.function.arguments || '{}'); } catch {}
@@ -158,9 +186,12 @@ export async function runAgent({ conversationId, userText, model, assistant, onE
       onEvent({ type: 'tool_result', name, content: result.slice(0, 2000) });
       messages.push({ role: 'tool', tool_call_id: call.id, content: result });
     }
+    if (stopped) break;
   }
+  controls.delete(conversationId);
 
-  if (!finalText.trim()) finalText = 'Concluído.';
+  if (stopped) { onEvent({ type: 'status', content: 'Interrompido pelo usuário' }); if (!finalText.trim()) finalText = '_Processamento interrompido pelo usuário._'; }
+  else if (!finalText.trim()) finalText = 'Concluído.';
   saveMessage(conversationId, 'assistant', finalText);
   return { text: finalText, usage, model: chosenModel };
 }
@@ -168,12 +199,15 @@ export async function runAgent({ conversationId, userText, model, assistant, onE
 // Orquestrador: aciona vários assistentes e um coordenador une as respostas
 export async function runOrchestrator({ conversationId, userText, model, assistants = [], onEvent }) {
   saveMessage(conversationId, 'user', userText);
+  const control = initControl(conversationId);
   const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
   const coordModel = model || process.env.DEEPSEEK_MODEL || 'deepseek-chat';
   const memory = memoryNote();
   const perspectives = [];
+  let stopped = false;
 
   for (const a of assistants) {
+    if (await gate(control, onEvent)) { stopped = true; break; }
     onEvent({ type: 'status', content: `${a.emoji || '🧑'} ${a.name} analisando...` });
     onEvent({ type: 'tool_start', name: a.name });
     const sys = `${a.system_prompt}\n\nDê APENAS a sua perspectiva especializada e resumida sobre o pedido, focando na sua área. Não gere arquivos nem execute código.`;
@@ -191,13 +225,22 @@ export async function runOrchestrator({ conversationId, userText, model, assista
     }
   }
 
+  let finalText = '';
+  if (stopped || await gate(control, onEvent)) {
+    controls.delete(conversationId);
+    onEvent({ type: 'status', content: 'Interrompido pelo usuário' });
+    finalText = perspectives.length ? perspectives.map(p => `### ${p.emoji || ''} ${p.name}\n${p.text}`).join('\n\n') : '_Processamento interrompido pelo usuário._';
+    onEvent({ type: 'delta', content: finalText });
+    saveMessage(conversationId, 'assistant', finalText);
+    return { text: finalText, usage, model: coordModel };
+  }
+
   onEvent({ type: 'status', content: 'Compilando a resposta final da equipe...' });
   const combined = perspectives.map(p => `### ${p.emoji || ''} ${p.name}\n${p.text}`).join('\n\n');
   const synthMsgs = [
     { role: 'system', content: 'Você é o coordenador de uma equipe de assistentes especializados. Combine as perspectivas abaixo em UMA resposta única, organizada e coesa, em português do Brasil, sem repetições. Use títulos por área quando ajudar e feche com um resumo prático.' },
     { role: 'user', content: `Pedido do usuário:\n${userText}\n\nPerspectivas da equipe:\n${combined}` }
   ];
-  let finalText = '';
   try {
     const synth = await client.chat.completions.create({ model: coordModel, messages: synthMsgs, temperature: 0.3 });
     addUsage(usage, synth.usage);
@@ -205,6 +248,7 @@ export async function runOrchestrator({ conversationId, userText, model, assista
   } catch (err) {
     finalText = `Não foi possível compilar a resposta final: ${err.message}`;
   }
+  controls.delete(conversationId);
   if (!finalText.trim()) finalText = 'Concluído.';
   onEvent({ type: 'delta', content: finalText });
   saveMessage(conversationId, 'assistant', finalText);

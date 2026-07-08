@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users } from 'lucide-react';
+import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square } from 'lucide-react';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
@@ -57,6 +57,7 @@ export default function App() {
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
   const [analytics, setAnalytics] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [paused, setPaused] = useState(false);
   const [statusText, setStatusText] = useState('');
   const [nowTick, setNowTick] = useState(0);
   const [dark, setDark] = useState(true);
@@ -214,11 +215,21 @@ export default function App() {
     try { setAnalytics(await (await fetch(`${API}/api/analytics`)).json()); } catch {}
   }
 
+  // ---- Controle: pausar / continuar / parar ----
+  async function control(action) {
+    if (!current) return;
+    if (action === 'pause') setPaused(true);
+    if (action === 'resume') setPaused(false);
+    if (action === 'stop') setPaused(false);
+    try { await fetch(`${API}/api/conversations/${current.id}/control`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action }) }); } catch {}
+  }
+
   async function sendMessage() {
     const text = input.trim();
     if (!text || busy || !current) return;
     setInput('');
     setBusy(true);
+    setPaused(false);
     setStatusText('Pensando...');
     const assistantMsgId = `local-${Date.now()}`;
     setMessages(prev => [...prev, { role: 'user', content: text }, { id: assistantMsgId, role: 'assistant', content: '', blocks: [] }]);
@@ -266,6 +277,7 @@ export default function App() {
     // Fecha qualquer ferramenta que tenha ficado "rodando"
     update(m => ({ ...m, blocks: (m.blocks || []).map(b => b.type === 'tool' && b.status === 'running' ? { ...b, status: 'done', ended: Date.now() } : b) }));
     setBusy(false);
+    setPaused(false);
     setStatusText('');
     await loadFiles();
     const rows = await fetchConversations();
@@ -324,7 +336,16 @@ export default function App() {
               : <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{m.content || ''}</ReactMarkdown>}
           </div>
         ))}
-        {busy && <div className="working"><span className="spin"/><span>{statusText || 'Processando...'}</span></div>}
+        {busy && <div className="working">
+          {paused ? <span className="pausedDot"/> : <span className="spin"/>}
+          <span>{paused ? 'Pausado' : (statusText || 'Processando...')}</span>
+          <div className="workctl">
+            {!paused
+              ? <button onClick={() => control('pause')} title="Pausar após a etapa atual"><Pause size={14}/> Pausar</button>
+              : <button onClick={() => control('resume')} title="Continuar"><Play size={14}/> Continuar</button>}
+            <button className="stopBtn" onClick={() => control('stop')} title="Parar o processamento"><Square size={13}/> Parar</button>
+          </div>
+        </div>}
         <div ref={endRef}/>
       </section>
       <footer className="composer">

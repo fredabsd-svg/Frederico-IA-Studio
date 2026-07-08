@@ -6,7 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import { nanoid } from 'nanoid';
 import { db, now } from './db.js';
-import { runAgent, runOrchestrator, AGENTS } from './agent.js';
+import { runAgent, runOrchestrator, setControl, AGENTS } from './agent.js';
 import { workspaceFor, destroyConversation } from './sandbox.js';
 
 const app = express();
@@ -200,6 +200,14 @@ app.get('/api/conversations/:id/download/*', (req, res) => {
   const target = path.resolve(ws.base, rel);
   if (!target.startsWith(path.resolve(ws.base)) || !fs.existsSync(target)) return res.status(404).send('Arquivo não encontrado');
   res.download(target);
+});
+
+// Pausar / continuar / parar o processamento em andamento
+app.post('/api/conversations/:id/control', (req, res) => {
+  const action = req.body?.action;
+  if (!['pause', 'resume', 'stop'].includes(action)) return res.status(400).json({ error: 'Ação inválida.' });
+  setControl(req.params.id, action);
+  res.json({ ok: true, action });
 });
 
 app.post('/api/conversations/:id/chat', async (req, res) => {
