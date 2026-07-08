@@ -215,6 +215,8 @@ app.post('/api/conversations/:id/chat', async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
   const send = (event) => res.write(`data: ${JSON.stringify(event)}\n\n`);
   try {
     const text = req.body?.message || '';

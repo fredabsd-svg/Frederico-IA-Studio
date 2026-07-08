@@ -158,23 +158,40 @@ export async function runAgent({ conversationId, userText, model, assistant, onE
   let stopped = false;
   for (let step = 0; step < 8; step++) {
     if (await gate(control, onEvent)) { stopped = true; break; }
-    onEvent({ type: 'status', content: step === 0 ? 'Pensando...' : 'Executando ferramentas...' });
-    const completion = await client.chat.completions.create({
+    onEvent({ type: 'status', content: step === 0 ? 'Pensando...' : 'Continuando...' });
+    // Streaming: o texto é enviado token a token para a interface (tela viva)
+    let content = '';
+    const toolCalls = [];
+    const stream = await client.chat.completions.create({
       model: chosenModel,
       messages,
       ...(tools.length ? { tools, tool_choice: 'auto' } : {}),
-      temperature
+      temperature,
+      stream: true,
+      stream_options: { include_usage: true }
     });
-    addUsage(usage, completion.usage);
-    const msg = completion.choices[0].message;
-    // Reenvia só o que a API espera (evita campos extras como reasoning_content)
-    messages.push({ role: 'assistant', content: msg.content ?? '', tool_calls: msg.tool_calls });
-    if (msg.content) {
-      finalText += msg.content;
-      onEvent({ type: 'delta', content: msg.content });
+    for await (const chunk of stream) {
+      if (chunk.usage) addUsage(usage, chunk.usage);
+      const delta = chunk.choices?.[0]?.delta;
+      if (!delta) continue;
+      if (delta.content) { content += delta.content; finalText += delta.content; onEvent({ type: 'delta', content: delta.content }); }
+      if (delta.tool_calls) {
+        for (const tc of delta.tool_calls) {
+          const i = tc.index ?? 0;
+          toolCalls[i] = toolCalls[i] || { id: tc.id, type: 'function', function: { name: '', arguments: '' } };
+          if (tc.id) toolCalls[i].id = tc.id;
+          if (tc.function?.name) toolCalls[i].function.name += tc.function.name;
+          if (tc.function?.arguments) toolCalls[i].function.arguments += tc.function.arguments;
+        }
+      }
+      if (control.stopped) { stopped = true; break; }
     }
-    if (!msg.tool_calls?.length) break;
-    for (const call of msg.tool_calls) {
+    const stepToolCalls = toolCalls.filter(Boolean);
+    // Reenvia só o que a API espera (evita campos extras como reasoning_content)
+    messages.push({ role: 'assistant', content: content ?? '', ...(stepToolCalls.length ? { tool_calls: stepToolCalls } : {}) });
+    if (stopped) break;
+    if (!stepToolCalls.length) break;
+    for (const call of stepToolCalls) {
       if (await gate(control, onEvent)) { stopped = true; break; }
       const name = call.function.name;
       let args = {};
@@ -242,15 +259,18 @@ export async function runOrchestrator({ conversationId, userText, model, assista
     { role: 'user', content: `Pedido do usuário:\n${userText}\n\nPerspectivas da equipe:\n${combined}` }
   ];
   try {
-    const synth = await client.chat.completions.create({ model: coordModel, messages: synthMsgs, temperature: 0.3 });
-    addUsage(usage, synth.usage);
-    finalText = synth.choices[0].message.content || '';
+    const stream = await client.chat.completions.create({ model: coordModel, messages: synthMsgs, temperature: 0.3, stream: true, stream_options: { include_usage: true } });
+    for await (const chunk of stream) {
+      if (chunk.usage) addUsage(usage, chunk.usage);
+      const d = chunk.choices?.[0]?.delta?.content || '';
+      if (d) { finalText += d; onEvent({ type: 'delta', content: d }); }
+    }
   } catch (err) {
     finalText = `Não foi possível compilar a resposta final: ${err.message}`;
+    onEvent({ type: 'delta', content: finalText });
   }
   controls.delete(conversationId);
-  if (!finalText.trim()) finalText = 'Concluído.';
-  onEvent({ type: 'delta', content: finalText });
+  if (!finalText.trim()) { finalText = 'Concluído.'; onEvent({ type: 'delta', content: finalText }); }
   saveMessage(conversationId, 'assistant', finalText);
   return { text: finalText, usage, model: coordModel };
 }
