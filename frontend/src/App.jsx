@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload } from 'lucide-react';
+import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo } from 'lucide-react';
 import { API, FALLBACK_MODELS, TOOL_INFO, TEMPLATES, SUGGESTIONS, emptyForm } from './constants.js';
 import { ToolStep, Slider, Modal, ModelPicker, Collapsible } from './components.jsx';
 
@@ -46,6 +46,9 @@ export default function App() {
   const [clientId, setClientId] = useState(() => localStorage.getItem('fred_client') || '');
   const [exportOpen, setExportOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [tasks, setTasks] = useState([]);
+  const [tasksOpen, setTasksOpen] = useState(false);
+  const prevTasksRef = useRef([]);
   const endRef = useRef(null);
   const inputRef = useRef(null);
   const recognitionRef = useRef(null);
@@ -62,10 +65,53 @@ export default function App() {
     return () => clearInterval(t);
   }, [busy]);
 
-  function showToast(text) {
+  function showToast(text, kind = 'err') {
     clearTimeout(toastTimer.current);
-    setToast(text);
+    setToast({ text, kind });
     toastTimer.current = setTimeout(() => setToast(null), 6000);
+  }
+
+  // ---- Fila de tarefas ----
+  const tasksActive = tasks.some(t => t.status === 'queued' || t.status === 'running');
+  useEffect(() => {
+    if (!tasksActive && !tasksOpen) return;
+    const iv = setInterval(pollTasks, 4000);
+    return () => clearInterval(iv);
+  }, [tasksActive, tasksOpen, current?.id]);
+
+  async function pollTasks() {
+    try {
+      const rows = await (await fetch(`${API}/api/tasks`)).json();
+      for (const r of rows) {
+        const old = prevTasksRef.current.find(p => p.id === r.id);
+        if (old && (old.status === 'queued' || old.status === 'running')) {
+          if (r.status === 'done') {
+            showToast(`✅ Tarefa concluída: ${r.prompt.slice(0, 60)}`, 'ok');
+            if (r.conversation_id === current?.id) { openConversation(current.id); }
+          }
+          if (r.status === 'error') showToast(`⚠️ Tarefa falhou: ${(r.error || '').slice(0, 100)}`);
+        }
+      }
+      prevTasksRef.current = rows;
+      setTasks(rows);
+    } catch {}
+  }
+
+  async function sendAsTask() {
+    const text = input.trim();
+    if (!text || !current) return;
+    if (listening) recognitionRef.current?.stop();
+    setInput('');
+    try {
+      const res = await fetch(`${API}/api/tasks`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId: current.id, message: text, model, assistantId, webSearch }) });
+      if (!res.ok) throw new Error();
+      showToast('⏳ Tarefa adicionada à fila — acompanhe no botão "Tarefas".', 'ok');
+      await pollTasks();
+    } catch { showToast('Não foi possível criar a tarefa.'); }
+  }
+
+  async function cancelTask(id) {
+    try { await fetch(`${API}/api/tasks/${id}/cancel`, { method: 'POST' }); await pollTasks(); } catch {}
   }
 
   async function copyMessage(m, idx) {
@@ -551,6 +597,7 @@ export default function App() {
       <button className="studio" onClick={openStudioNew}><Bot size={16}/> Criar assistente</button>
       <button className="studio" onClick={openTemplates}><BookMarked size={16}/> Templates</button>
       <button className="studio" onClick={() => { setMemoryScope('global'); loadMemory('global'); setMemoryOpen(true); }}><Brain size={16}/> Memória</button>
+      <button className="studio" onClick={() => { setTasksOpen(true); pollTasks(); }}><ListTodo size={16}/> Tarefas{tasksActive && <span className="badge">{tasks.filter(t => t.status === 'queued' || t.status === 'running').length}</span>}</button>
       <button className="studio" onClick={openAnalytics}><BarChart3 size={16}/> Análises</button>
       <button className="studio" onClick={() => window.open(`${API}/api/backup`, '_blank')} title="Baixa um arquivo .tar.gz com o banco e todos os workspaces"><HardDriveDownload size={16}/> Backup</button>
       <button className="theme" onClick={() => setDark(!dark)}>{dark ? <Sun size={16}/> : <Moon size={16}/>} Tema</button>
@@ -642,12 +689,13 @@ export default function App() {
           <button className={`webBtn ${webSearch ? 'on' : ''}`} onClick={() => setWebSearch(w => !w)} title={webSearch ? 'Pesquisa na internet ATIVADA — clique para desativar' : 'Ativar pesquisa na internet'} aria-label="Pesquisa na internet"><Globe size={18}/></button>
           <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }} placeholder={listening ? 'Ouvindo... fale agora' : (webSearch ? 'Pesquisa na internet ativada — pergunte algo atual...' : 'Peça para analisar arquivos, gerar Word, Excel, PDF...')} />
           <button className={`mic ${listening ? 'on' : ''}`} onClick={toggleMic} title="Falar (ditado por voz)" aria-label="Ditado por voz"><Mic size={18}/></button>
+          <button className="mic" onClick={sendAsTask} disabled={!input.trim()} title="Executar em segundo plano (fila de tarefas) — você pode continuar usando o app" aria-label="Enviar para a fila de tarefas"><Hourglass size={17}/></button>
           <button className="sendBtn" onClick={sendMessage} disabled={busy} aria-label="Enviar"><Send size={18}/></button>
         </div>
       </footer>
     </main>
 
-    {toast && <div className="toast" role="alert">{toast}<button onClick={() => setToast(null)} aria-label="Fechar aviso"><X size={14}/></button></div>}
+    {toast && <div className={`toast ${toast.kind || 'err'}`} role="alert">{toast.text}<button onClick={() => setToast(null)} aria-label="Fechar aviso"><X size={14}/></button></div>}
 
     {studioOpen && <Modal title={form.id ? 'Editar assistente' : 'Novo assistente'} icon={<Bot size={18}/>} onClose={() => setStudioOpen(false)}>
       <div className="frow">
@@ -769,6 +817,34 @@ export default function App() {
             <span className="tplPreview">{t.content.slice(0, 110)}{t.content.length > 110 ? '…' : ''}</span>
             <span className="memDel tplDel" onClick={(e) => deleteTemplate(t.id, e)} role="button" aria-label="Excluir template"><X size={15}/></span>
           </button>
+        ))}
+      </div>
+    </Modal>}
+
+    {tasksOpen && <Modal title="Fila de tarefas" icon={<ListTodo size={18}/>} onClose={() => setTasksOpen(false)}>
+      <p className="muted" style={{ margin: 0 }}>Tarefas rodam em segundo plano — você pode trocar de conversa ou fechar o app; a fila continua no servidor. Para criar uma, escreva o pedido e clique na ⏳ ao lado do enviar.</p>
+      <div className="memList">
+        {tasks.length === 0 && <p className="muted">Nenhuma tarefa ainda.</p>}
+        {tasks.map(t => (
+          <div className="taskItem" key={t.id}>
+            <div className="taskTop">
+              <span className={`taskStatus ${t.status}`}>
+                {t.status === 'queued' && '⏳ Na fila'}
+                {t.status === 'running' && <><span className="spin sm"/> Executando</>}
+                {t.status === 'done' && '✅ Concluída'}
+                {t.status === 'error' && '⚠️ Falhou'}
+                {t.status === 'canceled' && '✖ Cancelada'}
+              </span>
+              <span className="taskConv" title={t.conv_title}>{t.conv_title || 'Conversa'}</span>
+            </div>
+            <div className="taskPrompt">{t.prompt.slice(0, 120)}{t.prompt.length > 120 ? '…' : ''}</div>
+            {t.status === 'running' && t.progress_text && <div className="taskProg">{t.progress_text}</div>}
+            {t.status === 'error' && t.error && <div className="taskProg err">{t.error.slice(0, 140)}</div>}
+            <div className="taskActions">
+              {(t.status === 'queued' || t.status === 'running') && <button onClick={() => cancelTask(t.id)}>Cancelar</button>}
+              {t.status === 'done' && <button className="primary" onClick={() => { setTasksOpen(false); openConversation(t.conversation_id); }}>Abrir conversa</button>}
+            </div>
+          </div>
         ))}
       </div>
     </Modal>}

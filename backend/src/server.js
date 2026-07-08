@@ -309,6 +309,71 @@ app.get('/api/conversations/:id/download/*', (req, res) => {
   res.download(target);
 });
 
+// ---- Fila de tarefas (execução em segundo plano) ----
+let taskWorkerBusy = false;
+async function processTasks() {
+  if (taskWorkerBusy) return;
+  taskWorkerBusy = true;
+  try {
+    while (true) {
+      const t = db.prepare("SELECT * FROM tasks WHERE status='queued' ORDER BY created_at ASC LIMIT 1").get();
+      if (!t) break;
+      db.prepare("UPDATE tasks SET status='running', started_at=?, progress_text='Iniciando...' WHERE id=?").run(now(), t.id);
+      const setProg = (txt) => { try { db.prepare('UPDATE tasks SET progress_text=? WHERE id=?').run(String(txt).slice(0, 200), t.id); } catch {} };
+      try {
+        ensureConversation(t.conversation_id, t.model);
+        const assistant = loadAssistant(t.assistant_id);
+        const onEvent = (ev) => {
+          if (ev.type === 'status') setProg(ev.content);
+          else if (ev.type === 'tool_start') setProg(`Executando ${ev.name}...`);
+        };
+        const result = await runAgent({ conversationId: t.conversation_id, userText: t.prompt, model: t.model, assistant, webSearch: !!t.web_search, onEvent });
+        if (result?.usage) {
+          db.prepare('INSERT INTO usage (id,conversation_id,assistant_id,model,kind,prompt_tokens,completion_tokens,total_tokens,created_at) VALUES (?,?,?,?,?,?,?,?,?)')
+            .run(nanoid(), t.conversation_id, t.assistant_id, result.model, 'tarefa', result.usage.prompt_tokens, result.usage.completion_tokens, result.usage.total_tokens, now());
+        }
+        db.prepare("UPDATE tasks SET status='done', finished_at=?, result_text=?, progress_text='Concluída' WHERE id=?")
+          .run(now(), String(result?.text || '').slice(0, 300), t.id);
+      } catch (err) {
+        console.error('[tarefa]', err);
+        db.prepare("UPDATE tasks SET status='error', finished_at=?, error=? WHERE id=?").run(now(), friendlyApiError(err), t.id);
+      }
+    }
+  } finally { taskWorkerBusy = false; }
+}
+
+// Tarefas que estavam "rodando" quando o servidor caiu voltam para a fila
+db.prepare("UPDATE tasks SET status='queued', progress_text='Reenfileirada após reinício' WHERE status='running'").run();
+setTimeout(() => processTasks().catch(() => {}), 2000);
+
+app.post('/api/tasks', (req, res) => {
+  const message = (req.body?.message || '').trim();
+  const convId = req.body?.conversationId;
+  if (!message) return res.status(400).json({ error: 'Mensagem vazia.' });
+  if (!convId) return res.status(400).json({ error: 'Conversa não informada.' });
+  ensureConversation(convId, req.body?.model);
+  const id = nanoid();
+  db.prepare('INSERT INTO tasks (id,conversation_id,assistant_id,model,web_search,prompt,status,created_at) VALUES (?,?,?,?,?,?,?,?)')
+    .run(id, convId, req.body?.assistantId || null, req.body?.model || null, req.body?.webSearch ? 1 : 0, message, 'queued', now());
+  processTasks().catch(() => {});
+  res.json({ id, status: 'queued' });
+});
+
+app.get('/api/tasks', (_, res) => {
+  res.json(db.prepare(`
+    SELECT t.*, c.title conv_title FROM tasks t
+    LEFT JOIN conversations c ON c.id=t.conversation_id
+    ORDER BY t.created_at DESC LIMIT 20`).all());
+});
+
+app.post('/api/tasks/:id/cancel', (req, res) => {
+  const t = db.prepare('SELECT * FROM tasks WHERE id=?').get(req.params.id);
+  if (!t) return res.status(404).json({ error: 'Tarefa não encontrada' });
+  if (t.status === 'queued') db.prepare("UPDATE tasks SET status='canceled', finished_at=? WHERE id=?").run(now(), t.id);
+  else if (t.status === 'running') setControl(t.conversation_id, 'stop');
+  res.json({ ok: true });
+});
+
 // Exporta a conversa como PDF ou Word (gerado dentro do sandbox)
 const PY_EXPORT = [
   'import json',

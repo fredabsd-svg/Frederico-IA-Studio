@@ -63,6 +63,21 @@ CREATE TABLE IF NOT EXISTS templates (
   content TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS tasks (
+  id TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL,
+  assistant_id TEXT,
+  model TEXT,
+  web_search INTEGER DEFAULT 0,
+  prompt TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued',  -- queued|running|done|error|canceled
+  progress_text TEXT,
+  result_text TEXT,
+  error TEXT,
+  created_at TEXT NOT NULL,
+  started_at TEXT,
+  finished_at TEXT
+);
 CREATE TABLE IF NOT EXISTS usage (
   id TEXT PRIMARY KEY,
   conversation_id TEXT,
