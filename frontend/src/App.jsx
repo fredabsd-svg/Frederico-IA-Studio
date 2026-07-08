@@ -57,12 +57,20 @@ export default function App() {
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
   const [analytics, setAnalytics] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [statusText, setStatusText] = useState('');
+  const [nowTick, setNowTick] = useState(0);
   const [dark, setDark] = useState(true);
   const endRef = useRef(null);
 
   useEffect(() => { init(); loadModels(); loadAssistants(); loadMemory(); }, []);
   useEffect(() => { document.body.className = dark ? 'dark' : 'light'; }, [dark]);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+  // Enquanto processa, "bate um relógio" a cada segundo para os contadores vivos
+  useEffect(() => {
+    if (!busy) return;
+    const t = setInterval(() => setNowTick(n => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [busy]);
 
   async function init() {
     const rows = await fetchConversations();
@@ -211,33 +219,54 @@ export default function App() {
     if (!text || busy || !current) return;
     setInput('');
     setBusy(true);
+    setStatusText('Pensando...');
     const assistantMsgId = `local-${Date.now()}`;
-    setMessages(prev => [...prev, { role: 'user', content: text }, { id: assistantMsgId, role: 'assistant', content: '' }]);
+    setMessages(prev => [...prev, { role: 'user', content: text }, { id: assistantMsgId, role: 'assistant', content: '', blocks: [] }]);
+    const update = (fn) => setMessages(prev => prev.map(m => m.id === assistantMsgId ? fn(m) : m));
 
     const body = team
       ? { message: text, model, orchestrate: true, orchestrateIds: assistants.map(a => a.id) }
       : { message: text, model, assistantId };
-    const res = await fetch(`${API}/api/conversations/${current.id}/chat`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
-    });
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const parts = buffer.split('\n\n');
-      buffer = parts.pop();
-      for (const part of parts) {
-        if (!part.startsWith('data:')) continue;
-        const ev = JSON.parse(part.slice(5));
-        if (ev.type === 'delta') setMessages(prev => prev.map(m => m.id === assistantMsgId ? { ...m, content: (m.content || '') + ev.content } : m));
-        if (ev.type === 'tool_start') setMessages(prev => prev.map(m => m.id === assistantMsgId ? { ...m, content: (m.content || '') + `\n\n> Executando ferramenta: ${ev.name}\n` } : m));
-        if (ev.type === 'error') setMessages(prev => prev.map(m => m.id === assistantMsgId ? { ...m, content: (m.content || '') + `\n\nErro: ${ev.content}` } : m));
+    try {
+      const res = await fetch(`${API}/api/conversations/${current.id}/chat`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+      });
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop();
+        for (const part of parts) {
+          if (!part.startsWith('data:')) continue;
+          const ev = JSON.parse(part.slice(5));
+          if (ev.type === 'status') setStatusText(ev.content || '');
+          if (ev.type === 'delta') update(m => {
+            const blocks = [...(m.blocks || [])];
+            const last = blocks[blocks.length - 1];
+            if (last && last.type === 'text') blocks[blocks.length - 1] = { ...last, content: last.content + ev.content };
+            else blocks.push({ type: 'text', content: ev.content });
+            return { ...m, blocks, content: (m.content || '') + ev.content };
+          });
+          if (ev.type === 'tool_start') { setStatusText(`Executando ${ev.name}...`); update(m => ({ ...m, blocks: [...(m.blocks || []), { type: 'tool', name: ev.name, status: 'running', started: Date.now() }] })); }
+          if (ev.type === 'tool_result') update(m => {
+            const blocks = [...(m.blocks || [])];
+            for (let i = blocks.length - 1; i >= 0; i--) { if (blocks[i].type === 'tool' && blocks[i].status === 'running') { blocks[i] = { ...blocks[i], status: 'done', ended: Date.now() }; break; } }
+            return { ...m, blocks };
+          });
+          if (ev.type === 'error') update(m => ({ ...m, blocks: [...(m.blocks || []), { type: 'text', content: `\n\n**Erro:** ${ev.content}` }] }));
+        }
       }
+    } catch (err) {
+      update(m => ({ ...m, blocks: [...(m.blocks || []), { type: 'text', content: `\n\n**Conexão interrompida:** ${err.message}` }] }));
     }
+    // Fecha qualquer ferramenta que tenha ficado "rodando"
+    update(m => ({ ...m, blocks: (m.blocks || []).map(b => b.type === 'tool' && b.status === 'running' ? { ...b, status: 'done', ended: Date.now() } : b) }));
     setBusy(false);
+    setStatusText('');
     await loadFiles();
     const rows = await fetchConversations();
     const updated = rows.find(c => c.id === current.id);
@@ -286,8 +315,16 @@ export default function App() {
         </div>
       </header>
       <section className="messages">
-        {messages.map((m, idx) => <div key={m.id || idx} className={`msg ${m.role}`}><ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{m.content || ''}</ReactMarkdown></div>)}
-        {busy && <div className="typing">pensando...</div>}
+        {messages.map((m, idx) => (
+          <div key={m.id || idx} className={`msg ${m.role}`}>
+            {m.blocks
+              ? m.blocks.map((b, i) => b.type === 'tool'
+                ? <ToolStep key={i} step={b} nowTick={nowTick}/>
+                : <ReactMarkdown key={i} remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{b.content || ''}</ReactMarkdown>)
+              : <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{m.content || ''}</ReactMarkdown>}
+          </div>
+        ))}
+        {busy && <div className="working"><span className="spin"/><span>{statusText || 'Processando...'}</span></div>}
         <div ref={endRef}/>
       </section>
       <footer className="composer">
@@ -430,6 +467,17 @@ export default function App() {
         </div>
       </div>
     </div>}
+  </div>;
+}
+
+function ToolStep({ step }) {
+  const end = step.ended || Date.now();
+  const secs = Math.max(0, Math.round((end - step.started) / 1000));
+  return <div className={`toolstep ${step.status}`}>
+    <span className="ic">{step.status === 'running' ? <span className="spin sm"/> : '✓'}</span>
+    <code>{step.name}</code>
+    <span className="sec">{secs}s</span>
+    {step.status === 'running' && <span className="lbl">executando…</span>}
   </div>;
 }
 
