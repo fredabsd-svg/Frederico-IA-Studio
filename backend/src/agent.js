@@ -100,7 +100,8 @@ REGRAS DO SANDBOX (muito importante):
 - Se precisar mesmo dividir em etapas, salve os dados intermediários em arquivo (JSON/CSV em /workspace) e leia de volta no próximo script — nunca dependa de variáveis da execução anterior.
 - Evite muitas execuções exploratórias; planeje e faça de uma vez. Salve os arquivos finais em /workspace/outputs.
 - O sandbox tem ffmpeg instalado: use-o (via bash ou run_python) para EDITAR vídeos e áudios enviados pelo usuário — cortar, juntar, converter formato, extrair áudio, redimensionar, legendar. Salve o resultado em /workspace/outputs.
-- Para GERAR ou EDITAR IMAGENS com IA, use a ferramenta generate_image (não tente desenhar via matplotlib quando o usuário pedir uma imagem artística/realista).`;
+- Para GERAR ou EDITAR IMAGENS com IA, use a ferramenta generate_image (não tente desenhar via matplotlib quando o usuário pedir uma imagem artística/realista).
+- SEMPRE escreva uma frase curta explicando o que vai fazer ANTES de cada chamada de ferramenta, e verifique o resultado (exit code/erro) depois. Nunca encadeie ferramentas em silêncio.`;
 
 function promptFor(assistant) {
   const base = assistant ? (assistant.system_prompt || AGENTS.contabil.prompt) : AGENTS.contabil.prompt;
@@ -204,6 +205,8 @@ export async function runAgent({ conversationId, userText, model, assistant, web
   let finalText = '';
   let stopped = false;
   let completedNaturally = false;
+  let consecutiveFailures = 0;
+  let repeatedError = '';
   try {
   for (let step = 0; step < maxSteps; step++) {
     if (await gate(control, onEvent)) { stopped = true; break; }
@@ -252,14 +255,27 @@ export async function runAgent({ conversationId, userText, model, assistant, web
       const name = call.function.name;
       let args = {};
       try { args = JSON.parse(call.function.arguments || '{}'); } catch {}
-      onEvent({ type: 'tool_start', name });
+      // Prévia do que a ferramenta vai executar (exibida na interface)
+      const preview = String(args.code || args.command || args.prompt || args.path || args.query || args.url || '').slice(0, 400);
+      onEvent({ type: 'tool_start', name, preview });
       let result;
       try { result = await runTool(conversationId, name, args); }
       catch (err) { result = JSON.stringify({ error: err.message }); }
       onEvent({ type: 'tool_result', name, content: result.slice(0, 2000) });
       messages.push({ role: 'tool', tool_call_id: call.id, content: result });
+      // Freio de loop: conta falhas consecutivas das ferramentas
+      let failed = false;
+      try { const r = JSON.parse(result); failed = !!r.error || (typeof r.exitCode === 'number' && r.exitCode !== 0); if (failed) repeatedError = String(r.error || r.output || '').slice(-300); } catch {}
+      consecutiveFailures = failed ? consecutiveFailures + 1 : 0;
     }
     if (stopped) break;
+    if (consecutiveFailures >= 5) {
+      const note = `\n\n_⚠️ Interrompi o processamento: as últimas ${consecutiveFailures} execuções falharam seguidas — o modelo está em loop de erro. Último erro:_\n\`\`\`\n${repeatedError || 'sem detalhe'}\n\`\`\`\n_Sugestão: tente um modelo da categoria "⭐ Melhores para planilhas e arquivos" ou divida o pedido em partes._`;
+      finalText += note;
+      onEvent({ type: 'delta', content: note });
+      completedNaturally = true; // evita acumular também o aviso de limite de etapas
+      break;
+    }
   }
   } finally {
     controls.delete(conversationId);

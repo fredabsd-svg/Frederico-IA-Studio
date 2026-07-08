@@ -390,10 +390,10 @@ export default function App() {
             else blocks.push({ type: 'text', content: ev.content });
             return { ...m, blocks, content: (m.content || '') + ev.content };
           });
-          if (ev.type === 'tool_start') { setStatusText(`Executando ${ev.name}...`); update(m => ({ ...m, blocks: [...(m.blocks || []), { type: 'tool', name: ev.name, status: 'running', started: Date.now() }] })); }
+          if (ev.type === 'tool_start') { setStatusText(`Executando ${ev.name}...`); update(m => ({ ...m, blocks: [...(m.blocks || []), { type: 'tool', name: ev.name, preview: ev.preview, status: 'running', started: Date.now() }] })); }
           if (ev.type === 'tool_result') update(m => {
             const blocks = [...(m.blocks || [])];
-            for (let i = blocks.length - 1; i >= 0; i--) { if (blocks[i].type === 'tool' && blocks[i].status === 'running') { blocks[i] = { ...blocks[i], status: 'done', ended: Date.now() }; break; } }
+            for (let i = blocks.length - 1; i >= 0; i--) { if (blocks[i].type === 'tool' && blocks[i].status === 'running') { blocks[i] = { ...blocks[i], status: 'done', ended: Date.now(), result: ev.content }; break; } }
             return { ...m, blocks };
           });
           if (ev.type === 'files') update(m => ({ ...m, files: [...(m.files || []), ...ev.files] }));

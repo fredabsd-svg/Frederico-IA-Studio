@@ -68,15 +68,22 @@ export function ModelPicker({ models, value, onChange }) {
   </div>;
 }
 
-// Chip de ferramenta em execução/concluída dentro de uma mensagem
+// Chip de ferramenta em execução/concluída dentro de uma mensagem.
+// Clique expande e mostra o que foi executado e o resultado.
 export function ToolStep({ step }) {
+  const [open, setOpen] = useState(false);
   const end = step.ended || Date.now();
   const secs = Math.max(0, Math.round((end - step.started) / 1000));
-  return <div className={`toolstep ${step.status}`}>
-    <span className="ic">{step.status === 'running' ? <span className="spin sm"/> : '✓'}</span>
-    <code>{step.name}</code>
-    <span className="sec">{secs}s</span>
-    {step.status === 'running' && <span className="lbl">executando…</span>}
+  const hasDetail = !!(step.preview || step.result);
+  return <div className="toolwrap">
+    <button className={`toolstep ${step.status}`} onClick={() => hasDetail && setOpen(o => !o)} title={hasDetail ? 'Clique para ver o que foi executado' : undefined}>
+      <span className="ic">{step.status === 'running' ? <span className="spin sm"/> : '✓'}</span>
+      <code>{step.name}</code>
+      <span className="sec">{secs}s</span>
+      {step.status === 'running' && <span className="lbl">executando…</span>}
+      {hasDetail && <ChevronDown size={12} className={`tchev ${open ? 'up' : ''}`}/>}
+    </button>
+    {open && <pre className="tooldetail">{step.preview ? `▶ Executado:\n${step.preview}` : ''}{step.preview && step.result ? '\n\n' : ''}{step.result ? `◀ Resultado:\n${step.result}` : ''}</pre>}
   </div>;
 }
 
