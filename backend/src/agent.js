@@ -149,6 +149,62 @@ function addUsage(acc, u) {
   acc.total_tokens += u.total_tokens || 0;
 }
 
+// Valida automaticamente os arquivos gerados (abre? abas? erros de fórmula?)
+const VALIDATABLE = /\.(xlsx|pdf|docx)$/i;
+async function validateOutputs(conversationId, files, onEvent) {
+  const targets = files.filter(f => VALIDATABLE.test(f.name)).slice(0, 5);
+  if (!targets.length) return {};
+  onEvent({ type: 'status', content: 'Validando arquivos gerados...' });
+  const listJson = JSON.stringify(targets.map(f => f.path));
+  const code = [
+    'import json',
+    `files = json.loads('''${listJson}''')`,
+    'out = []',
+    'ERRS = ("#REF!", "#VALUE!", "#DIV/0!", "#N/A", "#NAME?", "#NULL!", "#NUM!")',
+    'for rel in files:',
+    "    p = '/workspace/' + rel",
+    "    r = {'path': rel, 'ok': True, 'info': ''}",
+    '    try:',
+    "        ext = rel.lower().rsplit('.', 1)[-1]",
+    "        if ext == 'xlsx':",
+    '            from openpyxl import load_workbook',
+    '            wb = load_workbook(p)',
+    '            errs = 0',
+    '            for ws in wb.worksheets:',
+    '                for row in ws.iter_rows():',
+    '                    for c in row:',
+    '                        v = c.value',
+    '                        if isinstance(v, str) and any(e in v for e in ERRS):',
+    '                            errs += 1',
+    "            r['info'] = str(len(wb.sheetnames)) + ' abas'",
+    '            if errs:',
+    "                r['ok'] = False",
+    "                r['info'] += ', ' + str(errs) + ' celulas com erro de formula'",
+    "        elif ext == 'pdf':",
+    '            from pypdf import PdfReader',
+    '            n = len(PdfReader(p).pages)',
+    "            r['info'] = str(n) + ' paginas'",
+    '            if n == 0:',
+    "                r['ok'] = False",
+    "        elif ext == 'docx':",
+    '            from docx import Document',
+    '            d = Document(p)',
+    "            r['info'] = str(len(d.paragraphs)) + ' paragrafos'",
+    '    except Exception as e:',
+    "        r['ok'] = False",
+    "        r['info'] = ('nao abre: ' + str(e))[:90]",
+    '    out.append(r)',
+    'print(json.dumps(out))'
+  ].join('\n');
+  try {
+    const raw = await runTool(conversationId, 'run_python', { code });
+    const r = JSON.parse(raw);
+    if (r.exitCode !== 0) return {};
+    const line = String(r.output || '').trim().split('\n').pop();
+    return Object.fromEntries(JSON.parse(line).map(x => [x.path, { ok: x.ok, info: x.info }]));
+  } catch { return {}; }
+}
+
 // Traduz erros comuns da API do provedor em mensagens claras em português
 export function friendlyApiError(err) {
   const status = err?.status || err?.response?.status;
@@ -310,9 +366,10 @@ export async function runAgent({ conversationId, userText, model, assistant, web
   // Detecta os arquivos gerados NESTA resposta e os anexa à mensagem
   const newFiles = listOutputs(conversationId).filter(f => outputsBefore.get(f.path) !== f.mtimeMs);
   if (newFiles.length) {
+    const checks = stopped ? {} : await validateOutputs(conversationId, newFiles, onEvent);
     const stmt = db.prepare('INSERT INTO files (id,conversation_id,message_id,kind,name,path,size,created_at) VALUES (?,?,?,?,?,?,?,?)');
     const cards = [];
-    for (const f of newFiles) { const id = nanoid(); stmt.run(id, conversationId, msgId, 'output', f.name, f.path, f.size, now()); cards.push({ id, name: f.name, path: f.path, size: f.size }); }
+    for (const f of newFiles) { const id = nanoid(); stmt.run(id, conversationId, msgId, 'output', f.name, f.path, f.size, now()); cards.push({ id, name: f.name, path: f.path, size: f.size, check: checks[f.path] }); }
     onEvent({ type: 'files', files: cards });
   }
   // Informa os ids reais salvos no banco (necessário para editar mensagens)

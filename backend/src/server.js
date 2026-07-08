@@ -6,7 +6,9 @@ import fs from 'fs';
 import path from 'path';
 import { nanoid } from 'nanoid';
 import { db, now } from './db.js';
+import { spawn } from 'child_process';
 import { runAgent, runOrchestrator, setControl, friendlyApiError, AGENTS } from './agent.js';
+import { runTool } from './tools.js';
 import { workspaceFor, destroyConversation, insideBase } from './sandbox.js';
 import { authEnabled, makeToken, verifyToken, getCookie, passwordMatches, loginRateLimited } from './auth.js';
 
@@ -209,7 +211,11 @@ app.get('/api/analytics', (_, res) => {
     FROM usage u LEFT JOIN assistants a ON a.id=u.assistant_id
     GROUP BY u.assistant_id ORDER BY tokens DESC`).all();
   const byModel = db.prepare('SELECT model, COUNT(*) messages, COALESCE(SUM(total_tokens),0) tokens FROM usage GROUP BY model ORDER BY tokens DESC').all();
-  res.json({ totals, byAssistant, byModel });
+  const byConversation = db.prepare(`
+    SELECT COALESCE(c.title,'(conversa apagada)') title, COUNT(*) messages, COALESCE(SUM(u.total_tokens),0) tokens
+    FROM usage u LEFT JOIN conversations c ON c.id=u.conversation_id
+    GROUP BY u.conversation_id ORDER BY tokens DESC LIMIT 15`).all();
+  res.json({ totals, byAssistant, byModel, byConversation });
 });
 
 app.get('/api/conversations', (req, res) => {
@@ -301,6 +307,78 @@ app.get('/api/conversations/:id/download/*', (req, res) => {
   const target = path.resolve(ws.base, rel);
   if (!insideBase(ws.base, target) || !fs.existsSync(target)) return res.status(404).send('Arquivo não encontrado');
   res.download(target);
+});
+
+// Exporta a conversa como PDF ou Word (gerado dentro do sandbox)
+const PY_EXPORT = [
+  'import json',
+  "d = json.load(open('/workspace/.export.json'))",
+  "fmt = '__FMT__'",
+  "out = '/workspace/outputs/__OUT__'",
+  "role = {'user': 'Voce', 'assistant': 'Assistente'}",
+  "if fmt == 'docx':",
+  '    from docx import Document',
+  '    doc = Document()',
+  "    doc.add_heading(d['title'], 0)",
+  "    for m in d['messages']:",
+  '        p = doc.add_paragraph()',
+  "        r = p.add_run(role.get(m['role'], m['role']) + ' - ' + m['created_at'][:16].replace('T', ' '))",
+  '        r.bold = True',
+  "        doc.add_paragraph(m['content'])",
+  '    doc.save(out)',
+  'else:',
+  '    from reportlab.lib.pagesizes import A4',
+  '    from reportlab.lib.styles import getSampleStyleSheet',
+  '    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer',
+  '    from xml.sax.saxutils import escape',
+  '    styles = getSampleStyleSheet()',
+  "    story = [Paragraph(escape(d['title']), styles['Title']), Spacer(1, 12)]",
+  "    for m in d['messages']:",
+  "        story.append(Paragraph('<b>' + role.get(m['role'], m['role']) + '</b> - ' + m['created_at'][:16].replace('T', ' '), styles['Heading4']))",
+  "        for line in m['content'].split('\\n'):",
+  '            if line.strip():',
+  "                story.append(Paragraph(escape(line), styles['BodyText']))",
+  '        story.append(Spacer(1, 10))',
+  '    SimpleDocTemplate(out, pagesize=A4).build(story)',
+  "print('OK')"
+].join('\n');
+
+app.post('/api/conversations/:id/export', async (req, res) => {
+  try {
+    const format = req.body?.format === 'docx' ? 'docx' : 'pdf';
+    const conv = db.prepare('SELECT * FROM conversations WHERE id=?').get(req.params.id);
+    if (!conv) return res.status(404).json({ error: 'Conversa não encontrada' });
+    const messages = db.prepare('SELECT role, content, created_at FROM messages WHERE conversation_id=? ORDER BY created_at ASC').all(req.params.id);
+    if (!messages.length) return res.status(400).json({ error: 'A conversa ainda não tem mensagens.' });
+    const ws = workspaceFor(req.params.id);
+    const jsonPath = path.join(ws.base, '.export.json');
+    fs.writeFileSync(jsonPath, JSON.stringify({ title: conv.title, messages }), 'utf8');
+    try { fs.chownSync(jsonPath, 1000, 1000); } catch {}
+    const slug = (conv.title || 'conversa').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'conversa';
+    const name = `conversa-${slug}.${format}`;
+    const result = JSON.parse(await runTool(req.params.id, 'run_python', { code: PY_EXPORT.replace('__FMT__', format).replace('__OUT__', name) }));
+    try { fs.rmSync(jsonPath, { force: true }); } catch {}
+    if (result.exitCode !== 0) return res.status(500).json({ error: 'Falha ao exportar: ' + String(result.output).slice(-200) });
+    res.json({ ok: true, path: `outputs/${name}`, name });
+  } catch (err) {
+    console.error('[export]', err);
+    res.status(500).json({ error: 'Falha ao exportar a conversa.' });
+  }
+});
+
+// Backup completo (banco + workspaces) num .tar.gz para download
+app.get('/api/backup', (req, res) => {
+  try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch {}
+  const stamp = new Date().toISOString().slice(0, 10);
+  const dataDir = path.dirname(path.resolve(process.env.DB_PATH || './data/app.sqlite'));
+  const wsRoot = path.resolve(process.env.WORKSPACE_ROOT || './workspaces');
+  res.setHeader('Content-Type', 'application/gzip');
+  res.setHeader('Content-Disposition', `attachment; filename="frederico-backup-${stamp}.tar.gz"`);
+  const args = ['-czf', '-', '-C', path.dirname(dataDir), path.basename(dataDir)];
+  if (fs.existsSync(wsRoot)) args.push('-C', path.dirname(wsRoot), path.basename(wsRoot));
+  const tar = spawn('tar', args);
+  tar.stdout.pipe(res);
+  tar.on('error', (err) => { console.error('[backup]', err); res.end(); });
 });
 
 // Edição de mensagem (estilo ChatGPT): remove a mensagem indicada e TUDO que

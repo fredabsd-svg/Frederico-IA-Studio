@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus } from 'lucide-react';
+import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload } from 'lucide-react';
 import { API, FALLBACK_MODELS, TOOL_INFO, TEMPLATES, SUGGESTIONS, emptyForm } from './constants.js';
 import { ToolStep, Slider, Modal, ModelPicker, Collapsible } from './components.jsx';
 
@@ -44,6 +44,8 @@ export default function App() {
   const [templates, setTemplates] = useState([]);
   const [clients, setClients] = useState([]);
   const [clientId, setClientId] = useState(() => localStorage.getItem('fred_client') || '');
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const endRef = useRef(null);
   const inputRef = useRef(null);
   const recognitionRef = useRef(null);
@@ -95,6 +97,23 @@ export default function App() {
     e.stopPropagation();
     if (!confirm('Excluir este template?')) return;
     try { await fetch(`${API}/api/templates/${id}`, { method: 'DELETE' }); await loadTemplates(); } catch {}
+  }
+
+  // ---- Exportar conversa ----
+  async function exportConv(format) {
+    setExportOpen(false);
+    if (!current || !messages.length) { showToast('A conversa ainda não tem mensagens para exportar.'); return; }
+    setExporting(true);
+    try {
+      const res = await fetch(`${API}/api/conversations/${current.id}/export`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ format }) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '');
+      window.open(`${API}/api/conversations/${current.id}/download/${data.path}`, '_blank');
+    } catch (e) {
+      showToast(`Não foi possível exportar: ${e.message || 'erro inesperado'}`);
+    } finally {
+      setExporting(false);
+    }
   }
 
   async function editMessage(m, idx) {
@@ -533,6 +552,7 @@ export default function App() {
       <button className="studio" onClick={openTemplates}><BookMarked size={16}/> Templates</button>
       <button className="studio" onClick={() => { setMemoryScope('global'); loadMemory('global'); setMemoryOpen(true); }}><Brain size={16}/> Memória</button>
       <button className="studio" onClick={openAnalytics}><BarChart3 size={16}/> Análises</button>
+      <button className="studio" onClick={() => window.open(`${API}/api/backup`, '_blank')} title="Baixa um arquivo .tar.gz com o banco e todos os workspaces"><HardDriveDownload size={16}/> Backup</button>
       <button className="theme" onClick={() => setDark(!dark)}>{dark ? <Sun size={16}/> : <Moon size={16}/>} Tema</button>
     </aside>
 
@@ -546,6 +566,13 @@ export default function App() {
             {assistants.map(a => <option key={a.id} value={a.id}>{a.emoji || '🤖'} {a.name}</option>)}
           </select>
           <button className="gear" onClick={() => currentAssistant ? openStudioEdit(currentAssistant) : openStudioNew()} title="Editar assistente" disabled={team}><Settings size={16}/></button>
+          <div className="mpicker">
+            <button className="gear" onClick={() => setExportOpen(o => !o)} title="Exportar conversa" disabled={exporting}>{exporting ? <span className="spin sm"/> : <FileDown size={16}/>}</button>
+            {exportOpen && <div className="mpPanel exportPanel">
+              <button className="mpItem" onClick={() => exportConv('pdf')}><span className="mpItemName">📄 Exportar como PDF</span></button>
+              <button className="mpItem" onClick={() => exportConv('docx')}><span className="mpItemName">📝 Exportar como Word (.docx)</span></button>
+            </div>}
+          </div>
           <ModelPicker models={allModels} value={model} onChange={setModel}/>
         </div>
       </header>
@@ -584,7 +611,7 @@ export default function App() {
                     </a>
                   : <a className="filecard" key={f.id || f.path} href={url} target="_blank" rel="noreferrer">
                       <span className="fcicon"><FileText size={20}/></span>
-                      <span className="fcinfo"><b>{f.name}</b><small>{Math.ceil((f.size || 0) / 1024)} KB</small></span>
+                      <span className="fcinfo"><b>{f.name}</b><small>{Math.ceil((f.size || 0) / 1024)} KB{f.check && <span className={f.check.ok ? 'okBadge' : 'warnBadge'}> · {f.check.ok ? `✓ verificado (${f.check.info})` : `⚠ ${f.check.info}`}</span>}</small></span>
                       <span className="fcdl"><Download size={16}/> Baixar</span>
                     </a>;
               })}
@@ -719,6 +746,13 @@ export default function App() {
           <table className="atable"><thead><tr><th>Modelo</th><th>Msgs</th><th>Tokens</th></tr></thead>
             <tbody>{(analytics.byModel || []).map((r, i) => <tr key={i}><td>{r.model}</td><td>{r.messages}</td><td>{(r.tokens || 0).toLocaleString('pt-BR')}</td></tr>)}
             {(!analytics.byModel || !analytics.byModel.length) && <tr><td colSpan={3} className="muted">Sem dados ainda.</td></tr>}</tbody>
+          </table>
+        </div>
+        <div className="field">
+          <span className="fieldLabel">Por conversa (15 maiores)</span>
+          <table className="atable"><thead><tr><th>Conversa</th><th>Msgs</th><th>Tokens</th></tr></thead>
+            <tbody>{(analytics.byConversation || []).map((r, i) => <tr key={i}><td>{r.title}</td><td>{r.messages}</td><td>{(r.tokens || 0).toLocaleString('pt-BR')}</td></tr>)}
+            {(!analytics.byConversation || !analytics.byConversation.length) && <tr><td colSpan={3} className="muted">Sem dados ainda.</td></tr>}</tbody>
           </table>
         </div>
         <p className="muted" style={{ margin: 0, fontSize: 12 }}>Tokens são a medida de consumo dos modelos. O custo em R$/US$ depende do preço de cada modelo no OpenRouter.</p>
