@@ -1,0 +1,14 @@
+# Dependências
+node_modules/
+
+# Segredos e ambiente
+.env
+
+# Dados de runtime (banco SQLite e workspaces das conversas)
+data/
+workspaces/
+
+# Logs e temporários
+*.log
+npm-debug.log*
+.DS_Store

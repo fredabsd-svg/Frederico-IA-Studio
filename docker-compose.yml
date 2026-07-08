@@ -1,0 +1,41 @@
+services:
+  # Constrói a imagem do sandbox; o backend cria containers dela sob demanda
+  sandbox-image:
+    build: ./sandbox
+    image: frederico-ai-sandbox:latest
+    command: ["true"]
+    restart: "no"
+
+  backend:
+    build: .
+    container_name: frederico-ai-backend
+    ports:
+      - "3001:3001"
+    env_file:
+      - .env
+    environment:
+      # Caminho DENTRO do container do backend
+      - WORKSPACE_ROOT=/app/workspaces
+      - DB_PATH=/app/data/app.sqlite
+      # Caminho NO HOST do mesmo diretório — usado nos binds dos sandboxes.
+      # Docker interpreta binds como caminhos do host, não do container.
+      - HOST_WORKSPACE_ROOT=${PWD}/workspaces
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./workspaces:/app/workspaces
+      - ./data:/app/data
+    depends_on:
+      sandbox-image:
+        condition: service_completed_successfully
+
+  frontend:
+    image: node:20-alpine
+    container_name: frederico-ai-frontend
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+    environment:
+      - VITE_API_URL=http://localhost:3001
