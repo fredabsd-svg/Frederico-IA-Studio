@@ -7,7 +7,7 @@ import path from 'path';
 import { nanoid } from 'nanoid';
 import { db, now } from './db.js';
 import { runAgent, runOrchestrator, setControl, AGENTS } from './agent.js';
-import { workspaceFor, destroyConversation } from './sandbox.js';
+import { workspaceFor, destroyConversation, insideBase } from './sandbox.js';
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -204,7 +204,7 @@ app.delete('/api/conversations/:id/files/*', (req, res) => {
   const ws = workspaceFor(req.params.id);
   const rel = req.params[0];
   const target = path.resolve(ws.base, rel);
-  if (!target.startsWith(path.resolve(ws.base))) return res.status(400).json({ error: 'Caminho inválido' });
+  if (!insideBase(ws.base, target)) return res.status(400).json({ error: 'Caminho inválido' });
   try { fs.rmSync(target, { force: true }); } catch {}
   db.prepare('DELETE FROM files WHERE conversation_id=? AND path=?').run(req.params.id, rel.replaceAll('\\', '/'));
   res.json({ ok: true });
@@ -214,7 +214,7 @@ app.get('/api/conversations/:id/download/*', (req, res) => {
   const ws = workspaceFor(req.params.id);
   const rel = req.params[0];
   const target = path.resolve(ws.base, rel);
-  if (!target.startsWith(path.resolve(ws.base)) || !fs.existsSync(target)) return res.status(404).send('Arquivo não encontrado');
+  if (!insideBase(ws.base, target) || !fs.existsSync(target)) return res.status(404).send('Arquivo não encontrado');
   res.download(target);
 });
 
@@ -233,7 +233,10 @@ app.post('/api/conversations/:id/chat', async (req, res) => {
   res.setHeader('Connection', 'keep-alive');
   res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders?.();
-  const send = (event) => res.write(`data: ${JSON.stringify(event)}\n\n`);
+  const send = (event) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(event)}\n\n`); };
+  // Se o navegador desconectar (aba fechada/rede), interrompe a execução
+  // para não continuar gastando tokens sem ninguém assistindo.
+  req.on('close', () => setControl(req.params.id, 'stop'));
   try {
     const text = req.body?.message || '';
     // Título automático: usa o início da 1ª mensagem em vez de "Nova conversa"
@@ -258,7 +261,8 @@ app.post('/api/conversations/:id/chat', async (req, res) => {
     }
     send({ type: 'done' });
   } catch (err) {
-    send({ type: 'error', content: err.message });
+    console.error('[chat]', err);
+    send({ type: 'error', content: String(err.message || 'Erro inesperado').slice(0, 300) });
   } finally {
     res.end();
   }
@@ -271,5 +275,17 @@ function walk(dir) {
     return d.isDirectory() ? walk(full) : [full];
   });
 }
+
+// 404 padrão para rotas de API desconhecidas
+app.use('/api', (_, res) => res.status(404).json({ error: 'Rota não encontrada' }));
+
+// Tratador global de erros: loga o detalhe no servidor e devolve mensagem
+// limpa ao cliente (sem stack trace).
+app.use((err, req, res, _next) => {
+  console.error('[erro]', req.method, req.path, err);
+  if (res.headersSent) return res.end();
+  const status = err.type === 'entity.parse.failed' ? 400 : err.status || 500;
+  res.status(status).json({ error: status === 400 ? 'Requisição inválida (JSON malformado).' : 'Erro interno do servidor.' });
+});
 
 app.listen(port, () => console.log(`Frederico AI Studio backend em http://localhost:${port}`));

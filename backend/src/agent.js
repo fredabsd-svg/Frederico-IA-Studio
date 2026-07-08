@@ -133,11 +133,13 @@ function addUsage(acc, u) {
 // ---- Controle de execução (pausar / continuar / parar) ----
 const controls = new Map(); // conversationId -> { paused, stopped }
 export function setControl(conversationId, action) {
-  const c = controls.get(conversationId) || { paused: false, stopped: false };
+  // Só atua sobre uma execução ATIVA; nunca cria entradas (evita vazamento
+  // quando o evento chega depois que a execução terminou).
+  const c = controls.get(conversationId);
+  if (!c) return null;
   if (action === 'pause') c.paused = true;
   else if (action === 'resume') c.paused = false;
   else if (action === 'stop') { c.stopped = true; c.paused = false; }
-  controls.set(conversationId, c);
   return c;
 }
 function initControl(id) { const c = { paused: false, stopped: false }; controls.set(id, c); return c; }
@@ -182,6 +184,7 @@ export async function runAgent({ conversationId, userText, model, assistant, web
   let finalText = '';
   let stopped = false;
   let completedNaturally = false;
+  try {
   for (let step = 0; step < maxSteps; step++) {
     if (await gate(control, onEvent)) { stopped = true; break; }
     onEvent({ type: 'status', content: step === 0 ? 'Pensando...' : 'Continuando...' });
@@ -231,7 +234,9 @@ export async function runAgent({ conversationId, userText, model, assistant, web
     }
     if (stopped) break;
   }
-  controls.delete(conversationId);
+  } finally {
+    controls.delete(conversationId);
+  }
 
   if (stopped) { onEvent({ type: 'status', content: 'Interrompido pelo usuário' }); if (!finalText.trim()) finalText = '_Processamento interrompido pelo usuário._'; }
   else if (!completedNaturally) {

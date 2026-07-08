@@ -1,108 +1,117 @@
 # Frederico AI Studio
 
-Aplicativo de chat com IA inspirado em ChatGPT/Claude, conectado à API da DeepSeek e a uma sandbox Linux via Docker para gerar arquivos reais: Word, Excel, PDF, CSV, TXT, ZIP e relatórios.
+Plataforma de chat com IA para escritórios e profissionais: converse com assistentes
+especializados que **executam código de verdade** em um sandbox Linux isolado e
+**geram arquivos reais** — Excel, Word, PDF, CSV, ZIP — prontos para baixar no chat.
 
-## Principais melhorias desta versão
+Conecta-se a qualquer provedor compatível com a API OpenAI (OpenRouter, DeepSeek,
+vLLM/Ollama local), com interface 100% em português do Brasil.
 
-- Interface com sidebar de conversas.
-- Painel lateral de arquivos/artifacts.
-- Upload de documentos.
-- Streaming via Server-Sent Events.
-- Renderização Markdown no chat.
-- Histórico persistente em SQLite.
-- Sandbox Docker por sessão.
-- Pasta isolada por conversa: `uploads` e `outputs`.
-- Ferramentas: `run_python`, `bash`, `read_file`, `write_file`, `list_files`, `zip_outputs`.
-- Bibliotecas prontas para gerar Excel, Word, PDF, PowerPoint, gráficos e OCR.
+## Principais recursos
 
-## Estrutura
+| Recurso | Descrição |
+|---|---|
+| 🤖 **Assistant Studio** | Crie assistentes sem programar: nome, modelo, instruções (com templates de Contábil, Jurídico, RH, Marketing, Dev), ferramentas permitidas e sliders de personalidade |
+| 📎 **Geração real de arquivos** | Excel (openpyxl/xlsxwriter), Word (python-docx), PDF (reportlab/weasyprint), gráficos (matplotlib), OCR (tesseract) — os arquivos aparecem como cartões no chat |
+| 🧠 **Memória** | Global (todos os assistentes lembram: empresa, CNPJ, preferências) e por assistente |
+| 🧑‍🤝‍🧑 **Modo Equipe** | Uma pergunta aciona todos os assistentes; um coordenador une as perspectivas numa resposta só |
+| 🌐 **Pesquisa na internet** | Botão de globo liga a busca (Google via API oficial, ou DuckDuckGo sem cadastro) com citação de fontes |
+| 🎤 **Ditado por voz** | Fale em vez de digitar (Chrome/Edge, pt-BR) |
+| ⏯️ **Controles de execução** | Pausar, continuar e parar o processamento; streaming token a token; rastro vivo das ferramentas |
+| 📊 **Análises** | Mensagens e tokens consumidos por assistente e por modelo |
+| 🔒 **Sandbox isolado** | 1 container Docker por conversa: sem rede, sem privilégios, com limites de CPU/memória/processos |
 
-```txt
+## Arquitetura
+
+```
+┌─────────────┐  SSE/REST   ┌──────────────┐  API OpenAI-compat.  ┌────────────┐
+│  Frontend    │ ──────────► │   Backend     │ ───────────────────► │ OpenRouter │
+│ React + Vite │             │ Node/Express  │                      │ /DeepSeek/ │
+│  (porta 5173)│             │  (porta 3001) │                      │ vLLM local │
+└─────────────┘             └──────┬───────┘                      └────────────┘
+                             SQLite │ dockerode
+                            ┌──────▼───────┐
+                            │   Sandbox     │  1 container por conversa
+                            │ python:3.12   │  sem rede · uid 1000 · limites
+                            └──────────────┘
+```
+
+```
 frederico-ai-studio/
-├─ backend/
-│  ├─ src/
-│  │  ├─ agent.js
-│  │  ├─ db.js
-│  │  ├─ sandbox.js
-│  │  ├─ server.js
-│  │  └─ tools.js
-│  └─ package.json
-├─ frontend/
-│  ├─ src/
-│  │  ├─ App.jsx
-│  │  ├─ main.jsx
-│  │  └─ styles.css
-│  └─ package.json
-├─ sandbox/
-│  └─ Dockerfile
-├─ docker-compose.yml
-├─ Dockerfile
-└─ .env.example
+├── docker-compose.yml        # sobe tudo (sandbox-image + backend + frontend)
+├── Dockerfile                # backend (node:20-slim)
+├── sandbox/Dockerfile        # imagem do sandbox (python:3.12-slim + libs)
+├── iniciar.bat / parar.bat   # atalhos Windows (duplo clique)
+├── .env.example              # modelo de configuração
+├── backend/src/
+│   ├── server.js             # rotas HTTP + SSE
+│   ├── agent.js              # loop agêntico, orquestrador, memória, controles
+│   ├── tools.js              # ferramentas (sandbox + pesquisa web)
+│   ├── sandbox.js            # ciclo de vida dos containers (dockerode)
+│   └── db.js                 # SQLite (better-sqlite3, WAL)
+└── frontend/src/
+    ├── App.jsx               # aplicação
+    ├── components.jsx        # componentes reutilizáveis
+    ├── constants.js          # configuração e dados estáticos
+    └── styles.css            # tema claro/escuro
 ```
 
 ## Como rodar
 
-### 1. Criar arquivo `.env`
+### Pré-requisitos
 
-Copie:
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) instalado e rodando
+- Uma chave de API: [OpenRouter](https://openrouter.ai) (recomendado — acesso a vários modelos) ou [DeepSeek](https://platform.deepseek.com)
+
+### 1. Configurar o `.env`
 
 ```bash
 cp .env.example .env
 ```
 
-Edite a chave:
+Edite o `.env`. Com **OpenRouter**:
 
 ```env
-DEEPSEEK_API_KEY=sua_chave_deepseek
+DEEPSEEK_API_KEY=sk-or-sua_chave
+DEEPSEEK_BASE_URL=https://openrouter.ai/api/v1
+DEEPSEEK_MODEL=deepseek/deepseek-chat
 ```
 
-### 2. Construir a imagem da sandbox
+Com **DeepSeek direto**: mantenha `DEEPSEEK_BASE_URL=https://api.deepseek.com` e `DEEPSEEK_MODEL=deepseek-chat`.
+
+### 2. Subir o aplicativo
+
+**Windows (mais fácil):** duplo clique em **`iniciar.bat`** — ele limpa execuções
+anteriores, constrói o que for preciso e abre o navegador sozinho. Para desligar,
+**`parar.bat`**.
+
+**Linha de comando (qualquer sistema):**
 
 ```bash
-docker build -t frederico-ai-sandbox:latest ./sandbox
-```
-
-### 3. Rodar tudo com Docker Compose
-
-```bash
+docker build -t frederico-ai-sandbox:latest ./sandbox   # 1ª vez
 docker compose up --build
 ```
 
-Acesse:
+Acesse **http://localhost:5173** (backend em `http://localhost:3001/api/health`).
 
-```txt
-http://localhost:5173
+### 3. Atualizar para uma versão nova
+
+```bash
+git pull
+docker compose up --build
 ```
 
-Backend:
+As conversas, assistentes e memórias ficam preservadas em `./data` (SQLite) e `./workspaces`.
 
-```txt
-http://localhost:3001/api/health
-```
+## Configurações opcionais (`.env`)
 
-## Exemplo de uso
-
-Envie no chat:
-
-```txt
-Crie um arquivo Excel em outputs/relatorio.xlsx com uma aba chamada Dashboard, três KPIs e formatação profissional em azul escuro.
-```
-
-Ou:
-
-```txt
-Gere um documento Word em outputs/proposta.docx com uma proposta profissional de serviços contábeis.
-```
-
-## Segurança implementada
-
-- Um container Docker por sessão.
-- `NetworkDisabled: true` na sandbox.
-- Sem chave de API dentro da sandbox.
-- Limites de memória, CPU e PIDs.
-- Bloqueio básico de comandos perigosos.
-- Workspace isolado por conversa.
-- Downloads restritos ao workspace da sessão.
+| Variável | Padrão | Descrição |
+|---|---|---|
+| `TOOL_TIMEOUT_MS` | `45000` | Tempo máximo de cada comando no sandbox |
+| `AGENT_MAX_STEPS` | `30` | Máximo de etapas (ferramentas) por resposta |
+| `AGENT_HISTORY_LIMIT` | `60` | Mensagens recentes enviadas ao modelo |
+| `SANDBOX_MEMORY` / `SANDBOX_CPUS` | `1024m` / `1` | Limites do sandbox |
+| `GOOGLE_API_KEY` + `GOOGLE_CSE_ID` | — | Pesquisa via Google (sem elas, usa DuckDuckGo) |
 
 ## ⚠️ Avisos de segurança (leia antes de usar)
 
@@ -116,40 +125,40 @@ Gere um documento Word em outputs/proposta.docx com uma proposta profissional de
 - A sandbox reduz o risco (`NetworkDisabled`, `CapDrop: ALL`,
   `no-new-privileges`, limites de memória/CPU/PIDs), mas **não** substitui as
   precauções acima.
+- Com a **pesquisa na internet ligada**, o conteúdo das páginas visitadas entra
+  na conversa e é enviado ao provedor de IA. Mantenha desligada para assuntos
+  sensíveis.
 
-## 🇧🇷 LGPD e residência de dados (DeepSeek)
+## 🇧🇷 LGPD e residência de dados
 
-A API da **DeepSeek** é hospedada na **China**. Todo texto enviado no chat
-(incluindo o conteúdo de arquivos que o modelo leia) é transmitido para
-servidores fora do Brasil. **Para dados sensíveis ou sujeitos à LGPD, não use
-o endpoint público da DeepSeek.**
+A API da **DeepSeek** é hospedada na **China**; o OpenRouter, nos **EUA**. Todo
+texto enviado no chat (incluindo o conteúdo de arquivos que o modelo leia) é
+transmitido para servidores fora do Brasil. **Para dados sensíveis ou sujeitos
+à LGPD, não use endpoints públicos.**
 
-Nesses casos, aponte `DEEPSEEK_BASE_URL` no `.env` para um endpoint **local**
-compatível com a API OpenAI — por exemplo **vLLM** ou **Ollama** — mantendo os
-dados dentro da sua infraestrutura:
+Nesses casos, aponte `DEEPSEEK_BASE_URL` para um endpoint **local** compatível
+com a API OpenAI — por exemplo **vLLM** ou **Ollama** — mantendo os dados na
+sua infraestrutura:
 
 ```env
-# Exemplo com um servidor local compatível (vLLM, Ollama, etc.)
 DEEPSEEK_BASE_URL=http://localhost:11434/v1
 DEEPSEEK_MODEL=seu-modelo-local
 DEEPSEEK_API_KEY=chave-qualquer
 ```
 
+## Solução de problemas
+
+| Sintoma | Causa provável / solução |
+|---|---|
+| "Não foi possível conectar ao servidor" | Docker Desktop fechado ou app desligado → abra o Docker e rode `iniciar.bat` |
+| `port is already allocated` | Sobrou uma execução anterior → `parar.bat` (ou `docker compose down`) e suba de novo |
+| Erro de chave / "Insufficient balance" | Confira a chave no `.env` e o crédito no provedor |
+| Arquivo não gera / trava nos 45s | Tarefa pesada → peça em partes (extrair dados → depois gerar o arquivo) ou aumente `TOOL_TIMEOUT_MS` |
+| Ditado por voz não funciona | Use Chrome/Edge e permita o microfone |
+
 ## Pontos para produção
 
-Antes de usar com clientes reais:
-
-1. Adicionar autenticação de usuários.
-2. Trocar SQLite por PostgreSQL se houver múltiplos usuários.
-3. Adicionar fila de execução para tarefas longas.
-4. Melhorar preview de DOCX/XLSX/PDF no navegador.
-5. Criar política de retenção e exclusão de dados.
-6. Adicionar antivírus/scan nos uploads.
-7. Usar gVisor ou Firecracker para isolamento mais forte.
-8. Implementar RBAC e logs de auditoria.
-9. Adicionar MCP para ferramentas externas.
-10. Criar agentes especializados: Contábil, Fiscal, Excel, Jurídico e Auditoria.
-
-## Observação importante
-
-Este projeto é uma base funcional e profissional para desenvolvimento local. Para ambiente de produção com documentos de clientes, revise LGPD, segurança da infraestrutura, retenção de arquivos, controle de acesso e residência de dados da API utilizada.
+Antes de usar com clientes reais: autenticação de usuários; HTTPS/proxy reverso;
+PostgreSQL para múltiplos usuários; fila para tarefas longas; retenção/expurgo de
+dados; antivírus nos uploads; isolamento mais forte (gVisor/Firecracker); RBAC e
+logs de auditoria.

@@ -2,40 +2,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe } from 'lucide-react';
-
-const API = import.meta.env.VITE_API_URL || 'http://localhost:3001';
-
-// Lista de reserva, usada só se a busca do catálogo do provedor falhar.
-const FALLBACK_MODELS = [
-  { id: 'deepseek/deepseek-chat', name: 'DeepSeek Chat', tools: true },
-  { id: 'openai/gpt-4o-mini', name: 'GPT-4o mini', tools: true },
-  { id: 'openai/gpt-4o', name: 'GPT-4o', tools: true },
-  { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet', tools: true },
-  { id: 'google/gemini-flash-1.5', name: 'Gemini 1.5 Flash', tools: true }
-];
-
-// Ferramentas que um assistente pode ter acesso
-const TOOL_INFO = [
-  { name: 'run_python', label: 'Executar Python' },
-  { name: 'bash', label: 'Comandos bash' },
-  { name: 'write_file', label: 'Escrever arquivos' },
-  { name: 'read_file', label: 'Ler arquivos' },
-  { name: 'list_files', label: 'Listar arquivos' },
-  { name: 'zip_outputs', label: 'Compactar (.zip)' }
-];
-
-// Templates prontos de system prompt
-const TEMPLATES = [
-  { key: 'contabil', label: 'Contábil / Fiscal', emoji: '📊', prompt: 'Você é um assistente contábil e fiscal brasileiro. Domine regimes tributários (Simples, Lucro Presumido e Real), obrigações acessórias, SPED, escrituração e conciliações. Responda em português do Brasil, cite a base legal quando relevante e gere planilhas/relatórios reais quando pedido.' },
-  { key: 'juridico', label: 'Jurídico', emoji: '⚖️', prompt: 'Você é um assistente jurídico brasileiro. Ajude com análise de contratos, petições, pareceres e pesquisa de legislação. Responda em português do Brasil, seja preciso, cite artigos e leis, e sempre recomende a revisão por um advogado responsável.' },
-  { key: 'rh', label: 'Recursos Humanos', emoji: '👥', prompt: 'Você é um assistente de RH e Departamento Pessoal no Brasil. Ajude com folha de pagamento, admissões/demissões, eSocial, férias, benefícios e legislação trabalhista (CLT). Responda em português do Brasil, de forma clara e prática.' },
-  { key: 'marketing', label: 'Marketing', emoji: '📣', prompt: 'Você é um assistente de marketing e conteúdo. Ajude a criar textos, campanhas, posts, e-mails e estratégias. Responda em português do Brasil, com tom persuasivo e criativo, adaptando a linguagem ao público-alvo.' },
-  { key: 'dev', label: 'Programação', emoji: '💻', prompt: 'Você é um engenheiro de software sênior com um sandbox Linux real. Escreva, execute e teste código (Python/shell) usando as ferramentas, verifique o resultado e corrija erros antes de responder. A sandbox NÃO tem internet: use a biblioteca padrão e os pacotes já instalados. Responda em português do Brasil, objetivo e técnico.' },
-  { key: 'geral', label: 'Uso geral', emoji: '🤖', prompt: 'Você é um assistente pessoal versátil e prestativo. Responda em português do Brasil, de forma clara e útil. Quando o usuário pedir arquivos (Excel, Word, PDF), gere-os de verdade usando as ferramentas disponíveis.' }
-];
-
-const emptyForm = () => ({ id: null, name: '', emoji: '🤖', model: '', system_prompt: '', template: '', tools: TOOL_INFO.map(t => t.name), personality: { form: 50, det: 50, criat: 20 } });
+import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles } from 'lucide-react';
+import { API, FALLBACK_MODELS, TOOL_INFO, TEMPLATES, SUGGESTIONS, emptyForm } from './constants.js';
+import { ToolStep, Slider, Modal } from './components.jsx';
 
 export default function App() {
   const [conversations, setConversations] = useState([]);
@@ -63,10 +32,15 @@ export default function App() {
   const [dark, setDark] = useState(true);
   const [listening, setListening] = useState(false);
   const [webSearch, setWebSearch] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [loadingConv, setLoadingConv] = useState(false);
+  const [connError, setConnError] = useState(false);
+  const [toast, setToast] = useState(null);
   const endRef = useRef(null);
   const recognitionRef = useRef(null);
+  const toastTimer = useRef(null);
 
-  useEffect(() => { init(); loadModels(); loadAssistants(); loadMemory(); }, []);
+  useEffect(() => { init(); }, []);
   useEffect(() => { document.body.className = dark ? 'dark' : 'light'; }, [dark]);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
   // Enquanto processa, "bate um relógio" a cada segundo para os contadores vivos
@@ -76,10 +50,24 @@ export default function App() {
     return () => clearInterval(t);
   }, [busy]);
 
+  function showToast(text) {
+    clearTimeout(toastTimer.current);
+    setToast(text);
+    toastTimer.current = setTimeout(() => setToast(null), 6000);
+  }
+
   async function init() {
-    const rows = await fetchConversations();
-    if (rows.length) openConversation(rows[0].id);
-    else createConversation();
+    setConnError(false);
+    try {
+      const rows = await fetchConversations();
+      if (rows.length) await openConversation(rows[0].id);
+      else await createConversation();
+      loadModels();
+      loadAssistants();
+      loadMemory();
+    } catch {
+      setConnError(true);
+    }
   }
 
   async function loadModels() {
@@ -112,40 +100,59 @@ export default function App() {
   }
 
   async function createConversation() {
-    const res = await fetch(`${API}/api/conversations`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'Nova conversa', model }) });
-    const c = await res.json();
-    setConversations(prev => [c, ...prev]);
-    setCurrent(c);
-    setMessages([]);
-    setFiles([]);
+    try {
+      const res = await fetch(`${API}/api/conversations`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'Nova conversa', model }) });
+      const c = await res.json();
+      setConversations(prev => [c, ...prev]);
+      setCurrent(c);
+      setMessages([]);
+      setFiles([]);
+      setMenuOpen(false);
+    } catch {
+      showToast('Não foi possível criar a conversa. O servidor está no ar?');
+    }
   }
 
   async function openConversation(id) {
-    const res = await fetch(`${API}/api/conversations/${id}`);
-    const data = await res.json();
-    setCurrent(data.conversation);
-    setMessages(data.messages || []);
-    loadFiles(id);
+    setLoadingConv(true);
+    setMenuOpen(false);
+    try {
+      const res = await fetch(`${API}/api/conversations/${id}`);
+      const data = await res.json();
+      setCurrent(data.conversation);
+      setMessages(data.messages || []);
+      loadFiles(id);
+    } catch {
+      showToast('Não foi possível abrir a conversa.');
+    } finally {
+      setLoadingConv(false);
+    }
   }
 
   async function deleteConversation(id, e) {
     e.stopPropagation();
     if (!confirm('Apagar esta conversa e todos os seus arquivos? Esta ação não pode ser desfeita.')) return;
-    await fetch(`${API}/api/conversations/${id}`, { method: 'DELETE' });
-    const rows = await fetchConversations();
-    if (current?.id === id) { rows.length ? openConversation(rows[0].id) : createConversation(); }
+    try {
+      await fetch(`${API}/api/conversations/${id}`, { method: 'DELETE' });
+      const rows = await fetchConversations();
+      if (current?.id === id) { rows.length ? openConversation(rows[0].id) : createConversation(); }
+    } catch {
+      showToast('Não foi possível apagar a conversa.');
+    }
   }
 
   async function loadFiles(id = current?.id) {
     if (!id) return;
-    const res = await fetch(`${API}/api/conversations/${id}/files`);
-    setFiles(await res.json());
+    try {
+      const res = await fetch(`${API}/api/conversations/${id}/files`);
+      setFiles(await res.json());
+    } catch {}
   }
 
   // ---- Ditado por voz (Web Speech API) ----
   function toggleMic() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) { alert('Seu navegador não suporta ditado por voz. Use o Google Chrome ou o Microsoft Edge.'); return; }
+    if (!SR) { showToast('Seu navegador não suporta ditado por voz. Use o Google Chrome ou o Microsoft Edge.'); return; }
     if (listening) { recognitionRef.current?.stop(); return; }
     const rec = new SR();
     rec.lang = 'pt-BR';
@@ -171,19 +178,29 @@ export default function App() {
   async function deleteFile(f) {
     if (!current) return;
     if (!confirm(`Excluir o arquivo "${f.name}"?`)) return;
-    const encoded = f.path.split('/').map(encodeURIComponent).join('/');
-    await fetch(`${API}/api/conversations/${current.id}/files/${encoded}`, { method: 'DELETE' });
-    await loadFiles();
+    try {
+      const encoded = f.path.split('/').map(encodeURIComponent).join('/');
+      await fetch(`${API}/api/conversations/${current.id}/files/${encoded}`, { method: 'DELETE' });
+      await loadFiles();
+    } catch {
+      showToast('Não foi possível excluir o arquivo.');
+    }
   }
 
   async function uploadFiles(e) {
     const selected = [...e.target.files];
     if (!selected.length || !current) return;
-    const fd = new FormData();
-    selected.forEach(f => fd.append('files', f));
-    await fetch(`${API}/api/conversations/${current.id}/upload`, { method: 'POST', body: fd });
-    await loadFiles();
-    e.target.value = '';
+    try {
+      const fd = new FormData();
+      selected.forEach(f => fd.append('files', f));
+      const res = await fetch(`${API}/api/conversations/${current.id}/upload`, { method: 'POST', body: fd });
+      if (!res.ok) throw new Error();
+      await loadFiles();
+    } catch {
+      showToast('Falha no envio do arquivo. Verifique o tamanho (máx. 50 MB) e tente de novo.');
+    } finally {
+      e.target.value = '';
+    }
   }
 
   function pickAssistant(id) {
@@ -195,7 +212,7 @@ export default function App() {
   // ---- Assistant Studio ----
   function openStudioNew() { setForm(emptyForm()); setStudioOpen(true); }
   function openStudioEdit(a) {
-    setForm({ id: a.id, name: a.name, emoji: a.emoji || '🤖', model: a.model || model, system_prompt: a.system_prompt || '', tools: a.tools?.length ? a.tools : TOOL_INFO.map(t => t.name), personality: { form: 50, det: 50, criat: 20, ...(a.personality || {}) } });
+    setForm({ id: a.id, name: a.name, emoji: a.emoji || '🤖', model: a.model || model, system_prompt: a.system_prompt || '', template: '', tools: a.tools?.length ? a.tools : TOOL_INFO.map(t => t.name), personality: { form: 50, det: 50, criat: 20, ...(a.personality || {}) } });
     setStudioOpen(true);
   }
   function applyTemplate(key) {
@@ -209,24 +226,34 @@ export default function App() {
   function setSlider(key, val) { setForm(f => ({ ...f, personality: { ...f.personality, [key]: Number(val) } })); }
 
   async function saveAssistant() {
-    if (!form.name.trim() || !form.system_prompt.trim()) { alert('Preencha o nome e as instruções do assistente.'); return; }
-    const payload = { name: form.name, emoji: form.emoji, model: form.model || model, system_prompt: form.system_prompt, tools: form.tools, personality: form.personality };
-    const url = form.id ? `${API}/api/assistants/${form.id}` : `${API}/api/assistants`;
-    const saved = await (await fetch(url, { method: form.id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })).json();
-    await loadAssistants();
-    if (saved?.id) pickAssistant(saved.id);
-    setStudioOpen(false);
+    if (!form.name.trim() || !form.system_prompt.trim()) { showToast('Preencha o nome e as instruções do assistente.'); return; }
+    try {
+      const payload = { name: form.name, emoji: form.emoji, model: form.model || model, system_prompt: form.system_prompt, tools: form.tools, personality: form.personality };
+      const url = form.id ? `${API}/api/assistants/${form.id}` : `${API}/api/assistants`;
+      const res = await fetch(url, { method: form.id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      if (!res.ok) throw new Error();
+      const saved = await res.json();
+      await loadAssistants();
+      if (saved?.id) pickAssistant(saved.id);
+      setStudioOpen(false);
+    } catch {
+      showToast('Não foi possível salvar o assistente.');
+    }
   }
 
   async function deleteAssistant() {
     if (!form.id) return;
     if (!confirm('Excluir este assistente?')) return;
-    await fetch(`${API}/api/assistants/${form.id}`, { method: 'DELETE' });
-    setStudioOpen(false);
-    const res = await fetch(`${API}/api/assistants`);
-    const rows = await res.json();
-    setAssistants(rows);
-    if (assistantId === form.id) pickAssistant(rows[0]?.id || null);
+    try {
+      await fetch(`${API}/api/assistants/${form.id}`, { method: 'DELETE' });
+      setStudioOpen(false);
+      const res = await fetch(`${API}/api/assistants`);
+      const rows = await res.json();
+      setAssistants(rows);
+      if (assistantId === form.id) pickAssistant(rows[0]?.id || null);
+    } catch {
+      showToast('Não foi possível excluir o assistente.');
+    }
   }
 
   // ---- Memória (global ou por assistente) ----
@@ -238,18 +265,28 @@ export default function App() {
     const content = memoryInput.trim();
     if (!content) return;
     setMemoryInput('');
-    await fetch(`${API}/api/memory`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content, scope: memoryScope }) });
-    await loadMemory();
+    try {
+      await fetch(`${API}/api/memory`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content, scope: memoryScope }) });
+      await loadMemory();
+    } catch {
+      showToast('Não foi possível salvar a memória.');
+    }
   }
   async function removeMemory(id) {
-    await fetch(`${API}/api/memory/${id}`, { method: 'DELETE' });
-    await loadMemory();
+    try {
+      await fetch(`${API}/api/memory/${id}`, { method: 'DELETE' });
+      await loadMemory();
+    } catch {
+      showToast('Não foi possível remover a memória.');
+    }
   }
 
   // ---- Analytics ----
   async function openAnalytics() {
     setAnalyticsOpen(true);
-    try { setAnalytics(await (await fetch(`${API}/api/analytics`)).json()); } catch {}
+    setAnalytics(null);
+    try { setAnalytics(await (await fetch(`${API}/api/analytics`)).json()); }
+    catch { showToast('Não foi possível carregar as análises.'); }
   }
 
   // ---- Controle: pausar / continuar / parar ----
@@ -319,19 +356,34 @@ export default function App() {
     setPaused(false);
     setStatusText('');
     await loadFiles();
-    const rows = await fetchConversations();
-    const updated = rows.find(c => c.id === current.id);
-    if (updated) setCurrent(updated);
+    try {
+      const rows = await fetchConversations();
+      const updated = rows.find(c => c.id === current.id);
+      if (updated) setCurrent(updated);
+    } catch {}
   }
 
   const currentAssistant = assistants.find(a => a.id === assistantId);
   const uploads = files.filter(f => f.kind === 'upload');
 
+  // Tela de erro de conexão (backend fora do ar)
+  if (connError) {
+    return <div className="connError">
+      <div className="connErrorCard">
+        <h2>Não foi possível conectar ao servidor</h2>
+        <p>Verifique se o aplicativo está ligado (Docker Desktop aberto e <code>iniciar.bat</code> executado) e tente novamente.</p>
+        <button className="primary" onClick={init}><RefreshCw size={15}/> Tentar novamente</button>
+      </div>
+    </div>;
+  }
+
   return <div className="app">
-    <aside className="sidebar">
+    {menuOpen && <div className="scrim" onClick={() => setMenuOpen(false)}/>}
+    <aside className={`sidebar ${menuOpen ? 'open' : ''}`}>
       <div className="brand">Frederico <span>AI Studio</span></div>
       <button className="new" onClick={createConversation}><Plus size={16}/> Nova conversa</button>
       <div className="convList">
+        {conversations.length === 0 && <p className="muted small">Suas conversas aparecerão aqui.</p>}
         {conversations.map(c => (
           <div key={c.id} className={`convItem ${current?.id === c.id ? 'active' : ''}`}>
             <button className="convOpen" onClick={() => openConversation(c.id)} title={c.title}>{c.title}</button>
@@ -347,6 +399,7 @@ export default function App() {
 
     <main className="chat">
       <header className="topbar">
+        <button className="hamburger" onClick={() => setMenuOpen(o => !o)} aria-label="Abrir menu"><Menu size={19}/></button>
         <div className="titleblock"><strong>{current?.title || 'Conversa'}</strong><small>{team ? `🧑‍🤝‍🧑 Equipe (${assistants.length} assistentes)` : (currentAssistant ? `${currentAssistant.emoji || '🤖'} ${currentAssistant.name}` : 'Assistente')} · {model}</small></div>
         <div className="pickers">
           <button className={`teamBtn ${team ? 'on' : ''}`} onClick={() => setTeam(t => !t)} title="Modo Equipe: aciona todos os assistentes e junta as respostas"><Users size={15}/> Equipe</button>
@@ -367,6 +420,15 @@ export default function App() {
         </div>
       </header>
       <section className="messages">
+        {loadingConv && <div className="working"><span className="spin"/><span>Carregando conversa...</span></div>}
+        {!loadingConv && messages.length === 0 && !busy && <div className="welcome">
+          <div className="welcomeIcon"><Sparkles size={26}/></div>
+          <h2>Como posso ajudar hoje?</h2>
+          <p>Envie um arquivo, peça uma planilha, um documento ou uma análise. Sugestões:</p>
+          <div className="suggestions">
+            {SUGGESTIONS.map((s, i) => <button key={i} onClick={() => setInput(s)}>{s}</button>)}
+          </div>
+        </div>}
         {messages.map((m, idx) => (
           <div key={m.id || idx} className={`msg ${m.role}`}>
             {m.blocks
@@ -375,7 +437,7 @@ export default function App() {
                 : <ReactMarkdown key={i} remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{b.content || ''}</ReactMarkdown>)
               : <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{m.content || ''}</ReactMarkdown>}
             {m.files?.length > 0 && <div className="filecards">
-              {m.files.map(f => <a className="filecard" key={f.id || f.path} href={`${API}/api/conversations/${current?.id}/download/${f.path}`} target="_blank">
+              {m.files.map(f => <a className="filecard" key={f.id || f.path} href={`${API}/api/conversations/${current?.id}/download/${f.path}`} target="_blank" rel="noreferrer">
                 <span className="fcicon"><FileText size={20}/></span>
                 <span className="fcinfo"><b>{f.name}</b><small>{Math.ceil((f.size || 0) / 1024)} KB</small></span>
                 <span className="fcdl"><Download size={16}/> Baixar</span>
@@ -407,154 +469,113 @@ export default function App() {
           <button className={`webBtn ${webSearch ? 'on' : ''}`} onClick={() => setWebSearch(w => !w)} title={webSearch ? 'Pesquisa na internet ATIVADA — clique para desativar' : 'Ativar pesquisa na internet'} aria-label="Pesquisa na internet"><Globe size={18}/></button>
           <textarea value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }} placeholder={listening ? 'Ouvindo... fale agora' : (webSearch ? 'Pesquisa na internet ativada — pergunte algo atual...' : 'Peça para analisar arquivos, gerar Word, Excel, PDF...')} />
           <button className={`mic ${listening ? 'on' : ''}`} onClick={toggleMic} title="Falar (ditado por voz)" aria-label="Ditado por voz"><Mic size={18}/></button>
-          <button onClick={sendMessage} disabled={busy}><Send size={18}/></button>
+          <button className="sendBtn" onClick={sendMessage} disabled={busy} aria-label="Enviar"><Send size={18}/></button>
         </div>
       </footer>
     </main>
 
-    {studioOpen && <div className="modalOverlay" onClick={() => setStudioOpen(false)}>
-      <div className="modal" onClick={e => e.stopPropagation()}>
-        <div className="modalHead">
-          <h2><Bot size={18}/> {form.id ? 'Editar assistente' : 'Novo assistente'}</h2>
-          <button className="x" onClick={() => setStudioOpen(false)} aria-label="Fechar">✕</button>
-        </div>
-        <div className="modalBody">
-          <div className="frow">
-            <label className="grow">Nome
-              <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Ex.: Assistente Contábil"/>
+    {toast && <div className="toast" role="alert">{toast}<button onClick={() => setToast(null)} aria-label="Fechar aviso"><X size={14}/></button></div>}
+
+    {studioOpen && <Modal title={form.id ? 'Editar assistente' : 'Novo assistente'} icon={<Bot size={18}/>} onClose={() => setStudioOpen(false)}>
+      <div className="frow">
+        <label className="grow">Nome
+          <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Ex.: Assistente Contábil"/>
+        </label>
+        <label className="emojiField">Ícone
+          <input value={form.emoji} onChange={e => setForm(f => ({ ...f, emoji: e.target.value }))} maxLength={2}/>
+        </label>
+      </div>
+
+      <label>Modelo de IA padrão
+        <select value={form.model || model} onChange={e => setForm(f => ({ ...f, model: e.target.value }))}>
+          {allModels.filter(m => m.tools !== false).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+        </select>
+      </label>
+
+      <label>Começar de um template
+        <select value={form.template || ''} onChange={e => applyTemplate(e.target.value)}>
+          <option value="">— escolher um modelo pronto —</option>
+          {TEMPLATES.map(t => <option key={t.key} value={t.key}>{t.emoji} {t.label}</option>)}
+        </select>
+      </label>
+
+      <label>Instruções do assistente (system prompt)
+        <textarea rows={7} value={form.system_prompt} onChange={e => setForm(f => ({ ...f, system_prompt: e.target.value }))} placeholder="Descreva em linguagem natural o papel, a especialidade e o comportamento esperado do assistente."/>
+      </label>
+
+      <div className="field">
+        <span className="fieldLabel">Ferramentas disponíveis</span>
+        <div className="tools">
+          {TOOL_INFO.map(t => (
+            <label key={t.name} className="chk">
+              <input type="checkbox" checked={form.tools.includes(t.name)} onChange={() => toggleTool(t.name)}/> {t.label}
             </label>
-            <label className="emojiField">Ícone
-              <input value={form.emoji} onChange={e => setForm(f => ({ ...f, emoji: e.target.value }))} maxLength={2}/>
-            </label>
-          </div>
-
-          <label>Modelo de IA padrão
-            <select value={form.model || model} onChange={e => setForm(f => ({ ...f, model: e.target.value }))}>
-              {allModels.filter(m => m.tools !== false).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-            </select>
-          </label>
-
-          <label>Começar de um template
-            <select value={form.template || ''} onChange={e => applyTemplate(e.target.value)}>
-              <option value="">— escolher um modelo pronto —</option>
-              {TEMPLATES.map(t => <option key={t.key} value={t.key}>{t.emoji} {t.label}</option>)}
-            </select>
-          </label>
-
-          <label>Instruções do assistente (system prompt)
-            <textarea rows={7} value={form.system_prompt} onChange={e => setForm(f => ({ ...f, system_prompt: e.target.value }))} placeholder="Descreva em linguagem natural o papel, a especialidade e o comportamento esperado do assistente."/>
-          </label>
-
-          <div className="field">
-            <span className="fieldLabel">Ferramentas disponíveis</span>
-            <div className="tools">
-              {TOOL_INFO.map(t => (
-                <label key={t.name} className="chk">
-                  <input type="checkbox" checked={form.tools.includes(t.name)} onChange={() => toggleTool(t.name)}/> {t.label}
-                </label>
-              ))}
-            </div>
-          </div>
-
-          <div className="field">
-            <span className="fieldLabel">Personalidade</span>
-            <Slider label="Formalidade" hintA="Informal" hintB="Formal" value={form.personality.form} onChange={v => setSlider('form', v)}/>
-            <Slider label="Detalhamento" hintA="Conciso" hintB="Detalhado" value={form.personality.det} onChange={v => setSlider('det', v)}/>
-            <Slider label="Criatividade" hintA="Preciso" hintB="Criativo" value={form.personality.criat} onChange={v => setSlider('criat', v)}/>
-          </div>
-
-          <div className="modalActions">
-            {form.id && <button className="danger" onClick={deleteAssistant}>Excluir</button>}
-            <div className="spacer"/>
-            <button onClick={() => setStudioOpen(false)}>Cancelar</button>
-            <button className="primary" onClick={saveAssistant}>Salvar assistente</button>
-          </div>
+          ))}
         </div>
       </div>
-    </div>}
 
-    {memoryOpen && <div className="modalOverlay" onClick={() => setMemoryOpen(false)}>
-      <div className="modal" onClick={e => e.stopPropagation()}>
-        <div className="modalHead">
-          <h2><Brain size={18}/> Memória</h2>
-          <button className="x" onClick={() => setMemoryOpen(false)} aria-label="Fechar">✕</button>
-        </div>
-        <div className="modalBody">
-          <label>Onde guardar
-            <select value={memoryScope} onChange={e => changeMemoryScope(e.target.value)}>
-              <option value="global">🌐 Global — todos os assistentes lembram</option>
-              {assistants.map(a => <option key={a.id} value={a.id}>{a.emoji || '🤖'} Só do assistente: {a.name}</option>)}
-            </select>
-          </label>
-          <p className="muted" style={{ margin: 0 }}>{memoryScope === 'global' ? 'Informações que TODOS os assistentes lembram em todas as conversas (ex.: CNPJ, regime tributário, preferências).' : 'Memória exclusiva deste assistente — só ele usa (ex.: decisões técnicas, particularidades do setor).'}</p>
-          <div className="memAdd">
-            <input value={memoryInput} onChange={e => setMemoryInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addMemory(); } }} placeholder="Ex.: Minha empresa é a Frederico Assessoria, CNPJ 00.000.000/0001-00, Simples Nacional."/>
-            <button className="primary" onClick={addMemory}>Adicionar</button>
-          </div>
-          <div className="memList">
-            {memoryItems.length === 0 && <p className="muted">Nenhuma informação salva ainda.</p>}
-            {memoryItems.map(m => (
-              <div className="memItem" key={m.id}>
-                <span>{m.content}</span>
-                <button className="memDel" onClick={() => removeMemory(m.id)} aria-label="Remover"><X size={15}/></button>
-              </div>
-            ))}
-          </div>
-        </div>
+      <div className="field">
+        <span className="fieldLabel">Personalidade</span>
+        <Slider label="Formalidade" hintA="Informal" hintB="Formal" value={form.personality.form} onChange={v => setSlider('form', v)}/>
+        <Slider label="Detalhamento" hintA="Conciso" hintB="Detalhado" value={form.personality.det} onChange={v => setSlider('det', v)}/>
+        <Slider label="Criatividade" hintA="Preciso" hintB="Criativo" value={form.personality.criat} onChange={v => setSlider('criat', v)}/>
       </div>
-    </div>}
 
-    {analyticsOpen && <div className="modalOverlay" onClick={() => setAnalyticsOpen(false)}>
-      <div className="modal" onClick={e => e.stopPropagation()}>
-        <div className="modalHead">
-          <h2><BarChart3 size={18}/> Análises de uso</h2>
-          <button className="x" onClick={() => setAnalyticsOpen(false)} aria-label="Fechar">✕</button>
-        </div>
-        <div className="modalBody">
-          {!analytics && <p className="muted">Carregando...</p>}
-          {analytics && <>
-            <div className="statRow">
-              <div className="stat"><b>{analytics.totals?.messages || 0}</b><span>mensagens</span></div>
-              <div className="stat"><b>{(analytics.totals?.tokens || 0).toLocaleString('pt-BR')}</b><span>tokens no total</span></div>
-              <div className="stat"><b>{(analytics.totals?.prompt_tokens || 0).toLocaleString('pt-BR')}</b><span>tokens de entrada</span></div>
-            </div>
-            <div className="field">
-              <span className="fieldLabel">Por assistente</span>
-              <table className="atable"><thead><tr><th>Assistente</th><th>Msgs</th><th>Tokens</th></tr></thead>
-                <tbody>{(analytics.byAssistant || []).map((r, i) => <tr key={i}><td>{r.emoji ? `${r.emoji} ` : ''}{r.name}</td><td>{r.messages}</td><td>{(r.tokens || 0).toLocaleString('pt-BR')}</td></tr>)}
-                {(!analytics.byAssistant || !analytics.byAssistant.length) && <tr><td colSpan={3} className="muted">Sem dados ainda.</td></tr>}</tbody>
-              </table>
-            </div>
-            <div className="field">
-              <span className="fieldLabel">Por modelo de IA</span>
-              <table className="atable"><thead><tr><th>Modelo</th><th>Msgs</th><th>Tokens</th></tr></thead>
-                <tbody>{(analytics.byModel || []).map((r, i) => <tr key={i}><td>{r.model}</td><td>{r.messages}</td><td>{(r.tokens || 0).toLocaleString('pt-BR')}</td></tr>)}
-                {(!analytics.byModel || !analytics.byModel.length) && <tr><td colSpan={3} className="muted">Sem dados ainda.</td></tr>}</tbody>
-              </table>
-            </div>
-            <p className="muted" style={{ margin: 0, fontSize: 12 }}>Tokens são a medida de consumo dos modelos. O custo em R$/US$ depende do preço de cada modelo no OpenRouter.</p>
-          </>}
-        </div>
+      <div className="modalActions">
+        {form.id && <button className="danger" onClick={deleteAssistant}>Excluir</button>}
+        <div className="spacer"/>
+        <button onClick={() => setStudioOpen(false)}>Cancelar</button>
+        <button className="primary" onClick={saveAssistant}>Salvar assistente</button>
       </div>
-    </div>}
-  </div>;
-}
+    </Modal>}
 
-function ToolStep({ step }) {
-  const end = step.ended || Date.now();
-  const secs = Math.max(0, Math.round((end - step.started) / 1000));
-  return <div className={`toolstep ${step.status}`}>
-    <span className="ic">{step.status === 'running' ? <span className="spin sm"/> : '✓'}</span>
-    <code>{step.name}</code>
-    <span className="sec">{secs}s</span>
-    {step.status === 'running' && <span className="lbl">executando…</span>}
-  </div>;
-}
+    {memoryOpen && <Modal title="Memória" icon={<Brain size={18}/>} onClose={() => setMemoryOpen(false)}>
+      <label>Onde guardar
+        <select value={memoryScope} onChange={e => changeMemoryScope(e.target.value)}>
+          <option value="global">🌐 Global — todos os assistentes lembram</option>
+          {assistants.map(a => <option key={a.id} value={a.id}>{a.emoji || '🤖'} Só do assistente: {a.name}</option>)}
+        </select>
+      </label>
+      <p className="muted" style={{ margin: 0 }}>{memoryScope === 'global' ? 'Informações que TODOS os assistentes lembram em todas as conversas (ex.: CNPJ, regime tributário, preferências).' : 'Memória exclusiva deste assistente — só ele usa (ex.: decisões técnicas, particularidades do setor).'}</p>
+      <div className="memAdd">
+        <input value={memoryInput} onChange={e => setMemoryInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addMemory(); } }} placeholder="Ex.: Minha empresa é a Frederico Assessoria, CNPJ 00.000.000/0001-00, Simples Nacional."/>
+        <button className="primary" onClick={addMemory}>Adicionar</button>
+      </div>
+      <div className="memList">
+        {memoryItems.length === 0 && <p className="muted">Nenhuma informação salva ainda.</p>}
+        {memoryItems.map(m => (
+          <div className="memItem" key={m.id}>
+            <span>{m.content}</span>
+            <button className="memDel" onClick={() => removeMemory(m.id)} aria-label="Remover"><X size={15}/></button>
+          </div>
+        ))}
+      </div>
+    </Modal>}
 
-function Slider({ label, hintA, hintB, value, onChange }) {
-  return <div className="slider">
-    <div className="sliderTop"><span>{label}</span><b>{value}</b></div>
-    <input type="range" min="0" max="100" value={value} onChange={e => onChange(e.target.value)}/>
-    <div className="sliderHints"><span>{hintA}</span><span>{hintB}</span></div>
+    {analyticsOpen && <Modal title="Análises de uso" icon={<BarChart3 size={18}/>} onClose={() => setAnalyticsOpen(false)}>
+      {!analytics && <div className="working"><span className="spin"/><span>Carregando...</span></div>}
+      {analytics && <>
+        <div className="statRow">
+          <div className="stat"><b>{analytics.totals?.messages || 0}</b><span>mensagens</span></div>
+          <div className="stat"><b>{(analytics.totals?.tokens || 0).toLocaleString('pt-BR')}</b><span>tokens no total</span></div>
+          <div className="stat"><b>{(analytics.totals?.prompt_tokens || 0).toLocaleString('pt-BR')}</b><span>tokens de entrada</span></div>
+        </div>
+        <div className="field">
+          <span className="fieldLabel">Por assistente</span>
+          <table className="atable"><thead><tr><th>Assistente</th><th>Msgs</th><th>Tokens</th></tr></thead>
+            <tbody>{(analytics.byAssistant || []).map((r, i) => <tr key={i}><td>{r.emoji ? `${r.emoji} ` : ''}{r.name}</td><td>{r.messages}</td><td>{(r.tokens || 0).toLocaleString('pt-BR')}</td></tr>)}
+            {(!analytics.byAssistant || !analytics.byAssistant.length) && <tr><td colSpan={3} className="muted">Sem dados ainda.</td></tr>}</tbody>
+          </table>
+        </div>
+        <div className="field">
+          <span className="fieldLabel">Por modelo de IA</span>
+          <table className="atable"><thead><tr><th>Modelo</th><th>Msgs</th><th>Tokens</th></tr></thead>
+            <tbody>{(analytics.byModel || []).map((r, i) => <tr key={i}><td>{r.model}</td><td>{r.messages}</td><td>{(r.tokens || 0).toLocaleString('pt-BR')}</td></tr>)}
+            {(!analytics.byModel || !analytics.byModel.length) && <tr><td colSpan={3} className="muted">Sem dados ainda.</td></tr>}</tbody>
+          </table>
+        </div>
+        <p className="muted" style={{ margin: 0, fontSize: 12 }}>Tokens são a medida de consumo dos modelos. O custo em R$/US$ depende do preço de cada modelo no OpenRouter.</p>
+      </>}
+    </Modal>}
   </div>;
 }

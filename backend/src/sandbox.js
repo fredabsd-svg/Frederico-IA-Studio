@@ -144,9 +144,16 @@ export async function destroyConversation(conversationId) {
   try { fs.rmSync(path.join(root, conversationId), { recursive: true, force: true }); } catch {}
 }
 
+// Verifica se `target` está DENTRO de `base` (comparação com separador,
+// para "/ws/abc" não autorizar "/ws/abc-outro").
+export function insideBase(base, target) {
+  const b = path.resolve(base);
+  return target === b || target.startsWith(b + path.sep);
+}
+
 export function safeJoin(base, userPath) {
   const clean = String(userPath || '').replace(/^\/+/, '');
   const full = path.resolve(base, clean);
-  if (!full.startsWith(path.resolve(base))) throw new Error('Caminho bloqueado por segurança.');
+  if (!insideBase(base, full)) throw new Error('Caminho bloqueado por segurança.');
   return full;
 }
