@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil } from 'lucide-react';
 import { API, FALLBACK_MODELS, TOOL_INFO, TEMPLATES, SUGGESTIONS, emptyForm } from './constants.js';
-import { ToolStep, Slider, Modal } from './components.jsx';
+import { ToolStep, Slider, Modal, ModelPicker } from './components.jsx';
 
 export default function App() {
   const [conversations, setConversations] = useState([]);
@@ -479,21 +479,7 @@ export default function App() {
             {assistants.map(a => <option key={a.id} value={a.id}>{a.emoji || '🤖'} {a.name}</option>)}
           </select>
           <button className="gear" onClick={() => currentAssistant ? openStudioEdit(currentAssistant) : openStudioNew()} title="Editar assistente" disabled={team}><Settings size={16}/></button>
-          <select value={model} onChange={e => setModel(e.target.value)} title="Modelo de IA">
-            <optgroup label="✅ Geram arquivos (recomendados)">
-              {allModels.filter(m => m.tools !== false && !m.id.endsWith(':free')).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-            </optgroup>
-            {allModels.some(m => m.tools !== false && m.id.endsWith(':free')) && (
-              <optgroup label="🆓 Gratuitos — sujeitos a fila e limites (erro 429)">
-                {allModels.filter(m => m.tools !== false && m.id.endsWith(':free')).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-              </optgroup>
-            )}
-            {allModels.some(m => m.tools === false) && (
-              <optgroup label="💬 Só conversa (não geram arquivos)">
-                {allModels.filter(m => m.tools === false).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-              </optgroup>
-            )}
-          </select>
+          <ModelPicker models={allModels} value={model} onChange={setModel}/>
         </div>
       </header>
       <section className="messages">

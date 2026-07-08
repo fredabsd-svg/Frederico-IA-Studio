@@ -76,11 +76,16 @@ app.get('/api/models', async (_, res) => {
     const base = (process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com').replace(/\/$/, '');
     const r = await fetch(`${base}/models`, { headers: { Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY || ''}` } });
     const data = await r.json();
-    const models = (data.data || []).map(m => ({
-      id: m.id,
-      name: m.name || m.id,
-      tools: Array.isArray(m.supported_parameters) ? m.supported_parameters.includes('tools') : null
-    })).sort((a, b) => a.name.localeCompare(b.name));
+    const models = (data.data || []).map(m => {
+      const out = m.architecture?.output_modalities || [];
+      return {
+        id: m.id,
+        name: m.name || m.id,
+        tools: Array.isArray(m.supported_parameters) ? m.supported_parameters.includes('tools') : null,
+        image: out.includes('image'),
+        video: out.includes('video')
+      };
+    }).sort((a, b) => a.name.localeCompare(b.name));
     modelsCache = models; modelsCacheAt = Date.now();
     res.json({ models });
   } catch (err) {

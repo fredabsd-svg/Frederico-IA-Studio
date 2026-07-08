@@ -1,4 +1,72 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Search, ChevronDown, Check } from 'lucide-react';
+
+// Ids (ou prefixos) dos modelos mais confiáveis para gerar planilhas/arquivos
+const BEST_FOR_FILES = [
+  'deepseek/deepseek-chat', 'openai/gpt-4o', 'openai/gpt-4.1',
+  'anthropic/claude-sonnet', 'anthropic/claude-3.5-sonnet', 'anthropic/claude-3.7-sonnet',
+  'google/gemini-2.5-flash', 'google/gemini-2.5-pro', 'mistralai/mistral-large'
+];
+
+// Seletor de modelos com busca e categorias
+export function ModelPicker({ models, value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const ref = useRef(null);
+  const searchRef = useRef(null);
+
+  useEffect(() => {
+    function onDoc(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
+    function onKey(e) { if (e.key === 'Escape') setOpen(false); }
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey); };
+  }, []);
+  useEffect(() => { if (open) { setQ(''); setTimeout(() => searchRef.current?.focus(), 30); } }, [open]);
+
+  const current = models.find(m => m.id === value);
+  const query = q.trim().toLowerCase();
+  const match = m => !query || (m.name || '').toLowerCase().includes(query) || m.id.toLowerCase().includes(query);
+  const isFree = m => m.id.endsWith(':free');
+  const isBest = m => BEST_FOR_FILES.some(p => m.id === p || m.id.startsWith(p));
+
+  const groups = [
+    { label: '⭐ Melhores para planilhas e arquivos', items: models.filter(m => m.tools !== false && !isFree(m) && !m.image && isBest(m)) },
+    { label: '🖼️ Geram imagens', items: models.filter(m => m.image && !isFree(m)) },
+    { label: '🎬 Geram vídeo', items: models.filter(m => m.video) },
+    { label: '✅ Outros com ferramentas (geram arquivos)', items: models.filter(m => m.tools !== false && !isFree(m) && !m.image && !m.video && !isBest(m)) },
+    { label: '🆓 Gratuitos — sujeitos a fila e limites', items: models.filter(m => isFree(m)) },
+    { label: '💬 Só conversa (não geram arquivos)', items: models.filter(m => m.tools === false && !m.image && !m.video && !isFree(m)) }
+  ].map(g => ({ ...g, items: g.items.filter(match) })).filter(g => g.items.length);
+
+  function pick(id) { onChange(id); setOpen(false); }
+
+  return <div className="mpicker" ref={ref}>
+    <button className="mpBtn" onClick={() => setOpen(o => !o)} title="Escolher o modelo de IA">
+      <span className="mpName">{current?.name || value}</span>
+      <ChevronDown size={14}/>
+    </button>
+    {open && <div className="mpPanel">
+      <div className="mpSearch">
+        <Search size={14}/>
+        <input ref={searchRef} value={q} onChange={e => setQ(e.target.value)} placeholder="Buscar modelo pelo nome..."/>
+      </div>
+      <div className="mpList">
+        {groups.length === 0 && <p className="mpEmpty">Nenhum modelo encontrado para "{q}".</p>}
+        {groups.map(g => <div key={g.label} className="mpGroup">
+          <div className="mpGroupLabel">{g.label} <em>{g.items.length}</em></div>
+          {g.items.map(m => (
+            <button key={`${g.label}-${m.id}`} className={`mpItem ${m.id === value ? 'sel' : ''}`} onClick={() => pick(m.id)}>
+              <span className="mpItemName">{m.name}</span>
+              <span className="mpItemId">{m.id}</span>
+              {m.id === value && <Check size={14} className="mpCheck"/>}
+            </button>
+          ))}
+        </div>)}
+      </div>
+    </div>}
+  </div>;
+}
 
 // Chip de ferramenta em execução/concluída dentro de uma mensagem
 export function ToolStep({ step }) {
