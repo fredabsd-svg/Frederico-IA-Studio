@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles } from 'lucide-react';
+import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil } from 'lucide-react';
 import { API, FALLBACK_MODELS, TOOL_INFO, TEMPLATES, SUGGESTIONS, emptyForm } from './constants.js';
 import { ToolStep, Slider, Modal } from './components.jsx';
 
@@ -39,9 +39,12 @@ export default function App() {
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [toast, setToast] = useState(null);
+  const [copiedIdx, setCopiedIdx] = useState(null);
   const endRef = useRef(null);
+  const inputRef = useRef(null);
   const recognitionRef = useRef(null);
   const toastTimer = useRef(null);
+  const copyTimer = useRef(null);
 
   useEffect(() => { init(); }, []);
   useEffect(() => { document.body.className = dark ? 'dark' : 'light'; }, [dark]);
@@ -57,6 +60,22 @@ export default function App() {
     clearTimeout(toastTimer.current);
     setToast(text);
     toastTimer.current = setTimeout(() => setToast(null), 6000);
+  }
+
+  async function copyMessage(m, idx) {
+    try {
+      await navigator.clipboard.writeText(m.content || '');
+      clearTimeout(copyTimer.current);
+      setCopiedIdx(idx);
+      copyTimer.current = setTimeout(() => setCopiedIdx(null), 1500);
+    } catch {
+      showToast('Não foi possível copiar (permita o acesso à área de transferência).');
+    }
+  }
+
+  function editMessage(m) {
+    setInput(m.content || '');
+    inputRef.current?.focus();
   }
 
   async function init() {
@@ -470,6 +489,10 @@ export default function App() {
         </div>}
         {messages.map((m, idx) => (
           <div key={m.id || idx} className={`msg ${m.role}`}>
+            <div className="msgActions">
+              {m.role === 'user' && <button onClick={() => editMessage(m)} title="Editar (joga o texto na caixa de mensagem)" aria-label="Editar mensagem"><Pencil size={13}/></button>}
+              <button onClick={() => copyMessage(m, idx)} title="Copiar a mensagem inteira" aria-label="Copiar mensagem">{copiedIdx === idx ? <Check size={13}/> : <Copy size={13}/>}</button>
+            </div>
             {m.blocks
               ? m.blocks.map((b, i) => b.type === 'tool'
                 ? <ToolStep key={i} step={b} nowTick={nowTick}/>
@@ -506,7 +529,7 @@ export default function App() {
         <div className="composer">
           <label className="upload" title="Anexar arquivo"><Upload size={18}/><input type="file" multiple onChange={uploadFiles}/></label>
           <button className={`webBtn ${webSearch ? 'on' : ''}`} onClick={() => setWebSearch(w => !w)} title={webSearch ? 'Pesquisa na internet ATIVADA — clique para desativar' : 'Ativar pesquisa na internet'} aria-label="Pesquisa na internet"><Globe size={18}/></button>
-          <textarea value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }} placeholder={listening ? 'Ouvindo... fale agora' : (webSearch ? 'Pesquisa na internet ativada — pergunte algo atual...' : 'Peça para analisar arquivos, gerar Word, Excel, PDF...')} />
+          <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }} placeholder={listening ? 'Ouvindo... fale agora' : (webSearch ? 'Pesquisa na internet ativada — pergunte algo atual...' : 'Peça para analisar arquivos, gerar Word, Excel, PDF...')} />
           <button className={`mic ${listening ? 'on' : ''}`} onClick={toggleMic} title="Falar (ditado por voz)" aria-label="Ditado por voz"><Mic size={18}/></button>
           <button className="sendBtn" onClick={sendMessage} disabled={busy} aria-label="Enviar"><Send size={18}/></button>
         </div>
