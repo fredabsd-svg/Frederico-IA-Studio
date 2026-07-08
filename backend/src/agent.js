@@ -216,10 +216,17 @@ export async function runAgent({ conversationId, userText, model, assistant, web
       stream: true,
       stream_options: { include_usage: true }
     });
+    let reasoningNotified = false;
     for await (const chunk of stream) {
       if (chunk.usage) addUsage(usage, chunk.usage);
       const delta = chunk.choices?.[0]?.delta;
       if (!delta) continue;
+      // Modelos de raciocínio (R1, o1...) emitem "pensamento" invisível antes
+      // do texto — avisa o usuário para a tela não parecer travada.
+      if ((delta.reasoning || delta.reasoning_content) && !reasoningNotified) {
+        reasoningNotified = true;
+        onEvent({ type: 'status', content: 'Raciocinando... (este modelo pensa antes de responder e pode demorar)' });
+      }
       if (delta.content) { content += delta.content; finalText += delta.content; onEvent({ type: 'delta', content: delta.content }); }
       if (delta.tool_calls) {
         for (const tc of delta.tool_calls) {
@@ -255,13 +262,21 @@ export async function runAgent({ conversationId, userText, model, assistant, web
     controls.delete(conversationId);
   }
 
-  if (stopped) { onEvent({ type: 'status', content: 'Interrompido pelo usuário' }); if (!finalText.trim()) finalText = '_Processamento interrompido pelo usuário._'; }
+  if (stopped) {
+    onEvent({ type: 'status', content: 'Interrompido pelo usuário' });
+    if (!finalText.trim()) { finalText = '_Processamento interrompido pelo usuário._'; onEvent({ type: 'delta', content: finalText }); }
+  }
   else if (!completedNaturally) {
     // Atingiu o limite de etapas ainda usando ferramentas: avisa o usuário
     const note = `\n\n_⚠️ Atingi o limite de ${maxSteps} etapas de processamento nesta tarefa. Ela ficou muito longa — provavelmente pela dificuldade de extrair os dados. Sugestão: peça em partes (ex.: 1º "extraia os lançamentos do Razão para um CSV", depois "gere a planilha DFC a partir do CSV")._`;
     finalText += note;
     onEvent({ type: 'delta', content: note });
-  } else if (!finalText.trim()) finalText = 'Concluído.';
+  } else if (!finalText.trim()) {
+    // O modelo terminou sem produzir texto: mostra algo na tela em vez de
+    // deixar o balão vazio (bug de streaming corrigido).
+    finalText = 'O modelo terminou sem gerar uma resposta em texto. Tente reformular o pedido ou escolher outro modelo.';
+    onEvent({ type: 'delta', content: finalText });
+  }
   const msgId = saveMessage(conversationId, 'assistant', finalText);
   // Detecta os arquivos gerados NESTA resposta e os anexa à mensagem
   const newFiles = listOutputs(conversationId).filter(f => outputsBefore.get(f.path) !== f.mtimeMs);
