@@ -237,6 +237,27 @@ app.get('/api/conversations/:id/download/*', (req, res) => {
   res.download(target);
 });
 
+// Edição de mensagem (estilo ChatGPT): remove a mensagem indicada e TUDO que
+// veio depois dela na conversa, incluindo os arquivos gerados por essas
+// mensagens — a conversa é regravada a partir dali.
+app.post('/api/conversations/:id/truncate', (req, res) => {
+  const msg = db.prepare('SELECT id, created_at FROM messages WHERE id=? AND conversation_id=?').get(req.body?.messageId, req.params.id);
+  if (!msg) return res.status(404).json({ error: 'Mensagem não encontrada' });
+  const doomed = db.prepare('SELECT id FROM messages WHERE conversation_id=? AND created_at>=?').all(req.params.id, msg.created_at).map(r => r.id);
+  if (doomed.length) {
+    const ws = workspaceFor(req.params.id);
+    const ph = doomed.map(() => '?').join(',');
+    const orphanFiles = db.prepare(`SELECT path FROM files WHERE conversation_id=? AND message_id IN (${ph})`).all(req.params.id, ...doomed);
+    for (const f of orphanFiles) {
+      const target = path.resolve(ws.base, f.path);
+      if (insideBase(ws.base, target)) { try { fs.rmSync(target, { force: true }); } catch {} }
+    }
+    db.prepare(`DELETE FROM files WHERE conversation_id=? AND message_id IN (${ph})`).run(req.params.id, ...doomed);
+  }
+  db.prepare('DELETE FROM messages WHERE conversation_id=? AND created_at>=?').run(req.params.id, msg.created_at);
+  res.json({ ok: true, removed: doomed.length });
+});
+
 // Pausar / continuar / parar o processamento em andamento
 app.post('/api/conversations/:id/control', (req, res) => {
   const action = req.body?.action;

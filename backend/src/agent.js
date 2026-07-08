@@ -179,7 +179,7 @@ export async function runAgent({ conversationId, userText, model, assistant, web
   let tools = toolsFor(assistant);
   if (webSearch) tools = [...tools, ...webToolDefinitions];
   const temperature = temperatureFor(assistant?.personality);
-  saveMessage(conversationId, 'user', userText);
+  const userMsgId = saveMessage(conversationId, 'user', userText);
   const historyLimit = Number(process.env.AGENT_HISTORY_LIMIT || 60);
   const history = db.prepare(`
     SELECT role, content FROM (
@@ -271,12 +271,14 @@ export async function runAgent({ conversationId, userText, model, assistant, web
     for (const f of newFiles) { const id = nanoid(); stmt.run(id, conversationId, msgId, 'output', f.name, f.path, f.size, now()); cards.push({ id, name: f.name, path: f.path, size: f.size }); }
     onEvent({ type: 'files', files: cards });
   }
+  // Informa os ids reais salvos no banco (necessário para editar mensagens)
+  onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId: msgId });
   return { text: finalText, usage, model: chosenModel };
 }
 
 // Orquestrador: aciona vários assistentes e um coordenador une as respostas
 export async function runOrchestrator({ conversationId, userText, model, assistants = [], onEvent }) {
-  saveMessage(conversationId, 'user', userText);
+  const userMsgId = saveMessage(conversationId, 'user', userText);
   const control = initControl(conversationId);
   const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
   const coordModel = model || process.env.DEEPSEEK_MODEL || 'deepseek-chat';
@@ -309,7 +311,8 @@ export async function runOrchestrator({ conversationId, userText, model, assista
     onEvent({ type: 'status', content: 'Interrompido pelo usuário' });
     finalText = perspectives.length ? perspectives.map(p => `### ${p.emoji || ''} ${p.name}\n${p.text}`).join('\n\n') : '_Processamento interrompido pelo usuário._';
     onEvent({ type: 'delta', content: finalText });
-    saveMessage(conversationId, 'assistant', finalText);
+    const stoppedMsgId = saveMessage(conversationId, 'assistant', finalText);
+    onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId: stoppedMsgId });
     return { text: finalText, usage, model: coordModel };
   }
 
@@ -332,7 +335,8 @@ export async function runOrchestrator({ conversationId, userText, model, assista
   }
   controls.delete(conversationId);
   if (!finalText.trim()) { finalText = 'Concluído.'; onEvent({ type: 'delta', content: finalText }); }
-  saveMessage(conversationId, 'assistant', finalText);
+  const doneMsgId = saveMessage(conversationId, 'assistant', finalText);
+  onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId: doneMsgId });
   return { text: finalText, usage, model: coordModel };
 }
 

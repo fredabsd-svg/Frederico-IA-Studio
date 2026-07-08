@@ -73,7 +73,20 @@ export default function App() {
     }
   }
 
-  function editMessage(m) {
+  async function editMessage(m, idx) {
+    const isSaved = m.id && !String(m.id).startsWith('local-');
+    if (isSaved) {
+      if (!confirm('Editar esta mensagem vai apagá-la junto com tudo o que veio depois nesta conversa, para regravar a partir daqui. Continuar?')) return;
+      try {
+        const res = await fetch(`${API}/api/conversations/${current.id}/truncate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messageId: m.id }) });
+        if (!res.ok) throw new Error();
+        setMessages(prev => prev.slice(0, idx));
+        loadFiles();
+      } catch {
+        showToast('Não foi possível editar a mensagem.');
+        return;
+      }
+    }
     setInput(m.content || '');
     inputRef.current?.focus();
   }
@@ -384,6 +397,12 @@ export default function App() {
             return { ...m, blocks };
           });
           if (ev.type === 'files') update(m => ({ ...m, files: [...(m.files || []), ...ev.files] }));
+          if (ev.type === 'saved') setMessages(prev => {
+            const arr = [...prev];
+            const ai = arr.findIndex(m => m.id === assistantMsgId);
+            if (ai > -1) { arr[ai] = { ...arr[ai], id: ev.assistantMessageId }; if (arr[ai - 1]?.role === 'user') arr[ai - 1] = { ...arr[ai - 1], id: ev.userMessageId }; }
+            return arr;
+          });
           if (ev.type === 'error') update(m => ({ ...m, blocks: [...(m.blocks || []), { type: 'text', content: `\n\n**Erro:** ${ev.content}` }] }));
         }
       }
@@ -490,7 +509,7 @@ export default function App() {
         {messages.map((m, idx) => (
           <div key={m.id || idx} className={`msg ${m.role}`}>
             <div className="msgActions">
-              {m.role === 'user' && <button onClick={() => editMessage(m)} title="Editar (joga o texto na caixa de mensagem)" aria-label="Editar mensagem"><Pencil size={13}/></button>}
+              {m.role === 'user' && !busy && <button onClick={() => editMessage(m, idx)} title="Editar e regravar a conversa a partir daqui" aria-label="Editar mensagem"><Pencil size={13}/></button>}
               <button onClick={() => copyMessage(m, idx)} title="Copiar a mensagem inteira" aria-label="Copiar mensagem">{copiedIdx === idx ? <Check size={13}/> : <Copy size={13}/>}</button>
             </div>
             {m.blocks
