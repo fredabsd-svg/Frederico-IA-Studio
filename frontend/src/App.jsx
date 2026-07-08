@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic } from 'lucide-react';
+import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe } from 'lucide-react';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
@@ -62,6 +62,7 @@ export default function App() {
   const [nowTick, setNowTick] = useState(0);
   const [dark, setDark] = useState(true);
   const [listening, setListening] = useState(false);
+  const [webSearch, setWebSearch] = useState(false);
   const endRef = useRef(null);
   const recognitionRef = useRef(null);
 
@@ -274,7 +275,7 @@ export default function App() {
 
     const body = team
       ? { message: text, model, orchestrate: true, orchestrateIds: assistants.map(a => a.id) }
-      : { message: text, model, assistantId };
+      : { message: text, model, assistantId, webSearch };
     try {
       const res = await fetch(`${API}/api/conversations/${current.id}/chat`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
@@ -403,7 +404,8 @@ export default function App() {
         </div>}
         <div className="composer">
           <label className="upload" title="Anexar arquivo"><Upload size={18}/><input type="file" multiple onChange={uploadFiles}/></label>
-          <textarea value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }} placeholder={listening ? 'Ouvindo... fale agora' : 'Peça para analisar arquivos, gerar Word, Excel, PDF...'} />
+          <button className={`webBtn ${webSearch ? 'on' : ''}`} onClick={() => setWebSearch(w => !w)} title={webSearch ? 'Pesquisa na internet ATIVADA — clique para desativar' : 'Ativar pesquisa na internet'} aria-label="Pesquisa na internet"><Globe size={18}/></button>
+          <textarea value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }} placeholder={listening ? 'Ouvindo... fale agora' : (webSearch ? 'Pesquisa na internet ativada — pergunte algo atual...' : 'Peça para analisar arquivos, gerar Word, Excel, PDF...')} />
           <button className={`mic ${listening ? 'on' : ''}`} onClick={toggleMic} title="Falar (ditado por voz)" aria-label="Ditado por voz"><Mic size={18}/></button>
           <button onClick={sendMessage} disabled={busy}><Send size={18}/></button>
         </div>

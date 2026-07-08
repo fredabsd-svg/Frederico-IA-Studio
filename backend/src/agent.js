@@ -1,7 +1,7 @@
 import OpenAI from 'openai';
 import fs from 'fs';
 import path from 'path';
-import { toolDefinitions, runTool } from './tools.js';
+import { toolDefinitions, webToolDefinitions, runTool } from './tools.js';
 import { workspaceFor } from './sandbox.js';
 import { db, now } from './db.js';
 import { nanoid } from 'nanoid';
@@ -154,10 +154,11 @@ async function gate(control, onEvent) {
   return false;
 }
 
-export async function runAgent({ conversationId, userText, model, assistant, onEvent }) {
+export async function runAgent({ conversationId, userText, model, assistant, webSearch, onEvent }) {
   const chosenModel = model || assistant?.model || process.env.DEEPSEEK_MODEL || 'deepseek-chat';
   const chosenPrompt = promptFor(assistant);
-  const tools = toolsFor(assistant);
+  let tools = toolsFor(assistant);
+  if (webSearch) tools = [...tools, ...webToolDefinitions];
   const temperature = temperatureFor(assistant?.personality);
   saveMessage(conversationId, 'user', userText);
   const historyLimit = Number(process.env.AGENT_HISTORY_LIMIT || 60);
@@ -167,6 +168,7 @@ export async function runAgent({ conversationId, userText, model, assistant, onE
       WHERE conversation_id=? ORDER BY created_at DESC LIMIT ?
     ) ORDER BY created_at ASC`).all(conversationId, historyLimit);
   const messages = [{ role: 'system', content: chosenPrompt }];
+  if (webSearch) messages.push({ role: 'system', content: 'O usuário ATIVOU a pesquisa na internet. Você pode usar web_search (buscar) e web_fetch (ler uma página). Use quando a pergunta envolver informações atuais ou externas (legislação, notícias, tabelas, cotações, prazos) e cite as fontes (links) na resposta.' });
   const memory = memoryNote(assistant?.id);
   if (memory) messages.push({ role: 'system', content: memory });
   const note = uploadsNote(conversationId);

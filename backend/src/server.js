@@ -249,7 +249,7 @@ app.post('/api/conversations/:id/chat', async (req, res) => {
       result = await runOrchestrator({ conversationId: req.params.id, userText: text, model: req.body?.model, assistants, onEvent: send });
     } else {
       const assistant = loadAssistant(req.body?.assistantId);
-      result = await runAgent({ conversationId: req.params.id, userText: text, model: req.body?.model, assistant, onEvent: send });
+      result = await runAgent({ conversationId: req.params.id, userText: text, model: req.body?.model, assistant, webSearch: !!req.body?.webSearch, onEvent: send });
     }
     // Registra o consumo de tokens para o painel de análises
     if (result?.usage) {

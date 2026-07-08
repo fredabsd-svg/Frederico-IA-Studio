@@ -11,6 +11,65 @@ export const toolDefinitions = [
   { type: 'function', function: { name: 'zip_outputs', description: 'Compacta a pasta outputs em um arquivo ZIP.', parameters: { type: 'object', properties: { zip_name: { type: 'string' } } } } }
 ];
 
+// Ferramentas de internet (rodam no BACKEND, que tem rede — o sandbox não tem).
+// Só são oferecidas ao modelo quando o usuário liga o botão de pesquisa.
+export const webToolDefinitions = [
+  { type: 'function', function: { name: 'web_search', description: 'Pesquisa na internet e retorna os principais resultados (título, link e resumo). Use para informações atuais: notícias, legislação, tabelas, cotações, prazos.', parameters: { type: 'object', properties: { query: { type: 'string', description: 'Termos da pesquisa' } }, required: ['query'] } } },
+  { type: 'function', function: { name: 'web_fetch', description: 'Abre uma página da web (URL) e retorna o texto dela. Use após web_search para ler o conteúdo de um resultado.', parameters: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] } } }
+];
+
+async function fetchWithTimeout(url, ms = 15000, options = {}) {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), ms);
+  try { return await fetch(url, { ...options, signal: ctl.signal, headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) FredericoAIStudio/1.0', ...(options.headers || {}) } }); }
+  finally { clearTimeout(t); }
+}
+
+function stripHtml(html) {
+  return String(html)
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/\s+/g, ' ').trim();
+}
+
+async function webSearch(query) {
+  // Com chaves do Google configuradas, usa a API oficial (Custom Search).
+  const gKey = process.env.GOOGLE_API_KEY, gCx = process.env.GOOGLE_CSE_ID;
+  if (gKey && gCx) {
+    const url = `https://www.googleapis.com/customsearch/v1?key=${encodeURIComponent(gKey)}&cx=${encodeURIComponent(gCx)}&num=6&q=${encodeURIComponent(query)}`;
+    const r = await fetchWithTimeout(url);
+    if (!r.ok) throw new Error(`Google API: HTTP ${r.status}`);
+    const data = await r.json();
+    return { engine: 'google', results: (data.items || []).map(i => ({ title: i.title, url: i.link, snippet: i.snippet })) };
+  }
+  // Sem chaves: DuckDuckGo (não exige cadastro)
+  const r = await fetchWithTimeout(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`);
+  if (!r.ok) throw new Error(`Busca: HTTP ${r.status}`);
+  const html = await r.text();
+  const results = [];
+  const re = /<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]*?(?:<a[^>]*class="result__snippet"[^>]*>([\s\S]*?)<\/a>)?/g;
+  let m;
+  while ((m = re.exec(html)) && results.length < 6) {
+    let url = m[1];
+    const uddg = /[?&]uddg=([^&]+)/.exec(url);
+    if (uddg) url = decodeURIComponent(uddg[1]);
+    results.push({ title: stripHtml(m[2]), url, snippet: stripHtml(m[3] || '') });
+  }
+  return { engine: 'duckduckgo', results };
+}
+
+async function webFetch(url) {
+  if (!/^https?:\/\//i.test(url)) throw new Error('URL inválida (use http/https).');
+  const r = await fetchWithTimeout(url, 20000);
+  const type = r.headers.get('content-type') || '';
+  if (!/text|html|json|xml/i.test(type)) return { url, note: `Conteúdo não textual (${type}). Baixe/processe de outra forma.` };
+  const body = await r.text();
+  const text = /json/i.test(type) ? body : stripHtml(body);
+  return { url, status: r.status, content: text.slice(0, 8000) };
+}
+
 const blocked = ['rm -rf /', 'mkfs', ':(){', 'shutdown', 'reboot', 'docker ', 'sudo ', 'su ', 'curl ', 'wget ', 'ssh ', 'scp '];
 function guardCommand(command) {
   const lower = String(command).toLowerCase();
@@ -18,6 +77,8 @@ function guardCommand(command) {
 }
 
 export async function runTool(conversationId, name, args = {}) {
+  if (name === 'web_search') return JSON.stringify(await webSearch(args.query || ''));
+  if (name === 'web_fetch') return JSON.stringify(await webFetch(args.url || ''));
   const ws = workspaceFor(conversationId);
   if (name === 'run_python') {
     const script = safeJoin(ws.base, `.tmp_${Date.now()}.py`);
