@@ -84,15 +84,18 @@ app.post('/api/conversations/:id/upload', upload.array('files'), (req, res) => {
   const ws = workspaceFor(req.params.id);
   const saved = [];
   for (const file of req.files || []) {
-    const safe = file.originalname.replace(/[^a-zA-Z0-9._ -]/g, '_');
+    // multer/busboy entrega originalname em latin1; reconverte para UTF-8
+    // para não corromper acentos (ex.: "Razão.pdf" virava "RazÃ£o.pdf").
+    const original = Buffer.from(file.originalname, 'latin1').toString('utf8');
+    const safe = original.replace(/[^a-zA-Z0-9._ -]/g, '_');
     const name = `${Date.now()}_${safe}`;
     const target = path.join(ws.uploads, name);
     fs.writeFileSync(target, file.buffer);
     try { fs.chownSync(target, 1000, 1000); } catch {}
     const id = nanoid();
     db.prepare('INSERT INTO files (id,conversation_id,kind,name,path,size,created_at) VALUES (?,?,?,?,?,?,?)')
-      .run(id, req.params.id, 'upload', file.originalname, `uploads/${name}`, file.size, now());
-    saved.push({ id, name: file.originalname, path: `uploads/${name}`, size: file.size });
+      .run(id, req.params.id, 'upload', original, `uploads/${name}`, file.size, now());
+    saved.push({ id, name: original, path: `uploads/${name}`, size: file.size });
   }
   res.json({ files: saved });
 });

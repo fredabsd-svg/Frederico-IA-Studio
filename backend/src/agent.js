@@ -1,7 +1,27 @@
 import OpenAI from 'openai';
+import fs from 'fs';
 import { toolDefinitions, runTool } from './tools.js';
+import { workspaceFor } from './sandbox.js';
 import { db, now } from './db.js';
 import { nanoid } from 'nanoid';
+
+// Lista os arquivos enviados pelo usuário para avisar o modelo que eles já
+// existem no sandbox (senão o modelo pede para "reenviar" um arquivo que já
+// está lá). Retorna null se não houver uploads.
+function uploadsNote(conversationId) {
+  let files = [];
+  try { files = fs.readdirSync(workspaceFor(conversationId).uploads); } catch {}
+  if (!files.length) return null;
+  const list = files.map(f => `- /workspace/uploads/${f}`).join('\n');
+  return `O usuário JÁ enviou os arquivos abaixo — eles estão disponíveis no sandbox agora:
+${list}
+
+Não peça para o usuário reenviar. Para lê-los, use as ferramentas:
+- PDF: run_python com pdfplumber (texto) ou pypdf; para PDFs escaneados, use pytesseract (OCR, idioma "por").
+- Excel/CSV: run_python com pandas (pd.read_excel / pd.read_csv).
+- Texto simples: read_file.
+Sempre comece analisando o arquivo antes de responder.`;
+}
 
 const client = new OpenAI({
   apiKey: process.env.DEEPSEEK_API_KEY,
@@ -52,7 +72,10 @@ export async function runAgent({ conversationId, userText, model, mode, onEvent 
       SELECT role, content, created_at FROM messages
       WHERE conversation_id=? ORDER BY created_at DESC LIMIT 40
     ) ORDER BY created_at ASC`).all(conversationId);
-  const messages = [{ role: 'system', content: chosenPrompt }, ...history.map(m => ({ role: m.role, content: m.content }))];
+  const messages = [{ role: 'system', content: chosenPrompt }];
+  const note = uploadsNote(conversationId);
+  if (note) messages.push({ role: 'system', content: note });
+  messages.push(...history.map(m => ({ role: m.role, content: m.content })));
 
   let finalText = '';
   for (let step = 0; step < 8; step++) {
