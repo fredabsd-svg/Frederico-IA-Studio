@@ -99,6 +99,24 @@ app.delete('/api/assistants/:id', (req, res) => {
   res.json({ ok: true });
 });
 
+// ---- Memória global (compartilhada por todos os assistentes) ----
+app.get('/api/memory', (_, res) => {
+  res.json(db.prepare("SELECT id, content, created_at FROM memory WHERE scope='global' ORDER BY created_at ASC").all());
+});
+
+app.post('/api/memory', (req, res) => {
+  const content = (req.body?.content || '').trim();
+  if (!content) return res.status(400).json({ error: 'Conteúdo vazio.' });
+  const id = nanoid();
+  db.prepare("INSERT INTO memory (id, scope, content, created_at) VALUES (?, 'global', ?, ?)").run(id, content, now());
+  res.json({ id, content });
+});
+
+app.delete('/api/memory/:id', (req, res) => {
+  db.prepare('DELETE FROM memory WHERE id=?').run(req.params.id);
+  res.json({ ok: true });
+});
+
 app.get('/api/conversations', (_, res) => {
   const rows = db.prepare('SELECT * FROM conversations ORDER BY updated_at DESC').all();
   res.json(rows);

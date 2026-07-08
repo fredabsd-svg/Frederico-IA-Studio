@@ -85,6 +85,15 @@ function toolsFor(assistant) {
   return toolDefinitions.filter(t => allowed.includes(t.function.name));
 }
 
+// Memória global: fatos que o usuário quer que TODOS os assistentes lembrem
+function memoryNote() {
+  let rows = [];
+  try { rows = db.prepare("SELECT content FROM memory WHERE scope='global' ORDER BY created_at ASC").all(); } catch {}
+  if (!rows.length) return null;
+  const list = rows.map(r => `- ${r.content}`).join('\n');
+  return `Informações permanentes sobre o usuário/empresa (leve-as em conta em todas as respostas):\n${list}`;
+}
+
 export async function runAgent({ conversationId, userText, model, assistant, onEvent }) {
   const chosenModel = model || assistant?.model || process.env.DEEPSEEK_MODEL || 'deepseek-chat';
   const chosenPrompt = promptFor(assistant);
@@ -97,6 +106,8 @@ export async function runAgent({ conversationId, userText, model, assistant, onE
       WHERE conversation_id=? ORDER BY created_at DESC LIMIT 40
     ) ORDER BY created_at ASC`).all(conversationId);
   const messages = [{ role: 'system', content: chosenPrompt }];
+  const memory = memoryNote();
+  if (memory) messages.push({ role: 'system', content: memory });
   const note = uploadsNote(conversationId);
   if (note) messages.push({ role: 'system', content: note });
   messages.push(...history.map(m => ({ role: m.role, content: m.content })));

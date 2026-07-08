@@ -45,6 +45,12 @@ CREATE TABLE IF NOT EXISTS assistants (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS memory (
+  id TEXT PRIMARY KEY,
+  scope TEXT NOT NULL DEFAULT 'global',  -- 'global' (compartilhada por todos os assistentes)
+  content TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
 `);
 
 export function now() { return new Date().toISOString(); }

@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot } from 'lucide-react';
+import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X } from 'lucide-react';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
@@ -49,11 +49,14 @@ export default function App() {
   const [assistantId, setAssistantId] = useState(null);
   const [studioOpen, setStudioOpen] = useState(false);
   const [form, setForm] = useState(emptyForm());
+  const [memoryOpen, setMemoryOpen] = useState(false);
+  const [memoryItems, setMemoryItems] = useState([]);
+  const [memoryInput, setMemoryInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [dark, setDark] = useState(true);
   const endRef = useRef(null);
 
-  useEffect(() => { init(); loadModels(); loadAssistants(); }, []);
+  useEffect(() => { init(); loadModels(); loadAssistants(); loadMemory(); }, []);
   useEffect(() => { document.body.className = dark ? 'dark' : 'light'; }, [dark]);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
@@ -176,6 +179,22 @@ export default function App() {
     if (assistantId === form.id) pickAssistant(rows[0]?.id || null);
   }
 
+  // ---- Memória global ----
+  async function loadMemory() {
+    try { setMemoryItems(await (await fetch(`${API}/api/memory`)).json()); } catch {}
+  }
+  async function addMemory() {
+    const content = memoryInput.trim();
+    if (!content) return;
+    setMemoryInput('');
+    await fetch(`${API}/api/memory`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content }) });
+    await loadMemory();
+  }
+  async function removeMemory(id) {
+    await fetch(`${API}/api/memory/${id}`, { method: 'DELETE' });
+    await loadMemory();
+  }
+
   async function sendMessage() {
     const text = input.trim();
     if (!text || busy || !current) return;
@@ -226,6 +245,7 @@ export default function App() {
         ))}
       </div>
       <button className="studio" onClick={openStudioNew}><Bot size={16}/> Criar assistente</button>
+      <button className="studio memoryBtn" onClick={() => setMemoryOpen(true)}><Brain size={16}/> Memória global</button>
       <button className="theme" onClick={() => setDark(!dark)}>{dark ? <Sun size={16}/> : <Moon size={16}/>} Tema</button>
     </aside>
 
@@ -325,6 +345,31 @@ export default function App() {
             <div className="spacer"/>
             <button onClick={() => setStudioOpen(false)}>Cancelar</button>
             <button className="primary" onClick={saveAssistant}>Salvar assistente</button>
+          </div>
+        </div>
+      </div>
+    </div>}
+
+    {memoryOpen && <div className="modalOverlay" onClick={() => setMemoryOpen(false)}>
+      <div className="modal" onClick={e => e.stopPropagation()}>
+        <div className="modalHead">
+          <h2><Brain size={18}/> Memória global</h2>
+          <button className="x" onClick={() => setMemoryOpen(false)} aria-label="Fechar">✕</button>
+        </div>
+        <div className="modalBody">
+          <p className="muted" style={{ margin: 0 }}>Tudo que você guardar aqui é lembrado por <strong>todos os assistentes</strong>, em todas as conversas. Ex.: nome e CNPJ da empresa, regime tributário, setor, preferências de resposta.</p>
+          <div className="memAdd">
+            <input value={memoryInput} onChange={e => setMemoryInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addMemory(); } }} placeholder="Ex.: Minha empresa é a Frederico Assessoria, CNPJ 00.000.000/0001-00, Simples Nacional."/>
+            <button className="primary" onClick={addMemory}>Adicionar</button>
+          </div>
+          <div className="memList">
+            {memoryItems.length === 0 && <p className="muted">Nenhuma informação salva ainda.</p>}
+            {memoryItems.map(m => (
+              <div className="memItem" key={m.id}>
+                <span>{m.content}</span>
+                <button className="memDel" onClick={() => removeMemory(m.id)} aria-label="Remover"><X size={15}/></button>
+              </div>
+            ))}
           </div>
         </div>
       </div>
