@@ -27,6 +27,27 @@ function ensureConversation(id, model) {
 
 app.get('/api/health', (_, res) => res.json({ ok: true, name: 'Frederico AI Studio' }));
 
+// Lista os modelos disponíveis no provedor configurado (ex.: catálogo do
+// OpenRouter). Marca quais suportam "tools" (necessário p/ gerar arquivos).
+let modelsCache = null, modelsCacheAt = 0;
+app.get('/api/models', async (_, res) => {
+  if (modelsCache && Date.now() - modelsCacheAt < 10 * 60 * 1000) return res.json({ models: modelsCache });
+  try {
+    const base = (process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com').replace(/\/$/, '');
+    const r = await fetch(`${base}/models`, { headers: { Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY || ''}` } });
+    const data = await r.json();
+    const models = (data.data || []).map(m => ({
+      id: m.id,
+      name: m.name || m.id,
+      tools: Array.isArray(m.supported_parameters) ? m.supported_parameters.includes('tools') : null
+    })).sort((a, b) => a.name.localeCompare(b.name));
+    modelsCache = models; modelsCacheAt = Date.now();
+    res.json({ models });
+  } catch (err) {
+    res.json({ models: [], error: err.message });
+  }
+});
+
 app.get('/api/conversations', (_, res) => {
   const rows = db.prepare('SELECT * FROM conversations ORDER BY updated_at DESC').all();
   res.json(rows);
@@ -109,7 +130,7 @@ app.post('/api/conversations/:id/chat', async (req, res) => {
       const autoTitle = text.trim().replace(/\s+/g, ' ').slice(0, 40);
       if (autoTitle) db.prepare('UPDATE conversations SET title=? WHERE id=?').run(autoTitle, req.params.id);
     }
-    await runAgent({ conversationId: req.params.id, userText: text, model: req.body?.model, onEvent: send });
+    await runAgent({ conversationId: req.params.id, userText: text, model: req.body?.model, mode: req.body?.mode, onEvent: send });
     send({ type: 'done' });
   } catch (err) {
     send({ type: 'error', content: err.message });

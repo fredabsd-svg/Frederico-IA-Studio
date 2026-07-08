@@ -10,12 +10,19 @@ const API = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 // requisito para gerar Excel/Word/PDF. Você pode acrescentar outros IDs do
 // catálogo em https://openrouter.ai/models — evite modelos de "raciocínio"
 // (ex.: deepseek/deepseek-r1), que não geram arquivos.
-const MODELS = [
-  { id: 'deepseek/deepseek-chat', label: 'DeepSeek Chat — econômico, gera arquivos' },
-  { id: 'openai/gpt-4o-mini', label: 'GPT-4o mini — rápido e barato (OpenAI)' },
-  { id: 'openai/gpt-4o', label: 'GPT-4o — mais capaz (OpenAI)' },
-  { id: 'anthropic/claude-3.5-sonnet', label: 'Claude 3.5 Sonnet — ótimo em texto' },
-  { id: 'google/gemini-flash-1.5', label: 'Gemini 1.5 Flash — Google' }
+// Lista de reserva, usada só se a busca do catálogo do provedor falhar.
+const FALLBACK_MODELS = [
+  { id: 'deepseek/deepseek-chat', name: 'DeepSeek Chat', tools: true },
+  { id: 'openai/gpt-4o-mini', name: 'GPT-4o mini', tools: true },
+  { id: 'openai/gpt-4o', name: 'GPT-4o', tools: true },
+  { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet', tools: true },
+  { id: 'google/gemini-flash-1.5', name: 'Gemini 1.5 Flash', tools: true }
+];
+
+// Modos de assistente (devem casar com AGENTS no backend)
+const MODES = [
+  { id: 'contabil', label: 'Contábil / Fiscal' },
+  { id: 'codigo', label: 'Programação (Codex)' }
 ];
 
 export default function App() {
@@ -24,12 +31,14 @@ export default function App() {
   const [messages, setMessages] = useState([]);
   const [files, setFiles] = useState([]);
   const [input, setInput] = useState('');
-  const [model, setModel] = useState(MODELS[0].id);
+  const [allModels, setAllModels] = useState(FALLBACK_MODELS);
+  const [model, setModel] = useState(FALLBACK_MODELS[0].id);
+  const [mode, setMode] = useState(MODES[0].id);
   const [busy, setBusy] = useState(false);
   const [dark, setDark] = useState(true);
   const endRef = useRef(null);
 
-  useEffect(() => { init(); }, []);
+  useEffect(() => { init(); loadModels(); }, []);
   useEffect(() => { document.body.className = dark ? 'dark' : 'light'; }, [dark]);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
@@ -37,6 +46,21 @@ export default function App() {
     const rows = await fetchConversations();
     if (rows.length) openConversation(rows[0].id);
     else createConversation();
+  }
+
+  // Busca o catálogo completo de modelos do provedor (ex.: OpenRouter)
+  async function loadModels() {
+    try {
+      const res = await fetch(`${API}/api/models`);
+      const data = await res.json();
+      if (data.models?.length) {
+        setAllModels(data.models);
+        // Mantém o modelo atual se ele existir; senão, escolhe um que gere arquivos
+        setModel(prev => data.models.some(m => m.id === prev)
+          ? prev
+          : (data.models.find(m => m.tools !== false)?.id || data.models[0].id));
+      }
+    } catch {}
   }
 
   // Só atualiza a lista da barra lateral (sem trocar de conversa)
@@ -100,7 +124,7 @@ export default function App() {
     setMessages(prev => [...prev, { role: 'user', content: text }, { id: assistantId, role: 'assistant', content: '' }]);
 
     const res = await fetch(`${API}/api/conversations/${current.id}/chat`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: text, model })
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: text, model, mode })
     });
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
@@ -150,10 +174,22 @@ export default function App() {
 
     <main className="chat">
       <header className="topbar">
-        <div><strong>{current?.title || 'Conversa'}</strong><small>Modelo ativo: {model}</small></div>
-        <select value={model} onChange={e => setModel(e.target.value)} title="Escolha a IA (OpenRouter)">
-          {MODELS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
-        </select>
+        <div className="titleblock"><strong>{current?.title || 'Conversa'}</strong><small>Modelo ativo: {model}</small></div>
+        <div className="pickers">
+          <select value={mode} onChange={e => setMode(e.target.value)} title="Tipo de assistente">
+            {MODES.map(m => <option key={m.id} value={m.id}>Assistente: {m.label}</option>)}
+          </select>
+          <select value={model} onChange={e => setModel(e.target.value)} title="Escolha a IA">
+            <optgroup label="✅ Geram arquivos (recomendados)">
+              {allModels.filter(m => m.tools !== false).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+            </optgroup>
+            {allModels.some(m => m.tools === false) && (
+              <optgroup label="💬 Só conversa (não geram arquivos)">
+                {allModels.filter(m => m.tools === false).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+              </optgroup>
+            )}
+          </select>
+        </div>
       </header>
       <section className="messages">
         {messages.map((m, idx) => <div key={m.id || idx} className={`msg ${m.role}`}><ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{m.content || ''}</ReactMarkdown></div>)}
