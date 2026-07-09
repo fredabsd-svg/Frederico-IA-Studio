@@ -113,8 +113,13 @@ async function generateImage(ws, args) {
 }
 
 const blocked = ['rm -rf /', 'mkfs', ':(){', 'shutdown', 'reboot', 'docker ', 'sudo ', 'su ', 'curl ', 'wget ', 'ssh ', 'scp '];
+// Instalações são bloqueadas com mensagem educativa: o sandbox não tem rede.
+const installCmds = ['pip install', 'pip3 install', 'python -m pip', 'apt install', 'apt-get install', 'npm install', 'npm i '];
 function guardCommand(command) {
   const lower = String(command).toLowerCase();
+  for (const bad of installCmds) if (lower.includes(bad)) {
+    throw new Error('O sandbox NÃO tem internet: instalar pacotes é impossível. Use somente as bibliotecas já instaladas (pandas, openpyxl, xlrd, PyMuPDF, ffmpeg etc.). Se uma biblioteca essencial estiver faltando, diga ao usuário qual é.');
+  }
   for (const bad of blocked) if (lower.includes(bad)) throw new Error(`Comando bloqueado: ${bad}`);
 }
 
