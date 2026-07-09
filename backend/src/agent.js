@@ -98,6 +98,16 @@ function temperatureFor(p) {
 const SANDBOX_RULES = `
 
 REGRAS DO SANDBOX (muito importante):
+- O app tem ferramentas reais. Nesta chamada, considere como utilizáveis apenas as ferramentas listadas em "FERRAMENTAS DISPONÍVEIS NESTA CHAMADA".
+- Quando o usuário pedir análise de arquivo, planilha, documento, PDF, imagem, áudio, vídeo ou automação, use as ferramentas disponíveis em vez de apenas explicar.
+- Onde estão os arquivos: uploads do usuário ficam em /workspace/uploads; arquivos finais devem ser salvos em /workspace/outputs para aparecerem como download no chat.
+- Ferramentas principais:
+  · run_python: executa Python 3.12 real para cálculos, análise de dados, planilhas, relatórios, gráficos e automações.
+  · bash: executa comandos Linux já instalados, incluindo soffice (LibreOffice headless), ffmpeg, pdftotext, ocrmypdf, tesseract, jq, xmlstarlet, qpdf, imagemagick, zip/unzip, node e java.
+  · write_file/read_file/list_files/zip_outputs: cria, lê, lista e compacta arquivos da conversa.
+  · generate_image: gera ou edita imagens com IA quando essa ferramenta estiver disponível para o assistente.
+- LibreOffice está instalado: use soffice --headless para converter .xls/.ods/.doc/.odt/.pptx e para gerar PDF fiel de documentos e planilhas. Exemplos: soffice --headless --convert-to xlsx --outdir /workspace/outputs arquivo.xls; soffice --headless --convert-to pdf --outdir /workspace/outputs relatorio.docx.
+- Para PDFs e documentos difíceis, siga esta ordem: PyMuPDF/fitz; pdftotext -layout; pdfplumber/camelot para tabelas; ocrmypdf; pdf2image + pytesseract com lang='por'.
 - Cada execução de run_python é um processo NOVO e independente. Variáveis NÃO persistem entre chamadas — o que você definiu numa execução some na seguinte.
 - Resolva a tarefa preferencialmente em UM ÚNICO script run_python, completo e autossuficiente: ler os arquivos, processar e salvar o resultado final de uma vez.
 - Se precisar mesmo dividir em etapas, salve os dados intermediários em arquivo (JSON/CSV em /workspace) e leia de volta no próximo script — nunca dependa de variáveis da execução anterior.
@@ -125,6 +135,27 @@ function toolsFor(assistant) {
   if (!Array.isArray(allowed) || !allowed.length) return all;
   return all.filter(t => allowed.includes(t.function.name));
 }
+
+function toolAvailabilityNote(tools) {
+  const names = new Set(tools.map(t => t.function.name));
+  const lines = ['FERRAMENTAS DISPONÍVEIS NESTA CHAMADA:'];
+  if (names.has('run_python')) lines.push('- run_python: Python 3.12 real para análise de dados, cálculos, planilhas, Word, PDF, gráficos e automações.');
+  if (names.has('bash')) lines.push('- bash: comandos Linux já instalados, incluindo LibreOffice/soffice, ffmpeg, OCR/PDF e utilitários de arquivo.');
+  if (names.has('write_file')) lines.push('- write_file: criar ou sobrescrever arquivos no workspace da conversa.');
+  if (names.has('read_file')) lines.push('- read_file: ler arquivos de texto do workspace da conversa.');
+  if (names.has('list_files')) lines.push('- list_files: listar uploads, outputs e arquivos da conversa.');
+  if (names.has('zip_outputs')) lines.push('- zip_outputs: compactar arquivos finais em ZIP.');
+  if (names.has('generate_image')) lines.push('- generate_image: gerar ou editar imagens com IA e salvar em outputs.');
+  if (names.has('web_search')) lines.push('- web_search: pesquisar na internet quando o botão de globo estiver ativado.');
+  if (names.has('web_fetch')) lines.push('- web_fetch: abrir uma página da internet encontrada na pesquisa.');
+  if (lines.length === 1) lines.push('- Nenhuma ferramenta de execução foi habilitada para este assistente. Responda apenas por texto e avise se a tarefa exigir ferramenta.');
+  lines.push('Use somente as ferramentas listadas aqui. Não diga que não tem Python/LibreOffice quando run_python e bash estiverem disponíveis.');
+  return lines.join('\n');
+}
+
+const TEAM_TOOL_AWARENESS = `CAPACIDADES DO APP:
+O Frederico AI Studio tem sandbox com Python, bash, LibreOffice/soffice, ffmpeg, OCR/PDF, geração de arquivos e ferramentas de imagem/web quando habilitadas.
+No Modo Equipe, os especialistas individuais desta etapa NÃO executam ferramentas diretamente; eles analisam e orientam. Se a resposta final exigir arquivo, cálculo, conversão ou validação, indique claramente que isso deve ser executado pelas ferramentas do assistente principal.`;
 
 // Memória: global (todos) + do assistente atual + do cliente da conversa
 function clientScopeFor(conversationId) {
@@ -268,7 +299,7 @@ export async function runAgent({ conversationId, userText, model, assistant, web
       SELECT role, content, created_at FROM messages
       WHERE conversation_id=? ORDER BY created_at DESC LIMIT ?
     ) ORDER BY created_at ASC`).all(conversationId, historyLimit);
-  const messages = [{ role: 'system', content: chosenPrompt }];
+  const messages = [{ role: 'system', content: chosenPrompt }, { role: 'system', content: toolAvailabilityNote(tools) }];
   if (webSearch) messages.push({ role: 'system', content: `VOCÊ TEM ACESSO À INTERNET NESTA CONVERSA — o usuário ativou a pesquisa web.
 - Para buscar: ferramenta web_search. Para ler uma página: web_fetch.
 - NUNCA diga que "não tem acesso à internet": você tem, através dessas duas ferramentas. Use-as para informações atuais/externas (legislação, notícias, tabelas, cotações, prazos) e cite as fontes (links).
@@ -447,6 +478,7 @@ export async function runOrchestrator({ conversationId, userText, model, assista
     const directMsgs = [
       { role: 'system', content: 'Você é o coordenador de uma equipe de assistentes especializados, no MEIO de uma conversa em andamento. Responda diretamente à nova mensagem em português do Brasil, usando o histórico e a memória. NÃO se reapresente, NÃO descreva a equipe, NÃO repita o que já foi alinhado — apenas continue o trabalho de onde parou.' }
     ];
+    directMsgs.push({ role: 'system', content: TEAM_TOOL_AWARENESS });
     if (memory) directMsgs.push({ role: 'system', content: memory });
     for (const m of histRows) directMsgs.push({ role: m.role, content: String(m.content).slice(0, 2000) });
     directMsgs.push({ role: 'user', content: userText });
@@ -457,7 +489,7 @@ export async function runOrchestrator({ conversationId, userText, model, assista
       if (await gate(control, onEvent)) { stopped = true; break; }
       onEvent({ type: 'status', content: `${a.emoji || '🧑'} ${a.name} analisando...` });
       onEvent({ type: 'tool_start', name: a.name });
-      const sys = `${a.system_prompt}\n\nVocê faz parte de uma equipe que JÁ está conversando com o usuário. Considere o histórico e dê APENAS a sua perspectiva especializada sobre a NOVA mensagem, direto ao ponto — sem se apresentar, sem repetir o que a equipe já disse. Não gere arquivos nem execute código.`;
+      const sys = `${a.system_prompt}\n\n${TEAM_TOOL_AWARENESS}\n\nVocê faz parte de uma equipe que JÁ está conversando com o usuário. Considere o histórico e dê APENAS a sua perspectiva especializada sobre a NOVA mensagem, direto ao ponto — sem se apresentar, sem repetir o que a equipe já disse. Não gere arquivos nem execute código nesta etapa.`;
       const msgs = [{ role: 'system', content: sys }];
       if (memory) msgs.push({ role: 'system', content: memory });
       msgs.push({ role: 'user', content: historyText ? `Histórico recente da conversa:\n${historyText}\n\nNOVA mensagem do usuário:\n${userText}` : userText });
@@ -486,6 +518,7 @@ export async function runOrchestrator({ conversationId, userText, model, assista
     const combined = perspectives.map(p => `### ${p.emoji || ''} ${p.name}\n${p.text}`).join('\n\n');
     const synthMsgs = [
       { role: 'system', content: 'Você é o coordenador de uma equipe de assistentes especializados, numa conversa em andamento. Combine as perspectivas abaixo em UMA resposta única e coesa, em português do Brasil, que responda DIRETAMENTE à nova mensagem do usuário. NÃO se reapresente, NÃO descreva a equipe nem faça manifesto — vá ao ponto. Use títulos por área quando ajudar e feche com um resumo prático.' },
+      { role: 'system', content: TEAM_TOOL_AWARENESS },
       { role: 'user', content: `${historyText ? `Histórico recente:\n${historyText}\n\n` : ''}NOVA mensagem do usuário:\n${userText}\n\nPerspectivas da equipe:\n${combined}` }
     ];
     try { finalText = await streamCoordinator(synthMsgs); }
