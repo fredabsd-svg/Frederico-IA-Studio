@@ -13,6 +13,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libreoffice-calc libreoffice-writer libreoffice-impress \
     # Fontes metricamente compatíveis com Calibri/Cambria (fidelidade no PDF)
     fonts-crosextra-carlito fonts-crosextra-caladea \
+    # Ferramentas de shell para dados/documentos: JSON (jq), XML (xmlstarlet),
+    # estrutura de PDF (qpdf) e manipulação de imagens (imagemagick)
+    jq xmlstarlet qpdf imagemagick \
     # Dependências de runtime do WeasyPrint (Pango/Cairo/GDK-Pixbuf).
     # Sem elas, "import weasyprint" falha com erro de biblioteca compartilhada.
     libpango-1.0-0 libpangocairo-1.0-0 libpangoft2-1.0-0 \
@@ -30,6 +33,31 @@ RUN pip install --no-cache-dir \
     # ocrmypdf: adiciona camada de texto OCR a PDFs escaneados
     # camelot + opencv: extração de tabelas com linhas (relatórios contábeis)
     PyMuPDF pdf2image ocrmypdf "camelot-py[base]" opencv-python-headless
+RUN pip install --no-cache-dir \
+    # Fiscal/contábil brasileiro (funcionam OFFLINE, sem acesso à SEFAZ):
+    # validate-docbr: valida CPF/CNPJ/PIS/CNH/título etc.
+    # num2words: valor por extenso em pt_BR (cheques, recibos, contratos)
+    # xmltodict: XML fiscal (NF-e/CT-e) <-> dicionário Python
+    # signxml: assinatura XML-DSig (base para NF-e/eSocial; SEM transmissão)
+    # jsonschema: valida JSON de eSocial/Reinf/DCTFWeb contra schema
+    validate-docbr num2words xmltodict signxml jsonschema \
+    # Produtividade e análise (offline):
+    # duckdb: banco analítico embutido para grandes volumes fiscais
+    # jinja2: templates de relatórios; rapidfuzz: casar nomes de empresas
+    # phonenumbers: valida telefones BR; unidecode: normaliza texto
+    duckdb jinja2 rapidfuzz phonenumbers Unidecode PyYAML \
+    python-dateutil pytz tzdata
+# Fontes reais da Microsoft (Arial, Times New Roman, Courier New...) para
+# fidelidade em documentos brasileiros. A Liberation (já instalada) é
+# metricamente compatível e continua como fallback se o download falhar.
+# O bloco termina com "; true" para nunca quebrar o build por falha de rede.
+RUN sed -i 's/Components: main/Components: main contrib/' /etc/apt/sources.list.d/debian.sources 2>/dev/null || true; \
+    apt-get update >/dev/null 2>&1 || true; \
+    echo "ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true" | debconf-set-selections; \
+    apt-get install -y --no-install-recommends cabextract wget ttf-mscorefonts-installer || true; \
+    fc-cache -f >/dev/null 2>&1 || true; \
+    rm -rf /var/lib/apt/lists/*
+
 RUN useradd -m -u 1000 sandbox
 USER sandbox
 WORKDIR /workspace

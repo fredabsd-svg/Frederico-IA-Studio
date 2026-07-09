@@ -105,7 +105,14 @@ REGRAS DO SANDBOX (muito importante):
 - O sandbox tem ffmpeg instalado: use-o (via bash ou run_python) para EDITAR vídeos e áudios enviados pelo usuário — cortar, juntar, converter formato, extrair áudio, redimensionar, legendar. Salve o resultado em /workspace/outputs.
 - Para GERAR ou EDITAR IMAGENS com IA, use a ferramenta generate_image (não tente desenhar via matplotlib quando o usuário pedir uma imagem artística/realista).
 - SEMPRE escreva uma frase curta explicando o que vai fazer ANTES de cada chamada de ferramenta, e verifique o resultado (exit code/erro) depois. Nunca encadeie ferramentas em silêncio.
-- O sandbox NÃO tem internet e NÃO instala pacotes (pip falha). Bibliotecas JÁ INSTALADAS: pandas, numpy, openpyxl, xlsxwriter, xlrd (.xls antigo), pyxlsb (.xlsb), odfpy (.ods), python-docx, python-pptx, reportlab, weasyprint, matplotlib, pillow, PyMuPDF (fitz), pypdf, pdfplumber, camelot, ocrmypdf, pdf2image, pytesseract (por), beautifulsoup4, lxml, tabulate; e no shell: ffmpeg, pdftotext, zip e LibreOffice headless (soffice) para conversão de documentos — ex.: soffice --headless --convert-to xlsx --outdir /workspace/outputs arquivo.xls | soffice --headless --convert-to pdf --outdir /workspace/outputs relatorio.docx. Se algo exigir uma biblioteca fora desta lista, avise o usuário em vez de tentar instalar.`;
+- O sandbox NÃO tem internet e NÃO instala pacotes (pip falha). Bibliotecas Python JÁ INSTALADAS:
+  · Planilhas/dados: pandas, numpy, openpyxl, xlsxwriter, xlrd (.xls antigo), pyxlsb (.xlsb), odfpy (.ods), duckdb, tabulate.
+  · Documentos: python-docx, python-pptx, reportlab, weasyprint, jinja2, matplotlib, pillow.
+  · PDF: PyMuPDF (fitz), pypdf, pdfplumber, camelot, ocrmypdf, pdf2image, pytesseract (idioma por).
+  · Fiscal/contábil BR: validate-docbr (CPF/CNPJ/PIS/CNH/título), num2words (valor por extenso pt_BR: from num2words import num2words; num2words(1250.5, lang='pt_BR', to='currency')), xmltodict (XML de NF-e/CT-e), signxml (assinatura XML-DSig, sem transmissão à SEFAZ), jsonschema (validar eSocial/Reinf), rapidfuzz, phonenumbers, unidecode, python-dateutil, pytz.
+  · Web/texto: beautifulsoup4, lxml.
+- No shell (bash): soffice (LibreOffice headless — converte documentos: soffice --headless --convert-to xlsx|pdf|docx --outdir /workspace/outputs "arquivo"), ffmpeg, pdftotext, ocrmypdf, jq (JSON), xmlstarlet (XML), qpdf (estrutura de PDF), imagemagick (convert), zip/unzip.
+- SEM acesso à SEFAZ/Receita (sandbox sem rede): dá para LER, VALIDAR e ASSINAR XML fiscal offline, mas NÃO transmitir. Se algo exigir uma biblioteca fora desta lista, avise o usuário.`;
 
 function promptFor(assistant) {
   const base = assistant ? (assistant.system_prompt || AGENTS.contabil.prompt) : AGENTS.contabil.prompt;
