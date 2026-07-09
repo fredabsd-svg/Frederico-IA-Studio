@@ -93,36 +93,38 @@ function temperatureFor(p) {
   const c = p && typeof p.criat === 'number' ? p.criat : 20;
   return Math.min(0.9, Math.max(0.1, 0.1 + (c / 100) * 0.8));
 }
+
+const PYTHON_INVENTORY = [
+  'Planilhas/dados: pandas, numpy, openpyxl, xlsxwriter, xlrd (.xls antigo), pyxlsb (.xlsb), odfpy (.ods), duckdb, polars, pyarrow, tabulate.',
+  'Documentos/relatórios: python-docx, python-pptx, reportlab, weasyprint, jinja2, matplotlib, pillow, plotly, seaborn.',
+  'PDF/OCR: PyMuPDF/fitz, pypdf, PyPDF2, pdfplumber, camelot, ocrmypdf, pdf2image, pytesseract (idioma por), opencv-python-headless.',
+  'Fiscal/contábil BR: validate-docbr (CPF/CNPJ/PIS/CNH/título), num2words (valor por extenso pt_BR), xmltodict (NF-e/CT-e), signxml (XML-DSig offline), jsonschema (eSocial/Reinf/DCTFWeb), rapidfuzz, phonenumbers, unidecode, python-dateutil, pytz, tzdata, PyYAML.',
+  'Web/texto offline: beautifulsoup4, lxml.'
+];
+
+const SHELL_INVENTORY = [
+  'LibreOffice/soffice headless: converte .xls/.ods/.doc/.odt/.pptx e gera PDF fiel de documentos e planilhas.',
+  'PDF/OCR: pdftotext, ocrmypdf, tesseract/tesseract-ocr-por, qpdf.',
+  'Mídia: ffmpeg para cortar, juntar, converter, extrair áudio, redimensionar e legendar vídeo/áudio.',
+  'Dados/documentos: jq (JSON), xmlstarlet (XML), imagemagick/convert, zip/unzip.',
+  'Runtimes offline: node/npm para scripts JavaScript locais e java/default-jre-headless para validadores .jar.'
+];
+
 // Regras aplicadas a TODOS os assistentes: evitam que o modelo perca trabalho
 // por assumir um "kernel" persistente que na verdade não existe.
 const SANDBOX_RULES = `
 
 REGRAS DO SANDBOX (muito importante):
-- O app tem ferramentas reais. Nesta chamada, considere como utilizáveis apenas as ferramentas listadas em "FERRAMENTAS DISPONÍVEIS NESTA CHAMADA".
+- O app tem ferramentas reais. Nesta chamada, considere como utilizáveis apenas as ferramentas e capacidades listadas em "FERRAMENTAS E AMBIENTE DISPONÍVEIS NESTA CHAMADA".
 - Quando o usuário pedir análise de arquivo, planilha, documento, PDF, imagem, áudio, vídeo ou automação, use as ferramentas disponíveis em vez de apenas explicar.
 - Onde estão os arquivos: uploads do usuário ficam em /workspace/uploads; arquivos finais devem ser salvos em /workspace/outputs para aparecerem como download no chat.
-- Ferramentas principais:
-  · run_python: executa Python 3.12 real para cálculos, análise de dados, planilhas, relatórios, gráficos e automações.
-  · bash: executa comandos Linux já instalados, incluindo soffice (LibreOffice headless), ffmpeg, pdftotext, ocrmypdf, tesseract, jq, xmlstarlet, qpdf, imagemagick, zip/unzip, node e java.
-  · write_file/read_file/list_files/zip_outputs: cria, lê, lista e compacta arquivos da conversa.
-  · generate_image: gera ou edita imagens com IA quando essa ferramenta estiver disponível para o assistente.
-- LibreOffice está instalado: use soffice --headless para converter .xls/.ods/.doc/.odt/.pptx e para gerar PDF fiel de documentos e planilhas. Exemplos: soffice --headless --convert-to xlsx --outdir /workspace/outputs arquivo.xls; soffice --headless --convert-to pdf --outdir /workspace/outputs relatorio.docx.
-- Para PDFs e documentos difíceis, siga esta ordem: PyMuPDF/fitz; pdftotext -layout; pdfplumber/camelot para tabelas; ocrmypdf; pdf2image + pytesseract com lang='por'.
 - Cada execução de run_python é um processo NOVO e independente. Variáveis NÃO persistem entre chamadas — o que você definiu numa execução some na seguinte.
 - Resolva a tarefa preferencialmente em UM ÚNICO script run_python, completo e autossuficiente: ler os arquivos, processar e salvar o resultado final de uma vez.
 - Se precisar mesmo dividir em etapas, salve os dados intermediários em arquivo (JSON/CSV em /workspace) e leia de volta no próximo script — nunca dependa de variáveis da execução anterior.
 - Evite muitas execuções exploratórias; planeje e faça de uma vez. Salve os arquivos finais em /workspace/outputs.
-- O sandbox tem ffmpeg instalado: use-o (via bash ou run_python) para EDITAR vídeos e áudios enviados pelo usuário — cortar, juntar, converter formato, extrair áudio, redimensionar, legendar. Salve o resultado em /workspace/outputs.
 - Para GERAR ou EDITAR IMAGENS com IA, use a ferramenta generate_image (não tente desenhar via matplotlib quando o usuário pedir uma imagem artística/realista).
 - SEMPRE escreva uma frase curta explicando o que vai fazer ANTES de cada chamada de ferramenta, e verifique o resultado (exit code/erro) depois. Nunca encadeie ferramentas em silêncio.
-- O sandbox NÃO tem internet e NÃO instala pacotes (pip falha). Bibliotecas Python JÁ INSTALADAS:
-  · Planilhas/dados: pandas, numpy, openpyxl, xlsxwriter, xlrd (.xls antigo), pyxlsb (.xlsb), odfpy (.ods), duckdb, tabulate.
-  · Documentos: python-docx, python-pptx, reportlab, weasyprint, jinja2, matplotlib, pillow.
-  · PDF: PyMuPDF (fitz), pypdf, pdfplumber, camelot, ocrmypdf, pdf2image, pytesseract (idioma por).
-  · Fiscal/contábil BR: validate-docbr (CPF/CNPJ/PIS/CNH/título), num2words (valor por extenso pt_BR: from num2words import num2words; num2words(1250.5, lang='pt_BR', to='currency')), xmltodict (XML de NF-e/CT-e), signxml (assinatura XML-DSig, sem transmissão à SEFAZ), jsonschema (validar eSocial/Reinf), rapidfuzz, phonenumbers, unidecode, python-dateutil, pytz.
-  · Web/texto: beautifulsoup4, lxml.
-  · Análise pesada/visualização: polars (DataFrame rápido), pyarrow (Parquet), plotly, seaborn.
-- No shell (bash): soffice (LibreOffice headless — converte documentos: soffice --headless --convert-to xlsx|pdf|docx --outdir /workspace/outputs "arquivo"), ffmpeg, pdftotext, ocrmypdf, jq (JSON), xmlstarlet (XML), qpdf (estrutura de PDF), imagemagick (convert), zip/unzip, node (JavaScript) e java (rodar validadores SPED/eSocial em .jar). Não instale pacotes (npm/pip sem rede) — use só o que já existe.
+- O sandbox NÃO tem internet e NÃO instala pacotes (pip/apt/npm sem rede). Use somente o inventário já instalado informado nesta chamada.
 - SEM acesso à SEFAZ/Receita (sandbox sem rede): dá para LER, VALIDAR e ASSINAR XML fiscal offline, mas NÃO transmitir. Se algo exigir uma biblioteca fora desta lista, avise o usuário.`;
 
 function promptFor(assistant) {
@@ -138,23 +140,41 @@ function toolsFor(assistant) {
 
 function toolAvailabilityNote(tools) {
   const names = new Set(tools.map(t => t.function.name));
-  const lines = ['FERRAMENTAS DISPONÍVEIS NESTA CHAMADA:'];
-  if (names.has('run_python')) lines.push('- run_python: Python 3.12 real para análise de dados, cálculos, planilhas, Word, PDF, gráficos e automações.');
-  if (names.has('bash')) lines.push('- bash: comandos Linux já instalados, incluindo LibreOffice/soffice, ffmpeg, OCR/PDF e utilitários de arquivo.');
-  if (names.has('write_file')) lines.push('- write_file: criar ou sobrescrever arquivos no workspace da conversa.');
-  if (names.has('read_file')) lines.push('- read_file: ler arquivos de texto do workspace da conversa.');
+  const lines = ['FERRAMENTAS E AMBIENTE DISPONÍVEIS NESTA CHAMADA:'];
+  lines.push('Arquivos da conversa: uploads em /workspace/uploads; resultados finais em /workspace/outputs.');
+
+  lines.push('Ferramentas do chat habilitadas para você:');
+  if (names.has('run_python')) lines.push('- run_python: executar Python 3.12 real no sandbox.');
+  if (names.has('bash')) lines.push('- bash: executar comandos Linux offline no sandbox.');
+  if (names.has('write_file')) lines.push('- write_file: criar ou sobrescrever arquivos no workspace.');
+  if (names.has('read_file')) lines.push('- read_file: ler arquivos de texto do workspace.');
   if (names.has('list_files')) lines.push('- list_files: listar uploads, outputs e arquivos da conversa.');
-  if (names.has('zip_outputs')) lines.push('- zip_outputs: compactar arquivos finais em ZIP.');
+  if (names.has('zip_outputs')) lines.push('- zip_outputs: compactar /workspace/outputs em ZIP.');
   if (names.has('generate_image')) lines.push('- generate_image: gerar ou editar imagens com IA e salvar em outputs.');
-  if (names.has('web_search')) lines.push('- web_search: pesquisar na internet quando o botão de globo estiver ativado.');
+  if (names.has('web_search')) lines.push('- web_search: pesquisar na internet pelo backend quando o globo estiver ativado.');
   if (names.has('web_fetch')) lines.push('- web_fetch: abrir uma página da internet encontrada na pesquisa.');
-  if (lines.length === 1) lines.push('- Nenhuma ferramenta de execução foi habilitada para este assistente. Responda apenas por texto e avise se a tarefa exigir ferramenta.');
-  lines.push('Use somente as ferramentas listadas aqui. Não diga que não tem Python/LibreOffice quando run_python e bash estiverem disponíveis.');
+  if (!tools.length) lines.push('- Nenhuma ferramenta de execução foi habilitada para este assistente. Responda por texto e avise se a tarefa exigir ferramenta.');
+
+  if (names.has('run_python')) {
+    lines.push('Inventário Python instalado via run_python:');
+    for (const item of PYTHON_INVENTORY) lines.push(`- ${item}`);
+  }
+  if (names.has('bash')) {
+    lines.push('Inventário de shell instalado via bash:');
+    for (const item of SHELL_INVENTORY) lines.push(`- ${item}`);
+  }
+  if (names.has('bash')) {
+    lines.push('Exemplos úteis de LibreOffice: soffice --headless --convert-to xlsx --outdir /workspace/outputs arquivo.xls; soffice --headless --convert-to pdf --outdir /workspace/outputs relatorio.docx.');
+  }
+  if (names.has('run_python') || names.has('bash')) {
+    lines.push('Estratégia para PDFs difíceis: PyMuPDF/fitz; pdftotext -layout; pdfplumber/camelot para tabelas; ocrmypdf; pdf2image + pytesseract com lang="por".');
+  }
+  lines.push('Não invente capacidades fora deste inventário. Se a ferramenta necessária não estiver habilitada, diga isso claramente ao usuário.');
   return lines.join('\n');
 }
 
 const TEAM_TOOL_AWARENESS = `CAPACIDADES DO APP:
-O Frederico AI Studio tem sandbox com Python, bash, LibreOffice/soffice, ffmpeg, OCR/PDF, geração de arquivos e ferramentas de imagem/web quando habilitadas.
+O Frederico AI Studio tem sandbox com Python 3.12, bash, LibreOffice/soffice, ffmpeg, OCR/PDF, utilitários JSON/XML/PDF/imagem, Node.js, Java, geração de arquivos e ferramentas de imagem/web quando habilitadas.
 No Modo Equipe, os especialistas individuais desta etapa NÃO executam ferramentas diretamente; eles analisam e orientam. Se a resposta final exigir arquivo, cálculo, conversão ou validação, indique claramente que isso deve ser executado pelas ferramentas do assistente principal.`;
 
 // Memória: global (todos) + do assistente atual + do cliente da conversa
