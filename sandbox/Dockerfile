@@ -16,6 +16,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Ferramentas de shell para dados/documentos: JSON (jq), XML (xmlstarlet),
     # estrutura de PDF (qpdf) e manipulação de imagens (imagemagick)
     jq xmlstarlet qpdf imagemagick \
+    # Node.js (scripts JS) e Java JRE (validadores SPED/eSocial, ferramentas
+    # fiscais brasileiras baseadas em Java). Ambos rodam offline.
+    nodejs npm default-jre-headless \
     # Dependências de runtime do WeasyPrint (Pango/Cairo/GDK-Pixbuf).
     # Sem elas, "import weasyprint" falha com erro de biblioteca compartilhada.
     libpango-1.0-0 libpangocairo-1.0-0 libpangoft2-1.0-0 \
@@ -46,7 +49,10 @@ RUN pip install --no-cache-dir \
     # jinja2: templates de relatórios; rapidfuzz: casar nomes de empresas
     # phonenumbers: valida telefones BR; unidecode: normaliza texto
     duckdb jinja2 rapidfuzz phonenumbers Unidecode PyYAML \
-    python-dateutil pytz tzdata
+    python-dateutil pytz tzdata \
+    # Análise de grandes volumes e visualização avançada:
+    # polars (DataFrame rápido), pyarrow (Parquet), plotly + seaborn (gráficos)
+    polars pyarrow plotly seaborn
 # Fontes reais da Microsoft (Arial, Times New Roman, Courier New...) para
 # fidelidade em documentos brasileiros. A Liberation (já instalada) é
 # metricamente compatível e continua como fallback se o download falhar.

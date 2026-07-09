@@ -111,7 +111,8 @@ REGRAS DO SANDBOX (muito importante):
   · PDF: PyMuPDF (fitz), pypdf, pdfplumber, camelot, ocrmypdf, pdf2image, pytesseract (idioma por).
   · Fiscal/contábil BR: validate-docbr (CPF/CNPJ/PIS/CNH/título), num2words (valor por extenso pt_BR: from num2words import num2words; num2words(1250.5, lang='pt_BR', to='currency')), xmltodict (XML de NF-e/CT-e), signxml (assinatura XML-DSig, sem transmissão à SEFAZ), jsonschema (validar eSocial/Reinf), rapidfuzz, phonenumbers, unidecode, python-dateutil, pytz.
   · Web/texto: beautifulsoup4, lxml.
-- No shell (bash): soffice (LibreOffice headless — converte documentos: soffice --headless --convert-to xlsx|pdf|docx --outdir /workspace/outputs "arquivo"), ffmpeg, pdftotext, ocrmypdf, jq (JSON), xmlstarlet (XML), qpdf (estrutura de PDF), imagemagick (convert), zip/unzip.
+  · Análise pesada/visualização: polars (DataFrame rápido), pyarrow (Parquet), plotly, seaborn.
+- No shell (bash): soffice (LibreOffice headless — converte documentos: soffice --headless --convert-to xlsx|pdf|docx --outdir /workspace/outputs "arquivo"), ffmpeg, pdftotext, ocrmypdf, jq (JSON), xmlstarlet (XML), qpdf (estrutura de PDF), imagemagick (convert), zip/unzip, node (JavaScript) e java (rodar validadores SPED/eSocial em .jar). Não instale pacotes (npm/pip sem rede) — use só o que já existe.
 - SEM acesso à SEFAZ/Receita (sandbox sem rede): dá para LER, VALIDAR e ASSINAR XML fiscal offline, mas NÃO transmitir. Se algo exigir uma biblioteca fora desta lista, avise o usuário.`;
 
 function promptFor(assistant) {
