@@ -21,6 +21,9 @@ export default function App() {
   const [form, setForm] = useState(emptyForm());
   const [memoryOpen, setMemoryOpen] = useState(false);
   const [team, setTeam] = useState(false);
+  const [teamOpen, setTeamOpen] = useState(false);
+  const [teamIds, setTeamIds] = useState(() => { try { return JSON.parse(localStorage.getItem('fred_team') || 'null'); } catch { return null; } });
+  const teamRef = useRef(null);
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
   const [analytics, setAnalytics] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -62,6 +65,21 @@ export default function App() {
     const t = setInterval(() => setNowTick(n => n + 1), 1000);
     return () => clearInterval(t);
   }, [busy]);
+  // Fecha o painel da equipe ao clicar fora
+  useEffect(() => {
+    function onDoc(e) { if (teamRef.current && !teamRef.current.contains(e.target)) setTeamOpen(false); }
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, []);
+
+  // Membros ativos da equipe (null = todos)
+  const effectiveTeam = assistants.filter(a => !teamIds || teamIds.includes(a.id));
+  function toggleTeamMember(id) {
+    const cur = teamIds || assistants.map(a => a.id);
+    const next = cur.includes(id) ? cur.filter(x => x !== id) : [...cur, id];
+    setTeamIds(next);
+    localStorage.setItem('fred_team', JSON.stringify(next));
+  }
 
   function showToast(text, kind = 'err') {
     clearTimeout(toastTimer.current);
@@ -448,6 +466,7 @@ export default function App() {
   async function sendMessage() {
     const text = input.trim();
     if (!text || busy || !current) return;
+    if (team && effectiveTeam.length === 0) { showToast('Selecione ao menos 1 assistente no painel da Equipe.'); return; }
     if (listening) recognitionRef.current?.stop();
     setInput('');
     setBusy(true);
@@ -458,7 +477,7 @@ export default function App() {
     const update = (fn) => setMessages(prev => prev.map(m => m.id === assistantMsgId ? fn(m) : m));
 
     const body = team
-      ? { message: text, model, orchestrate: true, orchestrateIds: assistants.map(a => a.id) }
+      ? { message: text, model, orchestrate: true, orchestrateIds: effectiveTeam.map(a => a.id) }
       : { message: text, model, assistantId, webSearch };
     try {
       const res = await fetch(`${API}/api/conversations/${current.id}/chat`, {
@@ -580,7 +599,19 @@ export default function App() {
         <button className="hamburger" onClick={() => setMenuOpen(o => !o)} aria-label="Abrir menu"><Menu size={19}/></button>
         <div className="titleblock"><strong>{current?.title || 'Conversa'}</strong><small>{team ? `🧑‍🤝‍🧑 Equipe (${assistants.length} assistentes)` : (currentAssistant ? `${currentAssistant.emoji || '🤖'} ${currentAssistant.name}` : 'Assistente')} · {model}</small></div>
         <div className="pickers">
-          <button className={`teamBtn ${team ? 'on' : ''}`} onClick={() => setTeam(t => !t)} title="Modo Equipe: aciona todos os assistentes e junta as respostas"><Users size={15}/> Equipe</button>
+          <div className="mpicker" ref={teamRef}>
+            <button className={`teamBtn ${team ? 'on' : ''}`} onClick={() => setTeamOpen(o => !o)} title="Modo Equipe: escolha os assistentes e junte as perspectivas"><Users size={15}/> Equipe{team ? ` (${effectiveTeam.length})` : ''}</button>
+            {teamOpen && <div className="mpPanel teamPanel">
+              <label className="chk teamSwitch"><input type="checkbox" checked={team} onChange={e => setTeam(e.target.checked)}/> <b>Modo Equipe ativado</b></label>
+              <div className="teamHint">Quem participa da consulta:</div>
+              {assistants.map(a => (
+                <label key={a.id} className="chk">
+                  <input type="checkbox" checked={!teamIds || teamIds.includes(a.id)} onChange={() => toggleTeamMember(a.id)}/> {a.emoji || '🤖'} {a.name}
+                </label>
+              ))}
+              <div className="teamHint">💡 A equipe completa é consultada só na <b>1ª mensagem</b> da conversa; depois o coordenador continua sozinho (sem gastar tokens). Escreva <b>"consulte a equipe"</b> quando quiser uma nova rodada.</div>
+            </div>}
+          </div>
           <select value={assistantId || ''} onChange={e => pickAssistant(e.target.value)} disabled={team} title="Assistente">
             {assistants.map(a => <option key={a.id} value={a.id}>{a.emoji || '🤖'} {a.name}</option>)}
           </select>

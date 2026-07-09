@@ -421,22 +421,12 @@ export async function runOrchestrator({ conversationId, userText, model, assista
     return text;
   }
 
-  // Roteador: numa conversa em andamento, só re-consulta os especialistas se a
-  // nova mensagem realmente exigir novas análises (evita o "loop de consultas").
-  let consult = true;
-  if (isFollowUp) {
-    try {
-      const r = await client.chat.completions.create({
-        model: coordModel, temperature: 0, max_tokens: 5,
-        messages: [
-          { role: 'system', content: 'Você decide se a nova mensagem de uma conversa em equipe exige NOVAS análises dos especialistas. Responda APENAS "SIM" ou "NAO". Responda NAO quando for continuação, refinamento ou execução do que a equipe já discutiu, agradecimento, ou pergunta respondível com o histórico.' },
-          { role: 'user', content: `Histórico:\n${historyText.slice(-4000)}\n\nNova mensagem: ${userText}` }
-        ]
-      });
-      addUsage(usage, r.usage);
-      consult = !/^n/i.test(String(r.choices[0].message.content || '').trim());
-    } catch { consult = true; }
-  }
+  // Regra determinística (zero custo): a equipe completa é consultada UMA vez
+  // por conversa (na primeira mensagem). Depois, o coordenador continua sozinho
+  // com o histórico e a memória. O usuário pode forçar nova consulta escrevendo
+  // "consulte a equipe" (ou "consulte os especialistas") na mensagem.
+  const forceConsult = /consult\w*\s+(a\s+|os\s+|o\s+)?(equipe|especialistas|time|todos)/i.test(userText);
+  const consult = (!isFollowUp || forceConsult) && assistants.length > 0;
 
   let finalText = '';
   const perspectives = [];
@@ -444,7 +434,7 @@ export async function runOrchestrator({ conversationId, userText, model, assista
 
   if (!consult) {
     // Continuação: o coordenador responde direto, com histórico e memória
-    onEvent({ type: 'status', content: 'Coordenador respondendo (equipe já consultada)...' });
+    onEvent({ type: 'status', content: 'Coordenador respondendo (equipe consultada no início da conversa — escreva "consulte a equipe" para nova rodada)...' });
     const directMsgs = [
       { role: 'system', content: 'Você é o coordenador de uma equipe de assistentes especializados, no MEIO de uma conversa em andamento. Responda diretamente à nova mensagem em português do Brasil, usando o histórico e a memória. NÃO se reapresente, NÃO descreva a equipe, NÃO repita o que já foi alinhado — apenas continue o trabalho de onde parou.' }
     ];
