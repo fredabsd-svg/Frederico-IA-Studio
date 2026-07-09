@@ -34,6 +34,8 @@ export default function App() {
   const [listening, setListening] = useState(false);
   const [webSearch, setWebSearch] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
+  const [uploadingFiles, setUploadingFiles] = useState(false);
   const [loadingConv, setLoadingConv] = useState(false);
   const [connError, setConnError] = useState(false);
   const [needLogin, setNeedLogin] = useState(false);
@@ -55,6 +57,7 @@ export default function App() {
   const recognitionRef = useRef(null);
   const toastTimer = useRef(null);
   const copyTimer = useRef(null);
+  const dragDepth = useRef(0);
 
   useEffect(() => { init(); }, []);
   useEffect(() => { document.body.className = dark ? 'dark' : 'light'; }, [dark]);
@@ -377,20 +380,62 @@ export default function App() {
     }
   }
 
-  async function uploadFiles(e) {
-    const selected = [...e.target.files];
-    if (!selected.length || !current) return;
+  async function uploadSelectedFiles(selected, source = 'input') {
+    const filesToUpload = [...(selected || [])].filter(Boolean);
+    if (!filesToUpload.length) return;
+    if (!current) { showToast('Abra uma conversa antes de anexar arquivos.'); return; }
+    setUploadingFiles(true);
     try {
       const fd = new FormData();
-      selected.forEach(f => fd.append('files', f));
+      filesToUpload.forEach(f => fd.append('files', f));
       const res = await fetch(`${API}/api/conversations/${current.id}/upload`, { method: 'POST', body: fd });
       if (!res.ok) throw new Error();
       await loadFiles();
+      if (source !== 'input') showToast(`${filesToUpload.length} arquivo(s) anexado(s).`, 'ok');
     } catch {
       showToast('Falha no envio do arquivo. Verifique o tamanho (máx. 50 MB) e tente de novo.');
     } finally {
-      e.target.value = '';
+      setUploadingFiles(false);
     }
+  }
+
+  async function uploadFiles(e) {
+    await uploadSelectedFiles(e.target.files, 'input');
+    e.target.value = '';
+  }
+
+  function hasDraggedFiles(e) {
+    return Array.from(e.dataTransfer?.types || []).includes('Files');
+  }
+  function onDragEnter(e) {
+    if (!hasDraggedFiles(e)) return;
+    e.preventDefault();
+    dragDepth.current += 1;
+    setDragActive(true);
+  }
+  function onDragOver(e) {
+    if (!hasDraggedFiles(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  }
+  function onDragLeave(e) {
+    if (!hasDraggedFiles(e)) return;
+    e.preventDefault();
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setDragActive(false);
+  }
+  async function onDrop(e) {
+    if (!hasDraggedFiles(e)) return;
+    e.preventDefault();
+    dragDepth.current = 0;
+    setDragActive(false);
+    await uploadSelectedFiles(e.dataTransfer.files, 'drop');
+  }
+  async function onPasteFiles(e) {
+    const pasted = Array.from(e.clipboardData?.files || []);
+    if (!pasted.length) return;
+    e.preventDefault();
+    await uploadSelectedFiles(pasted, 'paste');
   }
 
   function pickAssistant(id) {
@@ -594,7 +639,15 @@ export default function App() {
       <button className="theme" onClick={() => setDark(!dark)}>{dark ? <Sun size={16}/> : <Moon size={16}/>} Tema</button>
     </aside>
 
-    <main className="chat">
+    <main
+      className={`chat ${dragActive ? 'dragActive' : ''}`}
+      onPaste={onPasteFiles}
+      onDragEnter={onDragEnter}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
+      {dragActive && <div className="dropOverlay" aria-hidden="true"><Upload size={30}/><span>Solte os arquivos aqui</span></div>}
       <header className="topbar">
         <button className="hamburger" onClick={() => setMenuOpen(o => !o)} aria-label="Abrir menu"><Menu size={19}/></button>
         <div className="titleblock"><strong>{current?.title || 'Conversa'}</strong><small>{team ? `🧑‍🤝‍🧑 Equipe (${assistants.length} assistentes)` : (currentAssistant ? `${currentAssistant.emoji || '🤖'} ${currentAssistant.name}` : 'Assistente')} · {model}</small></div>
@@ -687,6 +740,7 @@ export default function App() {
             <button onClick={() => deleteFile(f)} aria-label="Remover anexo"><X size={12}/></button>
           </span>)}
         </div>}
+        {uploadingFiles && <div className="attachStatus"><span className="spin sm"/><span>Anexando arquivo...</span></div>}
         <div className="composer">
           <label className="upload" title="Anexar arquivo"><Upload size={18}/><input type="file" multiple onChange={uploadFiles}/></label>
           <button className={`webBtn ${webSearch ? 'on' : ''}`} onClick={() => setWebSearch(w => !w)} title={webSearch ? 'Pesquisa na internet ATIVADA — clique para desativar' : 'Ativar pesquisa na internet'} aria-label="Pesquisa na internet"><Globe size={18}/></button>
