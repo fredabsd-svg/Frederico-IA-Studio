@@ -35,7 +35,7 @@ Não peça para o usuário reenviar. Para lê-los, use as ferramentas:
   3) Tabelas com linhas: camelot.read_pdf(caminho, pages='all') ou pdfplumber .extract_tables().
   4) PDF escaneado ou texto ilegível/sobreposto: OCR — bash: ocrmypdf -l por --force-ocr entrada.pdf saida.pdf e extraia da saída; ou pdf2image + pytesseract (lang='por').
   Valide a qualidade: se o texto sair embaralhado, tente a próxima estratégia em vez de insistir.
-- Excel/CSV: run_python com pandas (pd.read_excel / pd.read_csv).
+- Excel/CSV: run_python com pandas (pd.read_excel / pd.read_csv). Formatos legados suportados: .xls (xlrd), .xlsb (pyxlsb), .ods (odfpy) — o pandas detecta sozinho.
 - Texto simples: read_file.
 Sempre comece analisando o arquivo antes de responder.`;
 }
@@ -103,7 +103,8 @@ REGRAS DO SANDBOX (muito importante):
 - Evite muitas execuções exploratórias; planeje e faça de uma vez. Salve os arquivos finais em /workspace/outputs.
 - O sandbox tem ffmpeg instalado: use-o (via bash ou run_python) para EDITAR vídeos e áudios enviados pelo usuário — cortar, juntar, converter formato, extrair áudio, redimensionar, legendar. Salve o resultado em /workspace/outputs.
 - Para GERAR ou EDITAR IMAGENS com IA, use a ferramenta generate_image (não tente desenhar via matplotlib quando o usuário pedir uma imagem artística/realista).
-- SEMPRE escreva uma frase curta explicando o que vai fazer ANTES de cada chamada de ferramenta, e verifique o resultado (exit code/erro) depois. Nunca encadeie ferramentas em silêncio.`;
+- SEMPRE escreva uma frase curta explicando o que vai fazer ANTES de cada chamada de ferramenta, e verifique o resultado (exit code/erro) depois. Nunca encadeie ferramentas em silêncio.
+- O sandbox NÃO tem internet e NÃO instala pacotes (pip falha). Bibliotecas JÁ INSTALADAS: pandas, numpy, openpyxl, xlsxwriter, xlrd (.xls antigo), pyxlsb (.xlsb), odfpy (.ods), python-docx, python-pptx, reportlab, weasyprint, matplotlib, pillow, PyMuPDF (fitz), pypdf, pdfplumber, camelot, ocrmypdf, pdf2image, pytesseract (por), beautifulsoup4, lxml, tabulate; e no shell: ffmpeg, pdftotext, zip. Se algo exigir uma biblioteca fora desta lista, avise o usuário em vez de tentar instalar.`;
 
 function promptFor(assistant) {
   const base = assistant ? (assistant.system_prompt || AGENTS.contabil.prompt) : AGENTS.contabil.prompt;
@@ -259,7 +260,10 @@ export async function runAgent({ conversationId, userText, model, assistant, web
       WHERE conversation_id=? ORDER BY created_at DESC LIMIT ?
     ) ORDER BY created_at ASC`).all(conversationId, historyLimit);
   const messages = [{ role: 'system', content: chosenPrompt }];
-  if (webSearch) messages.push({ role: 'system', content: 'O usuário ATIVOU a pesquisa na internet. Você pode usar web_search (buscar) e web_fetch (ler uma página). Use quando a pergunta envolver informações atuais ou externas (legislação, notícias, tabelas, cotações, prazos) e cite as fontes (links) na resposta.' });
+  if (webSearch) messages.push({ role: 'system', content: `VOCÊ TEM ACESSO À INTERNET NESTA CONVERSA — o usuário ativou a pesquisa web.
+- Para buscar: ferramenta web_search. Para ler uma página: web_fetch.
+- NUNCA diga que "não tem acesso à internet": você tem, através dessas duas ferramentas. Use-as para informações atuais/externas (legislação, notícias, tabelas, cotações, prazos) e cite as fontes (links).
+- Atenção à diferença: o SANDBOX Python continua SEM rede (não tente pip install / requests / urllib lá dentro). Internet = somente via web_search/web_fetch. Se faltar uma biblioteca Python, diga qual é ao usuário em vez de tentar instalar.` });
   // Memória de longo prazo: perfil, notas, resumos e recuperação semântica
   try {
     const ctxBlocks = await buildContext({ conversationId, assistantId: assistant?.id, clientScope: clientScopeFor(conversationId), userText, historyLimit });

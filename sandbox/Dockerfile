@@ -17,6 +17,8 @@ RUN pip install --no-cache-dir \
     pandas openpyxl xlsxwriter python-docx reportlab matplotlib pillow \
     pypdf PyPDF2 pdfplumber beautifulsoup4 lxml numpy tabulate \
     pytesseract python-pptx weasyprint \
+    # Formatos de planilha legados/alternativos: .xls (xlrd), .xlsb, .ods
+    xlrd pyxlsb odfpy \
     # Kit reforçado de leitura de PDF:
     # PyMuPDF (fitz): extração robusta de texto/layout, o melhor para PDFs difíceis
     # pdf2image: converte páginas em imagens (para OCR com pytesseract)
