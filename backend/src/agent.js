@@ -401,55 +401,96 @@ export async function runOrchestrator({ conversationId, userText, model, assista
   let memory = null;
   try { memory = (await buildContext({ conversationId, assistantId: null, clientScope: clientScopeFor(conversationId), userText })).join('\n\n') || null; }
   catch { memory = memoryNote(null, clientScopeFor(conversationId)); }
-  const perspectives = [];
-  let stopped = false;
+  // Histórico da conversa (a mensagem atual do usuário já foi salva — exclui ela)
+  const histRows = db.prepare(`
+    SELECT role, content FROM (
+      SELECT role, content, created_at FROM messages
+      WHERE conversation_id=? ORDER BY created_at DESC LIMIT 13
+    ) ORDER BY created_at ASC`).all(conversationId).slice(0, -1);
+  const historyText = histRows.map(m => `${m.role === 'user' ? 'Usuário' : 'Equipe'}: ${String(m.content).slice(0, 600)}`).join('\n');
+  const isFollowUp = histRows.some(m => m.role === 'assistant');
 
-  for (const a of assistants) {
-    if (await gate(control, onEvent)) { stopped = true; break; }
-    onEvent({ type: 'status', content: `${a.emoji || '🧑'} ${a.name} analisando...` });
-    onEvent({ type: 'tool_start', name: a.name });
-    const sys = `${a.system_prompt}\n\nDê APENAS a sua perspectiva especializada e resumida sobre o pedido, focando na sua área. Não gere arquivos nem execute código.`;
-    const msgs = [{ role: 'system', content: sys }];
-    if (memory) msgs.push({ role: 'system', content: memory });
-    msgs.push({ role: 'user', content: userText });
-    try {
-      const c = await client.chat.completions.create({ model: a.model || coordModel, messages: msgs, temperature: 0.3 });
-      addUsage(usage, c.usage);
-      const text = c.choices[0].message.content || '';
-      perspectives.push({ name: a.name, emoji: a.emoji, text });
-      onEvent({ type: 'tool_result', name: a.name, content: text.slice(0, 600) });
-    } catch (err) {
-      onEvent({ type: 'tool_result', name: a.name, content: `erro: ${err.message}` });
-    }
-  }
-
-  let finalText = '';
-  if (stopped || await gate(control, onEvent)) {
-    controls.delete(conversationId);
-    onEvent({ type: 'status', content: 'Interrompido pelo usuário' });
-    finalText = perspectives.length ? perspectives.map(p => `### ${p.emoji || ''} ${p.name}\n${p.text}`).join('\n\n') : '_Processamento interrompido pelo usuário._';
-    onEvent({ type: 'delta', content: finalText });
-    const stoppedMsgId = saveMessage(conversationId, 'assistant', finalText);
-    onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId: stoppedMsgId });
-    return { text: finalText, usage, model: coordModel };
-  }
-
-  onEvent({ type: 'status', content: 'Compilando a resposta final da equipe...' });
-  const combined = perspectives.map(p => `### ${p.emoji || ''} ${p.name}\n${p.text}`).join('\n\n');
-  const synthMsgs = [
-    { role: 'system', content: 'Você é o coordenador de uma equipe de assistentes especializados. Combine as perspectivas abaixo em UMA resposta única, organizada e coesa, em português do Brasil, sem repetições. Use títulos por área quando ajudar e feche com um resumo prático.' },
-    { role: 'user', content: `Pedido do usuário:\n${userText}\n\nPerspectivas da equipe:\n${combined}` }
-  ];
-  try {
-    const stream = await client.chat.completions.create({ model: coordModel, messages: synthMsgs, temperature: 0.3, stream: true, stream_options: { include_usage: true } });
+  async function streamCoordinator(msgs) {
+    const stream = await client.chat.completions.create({ model: coordModel, messages: msgs, temperature: 0.3, stream: true, stream_options: { include_usage: true } });
+    let text = '';
     for await (const chunk of stream) {
       if (chunk.usage) addUsage(usage, chunk.usage);
       const d = chunk.choices?.[0]?.delta?.content || '';
-      if (d) { finalText += d; onEvent({ type: 'delta', content: d }); }
+      if (d) { text += d; onEvent({ type: 'delta', content: d }); }
     }
-  } catch (err) {
-    finalText = `Não foi possível compilar a resposta final: ${err.message}`;
-    onEvent({ type: 'delta', content: finalText });
+    return text;
+  }
+
+  // Roteador: numa conversa em andamento, só re-consulta os especialistas se a
+  // nova mensagem realmente exigir novas análises (evita o "loop de consultas").
+  let consult = true;
+  if (isFollowUp) {
+    try {
+      const r = await client.chat.completions.create({
+        model: coordModel, temperature: 0, max_tokens: 5,
+        messages: [
+          { role: 'system', content: 'Você decide se a nova mensagem de uma conversa em equipe exige NOVAS análises dos especialistas. Responda APENAS "SIM" ou "NAO". Responda NAO quando for continuação, refinamento ou execução do que a equipe já discutiu, agradecimento, ou pergunta respondível com o histórico.' },
+          { role: 'user', content: `Histórico:\n${historyText.slice(-4000)}\n\nNova mensagem: ${userText}` }
+        ]
+      });
+      addUsage(usage, r.usage);
+      consult = !/^n/i.test(String(r.choices[0].message.content || '').trim());
+    } catch { consult = true; }
+  }
+
+  let finalText = '';
+  const perspectives = [];
+  let stopped = false;
+
+  if (!consult) {
+    // Continuação: o coordenador responde direto, com histórico e memória
+    onEvent({ type: 'status', content: 'Coordenador respondendo (equipe já consultada)...' });
+    const directMsgs = [
+      { role: 'system', content: 'Você é o coordenador de uma equipe de assistentes especializados, no MEIO de uma conversa em andamento. Responda diretamente à nova mensagem em português do Brasil, usando o histórico e a memória. NÃO se reapresente, NÃO descreva a equipe, NÃO repita o que já foi alinhado — apenas continue o trabalho de onde parou.' }
+    ];
+    if (memory) directMsgs.push({ role: 'system', content: memory });
+    for (const m of histRows) directMsgs.push({ role: m.role, content: String(m.content).slice(0, 2000) });
+    directMsgs.push({ role: 'user', content: userText });
+    try { finalText = await streamCoordinator(directMsgs); }
+    catch (err) { finalText = `Não foi possível responder: ${err.message}`; onEvent({ type: 'delta', content: finalText }); }
+  } else {
+    for (const a of assistants) {
+      if (await gate(control, onEvent)) { stopped = true; break; }
+      onEvent({ type: 'status', content: `${a.emoji || '🧑'} ${a.name} analisando...` });
+      onEvent({ type: 'tool_start', name: a.name });
+      const sys = `${a.system_prompt}\n\nVocê faz parte de uma equipe que JÁ está conversando com o usuário. Considere o histórico e dê APENAS a sua perspectiva especializada sobre a NOVA mensagem, direto ao ponto — sem se apresentar, sem repetir o que a equipe já disse. Não gere arquivos nem execute código.`;
+      const msgs = [{ role: 'system', content: sys }];
+      if (memory) msgs.push({ role: 'system', content: memory });
+      msgs.push({ role: 'user', content: historyText ? `Histórico recente da conversa:\n${historyText}\n\nNOVA mensagem do usuário:\n${userText}` : userText });
+      try {
+        const c = await client.chat.completions.create({ model: a.model || coordModel, messages: msgs, temperature: 0.3 });
+        addUsage(usage, c.usage);
+        const text = c.choices[0].message.content || '';
+        perspectives.push({ name: a.name, emoji: a.emoji, text });
+        onEvent({ type: 'tool_result', name: a.name, content: text.slice(0, 600) });
+      } catch (err) {
+        onEvent({ type: 'tool_result', name: a.name, content: `erro: ${err.message}` });
+      }
+    }
+
+    if (stopped || await gate(control, onEvent)) {
+      controls.delete(conversationId);
+      onEvent({ type: 'status', content: 'Interrompido pelo usuário' });
+      finalText = perspectives.length ? perspectives.map(p => `### ${p.emoji || ''} ${p.name}\n${p.text}`).join('\n\n') : '_Processamento interrompido pelo usuário._';
+      onEvent({ type: 'delta', content: finalText });
+      const stoppedMsgId = saveMessage(conversationId, 'assistant', finalText);
+      onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId: stoppedMsgId });
+      return { text: finalText, usage, model: coordModel };
+    }
+
+    onEvent({ type: 'status', content: 'Compilando a resposta final da equipe...' });
+    const combined = perspectives.map(p => `### ${p.emoji || ''} ${p.name}\n${p.text}`).join('\n\n');
+    const synthMsgs = [
+      { role: 'system', content: 'Você é o coordenador de uma equipe de assistentes especializados, numa conversa em andamento. Combine as perspectivas abaixo em UMA resposta única e coesa, em português do Brasil, que responda DIRETAMENTE à nova mensagem do usuário. NÃO se reapresente, NÃO descreva a equipe nem faça manifesto — vá ao ponto. Use títulos por área quando ajudar e feche com um resumo prático.' },
+      { role: 'user', content: `${historyText ? `Histórico recente:\n${historyText}\n\n` : ''}NOVA mensagem do usuário:\n${userText}\n\nPerspectivas da equipe:\n${combined}` }
+    ];
+    try { finalText = await streamCoordinator(synthMsgs); }
+    catch (err) { finalText = `Não foi possível compilar a resposta final: ${err.message}`; onEvent({ type: 'delta', content: finalText }); }
   }
   controls.delete(conversationId);
   if (!finalText.trim()) { finalText = 'Concluído.'; onEvent({ type: 'delta', content: finalText }); }
