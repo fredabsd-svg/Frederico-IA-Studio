@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS messages (
   conversation_id TEXT NOT NULL,
   role TEXT NOT NULL,
   content TEXT NOT NULL,
+  memory_meta TEXT,
   created_at TEXT NOT NULL,
   FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
 );
@@ -107,6 +108,7 @@ CREATE TABLE IF NOT EXISTS settings (
 
 // Migrações p/ bancos antigos: adiciona colunas se ainda não existirem
 try { db.exec('ALTER TABLE files ADD COLUMN message_id TEXT'); } catch {}
+try { db.exec('ALTER TABLE messages ADD COLUMN memory_meta TEXT'); } catch {}
 try { db.exec('ALTER TABLE conversations ADD COLUMN client_id TEXT'); } catch {}
 // Memória de longo prazo: novas colunas da tabela memory
 try { db.exec("ALTER TABLE memory ADD COLUMN type TEXT DEFAULT 'manual'"); } catch {}

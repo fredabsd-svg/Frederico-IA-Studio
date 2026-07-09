@@ -227,7 +227,7 @@ app.post('/api/memories/reindex', async (_, res) => {
 // Inicia a importação em segundo plano; o progresso é consultado via /import-status
 app.post('/api/memories/import', upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'Nenhum arquivo enviado.' });
-  const r = startImport(Buffer.from(req.file.originalname, 'latin1').toString('utf8'), req.file.buffer);
+  const r = startImport(Buffer.from(req.file.originalname, 'latin1').toString('utf8'), req.file.buffer, req.query.scope || 'global');
   if (!r.ok) return res.status(409).json({ error: r.error });
   res.json({ started: true });
 });
@@ -291,7 +291,13 @@ app.get('/api/conversations/:id', (req, res) => {
   for (const f of db.prepare('SELECT id,name,path,size,message_id FROM files WHERE conversation_id=? AND message_id IS NOT NULL').all(req.params.id)) {
     (byMsg[f.message_id] ||= []).push(f);
   }
-  messages.forEach(m => { m.files = byMsg[m.id] || []; });
+  messages.forEach(m => {
+    m.files = byMsg[m.id] || [];
+    if (m.memory_meta) {
+      try { m.memory = JSON.parse(m.memory_meta); } catch {}
+    }
+    delete m.memory_meta;
+  });
   res.json({ conversation, messages });
 });
 

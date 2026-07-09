@@ -2,7 +2,7 @@ import OpenAI from 'openai';
 import fs from 'fs';
 import path from 'path';
 import { toolDefinitions, webToolDefinitions, imageToolDefinitions, runTool } from './tools.js';
-import { buildContext } from './memory/contextBuilder.js';
+import { buildContext, historyBudgetForModel, selectHistoryForContext } from './memory/contextBuilder.js';
 import { indexAfterReply } from './memory/indexer.js';
 import { workspaceFor } from './sandbox.js';
 import { db, now } from './db.js';
@@ -314,19 +314,17 @@ export async function runAgent({ conversationId, userText, model, assistant, web
   const temperature = temperatureFor(assistant?.personality);
   const userMsgId = saveMessage(conversationId, 'user', userText);
   const historyLimit = Number(process.env.AGENT_HISTORY_LIMIT || 60);
-  const history = db.prepare(`
-    SELECT role, content FROM (
-      SELECT role, content, created_at FROM messages
-      WHERE conversation_id=? ORDER BY created_at DESC LIMIT ?
-    ) ORDER BY created_at ASC`).all(conversationId, historyLimit);
   const messages = [{ role: 'system', content: chosenPrompt }, { role: 'system', content: toolAvailabilityNote(tools) }];
   if (webSearch) messages.push({ role: 'system', content: `VOCÊ TEM ACESSO À INTERNET NESTA CONVERSA — o usuário ativou a pesquisa web.
 - Para buscar: ferramenta web_search. Para ler uma página: web_fetch.
 - NUNCA diga que "não tem acesso à internet": você tem, através dessas duas ferramentas. Use-as para informações atuais/externas (legislação, notícias, tabelas, cotações, prazos) e cite as fontes (links).
 - Atenção à diferença: o SANDBOX Python continua SEM rede (não tente pip install / requests / urllib lá dentro). Internet = somente via web_search/web_fetch. Se faltar uma biblioteca Python, diga qual é ao usuário em vez de tentar instalar.` });
+  let memoryMeta = null;
   // Memória de longo prazo: perfil, notas, resumos e recuperação semântica
   try {
-    const ctxBlocks = await buildContext({ conversationId, assistantId: assistant?.id, clientScope: clientScopeFor(conversationId), userText, historyLimit });
+    const contextPlan = await buildContext({ conversationId, assistantId: assistant?.id, clientScope: clientScopeFor(conversationId), userText, historyLimit, model: chosenModel });
+    const ctxBlocks = contextPlan.blocks || [];
+    memoryMeta = contextPlan.meta || null;
     for (const b of ctxBlocks) messages.push({ role: 'system', content: b });
   } catch (err) {
     console.error('[memória] contexto indisponível nesta resposta:', err.message);
@@ -335,6 +333,16 @@ export async function runAgent({ conversationId, userText, model, assistant, web
   }
   const note = uploadsNote(conversationId);
   if (note) messages.push({ role: 'system', content: note });
+  const historyPlan = selectHistoryForContext({
+    conversationId,
+    limit: historyLimit,
+    budgetTokens: historyBudgetForModel(chosenModel, memoryMeta?.budget)
+  });
+  if (memoryMeta) {
+    memoryMeta = { ...memoryMeta, history: historyPlan.meta };
+    onEvent({ type: 'memory_context', memory: memoryMeta });
+  }
+  const history = historyPlan.rows;
   messages.push(...history.map(m => ({ role: m.role, content: m.content })));
 
   const control = initControl(conversationId);
@@ -435,7 +443,7 @@ export async function runAgent({ conversationId, userText, model, assistant, web
     finalText = 'O modelo terminou sem gerar uma resposta em texto. Tente reformular o pedido ou escolher outro modelo.';
     onEvent({ type: 'delta', content: finalText });
   }
-  const msgId = saveMessage(conversationId, 'assistant', finalText);
+  const msgId = saveMessage(conversationId, 'assistant', finalText, { memoryMeta });
   // Detecta os arquivos gerados NESTA resposta e os anexa à mensagem
   const newFiles = listOutputs(conversationId).filter(f => outputsBefore.get(f.path) !== f.mtimeMs);
   if (newFiles.length) {
@@ -459,7 +467,13 @@ export async function runOrchestrator({ conversationId, userText, model, assista
   const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
   const coordModel = model || process.env.DEEPSEEK_MODEL || 'deepseek-chat';
   let memory = null;
-  try { memory = (await buildContext({ conversationId, assistantId: null, clientScope: clientScopeFor(conversationId), userText })).join('\n\n') || null; }
+  let memoryMeta = null;
+  try {
+    const contextPlan = await buildContext({ conversationId, assistantId: null, clientScope: clientScopeFor(conversationId), userText, model: coordModel });
+    memory = (contextPlan.blocks || []).join('\n\n') || null;
+    memoryMeta = contextPlan.meta || null;
+    if (memoryMeta) onEvent({ type: 'memory_context', memory: memoryMeta });
+  }
   catch { memory = memoryNote(null, clientScopeFor(conversationId)); }
   // Histórico da conversa (a mensagem atual do usuário já foi salva — exclui ela)
   const histRows = db.prepare(`
@@ -529,7 +543,7 @@ export async function runOrchestrator({ conversationId, userText, model, assista
       onEvent({ type: 'status', content: 'Interrompido pelo usuário' });
       finalText = perspectives.length ? perspectives.map(p => `### ${p.emoji || ''} ${p.name}\n${p.text}`).join('\n\n') : '_Processamento interrompido pelo usuário._';
       onEvent({ type: 'delta', content: finalText });
-      const stoppedMsgId = saveMessage(conversationId, 'assistant', finalText);
+      const stoppedMsgId = saveMessage(conversationId, 'assistant', finalText, { memoryMeta });
       onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId: stoppedMsgId });
       return { text: finalText, usage, model: coordModel };
     }
@@ -546,16 +560,17 @@ export async function runOrchestrator({ conversationId, userText, model, assista
   }
   controls.delete(conversationId);
   if (!finalText.trim()) { finalText = 'Concluído.'; onEvent({ type: 'delta', content: finalText }); }
-  const doneMsgId = saveMessage(conversationId, 'assistant', finalText);
+  const doneMsgId = saveMessage(conversationId, 'assistant', finalText, { memoryMeta });
   onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId: doneMsgId });
   indexAfterReply(conversationId).catch(() => {});
   return { text: finalText, usage, model: coordModel };
 }
 
-export function saveMessage(conversationId, role, content) {
+export function saveMessage(conversationId, role, content, extra = {}) {
   const id = nanoid();
-  db.prepare('INSERT INTO messages (id, conversation_id, role, content, created_at) VALUES (?,?,?,?,?)')
-    .run(id, conversationId, role, content, now());
+  const memoryMeta = extra.memoryMeta ? JSON.stringify(extra.memoryMeta).slice(0, 20000) : null;
+  db.prepare('INSERT INTO messages (id, conversation_id, role, content, memory_meta, created_at) VALUES (?,?,?,?,?,?)')
+    .run(id, conversationId, role, content, memoryMeta, now());
   db.prepare('UPDATE conversations SET updated_at=? WHERE id=?').run(now(), conversationId);
   return id;
 }

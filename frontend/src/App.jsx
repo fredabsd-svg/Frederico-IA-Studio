@@ -7,6 +7,33 @@ import { API, FALLBACK_MODELS, TOOL_INFO, TEMPLATES, SUGGESTIONS, emptyForm } fr
 import { ToolStep, Slider, Modal, ModelPicker, Collapsible } from './components.jsx';
 import { MemoryPanel } from './MemoryPanel.jsx';
 
+function MemoryTrace({ memory, onOpenMemory }) {
+  if (!memory?.enabled) return null;
+  const stats = memory.stats || {};
+  const memories = stats.memoriesUsed ?? memory.memories?.length ?? 0;
+  const chunks = stats.chunksUsed ?? memory.chunks?.length ?? 0;
+  const summaries = stats.summariesUsed ?? memory.summaries ?? 0;
+  const used = stats.contextTokens || memory.usedTokens || 0;
+  const budget = stats.contextBudget || memory.budget || 0;
+  const hasSignal = memories || chunks || summaries || memory.history?.clipped;
+  if (!hasSignal) return <div className="memoryTrace compact"><Brain size={13}/> Memoria ativa: nada relevante foi adicionado nesta resposta.</div>;
+  return <details className="memoryTrace">
+    <summary><Brain size={13}/><span>Usei {memories} memoria(s), {chunks} conversa(s) antiga(s){summaries ? ` e ${summaries} resumo(s)` : ''}.</span></summary>
+    <div className="memoryTraceBody">
+      <div className="memoryTraceMeta">Contexto: {used.toLocaleString('pt-BR')} / {budget.toLocaleString('pt-BR')} tokens{memory.truncated ? ' (encurtado)' : ''}. Historico: {memory.history?.included || 0} mensagens.</div>
+      {memory.memories?.length > 0 && <div className="memoryTraceList">
+        <b>Memorias usadas</b>
+        {memory.memories.slice(0, 8).map((m, i) => <span key={`${m.id || i}-${i}`}>{m.scopeLabel || 'Memoria'} · {m.type || 'nota'} · {m.preview}</span>)}
+      </div>}
+      {memory.chunks?.length > 0 && <div className="memoryTraceList">
+        <b>Conversas antigas</b>
+        {memory.chunks.slice(0, 5).map((c, i) => <span key={`${c.title || i}-${i}`}>{c.scopeLabel || 'Escopo'} · {c.title}{c.date ? ` · ${c.date}` : ''}</span>)}
+      </div>}
+      <button type="button" onClick={(e) => { e.preventDefault(); onOpenMemory?.(); }}>Abrir memoria</button>
+    </div>
+  </details>;
+}
+
 export default function App() {
   const [conversations, setConversations] = useState([]);
   const [current, setCurrent] = useState(null);
@@ -542,6 +569,7 @@ export default function App() {
           if (!part.startsWith('data:')) continue;
           const ev = JSON.parse(part.slice(5));
           if (ev.type === 'status') setStatusText(ev.content || '');
+          if (ev.type === 'memory_context') update(m => ({ ...m, memory: ev.memory }));
           if (ev.type === 'delta') update(m => {
             const blocks = [...(m.blocks || [])];
             const last = blocks[blocks.length - 1];
@@ -703,6 +731,7 @@ export default function App() {
               : (m.role === 'user'
                 ? <Collapsible text={m.content}>{t => <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{t}</ReactMarkdown>}</Collapsible>
                 : <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{m.content || ''}</ReactMarkdown>)}
+            {m.role === 'assistant' && <MemoryTrace memory={m.memory} onOpenMemory={() => setMemoryOpen(true)}/>}
             {m.files?.length > 0 && <div className="filecards">
               {m.files.map(f => {
                 const url = `${API}/api/conversations/${current?.id}/download/${f.path}`;

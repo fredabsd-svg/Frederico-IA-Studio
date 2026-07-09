@@ -153,19 +153,27 @@ function parseImport(name, text) {
 }
 
 // Estado da importação (consultado pela interface para mostrar progresso)
-export const importStatus = { running: false, file: '', total: 0, processed: 0, chunks: 0, facts: 0, error: null, done: false };
+export const importStatus = { running: false, file: '', scope: 'global', total: 0, processed: 0, chunks: 0, facts: 0, error: null, done: false };
+
+function normalizeImportScope(scope) {
+  const s = String(scope || 'global');
+  if (s === 'global' || s === 'office' || s.startsWith('client:')) return s;
+  return 'global';
+}
 
 // Inicia a importação em SEGUNDO PLANO (a rota responde na hora)
-export function startImport(fileName, buffer) {
+export function startImport(fileName, buffer, scope = 'global') {
   if (importStatus.running) return { ok: false, error: 'Já existe uma importação em andamento.' };
-  Object.assign(importStatus, { running: true, file: fileName, total: 0, processed: 0, chunks: 0, facts: 0, error: null, done: false });
-  importConversations(fileName, buffer)
+  const targetScope = normalizeImportScope(scope);
+  Object.assign(importStatus, { running: true, file: fileName, scope: targetScope, total: 0, processed: 0, chunks: 0, facts: 0, error: null, done: false });
+  importConversations(fileName, buffer, targetScope)
     .then(r => Object.assign(importStatus, { running: false, done: true, ...r }))
     .catch(err => Object.assign(importStatus, { running: false, done: true, error: err.message }));
   return { ok: true };
 }
 
-export async function importConversations(fileName, buffer) {
+export async function importConversations(fileName, buffer, scope = 'global') {
+  const targetScope = normalizeImportScope(scope);
   const text = buffer.toString('utf8');
   const convs = parseImport(fileName, text).slice(0, 200);
   importStatus.total = convs.length;
@@ -186,7 +194,7 @@ export async function importConversations(fileName, buffer) {
       const vecs = await embed(batch, 'passage');
       batch.forEach((p, j) => {
         db.prepare('INSERT INTO conversation_chunks (id, conversation_id, source_title, scope, content, embedding, token_count, created_at) VALUES (?,?,?,?,?,?,?,?)')
-          .run(nanoid(), null, title, 'global', p, vecs[j], estimateTokens(p), now());
+          .run(nanoid(), null, title, targetScope, p, vecs[j], estimateTokens(p), now());
         chunks++;
       });
     }
@@ -204,7 +212,7 @@ export async function importConversations(fileName, buffer) {
         const dup = await findSimilar(content, 0.88);
         if (dup) continue;
         const type = ['perfil', 'preferencia', 'projeto', 'fato'].includes(f.type) ? f.type : 'fato';
-        await addMemory({ content, type, scope: 'global', importance: Math.min(5, Number(f.importance) || 3), confidence: Number(f.confidence) || 0.7, source_type: 'import', source_id: title });
+        await addMemory({ content, type, scope: targetScope, importance: Math.min(5, Number(f.importance) || 3), confidence: Number(f.confidence) || 0.7, source_type: 'import', source_id: title });
         facts++;
       }
     } catch {}

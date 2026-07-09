@@ -21,6 +21,7 @@ export function MemoryPanel({ assistants, clients, clientId, showToast, onClose 
   const [type, setType] = useState('');
   const [newContent, setNewContent] = useState('');
   const [newScope, setNewScope] = useState('global');
+  const [importScope, setImportScope] = useState(() => clientId ? `client:${clientId}` : 'global');
   const [config, setConfig] = useState(null);
   const [configOpen, setConfigOpen] = useState(false);
   const [workingLabel, setWorkingLabel] = useState('');
@@ -133,7 +134,7 @@ export function MemoryPanel({ assistants, clients, clientId, showToast, onClose 
     try {
       const fd = new FormData();
       fd.append('file', f);
-      const res = await fetch(`${API}/api/memories/import`, { method: 'POST', body: fd });
+      const res = await fetch(`${API}/api/memories/import?scope=${encodeURIComponent(importScope || 'global')}`, { method: 'POST', body: fd });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || '');
       watchImport(); // acompanha o progresso em segundo plano
@@ -142,6 +143,7 @@ export function MemoryPanel({ assistants, clients, clientId, showToast, onClose 
   }
 
   const scopeName = (scope) => {
+    if (scope === 'office') return 'Escritorio';
     if (scope === 'global') return '🌐 Global';
     if (scope?.startsWith('client:')) { const c = clients.find(x => `client:${x.id}` === scope); return `👤 ${c?.name || 'Cliente'}`; }
     const a = assistants.find(x => x.id === scope);
@@ -160,6 +162,7 @@ export function MemoryPanel({ assistants, clients, clientId, showToast, onClose 
       <input value={newContent} onChange={e => setNewContent(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); add(); } }} placeholder="Adicionar memória manual (ex.: Meu nome é Frederico, sou contador, CRC TO-006157/O-8)"/>
       <select value={newScope} onChange={e => setNewScope(e.target.value)} title="Escopo">
         <option value="global">🌐 Global</option>
+        <option value="office">Escritorio</option>
         {clientId && <option value={`client:${clientId}`}>👤 Cliente atual</option>}
         {assistants.map(a => <option key={a.id} value={a.id}>{a.emoji || '🤖'} {a.name}</option>)}
       </select>
@@ -168,6 +171,11 @@ export function MemoryPanel({ assistants, clients, clientId, showToast, onClose 
 
     <div className="memBtns">
       <button onClick={() => window.open(`${API}/api/memories/export`, '_blank')} title="Baixa um JSON com todas as memórias"><Download size={14}/> Exportar</button>
+      <select className="memScopePicker" value={importScope} onChange={e => setImportScope(e.target.value)} title="Escopo da importacao">
+        <option value="global">Importar para: Geral</option>
+        <option value="office">Importar para: Escritorio</option>
+        {clientId && <option value={`client:${clientId}`}>Importar para: Cliente atual</option>}
+      </select>
       <button onClick={() => fileRef.current?.click()} title="Importa .json (Claude/ChatGPT), .txt, .md ou .html"><Upload size={14}/> Importar conversas</button>
       <input ref={fileRef} type="file" accept=".json,.txt,.md,.html,.htm" style={{ display: 'none' }} onChange={importFile}/>
       <button onClick={reindex} title="Regera os embeddings de tudo"><RefreshCw size={14}/> Reprocessar</button>
@@ -180,7 +188,7 @@ export function MemoryPanel({ assistants, clients, clientId, showToast, onClose 
     {configOpen && config && <div className="memConfig">
       <label className="chk"><input type="checkbox" checked={!!config.memory_enabled} onChange={e => saveConfig({ memory_enabled: e.target.checked ? 1 : 0 })}/> Memória ativada (o app consulta o passado antes de responder)</label>
       <label className="chk"><input type="checkbox" checked={!!config.auto_memory} onChange={e => saveConfig({ auto_memory: e.target.checked ? 1 : 0 })}/> Memória automática (aprender fatos das conversas)</label>
-      <div className="cfgRow"><span>Alvo de contexto (tokens) — suba para modelos de 1M</span><input type="number" min="4000" step="10000" value={config.context_target_tokens} onChange={e => saveConfig({ context_target_tokens: e.target.value })}/></div>
+      <div className="cfgRow"><span>Limite maximo de contexto (o app reduz automaticamente por modelo)</span><input type="number" min="4000" step="10000" value={config.context_target_tokens} onChange={e => saveConfig({ context_target_tokens: e.target.value })}/></div>
       <div className="cfgRow"><span>Memórias recuperadas por resposta</span><input type="number" min="0" max="50" value={config.max_memories} onChange={e => saveConfig({ max_memories: e.target.value })}/></div>
       <div className="cfgRow"><span>Trechos de conversas antigas por resposta</span><input type="number" min="0" max="50" value={config.max_chunks} onChange={e => saveConfig({ max_chunks: e.target.value })}/></div>
       <div className="cfgRow"><span>Importância mínima para salvar automático (1–5)</span><input type="number" min="1" max="5" value={config.importance_threshold} onChange={e => saveConfig({ importance_threshold: e.target.value })}/></div>
