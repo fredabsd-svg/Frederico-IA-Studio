@@ -36,6 +36,7 @@ Não peça para o usuário reenviar. Para lê-los, use as ferramentas:
   4) PDF escaneado ou texto ilegível/sobreposto: OCR — bash: ocrmypdf -l por --force-ocr entrada.pdf saida.pdf e extraia da saída; ou pdf2image + pytesseract (lang='por').
   Valide a qualidade: se o texto sair embaralhado, tente a próxima estratégia em vez de insistir.
 - Excel/CSV: run_python com pandas (pd.read_excel / pd.read_csv). Formatos legados suportados: .xls (xlrd), .xlsb (pyxlsb), .ods (odfpy) — o pandas detecta sozinho.
+- Conversão de formatos (quando a leitura direta falhar ou o usuário pedir outro formato): o LibreOffice ESTÁ INSTALADO — use bash: soffice --headless --convert-to xlsx|pdf|docx --outdir /workspace/outputs "arquivo". Funciona para .xls, .doc, .odt, .pptx e para gerar PDF fiel de docx/xlsx.
 - Texto simples: read_file.
 Sempre comece analisando o arquivo antes de responder.`;
 }

@@ -4,7 +4,7 @@ import { execInSandbox, workspaceFor, safeJoin } from './sandbox.js';
 
 export const toolDefinitions = [
   { type: 'function', function: { name: 'run_python', description: 'Executa código Python na sandbox Linux isolada. Use para análises, planilhas, Word, PDF e gráficos.', parameters: { type: 'object', properties: { code: { type: 'string' } }, required: ['code'] } } },
-  { type: 'function', function: { name: 'bash', description: 'Executa comando bash seguro na sandbox. Evite comandos destrutivos.', parameters: { type: 'object', properties: { command: { type: 'string' } }, required: ['command'] } } },
+  { type: 'function', function: { name: 'bash', description: 'Executa comando bash na sandbox. Programas DISPONÍVEIS: soffice (LibreOffice headless — converta documentos: soffice --headless --convert-to xlsx|pdf|docx --outdir /workspace/outputs arquivo), ffmpeg (editar vídeo/áudio), pdftotext, ocrmypdf, zip/unzip. SEM internet: pip/apt install não funcionam.', parameters: { type: 'object', properties: { command: { type: 'string' } }, required: ['command'] } } },
   { type: 'function', function: { name: 'write_file', description: 'Cria ou sobrescreve arquivo no workspace da sessão.', parameters: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path','content'] } } },
   { type: 'function', function: { name: 'read_file', description: 'Lê um arquivo de texto do workspace da sessão.', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } } },
   { type: 'function', function: { name: 'list_files', description: 'Lista arquivos enviados e gerados na sessão.', parameters: { type: 'object', properties: { folder: { type: 'string', enum: ['uploads','outputs','.'] } } } } },
