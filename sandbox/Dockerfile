@@ -8,6 +8,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ghostscript \
     # ffmpeg: edição de vídeo e áudio (cortar, juntar, converter, extrair)
     ffmpeg \
+    # LibreOffice headless (soffice): conversões de documentos —
+    # .xls antigo -> .xlsx, docx/xlsx/pptx -> PDF com layout fiel, .doc, .odt
+    libreoffice-calc libreoffice-writer libreoffice-impress \
+    # Fontes metricamente compatíveis com Calibri/Cambria (fidelidade no PDF)
+    fonts-crosextra-carlito fonts-crosextra-caladea \
     # Dependências de runtime do WeasyPrint (Pango/Cairo/GDK-Pixbuf).
     # Sem elas, "import weasyprint" falha com erro de biblioteca compartilhada.
     libpango-1.0-0 libpangocairo-1.0-0 libpangoft2-1.0-0 \
