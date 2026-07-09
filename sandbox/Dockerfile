@@ -64,6 +64,10 @@ RUN sed -i 's/Components: main/Components: main contrib/' /etc/apt/sources.list.
     fc-cache -f >/dev/null 2>&1 || true; \
     rm -rf /var/lib/apt/lists/*
 
+# Compatibilidade com modelos que tentam salvar arquivos no caminho usado por
+# outros sandboxes. Aqui ele aponta para o workspace real da conversa.
+RUN mkdir -p /mnt && ln -sfnT /workspace /mnt/user-data
+
 RUN useradd -m -u 1000 sandbox
 USER sandbox
 WORKDIR /workspace

@@ -4,7 +4,7 @@ import path from 'path';
 import { toolDefinitions, webToolDefinitions, imageToolDefinitions, runTool } from './tools.js';
 import { buildContext, historyBudgetForModel, selectHistoryForContext } from './memory/contextBuilder.js';
 import { indexAfterReply } from './memory/indexer.js';
-import { workspaceFor } from './sandbox.js';
+import { execInSandbox, workspaceFor } from './sandbox.js';
 import { db, now } from './db.js';
 import { nanoid } from 'nanoid';
 
@@ -15,6 +15,40 @@ function listOutputs(conversationId) {
   const walk = (dir) => { try { for (const d of fs.readdirSync(dir, { withFileTypes: true })) { const full = path.join(dir, d.name); d.isDirectory() ? walk(full) : acc.push(full); } } catch {} };
   walk(ws.outputs);
   return acc.map(f => { const st = fs.statSync(f); return { path: path.relative(ws.base, f).replaceAll('\\', '/'), name: path.basename(f), size: st.size, mtimeMs: st.mtimeMs }; });
+}
+
+function mentionsOutputPath(text) {
+  return /(?:sandbox:)?(?:\/workspace\/|\/mnt\/user-data\/)?outputs\//i.test(String(text || ''));
+}
+
+async function recoverAlternateOutputs(conversationId) {
+  const script = [
+    'mkdir -p /workspace/outputs',
+    'target="$(readlink -f /workspace/outputs)"',
+    'for d in /mnt/user-data/outputs /mnt/data/outputs /mnt/data; do',
+    '  [ -d "$d" ] || continue',
+    '  src="$(readlink -f "$d" 2>/dev/null || true)"',
+    '  [ "$src" = "$target" ] && continue',
+    '  find "$d" -maxdepth 1 -type f -print0 | while IFS= read -r -d "" f; do cp -f "$f" "/workspace/outputs/$(basename "$f")"; done',
+    'done'
+  ].join('\n');
+  try { await execInSandbox(conversationId, script, 15000); } catch {}
+}
+
+function referencedOutputFiles(text, files) {
+  const byPath = new Map(files.map(f => [String(f.path || '').toLowerCase(), f]));
+  const byName = new Map(files.map(f => [String(f.name || '').toLowerCase(), f]));
+  const picked = new Map();
+  const re = /(?:sandbox:)?(?:\/workspace\/|\/mnt\/user-data\/)?outputs\/([^\)\]\n\r]+)/gi;
+  let m;
+  while ((m = re.exec(String(text || '')))) {
+    let rel = `outputs/${String(m[1] || '').trim().replace(/^[/\\]+/, '').replaceAll('\\', '/')}`;
+    try { rel = decodeURI(rel); } catch {}
+    rel = rel.replace(/^outputs\/outputs\//i, 'outputs/');
+    const found = byPath.get(rel.toLowerCase()) || byName.get(path.basename(rel).toLowerCase());
+    if (found) picked.set(found.path, found);
+  }
+  return [...picked.values()];
 }
 
 // Lista os arquivos enviados pelo usuário para avisar o modelo que eles já
@@ -118,6 +152,7 @@ REGRAS DO SANDBOX (muito importante):
 - O app tem ferramentas reais. Nesta chamada, considere como utilizáveis apenas as ferramentas e capacidades listadas em "FERRAMENTAS E AMBIENTE DISPONÍVEIS NESTA CHAMADA".
 - Quando o usuário pedir análise de arquivo, planilha, documento, PDF, imagem, áudio, vídeo ou automação, use as ferramentas disponíveis em vez de apenas explicar.
 - Onde estão os arquivos: uploads do usuário ficam em /workspace/uploads; arquivos finais devem ser salvos em /workspace/outputs para aparecerem como download no chat.
+- Caminho obrigatorio para arquivos finais: /workspace/outputs. Nao use sandbox:/mnt/user-data/outputs, /mnt/user-data/outputs nem links markdown inventados; o app cria o cartao de download automaticamente.
 - Cada execução de run_python é um processo NOVO e independente. Variáveis NÃO persistem entre chamadas — o que você definiu numa execução some na seguinte.
 - Resolva a tarefa preferencialmente em UM ÚNICO script run_python, completo e autossuficiente: ler os arquivos, processar e salvar o resultado final de uma vez.
 - Se precisar mesmo dividir em etapas, salve os dados intermediários em arquivo (JSON/CSV em /workspace) e leia de volta no próximo script — nunca dependa de variáveis da execução anterior.
@@ -142,6 +177,7 @@ function toolAvailabilityNote(tools) {
   const names = new Set(tools.map(t => t.function.name));
   const lines = ['FERRAMENTAS E AMBIENTE DISPONÍVEIS NESTA CHAMADA:'];
   lines.push('Arquivos da conversa: uploads em /workspace/uploads; resultados finais em /workspace/outputs.');
+  lines.push('Para entregar arquivo ao usuario, salve em /workspace/outputs e nao escreva link sandbox:/mnt/user-data/outputs; o chat anexa o download sozinho.');
 
   lines.push('Ferramentas do chat habilitadas para você:');
   if (names.has('run_python')) lines.push('- run_python: executar Python 3.12 real no sandbox.');
@@ -445,7 +481,14 @@ export async function runAgent({ conversationId, userText, model, assistant, web
   }
   const msgId = saveMessage(conversationId, 'assistant', finalText, { memoryMeta });
   // Detecta os arquivos gerados NESTA resposta e os anexa à mensagem
-  const newFiles = listOutputs(conversationId).filter(f => outputsBefore.get(f.path) !== f.mtimeMs);
+  let outputsAfter = listOutputs(conversationId);
+  let newFiles = outputsAfter.filter(f => outputsBefore.get(f.path) !== f.mtimeMs);
+  if (!newFiles.length && mentionsOutputPath(finalText)) {
+    await recoverAlternateOutputs(conversationId);
+    outputsAfter = listOutputs(conversationId);
+    newFiles = outputsAfter.filter(f => outputsBefore.get(f.path) !== f.mtimeMs);
+  }
+  if (!newFiles.length && mentionsOutputPath(finalText)) newFiles = referencedOutputFiles(finalText, outputsAfter);
   if (newFiles.length) {
     const checks = stopped ? {} : await validateOutputs(conversationId, newFiles, onEvent);
     const stmt = db.prepare('INSERT INTO files (id,conversation_id,message_id,kind,name,path,size,created_at) VALUES (?,?,?,?,?,?,?,?)');
