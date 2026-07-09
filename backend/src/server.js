@@ -10,7 +10,7 @@ import { spawn } from 'child_process';
 import { runAgent, runOrchestrator, setControl, friendlyApiError, AGENTS } from './agent.js';
 import { runTool } from './tools.js';
 import { listMemories, addMemory, updateMemory, deleteMemory, deleteAllMemories, exportAll, reindexAll, getSettings, setSettings, looksSensitive } from './memory/memoryService.js';
-import { importConversations } from './memory/indexer.js';
+import { startImport, importStatus } from './memory/indexer.js';
 import { workspaceFor, destroyConversation, insideBase } from './sandbox.js';
 import { authEnabled, makeToken, verifyToken, getCookie, passwordMatches, loginRateLimited } from './auth.js';
 
@@ -224,13 +224,15 @@ app.post('/api/memories/reindex', async (_, res) => {
   try { res.json(await reindexAll()); } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.post('/api/memories/import', upload.single('file'), async (req, res) => {
-  try {
-    if (!req.file) return res.status(400).json({ error: 'Nenhum arquivo enviado.' });
-    const result = await importConversations(Buffer.from(req.file.originalname, 'latin1').toString('utf8'), req.file.buffer);
-    res.json(result);
-  } catch (err) { res.status(400).json({ error: 'Importação falhou: ' + err.message }); }
+// Inicia a importação em segundo plano; o progresso é consultado via /import-status
+app.post('/api/memories/import', upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Nenhum arquivo enviado.' });
+  const r = startImport(Buffer.from(req.file.originalname, 'latin1').toString('utf8'), req.file.buffer);
+  if (!r.ok) return res.status(409).json({ error: r.error });
+  res.json({ started: true });
 });
+
+app.get('/api/memories/import-status', (_, res) => res.json(importStatus));
 
 app.get('/api/memory-config', (_, res) => res.json(getSettings()));
 app.put('/api/memory-config', (req, res) => res.json(setSettings(req.body || {})));

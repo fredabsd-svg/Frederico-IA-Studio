@@ -152,11 +152,29 @@ function parseImport(name, text) {
   return [{ title: name.replace(/\.[a-z]+$/i, ''), text: String(raw) }];
 }
 
+// Estado da importação (consultado pela interface para mostrar progresso)
+export const importStatus = { running: false, file: '', total: 0, processed: 0, chunks: 0, facts: 0, error: null, done: false };
+
+// Inicia a importação em SEGUNDO PLANO (a rota responde na hora)
+export function startImport(fileName, buffer) {
+  if (importStatus.running) return { ok: false, error: 'Já existe uma importação em andamento.' };
+  Object.assign(importStatus, { running: true, file: fileName, total: 0, processed: 0, chunks: 0, facts: 0, error: null, done: false });
+  importConversations(fileName, buffer)
+    .then(r => Object.assign(importStatus, { running: false, done: true, ...r }))
+    .catch(err => Object.assign(importStatus, { running: false, done: true, error: err.message }));
+  return { ok: true };
+}
+
 export async function importConversations(fileName, buffer) {
   const text = buffer.toString('utf8');
   const convs = parseImport(fileName, text).slice(0, 200);
+  importStatus.total = convs.length;
   let chunks = 0, facts = 0;
   for (const conv of convs) {
+    importStatus.processed++;
+    importStatus.chunks = chunks;
+    importStatus.facts = facts;
+    console.log(`[memória] importando ${importStatus.processed}/${convs.length}: ${String(conv.title).slice(0, 60)}`);
     const title = `Importada: ${String(conv.title).slice(0, 80)}`;
     // divide em janelas de ~1400 caracteres
     const body = String(conv.text || '').trim();
@@ -191,5 +209,7 @@ export async function importConversations(fileName, buffer) {
       }
     } catch {}
   }
+  importStatus.chunks = chunks;
+  importStatus.facts = facts;
   return { conversations: convs.length, chunks, facts };
 }

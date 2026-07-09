@@ -26,8 +26,15 @@ export function MemoryPanel({ assistants, clients, clientId, showToast, onClose 
   const [workingLabel, setWorkingLabel] = useState('');
   const fileRef = useRef(null);
   const searchTimer = useRef(null);
+  const importTimer = useRef(null);
 
-  useEffect(() => { load(); loadConfig(); }, []);
+  useEffect(() => {
+    load();
+    loadConfig();
+    // Se já houver uma importação rodando (painel reaberto), retoma o acompanhamento
+    fetch(`${API}/api/memories/import-status`).then(r => r.json()).then(s => { if (s.running) watchImport(); }).catch(() => {});
+    return () => { clearInterval(importTimer.current); clearTimeout(searchTimer.current); };
+  }, []);
   useEffect(() => {
     clearTimeout(searchTimer.current);
     searchTimer.current = setTimeout(load, 350);
@@ -99,20 +106,39 @@ export function MemoryPanel({ assistants, clients, clientId, showToast, onClose 
     } catch { showToast('Falha ao reprocessar.'); }
     finally { setWorkingLabel(''); }
   }
+  function watchImport() {
+    clearInterval(importTimer.current);
+    importTimer.current = setInterval(async () => {
+      try {
+        const s = await (await fetch(`${API}/api/memories/import-status`)).json();
+        if (s.running) {
+          setWorkingLabel(`Importando "${s.file}": conversa ${s.processed} de ${s.total} · ${s.chunks} trechos · ${s.facts} fatos aprendidos...`);
+          return;
+        }
+        clearInterval(importTimer.current);
+        setWorkingLabel('');
+        if (s.done) {
+          if (s.error) showToast(`Importação falhou: ${s.error}`);
+          else showToast(`✅ Importado: ${s.total} conversa(s), ${s.chunks} trechos indexados, ${s.facts} fatos aprendidos.`, 'ok');
+          await load();
+        }
+      } catch {}
+    }, 2500);
+  }
+
   async function importFile(e) {
     const f = e.target.files?.[0];
     if (!f) return;
-    setWorkingLabel(`Importando "${f.name}"... (pode demorar alguns minutos)`);
+    setWorkingLabel(`Enviando "${f.name}"...`);
     try {
       const fd = new FormData();
       fd.append('file', f);
       const res = await fetch(`${API}/api/memories/import`, { method: 'POST', body: fd });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || '');
-      showToast(`Importado: ${data.conversations} conversa(s), ${data.chunks} trechos indexados, ${data.facts} fatos aprendidos.`, 'ok');
-      await load();
-    } catch (err) { showToast(err.message || 'Importação falhou.'); }
-    finally { setWorkingLabel(''); e.target.value = ''; }
+      watchImport(); // acompanha o progresso em segundo plano
+    } catch (err) { setWorkingLabel(''); showToast(err.message || 'Importação falhou.'); }
+    finally { e.target.value = ''; }
   }
 
   const scopeName = (scope) => {
