@@ -89,10 +89,39 @@ CREATE TABLE IF NOT EXISTS usage (
   total_tokens INTEGER DEFAULT 0,
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS conversation_chunks (
+  id TEXT PRIMARY KEY,
+  conversation_id TEXT,               -- NULL para conteúdo importado
+  source_title TEXT,                  -- rótulo de origem (ex.: título importado)
+  scope TEXT DEFAULT 'global',        -- 'global' ou 'client:<id>' (isolamento por cliente)
+  content TEXT NOT NULL,
+  embedding BLOB,
+  token_count INTEGER DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT
+);
 `);
 
 // Migrações p/ bancos antigos: adiciona colunas se ainda não existirem
 try { db.exec('ALTER TABLE files ADD COLUMN message_id TEXT'); } catch {}
 try { db.exec('ALTER TABLE conversations ADD COLUMN client_id TEXT'); } catch {}
+// Memória de longo prazo: novas colunas da tabela memory
+try { db.exec("ALTER TABLE memory ADD COLUMN type TEXT DEFAULT 'manual'"); } catch {}
+try { db.exec("ALTER TABLE memory ADD COLUMN source_type TEXT DEFAULT 'manual'"); } catch {}
+try { db.exec('ALTER TABLE memory ADD COLUMN source_id TEXT'); } catch {}
+try { db.exec('ALTER TABLE memory ADD COLUMN importance INTEGER DEFAULT 3'); } catch {}
+try { db.exec('ALTER TABLE memory ADD COLUMN confidence REAL DEFAULT 1'); } catch {}
+try { db.exec('ALTER TABLE memory ADD COLUMN pinned INTEGER DEFAULT 0'); } catch {}
+try { db.exec('ALTER TABLE memory ADD COLUMN tags TEXT'); } catch {}
+try { db.exec('ALTER TABLE memory ADD COLUMN updated_at TEXT'); } catch {}
+try { db.exec('ALTER TABLE memory ADD COLUMN embedding BLOB'); } catch {}
+try { db.exec("ALTER TABLE conversation_chunks ADD COLUMN scope TEXT DEFAULT 'global'"); } catch {}
+// Resumos e tags automáticos das conversas
+try { db.exec('ALTER TABLE conversations ADD COLUMN summary_short TEXT'); } catch {}
+try { db.exec('ALTER TABLE conversations ADD COLUMN summary_long TEXT'); } catch {}
+try { db.exec('ALTER TABLE conversations ADD COLUMN tags TEXT'); } catch {}
 
 export function now() { return new Date().toISOString(); }

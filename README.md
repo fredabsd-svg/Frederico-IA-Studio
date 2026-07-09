@@ -13,7 +13,7 @@ vLLM/Ollama local), com interface 100% em português do Brasil.
 |---|---|
 | 🤖 **Assistant Studio** | Crie assistentes sem programar: nome, modelo, instruções (com templates de Contábil, Jurídico, RH, Marketing, Dev), ferramentas permitidas e sliders de personalidade |
 | 📎 **Geração real de arquivos** | Excel (openpyxl/xlsxwriter), Word (python-docx), PDF (reportlab/weasyprint), gráficos (matplotlib), OCR (tesseract) — os arquivos aparecem como cartões no chat |
-| 🧠 **Memória** | Global (todos os assistentes lembram: empresa, CNPJ, preferências) e por assistente |
+| 🧠 **Memória de longo prazo** | O app aprende sozinho quem você é: extrai fatos das conversas, indexa tudo com embeddings locais e recupera por significado antes de cada resposta (Context Builder). Pergunte "quem sou eu?" e ele responde com base no histórico. Importa conversas antigas (Claude/ChatGPT/txt/md) |
 | 🧑‍🤝‍🧑 **Modo Equipe** | Uma pergunta aciona todos os assistentes; um coordenador une as perspectivas numa resposta só |
 | 🌐 **Pesquisa na internet** | Botão de globo liga a busca (Google via API oficial, ou DuckDuckGo sem cadastro) com citação de fontes |
 | 🎤 **Ditado por voz** | Fale em vez de digitar (Chrome/Edge, pt-BR) |
@@ -122,6 +122,20 @@ As conversas, assistentes e memórias ficam preservadas em `./data` (SQLite) e `
 | `AGENT_HISTORY_LIMIT` | `60` | Mensagens recentes enviadas ao modelo |
 | `SANDBOX_MEMORY` / `SANDBOX_CPUS` | `1024m` / `1` | Limites do sandbox |
 | `GOOGLE_API_KEY` + `GOOGLE_CSE_ID` | — | Pesquisa via Google (sem elas, usa DuckDuckGo) |
+| `EMBEDDING_MODEL` | `Xenova/multilingual-e5-small` | Modelo local de embeddings da memória (baixado 1x, ~112 MB) |
+| `EXTRACT_MODEL` | modelo principal | Modelo barato usado para resumir/extrair fatos das conversas |
+
+### 🧠 Como funciona a memória de longo prazo
+
+Após cada resposta, um processo em segundo plano indexa a troca (embeddings
+locais — nada sai da sua máquina) e um modelo barato extrai fatos úteis
+(perfil, preferências, projetos, decisões), com filtro de dados sensíveis.
+Antes de cada resposta, o **Context Builder** monta o contexto: perfil +
+notas + resumo da conversa + memórias e trechos de conversas antigas
+recuperados por busca semântica, respeitando o orçamento de tokens
+(configurável no painel Memória — suba o alvo para modelos de 1M de contexto).
+No painel **Memória** você vê/edita/fixa/apaga tudo o que o app sabe,
+importa históricos (Claude, ChatGPT, .txt/.md) e exporta um backup em JSON.
 
 ## ⚠️ Avisos de segurança (leia antes de usar)
 

@@ -9,6 +9,8 @@ import { db, now } from './db.js';
 import { spawn } from 'child_process';
 import { runAgent, runOrchestrator, setControl, friendlyApiError, AGENTS } from './agent.js';
 import { runTool } from './tools.js';
+import { listMemories, addMemory, updateMemory, deleteMemory, deleteAllMemories, exportAll, reindexAll, getSettings, setSettings, looksSensitive } from './memory/memoryService.js';
+import { importConversations } from './memory/indexer.js';
 import { workspaceFor, destroyConversation, insideBase } from './sandbox.js';
 import { authEnabled, makeToken, verifyToken, getCookie, passwordMatches, loginRateLimited } from './auth.js';
 
@@ -158,6 +160,7 @@ app.post('/api/clients', (req, res) => {
 app.delete('/api/clients/:id', (req, res) => {
   // Não destrutivo: as conversas do cliente voltam para "Geral"
   db.prepare('UPDATE conversations SET client_id=NULL WHERE client_id=?').run(req.params.id);
+  db.prepare('UPDATE conversation_chunks SET scope=? WHERE scope=?').run('global', `client:${req.params.id}`);
   db.prepare("DELETE FROM memory WHERE scope=?").run(`client:${req.params.id}`);
   db.prepare('DELETE FROM clients WHERE id=?').run(req.params.id);
   res.json({ ok: true });
@@ -182,25 +185,65 @@ app.delete('/api/templates/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-// ---- Memória (scope 'global' ou id de um assistente) ----
-app.get('/api/memory', (req, res) => {
-  const scope = req.query.scope || 'global';
-  res.json(db.prepare('SELECT id, content, created_at FROM memory WHERE scope=? ORDER BY created_at ASC').all(scope));
+// ---- Memória de longo prazo (Cérebro do Assistente) ----
+app.get('/api/memories', async (req, res) => {
+  try {
+    res.json(await listMemories({ query: req.query.query || '', type: req.query.type || '', scope: req.query.scope || '' }));
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.post('/api/memory', (req, res) => {
-  const content = (req.body?.content || '').trim();
-  const scope = req.body?.scope || 'global';
-  if (!content) return res.status(400).json({ error: 'Conteúdo vazio.' });
-  const id = nanoid();
-  db.prepare('INSERT INTO memory (id, scope, content, created_at) VALUES (?, ?, ?, ?)').run(id, scope, content, now());
-  res.json({ id, content });
+app.post('/api/memories', async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (looksSensitive(b.content)) return res.status(400).json({ error: 'Este conteúdo parece conter senha/chave — por segurança, não é salvo na memória.' });
+    res.json(await addMemory({ content: b.content, type: b.type || 'manual', scope: b.scope || 'global', importance: Number(b.importance) || 3, pinned: b.pinned ? 1 : 0, tags: b.tags || null, source_type: 'manual' }));
+  } catch (err) { res.status(400).json({ error: err.message }); }
 });
 
-app.delete('/api/memory/:id', (req, res) => {
-  db.prepare('DELETE FROM memory WHERE id=?').run(req.params.id);
+app.put('/api/memories/:id', async (req, res) => {
+  try {
+    const m = await updateMemory(req.params.id, req.body || {});
+    if (!m) return res.status(404).json({ error: 'Memória não encontrada' });
+    res.json(m);
+  } catch (err) { res.status(400).json({ error: err.message }); }
+});
+
+app.delete('/api/memories/:id', (req, res) => { deleteMemory(req.params.id); res.json({ ok: true }); });
+
+app.delete('/api/memories', (req, res) => {
+  deleteAllMemories({ scope: req.query.scope || null, source_type: req.query.source_type || null });
   res.json({ ok: true });
 });
+
+app.get('/api/memories/export', (_, res) => {
+  res.setHeader('Content-Disposition', 'attachment; filename="memoria-frederico-ai.json"');
+  res.json(exportAll());
+});
+
+app.post('/api/memories/reindex', async (_, res) => {
+  try { res.json(await reindexAll()); } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/memories/import', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Nenhum arquivo enviado.' });
+    const result = await importConversations(Buffer.from(req.file.originalname, 'latin1').toString('utf8'), req.file.buffer);
+    res.json(result);
+  } catch (err) { res.status(400).json({ error: 'Importação falhou: ' + err.message }); }
+});
+
+app.get('/api/memory-config', (_, res) => res.json(getSettings()));
+app.put('/api/memory-config', (req, res) => res.json(setSettings(req.body || {})));
+
+// Rotas legadas (compatibilidade com versões antigas da interface)
+app.get('/api/memory', async (req, res) => {
+  res.json(await listMemories({ scope: req.query.scope || 'global' }));
+});
+app.post('/api/memory', async (req, res) => {
+  try { res.json(await addMemory({ content: req.body?.content, scope: req.body?.scope || 'global' })); }
+  catch (err) { res.status(400).json({ error: err.message }); }
+});
+app.delete('/api/memory/:id', (req, res) => { deleteMemory(req.params.id); res.json({ ok: true }); });
 
 // ---- Analytics de uso (mensagens e tokens) ----
 app.get('/api/analytics', (_, res) => {
@@ -255,6 +298,8 @@ app.delete('/api/conversations/:id', async (req, res) => {
   const existing = db.prepare('SELECT id FROM conversations WHERE id=?').get(id);
   if (!existing) return res.status(404).json({ error: 'Conversa não encontrada' });
   db.prepare('DELETE FROM conversations WHERE id=?').run(id); // cascade: messages + files
+  // Privacidade: remove também o índice de memória desta conversa
+  db.prepare('DELETE FROM conversation_chunks WHERE conversation_id=?').run(id);
   await destroyConversation(id); // remove container e pasta do workspace
   res.json({ ok: true });
 });
@@ -464,6 +509,10 @@ app.post('/api/conversations/:id/truncate', (req, res) => {
     db.prepare(`DELETE FROM files WHERE conversation_id=? AND message_id IN (${ph})`).run(req.params.id, ...doomed);
   }
   db.prepare('DELETE FROM messages WHERE conversation_id=? AND created_at>=?').run(req.params.id, msg.created_at);
+  // Privacidade: limpa o índice e os resumos derivados das mensagens removidas
+  // (os chunks serão reindexados conforme a conversa continuar)
+  db.prepare('DELETE FROM conversation_chunks WHERE conversation_id=?').run(req.params.id);
+  db.prepare('UPDATE conversations SET summary_short=NULL, summary_long=NULL WHERE id=?').run(req.params.id);
   res.json({ ok: true, removed: doomed.length });
 });
 

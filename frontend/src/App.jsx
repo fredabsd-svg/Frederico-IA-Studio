@@ -5,6 +5,7 @@ import rehypeHighlight from 'rehype-highlight';
 import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo } from 'lucide-react';
 import { API, FALLBACK_MODELS, TOOL_INFO, TEMPLATES, SUGGESTIONS, emptyForm } from './constants.js';
 import { ToolStep, Slider, Modal, ModelPicker, Collapsible } from './components.jsx';
+import { MemoryPanel } from './MemoryPanel.jsx';
 
 export default function App() {
   const [conversations, setConversations] = useState([]);
@@ -19,9 +20,6 @@ export default function App() {
   const [studioOpen, setStudioOpen] = useState(false);
   const [form, setForm] = useState(emptyForm());
   const [memoryOpen, setMemoryOpen] = useState(false);
-  const [memoryItems, setMemoryItems] = useState([]);
-  const [memoryInput, setMemoryInput] = useState('');
-  const [memoryScope, setMemoryScope] = useState('global');
   const [team, setTeam] = useState(false);
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
   const [analytics, setAnalytics] = useState(null);
@@ -188,7 +186,6 @@ export default function App() {
       else await createConversation();
       loadModels();
       loadAssistants();
-      loadMemory();
       loadClients();
     } catch (err) {
       if (err?.auth) setNeedLogin(true);
@@ -431,31 +428,6 @@ export default function App() {
     }
   }
 
-  // ---- Memória (global ou por assistente) ----
-  async function loadMemory(scope = memoryScope) {
-    try { setMemoryItems(await (await fetch(`${API}/api/memory?scope=${encodeURIComponent(scope)}`)).json()); } catch {}
-  }
-  function changeMemoryScope(scope) { setMemoryScope(scope); loadMemory(scope); }
-  async function addMemory() {
-    const content = memoryInput.trim();
-    if (!content) return;
-    setMemoryInput('');
-    try {
-      await fetch(`${API}/api/memory`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content, scope: memoryScope }) });
-      await loadMemory();
-    } catch {
-      showToast('Não foi possível salvar a memória.');
-    }
-  }
-  async function removeMemory(id) {
-    try {
-      await fetch(`${API}/api/memory/${id}`, { method: 'DELETE' });
-      await loadMemory();
-    } catch {
-      showToast('Não foi possível remover a memória.');
-    }
-  }
-
   // ---- Analytics ----
   async function openAnalytics() {
     setAnalyticsOpen(true);
@@ -596,7 +568,7 @@ export default function App() {
       </div>
       <button className="studio" onClick={openStudioNew}><Bot size={16}/> Criar assistente</button>
       <button className="studio" onClick={openTemplates}><BookMarked size={16}/> Templates</button>
-      <button className="studio" onClick={() => { setMemoryScope('global'); loadMemory('global'); setMemoryOpen(true); }}><Brain size={16}/> Memória</button>
+      <button className="studio" onClick={() => setMemoryOpen(true)}><Brain size={16}/> Memória</button>
       <button className="studio" onClick={() => { setTasksOpen(true); pollTasks(); }}><ListTodo size={16}/> Tarefas{tasksActive && <span className="badge">{tasks.filter(t => t.status === 'queued' || t.status === 'running').length}</span>}</button>
       <button className="studio" onClick={openAnalytics}><BarChart3 size={16}/> Análises</button>
       <button className="studio" onClick={() => window.open(`${API}/api/backup`, '_blank')} title="Baixa um arquivo .tar.gz com o banco e todos os workspaces"><HardDriveDownload size={16}/> Backup</button>
@@ -750,29 +722,7 @@ export default function App() {
       </div>
     </Modal>}
 
-    {memoryOpen && <Modal title="Memória" icon={<Brain size={18}/>} onClose={() => setMemoryOpen(false)}>
-      <label>Onde guardar
-        <select value={memoryScope} onChange={e => changeMemoryScope(e.target.value)}>
-          <option value="global">🌐 Global — todos os assistentes lembram</option>
-          {clientId && <option value={`client:${clientId}`}>👤 Só do cliente: {clients.find(c => c.id === clientId)?.name || 'atual'}</option>}
-          {assistants.map(a => <option key={a.id} value={a.id}>{a.emoji || '🤖'} Só do assistente: {a.name}</option>)}
-        </select>
-      </label>
-      <p className="muted" style={{ margin: 0 }}>{memoryScope === 'global' ? 'Informações que TODOS os assistentes lembram em todas as conversas (ex.: CNPJ, regime tributário, preferências).' : memoryScope.startsWith('client:') ? 'Memória deste CLIENTE — lembrada em todas as conversas dele, por qualquer assistente (ex.: CNPJ do cliente, regime, particularidades).' : 'Memória exclusiva deste assistente — só ele usa (ex.: decisões técnicas, particularidades do setor).'}</p>
-      <div className="memAdd">
-        <input value={memoryInput} onChange={e => setMemoryInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addMemory(); } }} placeholder="Ex.: Minha empresa é a Frederico Assessoria, CNPJ 00.000.000/0001-00, Simples Nacional."/>
-        <button className="primary" onClick={addMemory}>Adicionar</button>
-      </div>
-      <div className="memList">
-        {memoryItems.length === 0 && <p className="muted">Nenhuma informação salva ainda.</p>}
-        {memoryItems.map(m => (
-          <div className="memItem" key={m.id}>
-            <span>{m.content}</span>
-            <button className="memDel" onClick={() => removeMemory(m.id)} aria-label="Remover"><X size={15}/></button>
-          </div>
-        ))}
-      </div>
-    </Modal>}
+    {memoryOpen && <MemoryPanel assistants={assistants} clients={clients} clientId={clientId} showToast={showToast} onClose={() => setMemoryOpen(false)}/>}
 
     {analyticsOpen && <Modal title="Análises de uso" icon={<BarChart3 size={18}/>} onClose={() => setAnalyticsOpen(false)}>
       {!analytics && <div className="working"><span className="spin"/><span>Carregando...</span></div>}

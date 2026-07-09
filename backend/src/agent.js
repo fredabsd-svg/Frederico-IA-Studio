@@ -2,6 +2,8 @@ import OpenAI from 'openai';
 import fs from 'fs';
 import path from 'path';
 import { toolDefinitions, webToolDefinitions, imageToolDefinitions, runTool } from './tools.js';
+import { buildContext } from './memory/contextBuilder.js';
+import { indexAfterReply } from './memory/indexer.js';
 import { workspaceFor } from './sandbox.js';
 import { db, now } from './db.js';
 import { nanoid } from 'nanoid';
@@ -258,8 +260,15 @@ export async function runAgent({ conversationId, userText, model, assistant, web
     ) ORDER BY created_at ASC`).all(conversationId, historyLimit);
   const messages = [{ role: 'system', content: chosenPrompt }];
   if (webSearch) messages.push({ role: 'system', content: 'O usuário ATIVOU a pesquisa na internet. Você pode usar web_search (buscar) e web_fetch (ler uma página). Use quando a pergunta envolver informações atuais ou externas (legislação, notícias, tabelas, cotações, prazos) e cite as fontes (links) na resposta.' });
-  const memory = memoryNote(assistant?.id, clientScopeFor(conversationId));
-  if (memory) messages.push({ role: 'system', content: memory });
+  // Memória de longo prazo: perfil, notas, resumos e recuperação semântica
+  try {
+    const ctxBlocks = await buildContext({ conversationId, assistantId: assistant?.id, clientScope: clientScopeFor(conversationId), userText, historyLimit });
+    for (const b of ctxBlocks) messages.push({ role: 'system', content: b });
+  } catch (err) {
+    console.error('[memória] contexto indisponível nesta resposta:', err.message);
+    const memory = memoryNote(assistant?.id, clientScopeFor(conversationId));
+    if (memory) messages.push({ role: 'system', content: memory });
+  }
   const note = uploadsNote(conversationId);
   if (note) messages.push({ role: 'system', content: note });
   messages.push(...history.map(m => ({ role: m.role, content: m.content })));
@@ -374,6 +383,8 @@ export async function runAgent({ conversationId, userText, model, assistant, web
   }
   // Informa os ids reais salvos no banco (necessário para editar mensagens)
   onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId: msgId });
+  // Memória: indexa a troca e extrai fatos em segundo plano (não bloqueia)
+  if (!stopped) indexAfterReply(conversationId).catch(() => {});
   return { text: finalText, usage, model: chosenModel };
 }
 
@@ -383,7 +394,9 @@ export async function runOrchestrator({ conversationId, userText, model, assista
   const control = initControl(conversationId);
   const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
   const coordModel = model || process.env.DEEPSEEK_MODEL || 'deepseek-chat';
-  const memory = memoryNote(null, clientScopeFor(conversationId));
+  let memory = null;
+  try { memory = (await buildContext({ conversationId, assistantId: null, clientScope: clientScopeFor(conversationId), userText })).join('\n\n') || null; }
+  catch { memory = memoryNote(null, clientScopeFor(conversationId)); }
   const perspectives = [];
   let stopped = false;
 
@@ -438,6 +451,7 @@ export async function runOrchestrator({ conversationId, userText, model, assista
   if (!finalText.trim()) { finalText = 'Concluído.'; onEvent({ type: 'delta', content: finalText }); }
   const doneMsgId = saveMessage(conversationId, 'assistant', finalText);
   onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId: doneMsgId });
+  indexAfterReply(conversationId).catch(() => {});
   return { text: finalText, usage, model: coordModel };
 }
 

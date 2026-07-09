@@ -38,6 +38,30 @@
 .sendBtn:disabled{opacity:.5}
 .okBadge{color:#22c55e}
 .warnBadge{color:#f59e0b}
+/* Cérebro do Assistente */
+.memToolbar{display:flex;flex-direction:column;gap:8px}
+.memSearch{display:flex;align-items:center;gap:8px;border:1px solid var(--line);background:var(--panel2);border-radius:10px;padding:9px 12px;color:var(--muted)}
+.memSearch input{flex:1;border:none;background:transparent;color:var(--text);font:inherit;outline:none}
+.memTypes{display:flex;flex-wrap:wrap;gap:6px}
+.memTypes button{font-size:12px;padding:5px 11px;border-radius:999px}
+.memTypes button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+.memBtns{display:flex;flex-wrap:wrap;gap:7px}
+.memBtns button{display:flex;align-items:center;gap:6px;font-size:12.5px;padding:7px 11px}
+.memBtns .danger{color:#ef4444;border-color:#ef4444}
+.memConfig{display:flex;flex-direction:column;gap:9px;border:1px solid var(--line);border-radius:12px;background:var(--panel2);padding:12px}
+.cfgRow{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:13px}
+.cfgRow input{width:110px;border:1px solid var(--line);background:var(--panel);color:var(--text);border-radius:8px;padding:6px 9px;font:inherit;text-align:right}
+.memItem2{border:1px solid var(--line);background:var(--panel2);border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:6px}
+.memItem2.pinned{border-color:var(--accent)}
+.memItemTop{display:flex;align-items:center;gap:9px;flex-wrap:wrap;font-size:11.5px;color:var(--muted)}
+.memBadge{font-weight:700;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:2px 9px}
+.memScope{opacity:.9}
+.memOrigin{flex:1}
+.memItemBtns{display:flex;gap:3px}
+.memItemBtns button{border:none;background:transparent;color:var(--muted);padding:4px;display:flex;border-radius:6px}
+.memItemBtns button:hover{color:var(--accent)}
+.memItemBtns .memDelBtn:hover{color:#ef4444}
+.memContent{font-size:13.5px;line-height:1.5}
 .exportPanel{width:250px}
 .exportPanel .mpItem{padding:10px 12px}.statRow{display:flex;gap:10px}.stat{flex:1;border:1px solid var(--line);background:var(--panel2);border-radius:12px;padding:12px;text-align:center;display:flex;flex-direction:column;gap:2px}.stat b{font-size:20px;color:var(--accent)}.stat span{font-size:12px;color:var(--muted)}.atable{width:100%;border-collapse:collapse;font-size:14px}.atable th,.atable td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}.atable th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.03em}.atable td:nth-child(2),.atable th:nth-child(2),.atable td:nth-child(3),.atable th:nth-child(3){text-align:right;font-variant-numeric:tabular-nums}/* Realce de sintaxe (classes do rehype-highlight/highlight.js) */
 .msg pre code{color:#dbe6f6}
