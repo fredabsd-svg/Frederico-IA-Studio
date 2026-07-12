@@ -2,8 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog } from 'lucide-react';
-import { API, FALLBACK_MODELS, TOOL_INFO, TEMPLATES, SUGGESTIONS, emptyForm } from './constants.js';
+import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search } from 'lucide-react';
+import { API, FALLBACK_MODELS, TOOL_INFO, TEMPLATES, SUGGESTIONS, QUICK_ACTIONS, emptyForm } from './constants.js';
 import { ToolStep, Slider, Modal, ModelPicker, Collapsible } from './components.jsx';
 import { MemoryPanel } from './MemoryPanel.jsx';
 import { PcFoldersPanel } from './PcFoldersPanel.jsx';
@@ -63,6 +63,7 @@ export default function App() {
   const [listening, setListening] = useState(false);
   const [webSearch, setWebSearch] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [convFilter, setConvFilter] = useState('');
   const [dragActive, setDragActive] = useState(false);
   const [uploadingFiles, setUploadingFiles] = useState(false);
   const [loadingConv, setLoadingConv] = useState(false);
@@ -147,11 +148,13 @@ export default function App() {
 
   async function sendAsTask() {
     const text = input.trim();
-    if (!text || !current) return;
+    if (!text) return;
+    let conv = current;
+    if (!conv) { conv = await ensureConversation(); if (!conv) return; }
     if (listening) recognitionRef.current?.stop();
     setInput('');
     try {
-      const res = await fetch(`${API}/api/tasks`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId: current.id, message: text, model, assistantId, webSearch }) });
+      const res = await fetch(`${API}/api/tasks`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId: conv.id, message: text, model, assistantId, webSearch }) });
       if (!res.ok) throw new Error();
       showToast('⏳ Tarefa adicionada à fila — acompanhe no botão "Tarefas".', 'ok');
       await pollTasks();
@@ -231,9 +234,8 @@ export default function App() {
   async function init() {
     setConnError(false);
     try {
-      const rows = await fetchConversations();
-      if (rows.length) await openConversation(rows[0].id);
-      else await createConversation();
+      await fetchConversations();   // carrega o histórico na barra lateral
+      startNewChat();               // abre sempre na tela de boas-vindas (nunca a última conversa)
       loadModels();
       loadAssistants();
       loadClients();
@@ -241,6 +243,15 @@ export default function App() {
       if (err?.auth) setNeedLogin(true);
       else setConnError(true);
     }
+  }
+
+  // Tela de boas-vindas (conversa "em rascunho" — só vira registro ao 1º envio)
+  function startNewChat() {
+    setCurrent(null);
+    setMessages([]);
+    setFiles([]);
+    setInput('');
+    setMenuOpen(false);
   }
 
   // ---- Clientes / Projetos ----
@@ -251,9 +262,8 @@ export default function App() {
     localStorage.setItem('fred_client', id);
     setClientId(id);
     try {
-      const rows = await fetchConversations(id);
-      if (rows.length) openConversation(rows[0].id);
-      else createConversation(id);
+      await fetchConversations(id);
+      startNewChat();
     } catch {}
   }
   async function addClient() {
@@ -321,17 +331,19 @@ export default function App() {
     return rows;
   }
 
-  async function createConversation(cid = clientId) {
+  // Cria o registro da conversa só quando ele é realmente necessário (1ª
+  // mensagem, anexo ou tarefa). Evita acumular conversas vazias no histórico.
+  async function ensureConversation(cid = clientId) {
     try {
       const res = await fetch(`${API}/api/conversations`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'Nova conversa', model, clientId: cid || null }) });
       const c = await res.json();
       setConversations(prev => [c, ...prev]);
       setCurrent(c);
-      setMessages([]);
       setFiles([]);
-      setMenuOpen(false);
+      return c;
     } catch {
       showToast('Não foi possível criar a conversa. O servidor está no ar?');
+      return null;
     }
   }
 
@@ -356,8 +368,8 @@ export default function App() {
     if (!confirm('Apagar esta conversa e todos os seus arquivos? Esta ação não pode ser desfeita.')) return;
     try {
       await fetch(`${API}/api/conversations/${id}`, { method: 'DELETE' });
-      const rows = await fetchConversations();
-      if (current?.id === id) { rows.length ? openConversation(rows[0].id) : createConversation(); }
+      await fetchConversations();
+      if (current?.id === id) startNewChat();
     } catch {
       showToast('Não foi possível apagar a conversa.');
     }
@@ -412,14 +424,15 @@ export default function App() {
   async function uploadSelectedFiles(selected, source = 'input') {
     const filesToUpload = [...(selected || [])].filter(Boolean);
     if (!filesToUpload.length) return;
-    if (!current) { showToast('Abra uma conversa antes de anexar arquivos.'); return; }
+    let conv = current;
+    if (!conv) { conv = await ensureConversation(); if (!conv) return; }
     setUploadingFiles(true);
     try {
       const fd = new FormData();
       filesToUpload.forEach(f => fd.append('files', f));
-      const res = await fetch(`${API}/api/conversations/${current.id}/upload`, { method: 'POST', body: fd });
+      const res = await fetch(`${API}/api/conversations/${conv.id}/upload`, { method: 'POST', body: fd });
       if (!res.ok) throw new Error();
-      await loadFiles();
+      await loadFiles(conv.id);
       if (source !== 'input') showToast(`${filesToUpload.length} arquivo(s) anexado(s).`, 'ok');
     } catch {
       showToast('Falha no envio do arquivo. Verifique o tamanho (máx. 50 MB) e tente de novo.');
@@ -539,9 +552,11 @@ export default function App() {
 
   async function sendMessage() {
     const text = input.trim();
-    if (!text || busy || !current) return;
+    if (!text || busy) return;
     if (team && effectiveTeam.length === 0) { showToast('Selecione ao menos 1 assistente no painel da Equipe.'); return; }
     if (listening) recognitionRef.current?.stop();
+    let conv = current;
+    if (!conv) { conv = await ensureConversation(); if (!conv) return; }
     setInput('');
     setBusy(true);
     setPaused(false);
@@ -554,7 +569,7 @@ export default function App() {
       ? { message: text, model, orchestrate: true, orchestrateIds: effectiveTeam.map(a => a.id) }
       : { message: text, model, assistantId, webSearch };
     try {
-      const res = await fetch(`${API}/api/conversations/${current.id}/chat`, {
+      const res = await fetch(`${API}/api/conversations/${conv.id}/chat`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
       });
       if (res.status === 401) { setBusy(false); setStatusText(''); setNeedLogin(true); return; }
@@ -603,10 +618,10 @@ export default function App() {
     setBusy(false);
     setPaused(false);
     setStatusText('');
-    await loadFiles();
+    await loadFiles(conv.id);
     try {
       const rows = await fetchConversations();
-      const updated = rows.find(c => c.id === current.id);
+      const updated = rows.find(c => c.id === conv.id);
       if (updated) setCurrent(updated);
     } catch {}
   }
@@ -650,24 +665,36 @@ export default function App() {
         <button onClick={addClient} title="Novo cliente/projeto" aria-label="Novo cliente"><Plus size={14}/></button>
         {clientId && <button className="clientDel" onClick={removeClient} title="Remover cliente (conversas voltam para Geral)" aria-label="Remover cliente"><Trash2 size={14}/></button>}
       </div>
-      <button className="new" onClick={() => createConversation()}><Plus size={16}/> Nova conversa</button>
-      <div className="convList">
-        {conversations.length === 0 && <p className="muted small">Suas conversas aparecerão aqui.</p>}
-        {conversations.map(c => (
-          <div key={c.id} className={`convItem ${current?.id === c.id ? 'active' : ''}`}>
-            <button className="convOpen" onClick={() => openConversation(c.id)} title={c.title}>{c.title}</button>
-            <button className="convDel" onClick={(e) => deleteConversation(c.id, e)} title="Apagar conversa" aria-label="Apagar conversa"><Trash2 size={15}/></button>
-          </div>
-        ))}
+      <button className="new" onClick={startNewChat}><Plus size={16}/> Nova conversa</button>
+      <div className="convSearch">
+        <Search size={15}/>
+        <input value={convFilter} onChange={e => setConvFilter(e.target.value)} placeholder="Buscar conversas..."/>
+        {convFilter && <button className="convSearchX" onClick={() => setConvFilter('')} aria-label="Limpar busca"><X size={13}/></button>}
       </div>
-      <button className="studio" onClick={openStudioNew}><Bot size={16}/> Criar assistente</button>
-      <button className="studio" onClick={openTemplates}><BookMarked size={16}/> Templates</button>
-      <button className="studio" onClick={() => setMemoryOpen(true)}><Brain size={16}/> Memória</button>
-      <button className="studio" onClick={() => setPcOpen(true)} title="Libere pastas do seu PC para o assistente procurar, ler e organizar arquivos"><FolderCog size={16}/> Pastas do PC</button>
-      <button className="studio" onClick={() => { setTasksOpen(true); pollTasks(); }}><ListTodo size={16}/> Tarefas{tasksActive && <span className="badge">{tasks.filter(t => t.status === 'queued' || t.status === 'running').length}</span>}</button>
-      <button className="studio" onClick={openAnalytics}><BarChart3 size={16}/> Análises</button>
-      <button className="studio" onClick={() => window.open(`${API}/api/backup`, '_blank')} title="Baixa um arquivo .tar.gz com o banco e todos os workspaces"><HardDriveDownload size={16}/> Backup</button>
-      <button className="theme" onClick={() => setDark(!dark)}>{dark ? <Sun size={16}/> : <Moon size={16}/>} Tema</button>
+      <div className="convList">
+        {(() => {
+          const q = convFilter.trim().toLowerCase();
+          const list = q ? conversations.filter(c => (c.title || '').toLowerCase().includes(q)) : conversations;
+          if (conversations.length === 0) return <p className="muted small">Suas conversas aparecerão aqui.</p>;
+          if (list.length === 0) return <p className="muted small">Nenhuma conversa encontrada.</p>;
+          return list.map(c => (
+            <div key={c.id} className={`convItem ${current?.id === c.id ? 'active' : ''}`}>
+              <button className="convOpen" onClick={() => openConversation(c.id)} title={c.title}>{c.title}</button>
+              <button className="convDel" onClick={(e) => deleteConversation(c.id, e)} title="Apagar conversa" aria-label="Apagar conversa"><Trash2 size={15}/></button>
+            </div>
+          ));
+        })()}
+      </div>
+      <div className="sideBottom">
+        <button className="studio" onClick={openStudioNew}><Bot size={16}/> Criar assistente</button>
+        <button className="studio" onClick={openTemplates}><BookMarked size={16}/> Templates</button>
+        <button className="studio" onClick={() => setMemoryOpen(true)}><Brain size={16}/> Memória</button>
+        <button className="studio" onClick={() => setPcOpen(true)} title="Libere pastas do seu PC para o assistente procurar, ler e organizar arquivos"><FolderCog size={16}/> Pastas do PC</button>
+        <button className="studio" onClick={() => { setTasksOpen(true); pollTasks(); }}><ListTodo size={16}/> Tarefas{tasksActive && <span className="badge">{tasks.filter(t => t.status === 'queued' || t.status === 'running').length}</span>}</button>
+        <button className="studio" onClick={openAnalytics}><BarChart3 size={16}/> Análises</button>
+        <button className="studio" onClick={() => window.open(`${API}/api/backup`, '_blank')} title="Baixa um arquivo .tar.gz com o banco e todos os workspaces"><HardDriveDownload size={16}/> Backup</button>
+        <button className="theme" onClick={() => setDark(!dark)}>{dark ? <Sun size={16}/> : <Moon size={16}/>} Tema</button>
+      </div>
     </aside>
 
     <main
@@ -681,7 +708,7 @@ export default function App() {
       {dragActive && <div className="dropOverlay" aria-hidden="true"><Upload size={30}/><span>Solte os arquivos aqui</span></div>}
       <header className="topbar">
         <button className="hamburger" onClick={() => setMenuOpen(o => !o)} aria-label="Abrir menu"><Menu size={19}/></button>
-        <div className="titleblock"><strong>{current?.title || 'Conversa'}</strong><small>{team ? `🧑‍🤝‍🧑 Equipe (${assistants.length} assistentes)` : (currentAssistant ? `${currentAssistant.emoji || '🤖'} ${currentAssistant.name}` : 'Assistente')} · {model}</small></div>
+        <div className="titleblock"><strong>{current?.title || 'Nova conversa'}</strong><small>{team ? `🧑‍🤝‍🧑 Equipe (${assistants.length} assistentes)` : (currentAssistant ? `${currentAssistant.emoji || '🤖'} ${currentAssistant.name}` : 'Assistente')} · {model}</small></div>
         <div className="pickers">
           <div className="mpicker" ref={teamRef}>
             <button className={`teamBtn ${team ? 'on' : ''}`} onClick={() => setTeamOpen(o => !o)} title="Modo Equipe: escolha os assistentes e junte as perspectivas"><Users size={15}/> Equipe{team ? ` (${effectiveTeam.length})` : ''}</button>
@@ -710,14 +737,20 @@ export default function App() {
           <ModelPicker models={allModels} value={model} onChange={setModel}/>
         </div>
       </header>
-      <section className="messages">
+      <section className={`messages ${!loadingConv && messages.length === 0 && !busy ? 'empty' : ''}`}>
         {loadingConv && <div className="working"><span className="spin"/><span>Carregando conversa...</span></div>}
         {!loadingConv && messages.length === 0 && !busy && <div className="welcome">
+          <div className="welcomeLogo">Frederico <span>AI Studio</span></div>
           <div className="welcomeIcon"><Sparkles size={26}/></div>
-          <h2>Como posso ajudar hoje?</h2>
-          <p>Envie um arquivo, peça uma planilha, um documento ou uma análise. Sugestões:</p>
-          <div className="suggestions">
-            {SUGGESTIONS.map((s, i) => <button key={i} onClick={() => setInput(s)}>{s}</button>)}
+          <h2>Olá! Como posso ajudar você hoje?</h2>
+          <p>Envie um arquivo, peça uma planilha, um documento, um código ou uma pesquisa.</p>
+          <div className="quickCards">
+            {QUICK_ACTIONS.map((q, i) => (
+              <button key={i} className="quickCard" onClick={() => { setInput(q.prompt); inputRef.current?.focus(); }}>
+                <span className="qcIcon" aria-hidden="true">{q.icon}</span>
+                <span className="qcText"><b>{q.label}</b><small>{q.desc}</small></span>
+              </button>
+            ))}
           </div>
         </div>}
         {messages.map((m, idx) => (

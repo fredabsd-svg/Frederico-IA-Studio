@@ -42,4 +42,12 @@ export const SUGGESTIONS = [
   'Analise o arquivo que enviei e faça um resumo com os principais números.'
 ];
 
+// Cards de ação rápida da tela de boas-vindas (estilo ChatGPT/Claude/Jan.ai)
+export const QUICK_ACTIONS = [
+  { icon: '📄', label: 'Resumir um documento', desc: 'Envie um PDF ou Word e receba um resumo', prompt: 'Analise o arquivo que enviei e faça um resumo com os principais números e pontos importantes.' },
+  { icon: '📊', label: 'Gerar uma planilha', desc: 'Excel pronto com fórmulas e totais', prompt: 'Gere uma planilha xlsx com um fluxo de caixa de 12 meses, com totais e formatação profissional.' },
+  { icon: '✍️', label: 'Criar um documento', desc: 'Word, proposta, contrato ou carta', prompt: 'Crie um documento Word com uma proposta de serviços contábeis, bem formatado.' },
+  { icon: '🔎', label: 'Pesquisar um assunto', desc: 'Busca atualizada na internet', prompt: 'Pesquise na internet as novidades fiscais e contábeis mais recentes e me faça um resumo.' }
+];
+
 export const emptyForm = () => ({ id: null, name: '', emoji: '🤖', model: '', system_prompt: '', template: '', tools: TOOL_INFO.map(t => t.name), personality: { form: 50, det: 50, criat: 20 } });
