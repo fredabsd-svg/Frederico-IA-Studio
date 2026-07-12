@@ -2,11 +2,12 @@ import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft } from 'lucide-react';
+import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench } from 'lucide-react';
 import { API, FALLBACK_MODELS, TOOL_INFO, TEMPLATES, SUGGESTIONS, QUICK_ACTIONS, emptyForm } from './constants.js';
 import { ToolStep, Slider, Modal, ModelPicker, Collapsible } from './components.jsx';
 import { MemoryPanel } from './MemoryPanel.jsx';
 import { PcFoldersPanel } from './PcFoldersPanel.jsx';
+import { ToolsPanel } from './ToolsPanel.jsx';
 
 function MemoryTrace({ memory, onOpenMemory }) {
   if (!memory?.enabled) return null;
@@ -49,6 +50,7 @@ export default function App() {
   const [form, setForm] = useState(emptyForm());
   const [memoryOpen, setMemoryOpen] = useState(false);
   const [pcOpen, setPcOpen] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
   const [team, setTeam] = useState(false);
   const [teamOpen, setTeamOpen] = useState(false);
   const [teamIds, setTeamIds] = useState(() => { try { return JSON.parse(localStorage.getItem('fred_team') || 'null'); } catch { return null; } });
@@ -265,6 +267,15 @@ export default function App() {
   // Esconde/mostra a barra lateral (guardado entre sessões)
   function toggleSide() {
     setSideHidden(h => { localStorage.setItem('fred_side_hidden', h ? '0' : '1'); return !h; });
+  }
+
+  // Abre um "app embutido": nova conversa com o pedido guiado já preenchido
+  function pickTool(app) {
+    setToolsOpen(false);
+    startNewChat();
+    setInput(app.prompt);
+    if (app.needsFile) showToast('Agora anexe o(s) arquivo(s) no clipe 📎 e clique em Enviar.', 'ok');
+    setTimeout(() => inputRef.current?.focus(), 60);
   }
 
   // Tela de boas-vindas (conversa "em rascunho" — só vira registro ao 1º envio)
@@ -742,6 +753,7 @@ export default function App() {
         })()}
       </div>
       <div className="sideBottom">
+        <button className="studio toolsBtn" onClick={() => setToolsOpen(true)} title="Fluxos prontos: NF-e, conciliação, OCR, comparador de regimes…"><Wrench size={16}/> Ferramentas</button>
         <button className="studio" onClick={openStudioNew}><Bot size={16}/> Criar assistente</button>
         <button className="studio" onClick={openTemplates}><BookMarked size={16}/> Templates</button>
         <button className="studio" onClick={() => setMemoryOpen(true)}><Brain size={16}/> Memória</button>
@@ -936,6 +948,7 @@ export default function App() {
 
     {memoryOpen && <MemoryPanel assistants={assistants} clients={clients} clientId={clientId} showToast={showToast} onClose={() => setMemoryOpen(false)}/>}
     {pcOpen && <PcFoldersPanel showToast={showToast} onClose={() => setPcOpen(false)}/>}
+    {toolsOpen && <ToolsPanel onPick={pickTool} onClose={() => setToolsOpen(false)}/>}
 
     {analyticsOpen && <Modal title="Análises de uso" icon={<BarChart3 size={18}/>} onClose={() => setAnalyticsOpen(false)}>
       {!analytics && <div className="working"><span className="spin"/><span>Carregando...</span></div>}
