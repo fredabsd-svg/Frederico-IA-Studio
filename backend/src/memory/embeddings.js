@@ -6,6 +6,7 @@ import path from 'path';
 // entra em modo degradado e a busca semântica vira busca por palavras.
 
 const MODEL = process.env.EMBEDDING_MODEL || 'Xenova/multilingual-e5-small';
+export const embeddingModelId = MODEL;
 let pipePromise = null;
 let degraded = false;
 

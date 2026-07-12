@@ -1,6 +1,20 @@
 import { db, now } from '../db.js';
 import { nanoid } from 'nanoid';
-import { embed, embedOne, cosine, keywordScore, embeddingsDegraded } from './embeddings.js';
+import { embed, embedOne, cosine, keywordScore, embeddingsDegraded, embeddingModelId } from './embeddings.js';
+
+// Se o modelo de embeddings mudou desde a última execução, os vetores antigos
+// ficam incompatíveis (a busca semântica silenciosamente vira busca por
+// palavras). Detecta a troca e reindexa em segundo plano, uma vez.
+export function maybeReindexOnModelChange() {
+  try {
+    const prev = db.prepare("SELECT value FROM settings WHERE key='embedding_model'").get()?.value;
+    if (prev && prev !== embeddingModelId) {
+      console.log(`[memória] modelo de embeddings mudou (${prev} → ${embeddingModelId}); reindexando em segundo plano...`);
+      reindexAll().then(() => console.log('[memória] reindexação concluída.')).catch(e => console.error('[memória] reindex falhou:', e.message));
+    }
+    db.prepare("INSERT INTO settings (key,value) VALUES ('embedding_model',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(embeddingModelId);
+  } catch (e) { console.error('[memória] verificação de modelo falhou:', e.message); }
+}
 
 // ---- Configurações da memória (tabela settings) ----
 export const DEFAULT_SETTINGS = {

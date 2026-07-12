@@ -70,6 +70,8 @@ export default function App() {
   const [loadingConv, setLoadingConv] = useState(false);
   const [connError, setConnError] = useState(false);
   const [needLogin, setNeedLogin] = useState(false);
+  const [unprotected, setUnprotected] = useState(false);
+  const [authWarnHidden, setAuthWarnHidden] = useState(() => localStorage.getItem('fred_authwarn_hidden') === '1');
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [toast, setToast] = useState(null);
@@ -253,6 +255,7 @@ export default function App() {
       loadModels();
       loadAssistants();
       loadClients();
+      try { const h = await (await fetch(`${API}/api/health`)).json(); setUnprotected(h && h.auth === false); } catch {}
     } catch (err) {
       if (err?.auth) setNeedLogin(true);
       else setConnError(true);
@@ -583,14 +586,23 @@ export default function App() {
     try { await fetch(`${API}/api/conversations/${current.id}/control`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action }) }); } catch {}
   }
 
-  async function sendMessage() {
-    const text = input.trim();
+  // Reenvia uma mensagem que falhou: remove o balão de erro (e o balão do
+  // usuário) e dispara o envio de novo com o mesmo texto.
+  function retrySend(idx, text) {
+    if (busy || !text) return;
+    setMessages(prev => prev.slice(0, Math.max(0, idx - 1)));
+    sendMessage(text);
+  }
+
+  async function sendMessage(textArg) {
+    const isRetry = typeof textArg === 'string';
+    const text = (isRetry ? textArg : input).trim();
     if (!text || busy) return;
     if (team && effectiveTeam.length === 0) { showToast('Selecione ao menos 1 assistente no painel da Equipe.'); return; }
     if (listening) recognitionRef.current?.stop();
     let conv = current;
     if (!conv) { conv = await ensureConversation(); if (!conv) return; }
-    setInput('');
+    if (!isRetry) setInput('');
     setBusy(true);
     setPaused(false);
     setStatusText('Pensando...');
@@ -609,7 +621,7 @@ export default function App() {
       if (!res.ok) {
         let msg = `O servidor respondeu com erro (${res.status}).`;
         try { const j = await res.json(); if (j?.error) msg = j.error; } catch {}
-        update(m => ({ ...m, blocks: [...(m.blocks || []), { type: 'text', content: `\n\n**Erro:** ${msg}` }] }));
+        update(m => ({ ...m, failed: true, retryText: text, blocks: [...(m.blocks || []), { type: 'text', content: `\n\n**Erro:** ${msg}` }] }));
         showToast(msg);
         setBusy(false); setPaused(false); setStatusText('');
         return;
@@ -652,7 +664,7 @@ export default function App() {
         }
       }
     } catch (err) {
-      update(m => ({ ...m, blocks: [...(m.blocks || []), { type: 'text', content: `\n\n**Conexão interrompida:** ${err.message}` }] }));
+      update(m => ({ ...m, failed: true, retryText: text, blocks: [...(m.blocks || []), { type: 'text', content: `\n\n**Conexão interrompida:** ${err.message}` }] }));
     }
     // Fecha qualquer ferramenta que tenha ficado "rodando"
     update(m => ({ ...m, blocks: (m.blocks || []).map(b => b.type === 'tool' && b.status === 'running' ? { ...b, status: 'done', ended: Date.now() } : b) }));
@@ -784,6 +796,10 @@ export default function App() {
           </div>
         </div>
       </header>
+      {unprotected && !authWarnHidden && <div className="authWarn">
+        <span>🔓 <b>Sem senha de acesso.</b> Use apenas na sua rede local — não exponha na internet sem definir <code>APP_PASSWORD</code>.</span>
+        <button onClick={() => { setAuthWarnHidden(true); localStorage.setItem('fred_authwarn_hidden', '1'); }} aria-label="Dispensar aviso"><X size={14}/></button>
+      </div>}
       <section className={`messages ${!loadingConv && messages.length === 0 && !busy ? 'empty' : ''}`}>
         {loadingConv && <div className="working"><span className="spin"/><span>Carregando conversa...</span></div>}
         {!loadingConv && messages.length === 0 && !busy && <div className="welcome">
@@ -812,6 +828,7 @@ export default function App() {
               : (m.role === 'user'
                 ? <Collapsible text={m.content}>{t => <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{t}</ReactMarkdown>}</Collapsible>
                 : <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{m.content || ''}</ReactMarkdown>)}
+            {m.role === 'assistant' && m.failed && <button className="retryBtn" onClick={() => retrySend(idx, m.retryText)}><RefreshCw size={14}/> Reenviar</button>}
             {m.role === 'assistant' && <MemoryTrace memory={m.memory} onOpenMemory={() => setMemoryOpen(true)}/>}
             {m.files?.length > 0 && <div className="filecards">
               {m.files.map(f => {

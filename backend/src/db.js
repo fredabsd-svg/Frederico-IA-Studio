@@ -150,4 +150,18 @@ try { db.exec('ALTER TABLE conversations ADD COLUMN summary_short TEXT'); } catc
 try { db.exec('ALTER TABLE conversations ADD COLUMN summary_long TEXT'); } catch {}
 try { db.exec('ALTER TABLE conversations ADD COLUMN tags TEXT'); } catch {}
 
+// Índices (criados APÓS as migrações, pois referenciam colunas adicionadas
+// via ALTER acima). Aceleram buscas quando o banco cresce.
+db.exec(`
+CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_files_conv ON files(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_chunks_conv ON conversation_chunks(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_chunks_scope ON conversation_chunks(scope);
+CREATE INDEX IF NOT EXISTS idx_memory_scope ON memory(scope);
+CREATE INDEX IF NOT EXISTS idx_memory_source ON memory(source_type, source_id);
+CREATE INDEX IF NOT EXISTS idx_usage_conv ON usage(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_conversations_client ON conversations(client_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+`);
+
 export function now() { return new Date().toISOString(); }

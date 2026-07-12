@@ -196,10 +196,15 @@ export function Collapsible({ text, limit = 700, children }) {
   </div>;
 }
 
-// Casca padrão dos modais (overlay + cabeçalho com fechar)
+// Casca padrão dos modais (overlay + cabeçalho com fechar). Fecha no ESC.
 export function Modal({ title, icon, onClose, children }) {
+  useEffect(() => {
+    function onKey(e) { if (e.key === 'Escape') onClose?.(); }
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
   return <div className="modalOverlay" onClick={onClose}>
-    <div className="modal" onClick={e => e.stopPropagation()} role="dialog" aria-label={title}>
+    <div className="modal" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={title}>
       <div className="modalHead">
         <h2>{icon} {title}</h2>
         <button className="x" onClick={onClose} aria-label="Fechar">✕</button>

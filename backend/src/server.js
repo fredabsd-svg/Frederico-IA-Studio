@@ -9,7 +9,7 @@ import { db, now } from './db.js';
 import { spawn } from 'child_process';
 import { runAgent, runOrchestrator, setControl, friendlyApiError, AGENTS } from './agent.js';
 import { runTool } from './tools.js';
-import { listMemories, addMemory, updateMemory, deleteMemory, deleteAllMemories, exportAll, reindexAll, getSettings, setSettings, looksSensitive, listMemorySuggestions, updateMemorySuggestion, approveMemorySuggestion, rejectMemorySuggestion } from './memory/memoryService.js';
+import { listMemories, addMemory, updateMemory, deleteMemory, deleteAllMemories, exportAll, reindexAll, getSettings, setSettings, looksSensitive, listMemorySuggestions, updateMemorySuggestion, approveMemorySuggestion, rejectMemorySuggestion, maybeReindexOnModelChange } from './memory/memoryService.js';
 import { startImport, importStatus } from './memory/indexer.js';
 import { workspaceFor, destroyConversation, insideBase, realInside, destroyAllSandboxes } from './sandbox.js';
 import { authEnabled, makeToken, verifyToken, getCookie, passwordMatches, loginRateLimited } from './auth.js';
@@ -86,7 +86,9 @@ function ensureConversation(id, model) {
   workspaceFor(id);
 }
 
-app.get('/api/health', (_, res) => res.json({ ok: true, name: 'Frederico AI Studio' }));
+app.get('/api/health', (_, res) => res.json({ ok: true, name: 'Frederico AI Studio', auth: authEnabled() }));
+// Verifica troca de modelo de embeddings e reindexa em segundo plano se preciso
+setTimeout(() => { try { maybeReindexOnModelChange(); } catch {} }, 3000);
 
 // Lista os modelos disponíveis no provedor configurado (ex.: catálogo do
 // OpenRouter). Marca quais suportam "tools" (necessário p/ gerar arquivos).
