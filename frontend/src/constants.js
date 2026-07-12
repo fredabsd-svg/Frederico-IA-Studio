@@ -70,4 +70,24 @@ export const EMBEDDED_APPS = [
     prompt: 'Quero gerar uma proposta comercial ou um contrato de prestação de serviços contábeis em Word (.docx). Me pergunte os dados necessários (nome e CNPJ do cliente, serviços incluídos, honorários, forma de pagamento, prazo e condições) e gere o documento bem formatado, pronto para revisar e assinar.' }
 ];
 
+// Calendário fiscal — dias de REFERÊNCIA das principais obrigações mensais.
+// Atenção: variam por feriado/fim de semana, por UF/município e por ano.
+export const FISCAL_CALENDAR = [
+  { day: 5, name: 'Salários', desc: 'Pagamento de salários (até o 5º dia útil)' },
+  { day: 15, name: 'EFD-Contribuições', desc: 'PIS/COFINS — SPED Contribuições' },
+  { day: 20, name: 'DAS — Simples Nacional', desc: 'Vencimento do DAS do mês' },
+  { day: 20, name: 'FGTS (FGTS Digital)', desc: 'FGTS da competência' },
+  { day: 20, name: 'INSS / DCTFWeb', desc: 'Contribuições previdenciárias' },
+  { day: 25, name: 'PIS/COFINS (Presumido/Real)', desc: 'DARF de PIS e COFINS' },
+  { day: 25, name: 'IPI', desc: 'IPI mensal (quando aplicável)' }
+];
+// Obrigações anuais (informativo, sem contagem regressiva)
+export const FISCAL_ANNUAL = [
+  { when: 'Fevereiro', name: 'DIRF', desc: 'Declaração do Imposto de Renda Retido na Fonte' },
+  { when: 'Março', name: 'DEFIS', desc: 'Declaração de Informações Socioeconômicas (Simples)' },
+  { when: 'Abril/Maio', name: 'IRPF', desc: 'Declaração do Imposto de Renda da Pessoa Física' },
+  { when: 'Maio', name: 'ECD', desc: 'Escrituração Contábil Digital' },
+  { when: 'Julho', name: 'ECF', desc: 'Escrituração Contábil Fiscal' }
+];
+
 export const emptyForm = () => ({ id: null, name: '', emoji: '🤖', model: '', system_prompt: '', template: '', tools: TOOL_INFO.map(t => t.name), personality: { form: 50, det: 50, criat: 20 } });
