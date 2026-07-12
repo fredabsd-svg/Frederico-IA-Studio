@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search } from 'lucide-react';
+import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft } from 'lucide-react';
 import { API, FALLBACK_MODELS, TOOL_INFO, TEMPLATES, SUGGESTIONS, QUICK_ACTIONS, emptyForm } from './constants.js';
 import { ToolStep, Slider, Modal, ModelPicker, Collapsible } from './components.jsx';
 import { MemoryPanel } from './MemoryPanel.jsx';
@@ -63,6 +63,7 @@ export default function App() {
   const [listening, setListening] = useState(false);
   const [webSearch, setWebSearch] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [sideHidden, setSideHidden] = useState(() => localStorage.getItem('fred_side_hidden') === '1');
   const [convFilter, setConvFilter] = useState('');
   const [dragActive, setDragActive] = useState(false);
   const [uploadingFiles, setUploadingFiles] = useState(false);
@@ -243,6 +244,11 @@ export default function App() {
       if (err?.auth) setNeedLogin(true);
       else setConnError(true);
     }
+  }
+
+  // Esconde/mostra a barra lateral (guardado entre sessões)
+  function toggleSide() {
+    setSideHidden(h => { localStorage.setItem('fred_side_hidden', h ? '0' : '1'); return !h; });
   }
 
   // Tela de boas-vindas (conversa "em rascunho" — só vira registro ao 1º envio)
@@ -653,10 +659,13 @@ export default function App() {
     </div>;
   }
 
-  return <div className="app">
+  return <div className={`app ${sideHidden ? 'sideHidden' : ''}`}>
     {menuOpen && <div className="scrim" onClick={() => setMenuOpen(false)}/>}
     <aside className={`sidebar ${menuOpen ? 'open' : ''}`}>
-      <div className="brand">Frederico <span>AI Studio</span></div>
+      <div className="brandRow">
+        <div className="brand">Frederico <span>AI Studio</span></div>
+        <button className="sideCollapse" onClick={toggleSide} title="Esconder a barra lateral" aria-label="Esconder a barra lateral"><PanelLeft size={17}/></button>
+      </div>
       <div className="clientRow">
         <select value={clientId} onChange={e => switchClient(e.target.value)} title="Cliente / Projeto ativo">
           <option value="">🗂️ Geral (sem cliente)</option>
@@ -708,6 +717,7 @@ export default function App() {
       {dragActive && <div className="dropOverlay" aria-hidden="true"><Upload size={30}/><span>Solte os arquivos aqui</span></div>}
       <header className="topbar">
         <button className="hamburger" onClick={() => setMenuOpen(o => !o)} aria-label="Abrir menu"><Menu size={19}/></button>
+        <button className="sideOpen" onClick={toggleSide} title="Mostrar a barra lateral" aria-label="Mostrar a barra lateral"><PanelLeft size={18}/></button>
         <div className="titleblock"><strong>{current?.title || 'Nova conversa'}</strong><small>{team ? `🧑‍🤝‍🧑 Equipe (${assistants.length} assistentes)` : (currentAssistant ? `${currentAssistant.emoji || '🤖'} ${currentAssistant.name}` : 'Assistente')} · {model}</small></div>
         <div className="pickers">
           <div className="mpicker" ref={teamRef}>
@@ -740,8 +750,6 @@ export default function App() {
       <section className={`messages ${!loadingConv && messages.length === 0 && !busy ? 'empty' : ''}`}>
         {loadingConv && <div className="working"><span className="spin"/><span>Carregando conversa...</span></div>}
         {!loadingConv && messages.length === 0 && !busy && <div className="welcome">
-          <div className="welcomeLogo">Frederico <span>AI Studio</span></div>
-          <div className="welcomeIcon"><Sparkles size={26}/></div>
           <h2>Olá! Como posso ajudar você hoje?</h2>
           <p>Envie um arquivo, peça uma planilha, um documento, um código ou uma pesquisa.</p>
           <div className="quickCards">

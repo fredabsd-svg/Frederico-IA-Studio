@@ -191,3 +191,25 @@
 .topbar{background:transparent;border-bottom:1px solid var(--line)}
 .messages{padding-left:max(24px,calc((100% - 860px)/2));padding-right:max(24px,calc((100% - 860px)/2))}
 @media(max-width:980px){.messages{padding-left:18px;padding-right:18px}.composerWrap{padding:6px 14px 16px}}
+/* ===== Barra lateral recolhível + refino minimalista ===== */
+.app{transition:grid-template-columns .22s ease}
+.brandRow{display:flex;align-items:center;justify-content:space-between;gap:8px;flex:none;margin-bottom:14px}
+.brandRow .brand{margin-bottom:0}
+.sideCollapse{flex:none;border:none;background:transparent;color:var(--muted);padding:6px;display:flex;border-radius:9px}
+.sideCollapse:hover{background:var(--panel2);color:var(--accent)}
+.sideOpen{display:none;flex:none;align-items:center;justify-content:center;padding:9px 11px;margin-right:10px;border-color:transparent;color:var(--muted)}
+.sideOpen:hover{background:var(--panel2);color:var(--accent)}
+@media(min-width:981px){
+  .app.sideHidden{grid-template-columns:0 1fr}
+  .app.sideHidden .sidebar{border-right-color:transparent}
+  .app.sideHidden .sideOpen{display:flex}
+}
+/* Cards de ação: planos, sem sombra, com realce sutil ao passar o mouse */
+.welcome{gap:14px}
+.welcome h2{font-size:27px}
+.quickCard{padding:14px 16px;background:transparent;border-radius:14px;box-shadow:none}
+.quickCard:hover{border-color:var(--accent);background:var(--panel2);transform:none;box-shadow:none}
+.qcIcon{background:var(--panel2);border-color:transparent}
+/* Campo de mensagem com sombra mais leve */
+.composer{box-shadow:0 2px 12px rgba(0,0,0,.06)}
+.composer:focus-within{box-shadow:0 2px 16px rgba(79,140,255,.14)}
