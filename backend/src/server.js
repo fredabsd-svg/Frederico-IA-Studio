@@ -9,7 +9,7 @@ import { db, now } from './db.js';
 import { spawn } from 'child_process';
 import { runAgent, runOrchestrator, setControl, friendlyApiError, AGENTS } from './agent.js';
 import { runTool } from './tools.js';
-import { listMemories, addMemory, updateMemory, deleteMemory, deleteAllMemories, exportAll, reindexAll, getSettings, setSettings, looksSensitive } from './memory/memoryService.js';
+import { listMemories, addMemory, updateMemory, deleteMemory, deleteAllMemories, exportAll, reindexAll, getSettings, setSettings, looksSensitive, listMemorySuggestions, updateMemorySuggestion, approveMemorySuggestion, rejectMemorySuggestion } from './memory/memoryService.js';
 import { startImport, importStatus } from './memory/indexer.js';
 import { workspaceFor, destroyConversation, insideBase } from './sandbox.js';
 import { authEnabled, makeToken, verifyToken, getCookie, passwordMatches, loginRateLimited } from './auth.js';
@@ -162,6 +162,7 @@ app.delete('/api/clients/:id', (req, res) => {
   db.prepare('UPDATE conversations SET client_id=NULL WHERE client_id=?').run(req.params.id);
   db.prepare('UPDATE conversation_chunks SET scope=? WHERE scope=?').run('global', `client:${req.params.id}`);
   db.prepare("DELETE FROM memory WHERE scope=?").run(`client:${req.params.id}`);
+  db.prepare("DELETE FROM memory_suggestions WHERE scope=?").run(`client:${req.params.id}`);
   db.prepare('DELETE FROM clients WHERE id=?').run(req.params.id);
   res.json({ ok: true });
 });
@@ -213,6 +214,32 @@ app.delete('/api/memories/:id', (req, res) => { deleteMemory(req.params.id); res
 app.delete('/api/memories', (req, res) => {
   deleteAllMemories({ scope: req.query.scope || null, source_type: req.query.source_type || null });
   res.json({ ok: true });
+});
+
+app.get('/api/memory-suggestions', (req, res) => {
+  res.json(listMemorySuggestions({ status: req.query.status || 'pending', limit: req.query.limit || 100 }));
+});
+
+app.put('/api/memory-suggestions/:id', (req, res) => {
+  try {
+    const s = updateMemorySuggestion(req.params.id, req.body || {});
+    if (!s) return res.status(404).json({ error: 'Sugestão não encontrada' });
+    res.json(s);
+  } catch (err) { res.status(400).json({ error: err.message }); }
+});
+
+app.post('/api/memory-suggestions/:id/approve', async (req, res) => {
+  try {
+    const r = await approveMemorySuggestion(req.params.id, req.body || {});
+    if (!r) return res.status(404).json({ error: 'Sugestão não encontrada' });
+    res.json(r);
+  } catch (err) { res.status(400).json({ error: err.message }); }
+});
+
+app.post('/api/memory-suggestions/:id/reject', (req, res) => {
+  const s = rejectMemorySuggestion(req.params.id);
+  if (!s) return res.status(404).json({ error: 'Sugestão não encontrada' });
+  res.json(s);
 });
 
 app.get('/api/memories/export', (_, res) => {

@@ -6,6 +6,7 @@ import { embed, embedOne, cosine, keywordScore, embeddingsDegraded } from './emb
 export const DEFAULT_SETTINGS = {
   memory_enabled: 1,          // memória ligada/desligada
   auto_memory: 1,             // extração automática de fatos
+  review_auto_memory: 1,      // fatos aprendidos entram em fila para revisão
   context_target_tokens: 60000, // alvo do Context Builder (suba p/ modelos de 1M)
   max_memories: 12,           // memórias recuperadas por resposta
   max_chunks: 10,             // trechos de conversas antigas por resposta
@@ -71,9 +72,88 @@ export async function updateMemory(id, fields = {}) {
 export function deleteMemory(id) { db.prepare('DELETE FROM memory WHERE id=?').run(id); }
 
 export function deleteAllMemories({ scope = null, source_type = null } = {}) {
-  if (scope) db.prepare('DELETE FROM memory WHERE scope=?').run(scope);
-  else if (source_type) db.prepare('DELETE FROM memory WHERE source_type=?').run(source_type);
-  else { db.prepare('DELETE FROM memory').run(); db.prepare('DELETE FROM conversation_chunks').run(); }
+  if (scope) { db.prepare('DELETE FROM memory WHERE scope=?').run(scope); db.prepare('DELETE FROM memory_suggestions WHERE scope=?').run(scope); }
+  else if (source_type) { db.prepare('DELETE FROM memory WHERE source_type=?').run(source_type); db.prepare('DELETE FROM memory_suggestions WHERE source_type=?').run(source_type); }
+  else { db.prepare('DELETE FROM memory').run(); db.prepare('DELETE FROM memory_suggestions').run(); db.prepare('DELETE FROM conversation_chunks').run(); }
+}
+
+// ---- Fila de revisão: memórias sugeridas pela IA ----
+function cleanSuggestionFields(fields = {}) {
+  const content = String(fields.content || '').trim();
+  const type = ['perfil', 'preferencia', 'projeto', 'fato', 'manual'].includes(fields.type) ? fields.type : 'fato';
+  const scope = String(fields.scope || 'global').trim() || 'global';
+  const importance = Math.min(5, Math.max(1, Number(fields.importance) || 3));
+  const confidence = Math.min(1, Math.max(0, Number(fields.confidence) || 0.7));
+  return {
+    content,
+    type,
+    scope,
+    importance,
+    confidence,
+    tags: fields.tags || null,
+    source_type: fields.source_type || 'auto',
+    source_id: fields.source_id || null
+  };
+}
+
+export function listMemorySuggestions({ status = 'pending', limit = 100 } = {}) {
+  const rows = status
+    ? db.prepare('SELECT * FROM memory_suggestions WHERE status=? ORDER BY created_at DESC LIMIT ?').all(status, Number(limit) || 100)
+    : db.prepare('SELECT * FROM memory_suggestions ORDER BY created_at DESC LIMIT ?').all(Number(limit) || 100);
+  return rows;
+}
+
+export function addMemorySuggestion(fields = {}) {
+  const s = cleanSuggestionFields(fields);
+  if (!s.content) return null;
+  if (looksSensitive(s.content)) return null;
+  const existing = db.prepare(`SELECT * FROM memory_suggestions
+    WHERE status='pending' AND scope=? AND lower(content)=lower(?) LIMIT 1`).get(s.scope, s.content);
+  if (existing) return existing;
+  const id = nanoid();
+  const t = now();
+  db.prepare(`INSERT INTO memory_suggestions
+    (id, scope, content, type, source_type, source_id, importance, confidence, tags, status, created_at, updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,'pending',?,?)`)
+    .run(id, s.scope, s.content, s.type, s.source_type, s.source_id, s.importance, s.confidence, s.tags, t, t);
+  return db.prepare('SELECT * FROM memory_suggestions WHERE id=?').get(id);
+}
+
+export function updateMemorySuggestion(id, fields = {}) {
+  const cur = db.prepare('SELECT * FROM memory_suggestions WHERE id=?').get(id);
+  if (!cur || cur.status !== 'pending') return null;
+  const s = cleanSuggestionFields({ ...cur, ...fields });
+  if (!s.content) throw new Error('Conteúdo vazio.');
+  if (looksSensitive(s.content)) throw new Error('Este conteúdo parece conter senha/chave — por segurança, não é salvo na memória.');
+  db.prepare(`UPDATE memory_suggestions SET content=?, type=?, scope=?, importance=?, confidence=?, tags=?, updated_at=? WHERE id=?`)
+    .run(s.content, s.type, s.scope, s.importance, s.confidence, s.tags, now(), id);
+  return db.prepare('SELECT * FROM memory_suggestions WHERE id=?').get(id);
+}
+
+export async function approveMemorySuggestion(id, fields = {}) {
+  const cur = fields && Object.keys(fields).length ? updateMemorySuggestion(id, fields) : db.prepare('SELECT * FROM memory_suggestions WHERE id=?').get(id);
+  if (!cur || cur.status !== 'pending') return null;
+  const mem = await addMemory({
+    content: cur.content,
+    type: cur.type,
+    scope: cur.scope,
+    importance: cur.importance,
+    confidence: cur.confidence,
+    tags: cur.tags,
+    source_type: cur.source_type || 'auto',
+    source_id: cur.source_id,
+    pinned: 0
+  });
+  db.prepare("UPDATE memory_suggestions SET status='approved', approved_memory_id=?, decided_at=?, updated_at=? WHERE id=?")
+    .run(mem.id, now(), now(), id);
+  return { suggestion: db.prepare('SELECT * FROM memory_suggestions WHERE id=?').get(id), memory: mem };
+}
+
+export function rejectMemorySuggestion(id) {
+  const cur = db.prepare('SELECT * FROM memory_suggestions WHERE id=?').get(id);
+  if (!cur || cur.status !== 'pending') return null;
+  db.prepare("UPDATE memory_suggestions SET status='rejected', decided_at=?, updated_at=? WHERE id=?").run(now(), now(), id);
+  return db.prepare('SELECT * FROM memory_suggestions WHERE id=?').get(id);
 }
 
 // Lista com filtros (para a interface). query usa busca semântica + texto.
@@ -147,9 +227,10 @@ export async function findSimilar(content, threshold = 0.88) {
 // ---- Exportar / Reindexar ----
 export function exportAll() {
   const memories = db.prepare('SELECT id, scope, type, content, source_type, source_id, importance, confidence, pinned, tags, created_at, updated_at FROM memory').all();
+  const suggestions = db.prepare('SELECT id, scope, type, content, source_type, source_id, importance, confidence, tags, status, created_at, updated_at, decided_at FROM memory_suggestions').all();
   const conversations = db.prepare('SELECT id, title, summary_short, tags, created_at FROM conversations').all();
   const chunks = db.prepare('SELECT COUNT(*) c FROM conversation_chunks').get().c;
-  return { exported_at: now(), memories, conversations, chunks_indexed: chunks, degraded_mode: embeddingsDegraded() };
+  return { exported_at: now(), memories, suggestions, conversations, chunks_indexed: chunks, degraded_mode: embeddingsDegraded() };
 }
 
 export async function reindexAll() {

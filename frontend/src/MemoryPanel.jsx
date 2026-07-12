@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Brain, Search, Pin, PinOff, Pencil, X, Download, Upload, RefreshCw, Trash2, Settings2 } from 'lucide-react';
+import { Brain, Search, Pin, PinOff, Pencil, X, Download, Upload, RefreshCw, Trash2, Settings2, Check } from 'lucide-react';
 import { API } from './constants.js';
 import { Modal } from './components.jsx';
 
@@ -17,6 +17,7 @@ const SOURCE_LABEL = { manual: 'adicionada por você', auto: 'aprendida das conv
 // Cérebro do Assistente: tudo o que o app sabe, com busca, edição e controles
 export function MemoryPanel({ assistants, clients, clientId, showToast, onClose }) {
   const [items, setItems] = useState(null);
+  const [suggestions, setSuggestions] = useState([]);
   const [query, setQuery] = useState('');
   const [type, setType] = useState('');
   const [newContent, setNewContent] = useState('');
@@ -31,6 +32,7 @@ export function MemoryPanel({ assistants, clients, clientId, showToast, onClose 
 
   useEffect(() => {
     load();
+    loadSuggestions();
     loadConfig();
     // Se já houver uma importação rodando (painel reaberto), retoma o acompanhamento
     fetch(`${API}/api/memories/import-status`).then(r => r.json()).then(s => { if (s.running) watchImport(); }).catch(() => {});
@@ -52,6 +54,14 @@ export function MemoryPanel({ assistants, clients, clientId, showToast, onClose 
       const data = await res.json();
       setItems(Array.isArray(data) ? data : []);
     } catch { setItems([]); showToast('Não foi possível carregar as memórias.'); }
+  }
+  async function loadSuggestions() {
+    try {
+      const res = await fetch(`${API}/api/memory-suggestions`);
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+      setSuggestions(Array.isArray(data) ? data : []);
+    } catch { setSuggestions([]); }
   }
   async function loadConfig() {
     try {
@@ -85,6 +95,31 @@ export function MemoryPanel({ assistants, clients, clientId, showToast, onClose 
   async function patch(id, fields) {
     try { await fetch(`${API}/api/memories/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(fields) }); await load(); }
     catch { showToast('Não foi possível atualizar a memória.'); }
+  }
+  async function approveSuggestion(s) {
+    try {
+      const res = await fetch(`${API}/api/memory-suggestions/${s.id}/approve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: s.content, type: s.type, scope: s.scope, importance: s.importance }) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || '');
+      showToast('Memoria aprovada.', 'ok');
+      await loadSuggestions();
+      await load();
+    } catch (e) { showToast(e.message || 'Nao foi possivel aprovar.'); }
+  }
+  async function editSuggestion(s) {
+    const content = prompt('Editar sugestao de memoria:', s.content);
+    if (content === null || !content.trim() || content === s.content) return;
+    try {
+      const res = await fetch(`${API}/api/memory-suggestions/${s.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: content.trim() }) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || '');
+      await loadSuggestions();
+    } catch (e) { showToast(e.message || 'Nao foi possivel editar a sugestao.'); }
+  }
+  async function rejectSuggestion(id) {
+    if (!confirm('Descartar esta sugestao de memoria?')) return;
+    try { await fetch(`${API}/api/memory-suggestions/${id}/reject`, { method: 'POST' }); await loadSuggestions(); }
+    catch { showToast('Nao foi possivel descartar a sugestao.'); }
   }
   async function edit(m) {
     const content = prompt('Editar memória:', m.content);
@@ -121,6 +156,7 @@ export function MemoryPanel({ assistants, clients, clientId, showToast, onClose 
         if (s.done) {
           if (s.error) showToast(`Importação falhou: ${s.error}`);
           else showToast(`✅ Importado: ${s.total} conversa(s), ${s.chunks} trechos indexados, ${s.facts} fatos aprendidos.`, 'ok');
+          await loadSuggestions();
           await load();
         }
       } catch {}
@@ -185,9 +221,29 @@ export function MemoryPanel({ assistants, clients, clientId, showToast, onClose 
 
     {workingLabel && <div className="working"><span className="spin"/><span>{workingLabel}</span></div>}
 
+    {suggestions.length > 0 && <div className="suggestBox">
+      <div className="suggestHead"><b>Memorias sugeridas</b><span>{suggestions.length} pendente(s)</span></div>
+      {suggestions.map(s => (
+        <div className="suggestItem" key={s.id}>
+          <div className="memItemTop">
+            <span className="memBadge">{TYPE_BADGE[s.type] || s.type}</span>
+            <span className="memScope">{scopeName(s.scope)}</span>
+            <span className="memOrigin">{SOURCE_LABEL[s.source_type] || s.source_type} · imp. {s.importance}/5</span>
+          </div>
+          <div className="memContent">{s.content}</div>
+          <div className="suggestActions">
+            <button className="primary" onClick={() => approveSuggestion(s)}><Check size={14}/> Aprovar</button>
+            <button onClick={() => editSuggestion(s)}><Pencil size={14}/> Editar</button>
+            <button className="danger" onClick={() => rejectSuggestion(s.id)}><X size={14}/> Descartar</button>
+          </div>
+        </div>
+      ))}
+    </div>}
+
     {configOpen && config && <div className="memConfig">
       <label className="chk"><input type="checkbox" checked={!!config.memory_enabled} onChange={e => saveConfig({ memory_enabled: e.target.checked ? 1 : 0 })}/> Memória ativada (o app consulta o passado antes de responder)</label>
       <label className="chk"><input type="checkbox" checked={!!config.auto_memory} onChange={e => saveConfig({ auto_memory: e.target.checked ? 1 : 0 })}/> Memória automática (aprender fatos das conversas)</label>
+      <label className="chk"><input type="checkbox" checked={!!config.review_auto_memory} onChange={e => saveConfig({ review_auto_memory: e.target.checked ? 1 : 0 })}/> Revisar memorias aprendidas antes de salvar</label>
       <div className="cfgRow"><span>Limite maximo de contexto (o app reduz automaticamente por modelo)</span><input type="number" min="4000" step="10000" value={config.context_target_tokens} onChange={e => saveConfig({ context_target_tokens: e.target.value })}/></div>
       <div className="cfgRow"><span>Memórias recuperadas por resposta</span><input type="number" min="0" max="50" value={config.max_memories} onChange={e => saveConfig({ max_memories: e.target.value })}/></div>
       <div className="cfgRow"><span>Trechos de conversas antigas por resposta</span><input type="number" min="0" max="50" value={config.max_chunks} onChange={e => saveConfig({ max_chunks: e.target.value })}/></div>

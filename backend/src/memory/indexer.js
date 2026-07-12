@@ -2,7 +2,7 @@ import OpenAI from 'openai';
 import { db, now } from '../db.js';
 import { nanoid } from 'nanoid';
 import { embed } from './embeddings.js';
-import { getSettings, addMemory, findSimilar, looksSensitive } from './memoryService.js';
+import { getSettings, addMemory, addMemorySuggestion, findSimilar, looksSensitive } from './memoryService.js';
 
 // Indexa conversas (chunks + resumo) e extrai fatos importantes para a
 // memória de longo prazo. Roda em segundo plano, sem atrasar as respostas.
@@ -100,7 +100,8 @@ export async function indexAfterReply(conversationId) {
       }
       const type = ['perfil', 'preferencia', 'projeto', 'fato'].includes(f.type) ? f.type : 'fato';
       const scope = (type === 'perfil' || type === 'preferencia') ? 'global' : clientScope;
-      await addMemory({ content, type, scope, importance, confidence, source_type: 'auto', source_id: conversationId });
+      if (s.review_auto_memory) addMemorySuggestion({ content, type, scope, importance, confidence, source_type: 'auto', source_id: conversationId });
+      else await addMemory({ content, type, scope, importance, confidence, source_type: 'auto', source_id: conversationId });
     }
   } catch (err) {
     console.error('[memória] extração falhou (segue sem):', err.message);
@@ -212,7 +213,9 @@ export async function importConversations(fileName, buffer, scope = 'global') {
         const dup = await findSimilar(content, 0.88);
         if (dup) continue;
         const type = ['perfil', 'preferencia', 'projeto', 'fato'].includes(f.type) ? f.type : 'fato';
-        await addMemory({ content, type, scope: targetScope, importance: Math.min(5, Number(f.importance) || 3), confidence: Number(f.confidence) || 0.7, source_type: 'import', source_id: title });
+        const payload = { content, type, scope: targetScope, importance: Math.min(5, Number(f.importance) || 3), confidence: Number(f.confidence) || 0.7, source_type: 'import', source_id: title };
+        if (getSettings().review_auto_memory) addMemorySuggestion(payload);
+        else await addMemory(payload);
         facts++;
       }
     } catch {}

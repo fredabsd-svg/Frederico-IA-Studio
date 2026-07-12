@@ -53,6 +53,22 @@ CREATE TABLE IF NOT EXISTS memory (
   content TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS memory_suggestions (
+  id TEXT PRIMARY KEY,
+  scope TEXT NOT NULL DEFAULT 'global',
+  content TEXT NOT NULL,
+  type TEXT DEFAULT 'fato',
+  source_type TEXT DEFAULT 'auto',
+  source_id TEXT,
+  importance INTEGER DEFAULT 3,
+  confidence REAL DEFAULT 1,
+  tags TEXT,
+  status TEXT NOT NULL DEFAULT 'pending', -- pending|approved|rejected
+  approved_memory_id TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  decided_at TEXT
+);
 CREATE TABLE IF NOT EXISTS clients (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -120,6 +136,7 @@ try { db.exec('ALTER TABLE memory ADD COLUMN pinned INTEGER DEFAULT 0'); } catch
 try { db.exec('ALTER TABLE memory ADD COLUMN tags TEXT'); } catch {}
 try { db.exec('ALTER TABLE memory ADD COLUMN updated_at TEXT'); } catch {}
 try { db.exec('ALTER TABLE memory ADD COLUMN embedding BLOB'); } catch {}
+try { db.exec('ALTER TABLE memory_suggestions ADD COLUMN approved_memory_id TEXT'); } catch {}
 try { db.exec("ALTER TABLE conversation_chunks ADD COLUMN scope TEXT DEFAULT 'global'"); } catch {}
 // Resumos e tags automáticos das conversas
 try { db.exec('ALTER TABLE conversations ADD COLUMN summary_short TEXT'); } catch {}
