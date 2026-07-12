@@ -93,13 +93,17 @@ export async function indexAfterReply(conversationId) {
       if (!content || content.length < 8) continue;
       if (looksSensitive(content)) continue;                      // nunca salvar segredos
       if (confidence < 0.6 || importance < s.importance_threshold) continue;
-      const dup = await findSimilar(content, 0.88);
+      const type = ['perfil', 'preferencia', 'projeto', 'fato'].includes(f.type) ? f.type : 'fato';
+      // Numa conversa de um cliente específico, TUDO fica no escopo do cliente —
+      // inclusive preferências (senão a preferência do cliente A vazaria para os
+      // outros). Só vira 'global' quando a conversa não tem cliente.
+      const isClient = clientScope && clientScope !== 'global';
+      const scope = isClient ? clientScope : ((type === 'perfil' || type === 'preferencia') ? 'global' : clientScope);
+      const dup = await findSimilar(content, 0.88, scope);
       if (dup) {
         db.prepare('UPDATE memory SET importance=MAX(importance,?), updated_at=? WHERE id=?').run(importance, now(), dup.id);
         continue;
       }
-      const type = ['perfil', 'preferencia', 'projeto', 'fato'].includes(f.type) ? f.type : 'fato';
-      const scope = (type === 'perfil' || type === 'preferencia') ? 'global' : clientScope;
       if (s.review_auto_memory) addMemorySuggestion({ content, type, scope, importance, confidence, source_type: 'auto', source_id: conversationId });
       else await addMemory({ content, type, scope, importance, confidence, source_type: 'auto', source_id: conversationId });
     }
@@ -210,7 +214,7 @@ export async function importConversations(fileName, buffer, scope = 'global') {
       for (const f of (data.facts || []).slice(0, 5)) {
         const content = String(f.content || '').trim();
         if (!content || looksSensitive(content) || (Number(f.confidence) || 0) < 0.6) continue;
-        const dup = await findSimilar(content, 0.88);
+        const dup = await findSimilar(content, 0.88, targetScope);
         if (dup) continue;
         const type = ['perfil', 'preferencia', 'projeto', 'fato'].includes(f.type) ? f.type : 'fato';
         const payload = { content, type, scope: targetScope, importance: Math.min(5, Number(f.importance) || 3), confidence: Number(f.confidence) || 0.7, source_type: 'import', source_id: title };

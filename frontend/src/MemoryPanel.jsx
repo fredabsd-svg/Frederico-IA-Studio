@@ -244,10 +244,10 @@ export function MemoryPanel({ assistants, clients, clientId, showToast, onClose 
       <label className="chk"><input type="checkbox" checked={!!config.memory_enabled} onChange={e => saveConfig({ memory_enabled: e.target.checked ? 1 : 0 })}/> Memória ativada (o app consulta o passado antes de responder)</label>
       <label className="chk"><input type="checkbox" checked={!!config.auto_memory} onChange={e => saveConfig({ auto_memory: e.target.checked ? 1 : 0 })}/> Memória automática (aprender fatos das conversas)</label>
       <label className="chk"><input type="checkbox" checked={!!config.review_auto_memory} onChange={e => saveConfig({ review_auto_memory: e.target.checked ? 1 : 0 })}/> Revisar memorias aprendidas antes de salvar</label>
-      <div className="cfgRow"><span>Limite maximo de contexto (o app reduz automaticamente por modelo)</span><input type="number" min="4000" step="10000" value={config.context_target_tokens} onChange={e => saveConfig({ context_target_tokens: e.target.value })}/></div>
-      <div className="cfgRow"><span>Memórias recuperadas por resposta</span><input type="number" min="0" max="50" value={config.max_memories} onChange={e => saveConfig({ max_memories: e.target.value })}/></div>
-      <div className="cfgRow"><span>Trechos de conversas antigas por resposta</span><input type="number" min="0" max="50" value={config.max_chunks} onChange={e => saveConfig({ max_chunks: e.target.value })}/></div>
-      <div className="cfgRow"><span>Importância mínima para salvar automático (1–5)</span><input type="number" min="1" max="5" value={config.importance_threshold} onChange={e => saveConfig({ importance_threshold: e.target.value })}/></div>
+      <div className="cfgRow"><span>Limite maximo de contexto (o app reduz automaticamente por modelo)</span><input type="number" min="4000" step="10000" value={config.context_target_tokens} onChange={e => saveConfig({ context_target_tokens: Number(e.target.value) || 0 })}/></div>
+      <div className="cfgRow"><span>Memórias recuperadas por resposta</span><input type="number" min="0" max="50" value={config.max_memories} onChange={e => saveConfig({ max_memories: Number(e.target.value) || 0 })}/></div>
+      <div className="cfgRow"><span>Trechos de conversas antigas por resposta</span><input type="number" min="0" max="50" value={config.max_chunks} onChange={e => saveConfig({ max_chunks: Number(e.target.value) || 0 })}/></div>
+      <div className="cfgRow"><span>Importância mínima para salvar automático (1–5)</span><input type="number" min="1" max="5" value={config.importance_threshold} onChange={e => saveConfig({ importance_threshold: Number(e.target.value) || 1 })}/></div>
     </div>}
 
     <div className="memList">

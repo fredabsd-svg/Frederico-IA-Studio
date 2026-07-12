@@ -72,7 +72,7 @@ export async function updateMemory(id, fields = {}) {
 export function deleteMemory(id) { db.prepare('DELETE FROM memory WHERE id=?').run(id); }
 
 export function deleteAllMemories({ scope = null, source_type = null } = {}) {
-  if (scope) { db.prepare('DELETE FROM memory WHERE scope=?').run(scope); db.prepare('DELETE FROM memory_suggestions WHERE scope=?').run(scope); }
+  if (scope) { db.prepare('DELETE FROM memory WHERE scope=?').run(scope); db.prepare('DELETE FROM memory_suggestions WHERE scope=?').run(scope); db.prepare('DELETE FROM conversation_chunks WHERE scope=?').run(scope); }
   else if (source_type) { db.prepare('DELETE FROM memory WHERE source_type=?').run(source_type); db.prepare('DELETE FROM memory_suggestions WHERE source_type=?').run(source_type); }
   else { db.prepare('DELETE FROM memory').run(); db.prepare('DELETE FROM memory_suggestions').run(); db.prepare('DELETE FROM conversation_chunks').run(); }
 }
@@ -212,10 +212,15 @@ export async function searchChunks(queryText, { excludeConversationId = null, sc
   return scored.map(({ embedding, ...r }) => r);
 }
 
-// Dedupe: encontra memória muito parecida (evita salvar o mesmo fato 2x)
-export async function findSimilar(content, threshold = 0.88) {
-  const qEmb = await embedOne(content, 'query');
-  const rows = db.prepare('SELECT id, content, importance, embedding FROM memory').all();
+// Dedupe: encontra memória muito parecida (evita salvar o mesmo fato 2x).
+// Filtra pelo MESMO escopo — senão um fato do cliente A some por já existir
+// parecido no cliente B (vazamento entre clientes). Usa prefixo 'passage'
+// para comparar passagem-com-passagem (o mesmo usado ao gravar).
+export async function findSimilar(content, threshold = 0.88, scope = null) {
+  const qEmb = await embedOne(content, 'passage');
+  const rows = scope
+    ? db.prepare('SELECT id, content, importance, embedding FROM memory WHERE scope=?').all(scope)
+    : db.prepare('SELECT id, content, importance, embedding FROM memory').all();
   let best = null;
   for (const r of rows) {
     const sim = qEmb && r.embedding ? cosine(qEmb, r.embedding) : keywordScore(content, r.content);

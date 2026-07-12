@@ -60,8 +60,30 @@ async function webSearch(query) {
   return { engine: 'duckduckgo', results };
 }
 
+// Bloqueia endereços internos/loopback/link-local para evitar SSRF (o backend
+// tem rede; o modelo pode ser induzido por conteúdo de uma página a buscar,
+// ex., http://169.254.169.254/ de metadados de nuvem).
+function isBlockedHost(hostname) {
+  const h = String(hostname || '').toLowerCase();
+  if (!h || h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.local') || h.endsWith('.internal')) return true;
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
+  if (m) {
+    const a = Number(m[1]), b = Number(m[2]);
+    if (a === 0 || a === 127 || a === 10) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 169 && b === 254) return true;       // link-local / metadados de nuvem
+    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
+  }
+  if (h === '::1' || h === '::' || h.startsWith('fc') || h.startsWith('fd') || h.startsWith('fe80')) return true;
+  return false;
+}
+
 async function webFetch(url) {
   if (!/^https?:\/\//i.test(url)) throw new Error('URL inválida (use http/https).');
+  let host;
+  try { host = new URL(url).hostname; } catch { throw new Error('URL inválida.'); }
+  if (isBlockedHost(host)) throw new Error('Endereço bloqueado por segurança (rede interna/local não é acessível).');
   const r = await fetchWithTimeout(url, 20000);
   const type = r.headers.get('content-type') || '';
   if (!/text|html|json|xml/i.test(type)) return { url, note: `Conteúdo não textual (${type}). Baixe/processe de outra forma.` };

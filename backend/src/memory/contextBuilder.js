@@ -243,7 +243,10 @@ export async function buildContext({ conversationId, assistantId, clientScope, u
     const t = estimateTokens(b.text);
     if (used + t > budget) {
       const remaining = budget - used;
-      if (remaining > 800) {
+      // Bloco não cabe inteiro. Se ainda houver folga razoável, encaixa uma
+      // versão aparada dele; senão, pula ESTE bloco e segue tentando os
+      // próximos (menores) em vez de abandonar todos de uma vez.
+      if (remaining > 800 && !meta.truncated) {
         kept.push(trimForTokens(b.text, remaining));
         used = budget;
         meta.truncated = true;
@@ -251,7 +254,7 @@ export async function buildContext({ conversationId, assistantId, clientScope, u
       } else {
         meta.omittedBlocks += 1;
       }
-      break;
+      continue;
     }
     kept.push(b.text);
     used += t;

@@ -11,7 +11,7 @@ import { runAgent, runOrchestrator, setControl, friendlyApiError, AGENTS } from 
 import { runTool } from './tools.js';
 import { listMemories, addMemory, updateMemory, deleteMemory, deleteAllMemories, exportAll, reindexAll, getSettings, setSettings, looksSensitive, listMemorySuggestions, updateMemorySuggestion, approveMemorySuggestion, rejectMemorySuggestion } from './memory/memoryService.js';
 import { startImport, importStatus } from './memory/indexer.js';
-import { workspaceFor, destroyConversation, insideBase, destroyAllSandboxes } from './sandbox.js';
+import { workspaceFor, destroyConversation, insideBase, realInside, destroyAllSandboxes } from './sandbox.js';
 import { authEnabled, makeToken, verifyToken, getCookie, passwordMatches, loginRateLimited } from './auth.js';
 
 const app = express();
@@ -153,7 +153,23 @@ app.delete('/api/assistants/:id', (req, res) => {
 });
 
 // ---- Pastas do Computador (acesso do assistente a pastas reais do PC) ----
-const BLOCKED_PATHS = /^([a-z]:[\\/]?|[\\/]|[a-z]:[\\/]windows|[a-z]:[\\/]program files)$/i;
+// Rejeita raízes de disco e pastas de sistema (Windows e Linux) — inclusive
+// qualquer subpasta delas — para o assistente nunca montar o SO inteiro nem
+// diretórios sensíveis (ex.: /var/run com o docker.sock).
+function isDangerousHostPath(raw) {
+  const p = String(raw || '').trim();
+  if (!p) return true;
+  const stripped = p.replace(/[\\/]+$/, '');
+  if (stripped === '' || stripped === '.') return true;              // raiz POSIX "/" ou "\"
+  if (/^[a-z]:$/i.test(stripped)) return true;                        // "C:"
+  if (/^\\\\[^\\]+\\?[^\\]*$/.test(stripped)) return true;            // UNC "\\servidor\share"
+  const norm = stripped.replace(/\\/g, '/').toLowerCase();
+  const winSys = /^[a-z]:\/(windows|program files( \(x86\))?|programdata|\$recycle\.bin)(\/|$)/;
+  if (winSys.test(norm)) return true;
+  const posixSys = /^\/(etc|root|proc|sys|dev|boot|bin|sbin|lib|lib64|usr|var|run)(\/|$)/;
+  if (posixSys.test(norm)) return true;
+  return false;
+}
 app.get('/api/pc-folders', (_, res) => {
   res.json(db.prepare('SELECT id, label, host_path, writable FROM pc_folders ORDER BY created_at ASC').all());
 });
@@ -161,7 +177,7 @@ app.post('/api/pc-folders', async (req, res) => {
   const label = (req.body?.label || '').trim();
   const hostPath = (req.body?.host_path || '').trim();
   if (!label || !hostPath) return res.status(400).json({ error: 'Nome e caminho da pasta são obrigatórios.' });
-  if (BLOCKED_PATHS.test(hostPath.replace(/[\\/]+$/, ''))) return res.status(400).json({ error: 'Por segurança, não é permitido liberar a raiz do disco nem pastas do sistema (Windows, Arquivos de Programas). Escolha uma pasta específica de trabalho.' });
+  if (isDangerousHostPath(hostPath)) return res.status(400).json({ error: 'Por segurança, não é permitido liberar a raiz do disco nem pastas do sistema (Windows, Arquivos de Programas, /etc, /var etc.). Escolha uma pasta específica de trabalho.' });
   const id = nanoid();
   db.prepare('INSERT INTO pc_folders (id,label,host_path,writable,created_at) VALUES (?,?,?,?,?)')
     .run(id, label, hostPath, req.body?.writable ? 1 : 0, now());
@@ -193,9 +209,11 @@ app.post('/api/clients', (req, res) => {
 });
 
 app.delete('/api/clients/:id', (req, res) => {
-  // Não destrutivo: as conversas do cliente voltam para "Geral"
+  // Não destrutivo p/ as conversas: elas voltam para "Geral". Mas o conteúdo
+  // PRIVADO indexado do cliente (memórias e trechos) é REMOVIDO — nunca
+  // promovido a 'global', senão vazaria para as outras conversas.
   db.prepare('UPDATE conversations SET client_id=NULL WHERE client_id=?').run(req.params.id);
-  db.prepare('UPDATE conversation_chunks SET scope=? WHERE scope=?').run('global', `client:${req.params.id}`);
+  db.prepare('DELETE FROM conversation_chunks WHERE scope=?').run(`client:${req.params.id}`);
   db.prepare("DELETE FROM memory WHERE scope=?").run(`client:${req.params.id}`);
   db.prepare("DELETE FROM memory_suggestions WHERE scope=?").run(`client:${req.params.id}`);
   db.prepare('DELETE FROM clients WHERE id=?').run(req.params.id);
@@ -368,8 +386,9 @@ app.delete('/api/conversations/:id', async (req, res) => {
   const existing = db.prepare('SELECT id FROM conversations WHERE id=?').get(id);
   if (!existing) return res.status(404).json({ error: 'Conversa não encontrada' });
   db.prepare('DELETE FROM conversations WHERE id=?').run(id); // cascade: messages + files
-  // Privacidade: remove também o índice de memória desta conversa
+  // Privacidade: remove o índice de memória e os fatos extraídos desta conversa
   db.prepare('DELETE FROM conversation_chunks WHERE conversation_id=?').run(id);
+  db.prepare("DELETE FROM memory WHERE source_type='auto' AND source_id=?").run(id);
   await destroyConversation(id); // remove container e pasta do workspace
   res.json({ ok: true });
 });
@@ -400,8 +419,10 @@ app.get('/api/conversations/:id/files', (req, res) => {
   const ws = workspaceFor(req.params.id);
   const outputFiles = walk(ws.outputs).map(p => {
     const rel = path.relative(ws.base, p).replaceAll('\\', '/');
-    return { id: Buffer.from(rel).toString('base64url'), kind: 'output', name: path.basename(p), path: rel, size: fs.statSync(p).size };
-  });
+    let size = 0;
+    try { size = fs.statSync(p).size; } catch { return null; } // arquivo removido no meio da varredura
+    return { id: Buffer.from(rel).toString('base64url'), kind: 'output', name: path.basename(p), path: rel, size };
+  }).filter(Boolean);
   const uploaded = db.prepare('SELECT id,kind,name,path,size,created_at FROM files WHERE conversation_id=?').all(req.params.id);
   res.json([...uploaded, ...outputFiles]);
 });
@@ -410,7 +431,7 @@ app.delete('/api/conversations/:id/files/*', (req, res) => {
   const ws = workspaceFor(req.params.id);
   const rel = req.params[0];
   const target = path.resolve(ws.base, rel);
-  if (!insideBase(ws.base, target)) return res.status(400).json({ error: 'Caminho inválido' });
+  if (!insideBase(ws.base, target) || !realInside(ws.base, target)) return res.status(400).json({ error: 'Caminho inválido' });
   try { fs.rmSync(target, { force: true }); } catch {}
   db.prepare('DELETE FROM files WHERE conversation_id=? AND path=?').run(req.params.id, rel.replaceAll('\\', '/'));
   res.json({ ok: true });
@@ -420,7 +441,7 @@ app.get('/api/conversations/:id/download/*', (req, res) => {
   const ws = workspaceFor(req.params.id);
   const rel = req.params[0];
   const target = path.resolve(ws.base, rel);
-  if (!insideBase(ws.base, target) || !fs.existsSync(target)) return res.status(404).send('Arquivo não encontrado');
+  if (!insideBase(ws.base, target) || !realInside(ws.base, target) || !fs.existsSync(target)) return res.status(404).send('Arquivo não encontrado');
   res.download(target);
 });
 
@@ -447,8 +468,9 @@ async function processTasks() {
           db.prepare('INSERT INTO usage (id,conversation_id,assistant_id,model,kind,prompt_tokens,completion_tokens,total_tokens,created_at) VALUES (?,?,?,?,?,?,?,?,?)')
             .run(nanoid(), t.conversation_id, t.assistant_id, result.model, 'tarefa', result.usage.prompt_tokens, result.usage.completion_tokens, result.usage.total_tokens, now());
         }
-        db.prepare("UPDATE tasks SET status='done', finished_at=?, result_text=?, progress_text='Concluída' WHERE id=?")
-          .run(now(), String(result?.text || '').slice(0, 300), t.id);
+        const finalStatus = result?.stopped ? 'canceled' : 'done';
+        db.prepare("UPDATE tasks SET status=?, finished_at=?, result_text=?, progress_text=? WHERE id=?")
+          .run(finalStatus, now(), String(result?.text || '').slice(0, 300), result?.stopped ? 'Cancelada' : 'Concluída', t.id);
       } catch (err) {
         console.error('[tarefa]', err);
         db.prepare("UPDATE tasks SET status='error', finished_at=?, error=? WHERE id=?").run(now(), friendlyApiError(err), t.id);
@@ -557,8 +579,21 @@ app.get('/api/backup', (req, res) => {
   const args = ['-czf', '-', '-C', path.dirname(dataDir), path.basename(dataDir)];
   if (fs.existsSync(wsRoot)) args.push('-C', path.dirname(wsRoot), path.basename(wsRoot));
   const tar = spawn('tar', args);
-  tar.stdout.pipe(res);
-  tar.on('error', (err) => { console.error('[backup]', err); res.end(); });
+  let headersSent = false;
+  const sendHeaders = () => {
+    if (headersSent) return;
+    headersSent = true;
+    res.setHeader('Content-Type', 'application/gzip');
+    res.setHeader('Content-Disposition', `attachment; filename="frederico-backup-${stamp}.tar.gz"`);
+  };
+  tar.stderr.on('data', () => {}); // drena o stderr (senão o buffer enche e o tar trava)
+  tar.stdout.on('data', (chunk) => { sendHeaders(); if (!res.write(chunk)) tar.stdout.pause(); });
+  res.on('drain', () => tar.stdout.resume());
+  tar.stdout.on('end', () => { if (headersSent) res.end(); });
+  // Falha antes de qualquer byte (ex.: tar ausente): responde erro JSON em vez
+  // de um .tar.gz truncado que o usuário baixaria sem perceber.
+  tar.on('error', (err) => { console.error('[backup]', err); if (!headersSent) res.status(500).json({ error: 'Falha ao gerar o backup (tar indisponível?).' }); else res.end(); });
+  tar.on('close', (code) => { if (!headersSent && code !== 0) res.status(500).json({ error: 'Falha ao gerar o backup.' }); });
 });
 
 // Edição de mensagem (estilo ChatGPT): remove a mensagem indicada e TUDO que

@@ -90,7 +90,7 @@ export function ModelPicker({ models, value, onChange }) {
   const filtersOn = query || fam !== 'all' || flags.length > 0 || sort !== 'none';
   const sortFn = (a, b) => sort === 'new' ? (b.created || 0) - (a.created || 0)
     : sort === 'cheap' ? (a.free ? 0 : a.price || Infinity) - (b.free ? 0 : b.price || Infinity)
-    : a.name.localeCompare(b.name);
+    : String(a.name || a.id).localeCompare(String(b.name || b.id));
 
   // Com filtro/ordenação: lista única; sem filtro: categorias (visão padrão)
   const flat = filtersOn ? [...base].sort(sortFn) : null;

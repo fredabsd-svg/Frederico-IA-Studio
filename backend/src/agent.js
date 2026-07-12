@@ -516,7 +516,7 @@ export async function runAgent({ conversationId, userText, model, assistant, web
   onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId: msgId });
   // Memória: indexa a troca e extrai fatos em segundo plano (não bloqueia)
   if (!stopped) indexAfterReply(conversationId).catch(() => {});
-  return { text: finalText, usage, model: chosenModel };
+  return { text: finalText, usage, model: chosenModel, stopped };
 }
 
 // Orquestrador: aciona vários assistentes e um coordenador une as respostas

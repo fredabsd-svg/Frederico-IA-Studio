@@ -1,6 +1,7 @@
 import Docker from 'dockerode';
 import fs from 'fs';
 import path from 'path';
+import { PassThrough } from 'stream';
 import { nanoid } from 'nanoid';
 import { db } from './db.js';
 
@@ -77,9 +78,21 @@ export async function ensureSandboxImage() {
   }
 }
 
+// Criações em andamento (single-flight): evita que duas execuções simultâneas
+// da mesma conversa criem dois containers, deixando um órfão para sempre.
+const creating = new Map();
+
 export async function getContainer(conversationId) {
   const entry = sessions.get(conversationId);
   if (entry) { entry.lastUsed = Date.now(); return entry.container; }
+  if (creating.has(conversationId)) return creating.get(conversationId);
+  const p = createContainer(conversationId);
+  creating.set(conversationId, p);
+  try { return await p; }
+  finally { creating.delete(conversationId); }
+}
+
+async function createContainer(conversationId) {
   await ensureSandboxImage();
   const { base } = workspaceFor(conversationId);
   const hostBase = path.join(hostRoot, conversationId);
@@ -119,46 +132,62 @@ function parseMemory(value) {
   return (m[2] || '').toLowerCase() === 'g' ? n * 1024 ** 3 : n * 1024 ** 2;
 }
 
+const MAX_OUTPUT_BYTES = Number(process.env.SANDBOX_MAX_OUTPUT_BYTES || 8 * 1024 * 1024);
+
 export async function execInSandbox(conversationId, cmd, timeoutMs = Number(process.env.TOOL_TIMEOUT_MS || 45000)) {
   let container = await getContainer(conversationId);
+  const makeExec = (c) => c.exec({ Cmd: ['bash', '-lc', cmd], AttachStdout: true, AttachStderr: true, WorkingDir: '/workspace', User: 'sandbox' });
   let exec;
   try {
-    exec = await container.exec({
-      Cmd: ['bash', '-lc', cmd],
-      AttachStdout: true,
-      AttachStderr: true,
-      WorkingDir: '/workspace',
-      User: 'sandbox'
-    });
-  } catch (err) {
+    exec = await makeExec(container);
+  } catch {
     // Container morreu (ex.: kill por timeout anterior + AutoRemove).
     // Remove a referência morta e recria uma vez.
     sessions.delete(conversationId);
     container = await getContainer(conversationId);
-    exec = await container.exec({
-      Cmd: ['bash', '-lc', cmd],
-      AttachStdout: true,
-      AttachStderr: true,
-      WorkingDir: '/workspace',
-      User: 'sandbox'
-    });
+    exec = await makeExec(container);
   }
   const stream = await exec.start({ hijack: true, stdin: false });
   let output = '';
-  let timedOut = false;
-  const timer = setTimeout(async () => {
+  let bytes = 0;
+  let timedOut = false, tooBig = false, settled = false;
+  // Desmultiplexa o protocolo de frames do Docker (Tty:false) em stdout/stderr,
+  // em vez de tentar remover os cabeçalhos "na mão" (que corrompia a saída).
+  const stdout = new PassThrough(), stderr = new PassThrough();
+  try { container.modem.demuxStream(stream, stdout, stderr); } catch {}
+  const onData = (chunk) => {
+    bytes += chunk.length;
+    if (!tooBig) output += chunk.toString('utf8');
+    // Limita a saída acumulada no BACKEND (o limite de memória é do container,
+    // não do Node): evita OOM com `yes`/prints gigantes.
+    if (bytes > MAX_OUTPUT_BYTES && !tooBig) {
+      tooBig = true;
+      sessions.delete(conversationId);
+      try { container.kill(); } catch {}
+    }
+  };
+  stdout.on('data', onData);
+  stderr.on('data', onData);
+  const timer = setTimeout(() => {
     timedOut = true;
     sessions.delete(conversationId); // referência ficaria morta após o kill
-    try { await container.kill(); } catch {}
+    try { container.kill(); } catch {}
   }, timeoutMs);
   return await new Promise((resolve) => {
-    stream.on('data', chunk => { output += chunk.toString('utf8').replace(/[\x00-\x08\x0E-\x1F]/g, ''); });
-    stream.on('end', async () => {
+    const finish = async () => {
+      if (settled) return; // 'end', 'close' e 'error' podem disparar juntos
+      settled = true;
       clearTimeout(timer);
       const info = await exec.inspect().catch(() => ({ ExitCode: -1 }));
-      if (timedOut) output += `\n[TIMEOUT: comando excedeu ${timeoutMs / 1000}s — sandbox reiniciado]`;
-      resolve({ exitCode: timedOut ? 124 : info.ExitCode, output: output.slice(-12000) });
-    });
+      let clean = output.replace(/[\x00-\x08\x0E-\x1F]/g, '');
+      if (timedOut) clean += `\n[TIMEOUT: comando excedeu ${timeoutMs / 1000}s — sandbox reiniciado]`;
+      if (tooBig) clean += `\n[SAÍDA MUITO GRANDE: cortada e execução interrompida]`;
+      resolve({ exitCode: timedOut ? 124 : (tooBig ? 137 : info.ExitCode), output: clean.slice(-12000) });
+    };
+    // 'error' evita crash do processo se o container for removido no meio do exec
+    stream.on('end', finish);
+    stream.on('close', finish);
+    stream.on('error', finish);
   });
 }
 
@@ -179,9 +208,29 @@ export function insideBase(base, target) {
   return target === b || target.startsWith(b + path.sep);
 }
 
+// Resolve symlinks do ancestral existente mais próximo e confirma que o
+// caminho REAL continua dentro da base. Bloqueia fuga do tipo:
+//   ln -s / /workspace/root  →  read_file("root/etc/passwd")
+export function realInside(base, full) {
+  let realBase;
+  try { realBase = fs.realpathSync(base); } catch { realBase = path.resolve(base); }
+  let dir = full, tail = '';
+  // sobe até achar um diretório que exista, guardando a parte inexistente
+  while (true) {
+    try { const real = path.resolve(fs.realpathSync(dir), tail); return insideBase(realBase, real); }
+    catch {
+      const parent = path.dirname(dir);
+      if (parent === dir) return insideBase(realBase, full); // nada existe: usa o resolvido
+      tail = tail ? path.join(path.basename(dir), tail) : path.basename(dir);
+      dir = parent;
+    }
+  }
+}
+
 export function safeJoin(base, userPath) {
   const clean = String(userPath || '').replace(/^\/+/, '');
   const full = path.resolve(base, clean);
   if (!insideBase(base, full)) throw new Error('Caminho bloqueado por segurança.');
+  if (!realInside(base, full)) throw new Error('Caminho bloqueado por segurança (link).');
   return full;
 }

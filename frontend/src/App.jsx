@@ -89,6 +89,17 @@ export default function App() {
   const toastTimer = useRef(null);
   const copyTimer = useRef(null);
   const dragDepth = useRef(0);
+  const busyRef = useRef(false);
+  const creatingConvRef = useRef(null);
+  useEffect(() => { busyRef.current = busy; }, [busy]);
+  // Ajusta a altura do campo de mensagem também quando o texto muda por código
+  // (envio limpa; template/edição preenchem).
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    if (input) el.style.height = Math.min(el.scrollHeight, 160) + 'px';
+  }, [input]);
 
   useEffect(() => { init(); }, []);
   useEffect(() => { document.body.className = dark ? 'dark' : 'light'; }, [dark]);
@@ -137,7 +148,9 @@ export default function App() {
         if (old && (old.status === 'queued' || old.status === 'running')) {
           if (r.status === 'done') {
             showToast(`✅ Tarefa concluída: ${r.prompt.slice(0, 60)}`, 'ok');
-            if (r.conversation_id === current?.id) { openConversation(current.id); }
+            // Só recarrega se NÃO estiver com uma resposta em andamento na tela,
+            // senão o setMessages substituiria o stream ao vivo e ele "sumiria".
+            if (r.conversation_id === current?.id && !busyRef.current) { openConversation(current.id); }
           }
           if (r.status === 'error') showToast(`⚠️ Tarefa falhou: ${(r.error || '').slice(0, 100)}`);
         }
@@ -179,7 +192,7 @@ export default function App() {
 
   // ---- Templates de pedido ----
   async function loadTemplates() {
-    try { setTemplates(await (await fetch(`${API}/api/templates`)).json()); } catch {}
+    try { const d = await (await fetch(`${API}/api/templates`)).json(); setTemplates(Array.isArray(d) ? d : []); } catch {}
   }
   function openTemplates() { loadTemplates(); setTplOpen(true); }
   function useTemplate(t) { setInput(t.content); setTplOpen(false); inputRef.current?.focus(); }
@@ -262,7 +275,7 @@ export default function App() {
 
   // ---- Clientes / Projetos ----
   async function loadClients() {
-    try { setClients(await (await fetch(`${API}/api/clients`)).json()); } catch {}
+    try { const d = await (await fetch(`${API}/api/clients`)).json(); setClients(Array.isArray(d) ? d : []); } catch {}
   }
   async function switchClient(id) {
     localStorage.setItem('fred_client', id);
@@ -321,7 +334,8 @@ export default function App() {
   async function loadAssistants() {
     try {
       const res = await fetch(`${API}/api/assistants`);
-      const rows = await res.json();
+      const data = await res.json();
+      const rows = Array.isArray(data) ? data : [];
       setAssistants(rows);
       setAssistantId(prev => (prev && rows.some(a => a.id === prev)) ? prev : (rows[0]?.id || null));
       const chosen = rows.find(a => a.id === assistantId) || rows[0];
@@ -332,7 +346,9 @@ export default function App() {
   async function fetchConversations(cid = clientId) {
     const res = await fetch(`${API}/api/conversations${cid ? `?client=${encodeURIComponent(cid)}` : ''}`);
     if (res.status === 401) { const e = new Error('auth'); e.auth = true; throw e; }
-    const rows = await res.json();
+    if (!res.ok) throw new Error('Falha ao listar conversas.');
+    const data = await res.json();
+    const rows = Array.isArray(data) ? data : []; // nunca deixa um objeto de erro quebrar o render
     setConversations(rows);
     return rows;
   }
@@ -340,17 +356,27 @@ export default function App() {
   // Cria o registro da conversa só quando ele é realmente necessário (1ª
   // mensagem, anexo ou tarefa). Evita acumular conversas vazias no histórico.
   async function ensureConversation(cid = clientId) {
-    try {
-      const res = await fetch(`${API}/api/conversations`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'Nova conversa', model, clientId: cid || null }) });
-      const c = await res.json();
-      setConversations(prev => [c, ...prev]);
-      setCurrent(c);
-      setFiles([]);
-      return c;
-    } catch {
-      showToast('Não foi possível criar a conversa. O servidor está no ar?');
-      return null;
-    }
+    if (current) return current;
+    // Single-flight: se duas ações "primeiras" (ex.: anexar + enviar) dispararem
+    // quase juntas, ambas veem current=null; sem isso, criariam 2 conversas.
+    if (creatingConvRef.current) return creatingConvRef.current;
+    const p = (async () => {
+      try {
+        const res = await fetch(`${API}/api/conversations`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'Nova conversa', model, clientId: cid || null }) });
+        if (!res.ok) throw new Error();
+        const c = await res.json();
+        setConversations(prev => [c, ...prev]);
+        setCurrent(c);
+        setFiles([]);
+        return c;
+      } catch {
+        showToast('Não foi possível criar a conversa. O servidor está no ar?');
+        return null;
+      }
+    })();
+    creatingConvRef.current = p;
+    try { return await p; }
+    finally { creatingConvRef.current = null; }
   }
 
   async function openConversation(id) {
@@ -385,7 +411,8 @@ export default function App() {
     if (!id) return;
     try {
       const res = await fetch(`${API}/api/conversations/${id}/files`);
-      setFiles(await res.json());
+      const d = await res.json();
+      setFiles(Array.isArray(d) ? d : []);
     } catch {}
   }
 
@@ -579,6 +606,14 @@ export default function App() {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
       });
       if (res.status === 401) { setBusy(false); setStatusText(''); setNeedLogin(true); return; }
+      if (!res.ok) {
+        let msg = `O servidor respondeu com erro (${res.status}).`;
+        try { const j = await res.json(); if (j?.error) msg = j.error; } catch {}
+        update(m => ({ ...m, blocks: [...(m.blocks || []), { type: 'text', content: `\n\n**Erro:** ${msg}` }] }));
+        showToast(msg);
+        setBusy(false); setPaused(false); setStatusText('');
+        return;
+      }
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
@@ -819,7 +854,7 @@ export default function App() {
         <div className="composer">
           <label className="upload" title="Anexar arquivo"><Upload size={18}/><input type="file" multiple onChange={uploadFiles}/></label>
           <button className={`webBtn ${webSearch ? 'on' : ''}`} onClick={() => setWebSearch(w => !w)} title={webSearch ? 'Pesquisa na internet ATIVADA — clique para desativar' : 'Ativar pesquisa na internet'} aria-label="Pesquisa na internet"><Globe size={18}/></button>
-          <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }} placeholder={listening ? 'Ouvindo... fale agora' : (webSearch ? 'Pesquisa na internet ativada — pergunte algo atual...' : 'Peça para analisar arquivos, gerar Word, Excel, PDF...')} />
+          <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)} onInput={e => { e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 160) + 'px'; }} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }} placeholder={listening ? 'Ouvindo... fale agora' : (webSearch ? 'Pesquisa na internet ativada — pergunte algo atual...' : 'Peça para analisar arquivos, gerar Word, Excel, PDF...')} />
           <button className={`mic ${listening ? 'on' : ''}`} onClick={toggleMic} title="Falar (ditado por voz)" aria-label="Ditado por voz"><Mic size={18}/></button>
           <button className="mic" onClick={sendAsTask} disabled={!input.trim()} title="Executar em segundo plano (fila de tarefas) — você pode continuar usando o app" aria-label="Enviar para a fila de tarefas"><Hourglass size={17}/></button>
           <button className="sendBtn" onClick={sendMessage} disabled={busy} aria-label="Enviar"><Send size={18}/></button>
