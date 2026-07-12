@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Search, ChevronDown, Check, Cpu } from 'lucide-react';
+import { Search, ChevronDown, Check, Cpu, Star } from 'lucide-react';
 
 // Ids (ou prefixos) dos modelos mais confiáveis para gerar planilhas/arquivos
 const BEST_FOR_FILES = [
@@ -19,9 +19,13 @@ const FAMILY_META = {
 const familyKey = id => { const s = String(id); return s.includes('/') ? s.split('/')[0] : s.split('-')[0]; };
 const familyLabel = key => FAMILY_META[key] || ('🤖 ' + (key.charAt(0).toUpperCase() + key.slice(1)));
 const NEW_DAYS = 60;
+const BIG_CTX = 100000;
 const isNewModel = m => m.created && (Date.now() / 1000 - m.created) < NEW_DAYS * 86400;
 const daysAgo = m => Math.max(0, Math.floor((Date.now() / 1000 - m.created) / 86400));
 const ctxLabel = n => !n ? '' : n >= 1000 ? `${Math.round(n / 1000)}k contexto` : `${n} contexto`;
+const priceLabel = m => m.free ? 'grátis' : (m.price ? `$${(m.price * 1e6).toFixed(2)}/1M` : '');
+const FAV_KEY = 'fred_fav_models';
+const loadFavs = () => { try { return JSON.parse(localStorage.getItem(FAV_KEY) || '[]'); } catch { return []; } };
 
 // Seletor de modelos com busca, filtros por família, lançamentos e capacidades
 export function ModelPicker({ models, value, onChange }) {
@@ -29,7 +33,8 @@ export function ModelPicker({ models, value, onChange }) {
   const [q, setQ] = useState('');
   const [fam, setFam] = useState('all');       // família selecionada
   const [flags, setFlags] = useState([]);       // toggles ativos
-  const [sortNew, setSortNew] = useState(false);// ordenar por lançamento
+  const [sort, setSort] = useState('none');     // 'none' | 'new' | 'cheap'
+  const [favs, setFavs] = useState(loadFavs);   // ids favoritados
   const ref = useRef(null);
   const searchRef = useRef(null);
 
@@ -48,6 +53,11 @@ export function ModelPicker({ models, value, onChange }) {
   const isFree = m => m.free || m.id.endsWith(':free');
   const isBest = m => BEST_FOR_FILES.some(p => m.id === p || m.id.startsWith(p));
   const toggleFlag = f => setFlags(fl => fl.includes(f) ? fl.filter(x => x !== f) : [...fl, f]);
+  const isFav = id => favs.includes(id);
+  function toggleFav(id, e) {
+    e?.stopPropagation();
+    setFavs(prev => { const next = prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]; try { localStorage.setItem(FAV_KEY, JSON.stringify(next)); } catch {} return next; });
+  }
 
   // Famílias presentes, ordenadas por quantidade
   const famCounts = {};
@@ -56,16 +66,20 @@ export function ModelPicker({ models, value, onChange }) {
 
   // Filtros de capacidade (toggles rápidos)
   const FLAGS = [
+    { key: 'fav', label: '⭐ Favoritos' },
     { key: 'new', label: '🆕 Lançamentos' },
     { key: 'free', label: '🆓 Grátis' },
+    { key: 'ctx', label: '🧠 Grande contexto' },
     { key: 'tools', label: '🛠️ Geram arquivos' },
     { key: 'vision', label: '👁️ Leem imagens' },
     { key: 'image', label: '🖼️ Criam imagens' },
     { key: 'video', label: '🎬 Criam vídeo' }
   ];
   const passFlags = m =>
+    (!flags.includes('fav') || isFav(m.id)) &&
     (!flags.includes('new') || isNewModel(m)) &&
     (!flags.includes('free') || isFree(m)) &&
+    (!flags.includes('ctx') || (m.context || 0) >= BIG_CTX) &&
     (!flags.includes('tools') || m.tools !== false) &&
     (!flags.includes('vision') || m.vision) &&
     (!flags.includes('image') || m.image) &&
@@ -73,11 +87,15 @@ export function ModelPicker({ models, value, onChange }) {
   const passFam = m => fam === 'all' || familyKey(m.id) === fam;
 
   const base = models.filter(m => match(m) && passFam(m) && passFlags(m));
-  const filtersOn = query || fam !== 'all' || flags.length > 0 || sortNew;
+  const filtersOn = query || fam !== 'all' || flags.length > 0 || sort !== 'none';
+  const sortFn = (a, b) => sort === 'new' ? (b.created || 0) - (a.created || 0)
+    : sort === 'cheap' ? (a.free ? 0 : a.price || Infinity) - (b.free ? 0 : b.price || Infinity)
+    : a.name.localeCompare(b.name);
 
   // Com filtro/ordenação: lista única; sem filtro: categorias (visão padrão)
-  const flat = filtersOn ? [...base].sort((a, b) => sortNew ? (b.created || 0) - (a.created || 0) : a.name.localeCompare(b.name)) : null;
+  const flat = filtersOn ? [...base].sort(sortFn) : null;
   const groups = filtersOn ? [] : [
+    { label: '⭐ Meus favoritos', items: base.filter(m => isFav(m.id)) },
     { label: '⭐ Melhores para planilhas e arquivos', items: base.filter(m => m.tools !== false && !isFree(m) && !m.image && isBest(m)) },
     { label: '🆕 Lançamentos recentes', items: [...base].filter(isNewModel).sort((a, b) => (b.created || 0) - (a.created || 0)).slice(0, 8) },
     { label: '🖼️ Geram imagens', items: base.filter(m => m.image && !isFree(m)) },
@@ -88,15 +106,18 @@ export function ModelPicker({ models, value, onChange }) {
   ].filter(g => g.items.length);
 
   function pick(id) { onChange(id); setOpen(false); }
-  function clearFilters() { setQ(''); setFam('all'); setFlags([]); setSortNew(false); }
+  function clearFilters() { setQ(''); setFam('all'); setFlags([]); setSort('none'); }
+  const toggleSort = s => setSort(cur => cur === s ? 'none' : s);
 
   const row = m => (
-    <button key={m.id} className={`mpItem ${m.id === value ? 'sel' : ''}`} onClick={() => pick(m.id)}>
-      <span className="mpItemName">{m.name}{isNewModel(m) && <span className="mpNew">NOVO</span>}</span>
-      <span className="mpItemId">{m.id}</span>
-      <span className="mpItemMeta">{[isNewModel(m) ? `há ${daysAgo(m)} dia(s)` : '', ctxLabel(m.context), isFree(m) ? 'grátis' : ''].filter(Boolean).join(' · ')}</span>
-      {m.id === value && <Check size={14} className="mpCheck"/>}
-    </button>
+    <div key={m.id} className={`mpItem ${m.id === value ? 'sel' : ''}`}>
+      <button className="mpPick" onClick={() => pick(m.id)}>
+        <span className="mpItemName">{m.name}{isNewModel(m) && <span className="mpNew">NOVO</span>}{m.id === value && <Check size={13} className="mpInlineCheck"/>}</span>
+        <span className="mpItemId">{m.id}</span>
+        <span className="mpItemMeta">{[isNewModel(m) ? `há ${daysAgo(m)} dia(s)` : '', ctxLabel(m.context), priceLabel(m)].filter(Boolean).join(' · ')}</span>
+      </button>
+      <button className={`mpStar ${isFav(m.id) ? 'on' : ''}`} onClick={e => toggleFav(m.id, e)} title={isFav(m.id) ? 'Remover dos favoritos' : 'Favoritar'} aria-label="Favoritar"><Star size={14} fill={isFav(m.id) ? 'currentColor' : 'none'}/></button>
+    </div>
   );
 
   return <div className="mpicker" ref={ref}>
@@ -113,7 +134,8 @@ export function ModelPicker({ models, value, onChange }) {
       </div>
       <div className="mpFilters">
         {FLAGS.map(f => <button key={f.key} className={`mpChip ${flags.includes(f.key) ? 'on' : ''}`} onClick={() => toggleFlag(f.key)}>{f.label}</button>)}
-        <button className={`mpChip ${sortNew ? 'on' : ''}`} onClick={() => setSortNew(v => !v)} title="Mostrar os mais novos primeiro">↕️ Mais novos primeiro</button>
+        <button className={`mpChip ${sort === 'new' ? 'on' : ''}`} onClick={() => toggleSort('new')} title="Ordenar dos mais recentes para os mais antigos">↕️ Mais novos</button>
+        <button className={`mpChip ${sort === 'cheap' ? 'on' : ''}`} onClick={() => toggleSort('cheap')} title="Ordenar dos mais baratos para os mais caros">💲 Mais baratos</button>
       </div>
       <div className="mpFamRow">
         <button className={`mpChip ${fam === 'all' ? 'on' : ''}`} onClick={() => setFam('all')}>Todas as famílias</button>
@@ -121,7 +143,7 @@ export function ModelPicker({ models, value, onChange }) {
       </div>
       <div className="mpList">
         {filtersOn
-          ? (flat.length ? <div className="mpGroup"><div className="mpGroupLabel">{sortNew ? '🆕 Mais novos primeiro' : 'Resultados'} <em>{flat.length}</em></div>{flat.map(row)}</div>
+          ? (flat.length ? <div className="mpGroup"><div className="mpGroupLabel">{sort === 'new' ? '🆕 Mais novos primeiro' : sort === 'cheap' ? '💲 Mais baratos primeiro' : 'Resultados'} <em>{flat.length}</em></div>{flat.map(row)}</div>
                          : <p className="mpEmpty">Nenhum modelo com esses filtros.</p>)
           : (groups.length ? groups.map(g => <div key={g.label} className="mpGroup"><div className="mpGroupLabel">{g.label} <em>{g.items.length}</em></div>{g.items.map(row)}</div>)
                            : <p className="mpEmpty">Nenhum modelo disponível.</p>)}

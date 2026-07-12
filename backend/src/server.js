@@ -111,6 +111,7 @@ app.get('/api/models', async (_, res) => {
         vision: inp.includes('image'),            // enxerga imagens enviadas
         created: m.created || 0,                  // timestamp (segundos) do lançamento
         context: m.context_length || m.top_provider?.context_length || 0,
+        price: pPrompt,                           // preço de entrada por token (para ordenar por mais barato)
         free: String(m.id).endsWith(':free') || (pPrompt === 0 && pCompletion === 0)
       };
     }).sort((a, b) => a.name.localeCompare(b.name));

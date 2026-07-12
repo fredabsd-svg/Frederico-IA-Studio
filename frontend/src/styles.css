@@ -240,3 +240,12 @@
 .mpChip.on em{opacity:.85}
 .mpItemMeta{font-size:11px;color:var(--muted);margin-top:1px}
 .mpNew{margin-left:7px;font-size:9.5px;font-weight:800;letter-spacing:.04em;color:#fff;background:#16a34a;border-radius:999px;padding:1px 6px;vertical-align:middle}
+/* Favoritar modelos + linha com estrela */
+.mpItem{flex-direction:row;align-items:center;gap:4px;padding:2px 6px 2px 4px}
+.mpPick{flex:1;min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:1px;border:none;background:transparent;color:var(--text);text-align:left;padding:6px 8px;border-radius:8px}
+.mpItem.sel{background:transparent}
+.mpItem.sel .mpPick{background:rgba(79,140,255,.14)}
+.mpInlineCheck{color:var(--accent);margin-left:6px;vertical-align:middle}
+.mpStar{flex:none;border:none;background:transparent;color:var(--muted);opacity:.55;padding:6px;border-radius:8px;display:flex}
+.mpStar:hover{opacity:1;color:#f59e0b}
+.mpStar.on{opacity:1;color:#f59e0b}
