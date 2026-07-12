@@ -74,6 +74,9 @@ export const EMBEDDED_APPS = [
 // Atenção: variam por feriado/fim de semana, por UF/município e por ano.
 export const FISCAL_CALENDAR = [
   { day: 5, name: 'Salários', desc: 'Pagamento de salários (até o 5º dia útil)' },
+  { day: 9, name: 'GIAM — ICMS (TO)', desc: 'Guia de Informação e Apuração Mensal do ICMS — Tocantins (entrega até o dia 9; não prorroga)' },
+  { day: 9, name: 'ICMS Tocantins (apuração normal)', desc: 'Recolhimento do ICMS próprio — TO (beneficiários da Lei 1.790/2007: dia 20)' },
+  { day: 15, name: 'SPED Fiscal (EFD ICMS/IPI) — TO', desc: 'Transmissão da EFD ICMS/IPI — Tocantins (Art. 384-E do RICMS/TO)' },
   { day: 15, name: 'EFD-Contribuições', desc: 'PIS/COFINS — SPED Contribuições' },
   { day: 20, name: 'DAS — Simples Nacional', desc: 'Vencimento do DAS do mês' },
   { day: 20, name: 'FGTS (FGTS Digital)', desc: 'FGTS da competência' },
