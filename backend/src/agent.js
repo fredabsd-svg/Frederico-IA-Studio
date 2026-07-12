@@ -4,7 +4,7 @@ import path from 'path';
 import { toolDefinitions, webToolDefinitions, imageToolDefinitions, runTool } from './tools.js';
 import { buildContext, historyBudgetForModel, selectHistoryForContext } from './memory/contextBuilder.js';
 import { indexAfterReply } from './memory/indexer.js';
-import { execInSandbox, workspaceFor } from './sandbox.js';
+import { execInSandbox, workspaceFor, pcFolderMounts } from './sandbox.js';
 import { db, now } from './db.js';
 import { nanoid } from 'nanoid';
 
@@ -49,6 +49,20 @@ function referencedOutputFiles(text, files) {
     if (found) picked.set(found.path, found);
   }
   return [...picked.values()];
+}
+
+// Avisa o modelo sobre as pastas reais do PC liberadas pelo usuário
+function pcFoldersNote() {
+  const mounts = pcFolderMounts();
+  if (!mounts.length) return null;
+  const list = mounts.map(m => `- ${m.target}  →  pasta "${m.label}" do computador do usuário (${m.writable ? 'LEITURA + ESCRITA: você pode ler, renomear, mover e organizar' : 'SOMENTE LEITURA: nunca altere/apague'})`).join('\n');
+  return `PASTAS DO COMPUTADOR DO USUÁRIO disponíveis no sandbox (arquivos REAIS da máquina dele):
+${list}
+
+Como usar (via run_python ou bash, com os caminhos acima):
+- Procurar/analisar: liste e leia os arquivos normalmente (os, pathlib, pandas, PyMuPDF...).
+- Organizar (somente nas pastas marcadas LEITURA + ESCRITA): use shutil.move / os.rename para renomear e reorganizar.
+- CUIDADO — são arquivos reais e insubstituíveis: NUNCA apague nada sem o usuário pedir explicitamente; prefira MOVER para uma subpasta (ex.: "_Organizado") em vez de excluir; confirme antes de operações em massa. Ao terminar, resuma o que foi alterado.`;
 }
 
 // Lista os arquivos enviados pelo usuário para avisar o modelo que eles já
@@ -369,6 +383,8 @@ export async function runAgent({ conversationId, userText, model, assistant, web
   }
   const note = uploadsNote(conversationId);
   if (note) messages.push({ role: 'system', content: note });
+  const pcNote = pcFoldersNote();
+  if (pcNote) messages.push({ role: 'system', content: pcNote });
   const historyPlan = selectHistoryForContext({
     conversationId,
     limit: historyLimit,

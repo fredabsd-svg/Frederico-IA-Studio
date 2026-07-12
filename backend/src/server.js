@@ -11,7 +11,7 @@ import { runAgent, runOrchestrator, setControl, friendlyApiError, AGENTS } from 
 import { runTool } from './tools.js';
 import { listMemories, addMemory, updateMemory, deleteMemory, deleteAllMemories, exportAll, reindexAll, getSettings, setSettings, looksSensitive, listMemorySuggestions, updateMemorySuggestion, approveMemorySuggestion, rejectMemorySuggestion } from './memory/memoryService.js';
 import { startImport, importStatus } from './memory/indexer.js';
-import { workspaceFor, destroyConversation, insideBase } from './sandbox.js';
+import { workspaceFor, destroyConversation, insideBase, destroyAllSandboxes } from './sandbox.js';
 import { authEnabled, makeToken, verifyToken, getCookie, passwordMatches, loginRateLimited } from './auth.js';
 
 const app = express();
@@ -141,6 +141,33 @@ app.put('/api/assistants/:id', (req, res) => {
 
 app.delete('/api/assistants/:id', (req, res) => {
   db.prepare('DELETE FROM assistants WHERE id=?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+// ---- Pastas do Computador (acesso do assistente a pastas reais do PC) ----
+const BLOCKED_PATHS = /^([a-z]:[\\/]?|[\\/]|[a-z]:[\\/]windows|[a-z]:[\\/]program files)$/i;
+app.get('/api/pc-folders', (_, res) => {
+  res.json(db.prepare('SELECT id, label, host_path, writable FROM pc_folders ORDER BY created_at ASC').all());
+});
+app.post('/api/pc-folders', async (req, res) => {
+  const label = (req.body?.label || '').trim();
+  const hostPath = (req.body?.host_path || '').trim();
+  if (!label || !hostPath) return res.status(400).json({ error: 'Nome e caminho da pasta são obrigatórios.' });
+  if (BLOCKED_PATHS.test(hostPath.replace(/[\\/]+$/, ''))) return res.status(400).json({ error: 'Por segurança, não é permitido liberar a raiz do disco nem pastas do sistema (Windows, Arquivos de Programas). Escolha uma pasta específica de trabalho.' });
+  const id = nanoid();
+  db.prepare('INSERT INTO pc_folders (id,label,host_path,writable,created_at) VALUES (?,?,?,?,?)')
+    .run(id, label, hostPath, req.body?.writable ? 1 : 0, now());
+  await destroyAllSandboxes(); // aplica o novo mount às conversas em andamento
+  res.json({ id, label, host_path: hostPath, writable: req.body?.writable ? 1 : 0 });
+});
+app.put('/api/pc-folders/:id', async (req, res) => {
+  db.prepare('UPDATE pc_folders SET writable=? WHERE id=?').run(req.body?.writable ? 1 : 0, req.params.id);
+  await destroyAllSandboxes();
+  res.json({ ok: true });
+});
+app.delete('/api/pc-folders/:id', async (req, res) => {
+  db.prepare('DELETE FROM pc_folders WHERE id=?').run(req.params.id);
+  await destroyAllSandboxes();
   res.json({ ok: true });
 });
 

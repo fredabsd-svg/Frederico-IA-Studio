@@ -2,10 +2,11 @@ import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo } from 'lucide-react';
+import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog } from 'lucide-react';
 import { API, FALLBACK_MODELS, TOOL_INFO, TEMPLATES, SUGGESTIONS, emptyForm } from './constants.js';
 import { ToolStep, Slider, Modal, ModelPicker, Collapsible } from './components.jsx';
 import { MemoryPanel } from './MemoryPanel.jsx';
+import { PcFoldersPanel } from './PcFoldersPanel.jsx';
 
 function MemoryTrace({ memory, onOpenMemory }) {
   if (!memory?.enabled) return null;
@@ -47,6 +48,7 @@ export default function App() {
   const [studioOpen, setStudioOpen] = useState(false);
   const [form, setForm] = useState(emptyForm());
   const [memoryOpen, setMemoryOpen] = useState(false);
+  const [pcOpen, setPcOpen] = useState(false);
   const [team, setTeam] = useState(false);
   const [teamOpen, setTeamOpen] = useState(false);
   const [teamIds, setTeamIds] = useState(() => { try { return JSON.parse(localStorage.getItem('fred_team') || 'null'); } catch { return null; } });
@@ -661,6 +663,7 @@ export default function App() {
       <button className="studio" onClick={openStudioNew}><Bot size={16}/> Criar assistente</button>
       <button className="studio" onClick={openTemplates}><BookMarked size={16}/> Templates</button>
       <button className="studio" onClick={() => setMemoryOpen(true)}><Brain size={16}/> Memória</button>
+      <button className="studio" onClick={() => setPcOpen(true)} title="Libere pastas do seu PC para o assistente procurar, ler e organizar arquivos"><FolderCog size={16}/> Pastas do PC</button>
       <button className="studio" onClick={() => { setTasksOpen(true); pollTasks(); }}><ListTodo size={16}/> Tarefas{tasksActive && <span className="badge">{tasks.filter(t => t.status === 'queued' || t.status === 'running').length}</span>}</button>
       <button className="studio" onClick={openAnalytics}><BarChart3 size={16}/> Análises</button>
       <button className="studio" onClick={() => window.open(`${API}/api/backup`, '_blank')} title="Baixa um arquivo .tar.gz com o banco e todos os workspaces"><HardDriveDownload size={16}/> Backup</button>
@@ -837,6 +840,7 @@ export default function App() {
     </Modal>}
 
     {memoryOpen && <MemoryPanel assistants={assistants} clients={clients} clientId={clientId} showToast={showToast} onClose={() => setMemoryOpen(false)}/>}
+    {pcOpen && <PcFoldersPanel showToast={showToast} onClose={() => setPcOpen(false)}/>}
 
     {analyticsOpen && <Modal title="Análises de uso" icon={<BarChart3 size={18}/>} onClose={() => setAnalyticsOpen(false)}>
       {!analytics && <div className="working"><span className="spin"/><span>Carregando...</span></div>}

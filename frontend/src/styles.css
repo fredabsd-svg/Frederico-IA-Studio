@@ -135,3 +135,16 @@
   .msg{max-width:100%}
   @media(prefers-reduced-motion:reduce){.sidebar{transition:none}}
 }
+/* Pastas do Computador (cowork) */
+.modalBody .primary{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:600;align-self:flex-start;padding:10px 16px}
+.pcWarn{font-size:12.5px;line-height:1.5;color:#f59e0b;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.35);border-radius:10px;padding:10px 12px}
+.pcHint{font-size:12px;line-height:1.5;color:var(--muted);background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.pcHint code{background:rgba(127,127,127,.12);border-radius:5px;padding:1px 5px;font-size:11.5px}
+.pcItem{display:flex;align-items:center;gap:10px;border:1px solid var(--line);background:var(--panel2);border-radius:10px;padding:10px 12px}
+.pcInfo{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.pcInfo b{font-weight:600}
+.pcInfo code{font-size:11.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pcPerm{flex:none;display:flex;align-items:center;gap:5px;font-size:12px;font-weight:600;border-radius:999px;padding:5px 11px;cursor:pointer;border:1px solid var(--line)}
+.pcPerm.rw{color:#f59e0b;border-color:rgba(245,158,11,.45)}
+.pcPerm.ro{color:#22c55e;border-color:rgba(34,197,94,.45)}
+.pcPerm:hover{border-color:var(--accent)}

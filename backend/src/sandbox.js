@@ -2,8 +2,32 @@ import Docker from 'dockerode';
 import fs from 'fs';
 import path from 'path';
 import { nanoid } from 'nanoid';
+import { db } from './db.js';
 
 const docker = new Docker({ socketPath: '/var/run/docker.sock' });
+
+// Pastas do computador do usuário liberadas para o assistente. Cada uma vira
+// um mount em /mnt/pc/<label> dentro do sandbox (só leitura ou leitura+escrita).
+export function pcFolderMounts() {
+  let rows = [];
+  try { rows = db.prepare('SELECT * FROM pc_folders ORDER BY created_at ASC').all(); } catch {}
+  const used = new Set();
+  return rows.map(r => {
+    let label = String(r.label || 'pasta').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9_-]/g, '_').slice(0, 30) || 'pasta';
+    while (used.has(label)) label = `${label}_`;
+    used.add(label);
+    return { source: r.host_path, target: `/mnt/pc/${label}`, writable: !!r.writable, label: r.label };
+  });
+}
+
+// Descarta todos os sandboxes ativos (usado quando as pastas do PC mudam,
+// para que os novos mounts entrem em vigor na próxima execução).
+export async function destroyAllSandboxes() {
+  for (const [id, entry] of sessions) {
+    sessions.delete(id);
+    try { await entry.container.remove({ force: true }); } catch {}
+  }
+}
 const root = path.resolve(process.env.WORKSPACE_ROOT || './workspaces');
 // Caminho no HOST correspondente a `root`. Binds do Docker são interpretados
 // pelo daemon como caminhos do host — quando o backend roda em container,
@@ -60,6 +84,9 @@ export async function getContainer(conversationId) {
   const { base } = workspaceFor(conversationId);
   const hostBase = path.join(hostRoot, conversationId);
   const name = `frederico-ai-${conversationId}-${nanoid(5)}`;
+  // Pastas do PC do usuário viram mounts /mnt/pc/<label> (Mounts evita o
+  // problema de parsing de caminhos do Windows com ":" no formato de Bind).
+  const mounts = pcFolderMounts().map(m => ({ Type: 'bind', Source: m.source, Target: m.target, ReadOnly: !m.writable }));
   const container = await docker.createContainer({
     Image: image,
     name,
@@ -70,6 +97,7 @@ export async function getContainer(conversationId) {
     NetworkDisabled: true,
     HostConfig: {
       Binds: [`${hostBase}:/workspace`],
+      Mounts: mounts,
       Memory: parseMemory(memory),
       NanoCpus: Math.floor(cpus * 1e9),
       PidsLimit: 256,

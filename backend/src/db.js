@@ -120,6 +120,13 @@ CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT
 );
+CREATE TABLE IF NOT EXISTS pc_folders (
+  id TEXT PRIMARY KEY,
+  label TEXT NOT NULL,
+  host_path TEXT NOT NULL,
+  writable INTEGER DEFAULT 0,   -- 0 = só leitura, 1 = leitura + organizar
+  created_at TEXT NOT NULL
+);
 `);
 
 // Migrações p/ bancos antigos: adiciona colunas se ainda não existirem
