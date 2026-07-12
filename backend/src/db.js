@@ -127,6 +127,21 @@ CREATE TABLE IF NOT EXISTS pc_folders (
   writable INTEGER DEFAULT 0,   -- 0 = só leitura, 1 = leitura + organizar
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS schedules (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  prompt TEXT NOT NULL,
+  assistant_id TEXT,
+  model TEXT,
+  client_id TEXT,
+  web_search INTEGER DEFAULT 0,
+  cadence TEXT NOT NULL DEFAULT 'monthly',  -- daily | weekly | monthly
+  day INTEGER DEFAULT 1,                     -- dia do mês (monthly) ou da semana 0-6 (weekly)
+  hour INTEGER DEFAULT 8,                     -- hora do dia (0-23)
+  enabled INTEGER DEFAULT 1,
+  last_run TEXT,                             -- data (YYYY-MM-DD) da última execução
+  created_at TEXT NOT NULL
+);
 `);
 
 // Migrações p/ bancos antigos: adiciona colunas se ainda não existirem

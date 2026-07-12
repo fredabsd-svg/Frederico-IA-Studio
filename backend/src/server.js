@@ -513,6 +513,68 @@ app.post('/api/tasks/:id/cancel', (req, res) => {
   res.json({ ok: true });
 });
 
+// ---- Rotinas agendadas (geram tarefas automaticamente na hora marcada) ----
+function daysInMonth(y, m) { return new Date(y, m + 1, 0).getDate(); }
+function scheduleDue(s, d) {
+  if (!s.enabled) return false;
+  if (d.getHours() < Number(s.hour)) return false;       // ainda não deu a hora
+  if (s.last_run === d.toISOString().slice(0, 10)) return false; // já rodou hoje
+  if (s.cadence === 'daily') return true;
+  if (s.cadence === 'weekly') return d.getDay() === Number(s.day);
+  if (s.cadence === 'monthly') {
+    const target = Math.min(Number(s.day) || 1, daysInMonth(d.getFullYear(), d.getMonth())); // clampa (ex.: 31 em fev)
+    return d.getDate() === target;
+  }
+  return false;
+}
+function runSchedule(s, d, markRun = true) {
+  const convId = nanoid();
+  const t = now();
+  db.prepare('INSERT INTO conversations (id,title,model,client_id,created_at,updated_at) VALUES (?,?,?,?,?,?)')
+    .run(convId, `Rotina: ${s.title} — ${d.toISOString().slice(0, 10)}`, s.model || process.env.DEEPSEEK_MODEL || 'deepseek-chat', s.client_id || null, t, t);
+  workspaceFor(convId);
+  db.prepare('INSERT INTO tasks (id,conversation_id,assistant_id,model,web_search,prompt,status,created_at) VALUES (?,?,?,?,?,?,?,?)')
+    .run(nanoid(), convId, s.assistant_id || null, s.model || null, s.web_search ? 1 : 0, s.prompt, 'queued', t);
+  if (markRun) db.prepare('UPDATE schedules SET last_run=? WHERE id=?').run(d.toISOString().slice(0, 10), s.id);
+}
+function checkSchedules() {
+  try {
+    const d = new Date();
+    let any = false;
+    for (const s of db.prepare('SELECT * FROM schedules WHERE enabled=1').all()) {
+      if (scheduleDue(s, d)) { runSchedule(s, d); any = true; }
+    }
+    if (any) processTasks().catch(() => {});
+  } catch (e) { console.error('[rotinas]', e.message); }
+}
+setInterval(checkSchedules, 60 * 1000).unref();
+setTimeout(checkSchedules, 5000);
+
+app.get('/api/schedules', (_, res) => res.json(db.prepare('SELECT * FROM schedules ORDER BY created_at DESC').all()));
+app.post('/api/schedules', (req, res) => {
+  const b = req.body || {};
+  const title = (b.title || '').trim();
+  const prompt = (b.prompt || '').trim();
+  if (!title || !prompt) return res.status(400).json({ error: 'Dê um nome e uma instrução para a rotina.' });
+  const cadence = ['daily', 'weekly', 'monthly'].includes(b.cadence) ? b.cadence : 'monthly';
+  const id = nanoid();
+  db.prepare('INSERT INTO schedules (id,title,prompt,assistant_id,model,client_id,web_search,cadence,day,hour,enabled,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
+    .run(id, title, prompt, b.assistant_id || null, b.model || null, b.client_id || null, b.web_search ? 1 : 0, cadence, Number(b.day) || 1, Math.min(23, Math.max(0, Number(b.hour) || 8)), 1, now());
+  res.json(db.prepare('SELECT * FROM schedules WHERE id=?').get(id));
+});
+app.put('/api/schedules/:id', (req, res) => {
+  if (typeof req.body?.enabled !== 'undefined') db.prepare('UPDATE schedules SET enabled=? WHERE id=?').run(req.body.enabled ? 1 : 0, req.params.id);
+  res.json({ ok: true });
+});
+app.delete('/api/schedules/:id', (req, res) => { db.prepare('DELETE FROM schedules WHERE id=?').run(req.params.id); res.json({ ok: true }); });
+app.post('/api/schedules/:id/run', (req, res) => {
+  const s = db.prepare('SELECT * FROM schedules WHERE id=?').get(req.params.id);
+  if (!s) return res.status(404).json({ error: 'Rotina não encontrada' });
+  runSchedule(s, new Date(), false); // execução manual não bloqueia a agendada do dia
+  processTasks().catch(() => {});
+  res.json({ ok: true });
+});
+
 // Exporta a conversa como PDF ou Word (gerado dentro do sandbox)
 const PY_EXPORT = [
   'import json',
