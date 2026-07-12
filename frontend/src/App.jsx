@@ -716,9 +716,12 @@ export default function App() {
     >
       {dragActive && <div className="dropOverlay" aria-hidden="true"><Upload size={30}/><span>Solte os arquivos aqui</span></div>}
       <header className="topbar">
-        <button className="hamburger" onClick={() => setMenuOpen(o => !o)} aria-label="Abrir menu"><Menu size={19}/></button>
-        <button className="sideOpen" onClick={toggleSide} title="Mostrar a barra lateral" aria-label="Mostrar a barra lateral"><PanelLeft size={18}/></button>
-        <div className="titleblock"><strong>{current?.title || 'Nova conversa'}</strong><small>{team ? `🧑‍🤝‍🧑 Equipe (${assistants.length} assistentes)` : (currentAssistant ? `${currentAssistant.emoji || '🤖'} ${currentAssistant.name}` : 'Assistente')} · {model}</small></div>
+        <div className="topLeft">
+          <button className="hamburger" onClick={() => setMenuOpen(o => !o)} aria-label="Abrir menu"><Menu size={19}/></button>
+          <button className="sideOpen" onClick={toggleSide} title="Mostrar a barra lateral" aria-label="Mostrar a barra lateral"><PanelLeft size={18}/></button>
+          <div className="titleblock"><strong>{current?.title || 'Nova conversa'}</strong><small>{team ? `🧑‍🤝‍🧑 Equipe (${assistants.length} assistentes)` : (currentAssistant ? `${currentAssistant.emoji || '🤖'} ${currentAssistant.name}` : 'Assistente')}</small></div>
+          <ModelPicker models={allModels} value={model} onChange={setModel}/>
+        </div>
         <div className="pickers">
           <div className="mpicker" ref={teamRef}>
             <button className={`teamBtn ${team ? 'on' : ''}`} onClick={() => setTeamOpen(o => !o)} title="Modo Equipe: escolha os assistentes e junte as perspectivas"><Users size={15}/> Equipe{team ? ` (${effectiveTeam.length})` : ''}</button>
@@ -744,7 +747,6 @@ export default function App() {
               <button className="mpItem" onClick={() => exportConv('docx')}><span className="mpItemName">📝 Exportar como Word (.docx)</span></button>
             </div>}
           </div>
-          <ModelPicker models={allModels} value={model} onChange={setModel}/>
         </div>
       </header>
       <section className={`messages ${!loadingConv && messages.length === 0 && !busy ? 'empty' : ''}`}>

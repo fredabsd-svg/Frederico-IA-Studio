@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Search, ChevronDown, Check } from 'lucide-react';
+import { Search, ChevronDown, Check, Cpu } from 'lucide-react';
 
 // Ids (ou prefixos) dos modelos mais confiáveis para gerar planilhas/arquivos
 const BEST_FOR_FILES = [
@@ -43,6 +43,7 @@ export function ModelPicker({ models, value, onChange }) {
 
   return <div className="mpicker" ref={ref}>
     <button className="mpBtn" onClick={() => setOpen(o => !o)} title="Escolher o modelo de IA">
+      <Cpu size={15} className="mpIco"/>
       <span className="mpName">{current?.name || value}</span>
       <ChevronDown size={14}/>
     </button>
