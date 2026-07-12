@@ -213,3 +213,8 @@
 /* Campo de mensagem com sombra mais leve */
 .composer{box-shadow:0 2px 12px rgba(0,0,0,.06)}
 .composer:focus-within{box-shadow:0 2px 16px rgba(79,140,255,.14)}
+/* Correção: ao recolher, a barra lateral encolhe de fato até 0 (sem sobra) */
+.sidebar{min-width:0;transition:padding .22s ease}
+@media(min-width:981px){
+  .app.sideHidden .sidebar{padding-left:0;padding-right:0;border-right-color:transparent}
+}
