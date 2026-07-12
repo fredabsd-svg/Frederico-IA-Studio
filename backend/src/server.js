@@ -99,12 +99,19 @@ app.get('/api/models', async (_, res) => {
     const data = await r.json();
     const models = (data.data || []).map(m => {
       const out = m.architecture?.output_modalities || [];
+      const inp = m.architecture?.input_modalities || [];
+      const pPrompt = Number(m.pricing?.prompt || 0);
+      const pCompletion = Number(m.pricing?.completion || 0);
       return {
         id: m.id,
         name: m.name || m.id,
         tools: Array.isArray(m.supported_parameters) ? m.supported_parameters.includes('tools') : null,
         image: out.includes('image'),
-        video: out.includes('video')
+        video: out.includes('video'),
+        vision: inp.includes('image'),            // enxerga imagens enviadas
+        created: m.created || 0,                  // timestamp (segundos) do lançamento
+        context: m.context_length || m.top_provider?.context_length || 0,
+        free: String(m.id).endsWith(':free') || (pPrompt === 0 && pCompletion === 0)
       };
     }).sort((a, b) => a.name.localeCompare(b.name));
     modelsCache = models; modelsCacheAt = Date.now();

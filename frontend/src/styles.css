@@ -227,3 +227,16 @@
 .mpBtn .mpIco{color:var(--accent);flex:none}
 .mpBtn .mpName{max-width:200px}
 @media(max-width:980px){.topLeft .titleblock{display:none}.mpBtn .mpName{max-width:130px}}
+/* Filtros do seletor de modelos */
+.mpPanel{width:min(460px,94vw)}
+.topLeft .mpPanel{left:0;right:auto}
+.mpClear{flex:none;border:none;background:transparent;color:var(--accent);font-size:12px;font-weight:600;padding:2px 6px}
+.mpFilters,.mpFamRow{display:flex;flex-wrap:wrap;gap:6px;padding:9px 12px;border-bottom:1px solid var(--line)}
+.mpFamRow{max-height:104px;overflow:auto}
+.mpChip{font-size:12px;padding:5px 10px;border-radius:999px;border:1px solid var(--line);background:var(--panel2);color:var(--muted);white-space:nowrap;display:inline-flex;align-items:center;gap:5px}
+.mpChip:hover{border-color:var(--accent);color:var(--text)}
+.mpChip.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.mpChip em{font-style:normal;opacity:.7;font-size:11px}
+.mpChip.on em{opacity:.85}
+.mpItemMeta{font-size:11px;color:var(--muted);margin-top:1px}
+.mpNew{margin-left:7px;font-size:9.5px;font-weight:800;letter-spacing:.04em;color:#fff;background:#16a34a;border-radius:999px;padding:1px 6px;vertical-align:middle}
