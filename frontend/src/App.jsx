@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench, CalendarClock, CalendarDays } from 'lucide-react';
+import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench, CalendarClock, CalendarDays, Inbox } from 'lucide-react';
 import { API, FALLBACK_MODELS, TOOL_INFO, TEMPLATES, SUGGESTIONS, QUICK_ACTIONS, emptyForm } from './constants.js';
 import { ToolStep, Slider, Modal, ModelPicker, Collapsible } from './components.jsx';
 import { MemoryPanel } from './MemoryPanel.jsx';
@@ -10,6 +10,7 @@ import { PcFoldersPanel } from './PcFoldersPanel.jsx';
 import { ToolsPanel } from './ToolsPanel.jsx';
 import { RoutinesPanel } from './RoutinesPanel.jsx';
 import { FiscalPanel } from './FiscalPanel.jsx';
+import { InboxPanel } from './InboxPanel.jsx';
 
 function MemoryTrace({ memory, onOpenMemory }) {
   if (!memory?.enabled) return null;
@@ -55,6 +56,7 @@ export default function App() {
   const [toolsOpen, setToolsOpen] = useState(false);
   const [routinesOpen, setRoutinesOpen] = useState(false);
   const [fiscalOpen, setFiscalOpen] = useState(false);
+  const [inboxOpen, setInboxOpen] = useState(false);
   const [team, setTeam] = useState(false);
   const [teamOpen, setTeamOpen] = useState(false);
   const [teamIds, setTeamIds] = useState(() => { try { return JSON.parse(localStorage.getItem('fred_team') || 'null'); } catch { return null; } });
@@ -762,6 +764,7 @@ export default function App() {
         <button className="studio" onClick={openTemplates}><BookMarked size={16}/> Templates</button>
         <button className="studio" onClick={() => setMemoryOpen(true)}><Brain size={16}/> Memória</button>
         <button className="studio" onClick={() => setPcOpen(true)} title="Libere pastas do seu PC para o assistente procurar, ler e organizar arquivos"><FolderCog size={16}/> Pastas do PC</button>
+        <button className="studio" onClick={() => setInboxOpen(true)} title="Acumule documentos por cliente e abra tudo numa conversa"><Inbox size={16}/> Caixa de entrada</button>
         <button className="studio" onClick={() => { setTasksOpen(true); pollTasks(); }}><ListTodo size={16}/> Tarefas{tasksActive && <span className="badge">{tasks.filter(t => t.status === 'queued' || t.status === 'running').length}</span>}</button>
         <button className="studio" onClick={() => setRoutinesOpen(true)} title="Programe tarefas para rodarem sozinhas (diária, semanal ou mensal)"><CalendarClock size={16}/> Rotinas</button>
         <button className="studio" onClick={() => setFiscalOpen(true)} title="Vencimentos das principais obrigações do mês"><CalendarDays size={16}/> Calendário fiscal</button>
@@ -957,6 +960,7 @@ export default function App() {
     {toolsOpen && <ToolsPanel onPick={pickTool} onClose={() => setToolsOpen(false)}/>}
     {routinesOpen && <RoutinesPanel assistants={assistants} clients={clients} showToast={showToast} onClose={() => setRoutinesOpen(false)}/>}
     {fiscalOpen && <FiscalPanel showToast={showToast} onClose={() => setFiscalOpen(false)}/>}
+    {inboxOpen && <InboxPanel clients={clients} clientId={clientId} showToast={showToast} onOpenConversation={(id) => { fetchConversations(); openConversation(id); }} onClose={() => setInboxOpen(false)}/>}
 
     {analyticsOpen && <Modal title="Análises de uso" icon={<BarChart3 size={18}/>} onClose={() => setAnalyticsOpen(false)}>
       {!analytics && <div className="working"><span className="spin"/><span>Carregando...</span></div>}

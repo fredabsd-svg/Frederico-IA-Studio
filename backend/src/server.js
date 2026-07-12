@@ -197,6 +197,66 @@ app.delete('/api/pc-folders/:id', async (req, res) => {
   res.json({ ok: true });
 });
 
+// ---- Caixa de entrada de documentos (por cliente) ----
+// Um lugar para acumular documentos de um cliente e, com 1 clique, abrir uma
+// conversa nova já com todos anexados para a IA processar.
+const inboxRoot = path.join(path.dirname(path.resolve(process.env.DB_PATH || './data/app.sqlite')), 'inbox');
+function inboxDir(client) {
+  const key = String(client || 'geral').replace(/[^a-zA-Z0-9_-]/g, '_') || 'geral';
+  const d = path.join(inboxRoot, key);
+  fs.mkdirSync(d, { recursive: true });
+  return d;
+}
+app.get('/api/inbox/:client', (req, res) => {
+  const d = inboxDir(req.params.client);
+  const files = fs.readdirSync(d).map(n => {
+    let size = 0; try { size = fs.statSync(path.join(d, n)).size; } catch { return null; }
+    return { stored: n, name: n.replace(/^\d+_/, ''), size };
+  }).filter(Boolean);
+  res.json(files);
+});
+app.post('/api/inbox/:client/upload', upload.array('files'), (req, res) => {
+  const d = inboxDir(req.params.client);
+  let count = 0;
+  for (const file of req.files || []) {
+    const original = Buffer.from(file.originalname, 'latin1').toString('utf8');
+    const safe = original.replace(/[^a-zA-Z0-9._ -]/g, '_');
+    fs.writeFileSync(path.join(d, `${Date.now()}_${count}_${safe}`), file.buffer);
+    count++;
+  }
+  res.json({ ok: true, count });
+});
+app.delete('/api/inbox/:client/:stored', (req, res) => {
+  const d = inboxDir(req.params.client);
+  const target = path.join(d, path.basename(req.params.stored)); // basename evita traversal
+  try { fs.rmSync(target, { force: true }); } catch {}
+  res.json({ ok: true });
+});
+app.post('/api/inbox/:client/to-conversation', (req, res) => {
+  const d = inboxDir(req.params.client);
+  const files = fs.readdirSync(d);
+  if (!files.length) return res.status(400).json({ error: 'A caixa de entrada está vazia.' });
+  const convId = nanoid();
+  const t = now();
+  const clientId = req.params.client === 'geral' ? null : req.params.client;
+  db.prepare('INSERT INTO conversations (id,title,model,client_id,created_at,updated_at) VALUES (?,?,?,?,?,?)')
+    .run(convId, `Documentos recebidos — ${t.slice(0, 10)}`, process.env.DEEPSEEK_MODEL || 'deepseek-chat', clientId, t, t);
+  const ws = workspaceFor(convId);
+  for (const n of files) {
+    const original = n.replace(/^\d+_\d+_/, '');
+    const dest = path.join(ws.uploads, n);
+    try {
+      fs.copyFileSync(path.join(d, n), dest);
+      try { fs.chownSync(dest, 1000, 1000); } catch {}
+      const size = fs.statSync(dest).size;
+      db.prepare('INSERT INTO files (id,conversation_id,kind,name,path,size,created_at) VALUES (?,?,?,?,?,?,?)')
+        .run(nanoid(), convId, 'upload', original, `uploads/${n}`, size, now());
+      fs.rmSync(path.join(d, n), { force: true }); // move: some da caixa para não reprocessar
+    } catch {}
+  }
+  res.json({ id: convId });
+});
+
 // ---- Clientes / Projetos ----
 app.get('/api/clients', (_, res) => {
   res.json(db.prepare('SELECT * FROM clients ORDER BY name ASC').all());
