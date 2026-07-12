@@ -138,8 +138,11 @@ export function ModelPicker({ models, value, onChange }) {
         <button className={`mpChip ${sort === 'cheap' ? 'on' : ''}`} onClick={() => toggleSort('cheap')} title="Ordenar dos mais baratos para os mais caros">💲 Mais baratos</button>
       </div>
       <div className="mpFamRow">
-        <button className={`mpChip ${fam === 'all' ? 'on' : ''}`} onClick={() => setFam('all')}>Todas as famílias</button>
-        {families.map(k => <button key={k} className={`mpChip ${fam === k ? 'on' : ''}`} onClick={() => setFam(k)}>{familyLabel(k)} <em>{famCounts[k]}</em></button>)}
+        <label className="mpFamLabel">Família:</label>
+        <select className="mpFamSelect" value={fam} onChange={e => setFam(e.target.value)}>
+          <option value="all">Todas as famílias ({models.length})</option>
+          {families.map(k => <option key={k} value={k}>{familyLabel(k)} ({famCounts[k]})</option>)}
+        </select>
       </div>
       <div className="mpList">
         {filtersOn

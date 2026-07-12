@@ -249,3 +249,10 @@
 .mpStar{flex:none;border:none;background:transparent;color:var(--muted);opacity:.55;padding:6px;border-radius:8px;display:flex}
 .mpStar:hover{opacity:1;color:#f59e0b}
 .mpStar.on{opacity:1;color:#f59e0b}
+/* Família vira lista suspensa (mais fácil de usar que os chips espremidos) */
+.mpFamRow{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--line);max-height:none;overflow:visible;flex-wrap:nowrap}
+.mpFamLabel{flex:none;font-size:12px;font-weight:600;color:var(--muted)}
+.mpFamSelect{flex:1;min-width:0;border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:10px;padding:9px 11px;font:inherit;font-size:13px;cursor:pointer;max-width:none}
+.mpFamSelect:focus{border-color:var(--accent);outline:none}
+.mpList{flex:1;min-height:120px}
+.mpPanel{max-height:min(560px,72vh)}
