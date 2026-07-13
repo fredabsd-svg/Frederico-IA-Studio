@@ -802,12 +802,17 @@ app.post('/api/conversations/:id/chat', async (req, res) => {
   res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders?.();
   const send = (event) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(event)}\n\n`); };
+  // Pulso (heartbeat): comentário SSE a cada 15s para a conexão nunca ficar
+  // "ociosa" durante esperas longas (modelo pensando, pesquisa na web). Sem
+  // isso, proxies/gateways cortam com "Upstream idle timeout exceeded". O
+  // cliente ignora linhas que não começam com "data:".
+  const heartbeat = setInterval(() => { if (!res.writableEnded) res.write(': ping\n\n'); }, 15000);
   // Se o navegador desconectar (aba fechada/rede), interrompe a execução
   // para não continuar gastando tokens sem ninguém assistindo.
   // IMPORTANTE: usar o 'close' da RESPOSTA (res), não do pedido (req) — o
   // 'close' do req dispara assim que o corpo do POST termina de chegar, o
   // que interrompia toda resposta logo no primeiro token.
-  res.on('close', () => { if (!res.writableEnded) setControl(req.params.id, 'stop'); });
+  res.on('close', () => { clearInterval(heartbeat); if (!res.writableEnded) setControl(req.params.id, 'stop'); });
   try {
     const text = req.body?.message || '';
     // Título automático: usa o início da 1ª mensagem em vez de "Nova conversa"
@@ -835,6 +840,7 @@ app.post('/api/conversations/:id/chat', async (req, res) => {
     console.error('[chat]', err);
     send({ type: 'error', content: friendlyApiError(err) });
   } finally {
+    clearInterval(heartbeat);
     res.end();
   }
 });
