@@ -2,8 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench, CalendarClock, CalendarDays, Inbox, Palette } from 'lucide-react';
-import { API, FALLBACK_MODELS, TOOL_INFO, TEMPLATES, SUGGESTIONS, QUICK_ACTIONS, THEMES, emptyForm } from './constants.js';
+import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench, CalendarClock, CalendarDays, Inbox, Palette, Gauge } from 'lucide-react';
+import { API, FALLBACK_MODELS, TOOL_INFO, TEMPLATES, SUGGESTIONS, QUICK_ACTIONS, THEMES, EFFORTS, emptyForm } from './constants.js';
 import { ToolStep, Slider, Modal, ModelPicker, Collapsible } from './components.jsx';
 import { MemoryPanel } from './MemoryPanel.jsx';
 import { PcFoldersPanel } from './PcFoldersPanel.jsx';
@@ -72,6 +72,9 @@ export default function App() {
   const [themeOpen, setThemeOpen] = useState(false);
   const [listening, setListening] = useState(false);
   const [webSearch, setWebSearch] = useState(false);
+  const [effort, setEffort] = useState(() => localStorage.getItem('fred_effort') || 'moderado');
+  const [effortOpen, setEffortOpen] = useState(false);
+  const effortRef = useRef(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [sideHidden, setSideHidden] = useState(() => localStorage.getItem('fred_side_hidden') === '1');
   const [convFilter, setConvFilter] = useState('');
@@ -104,6 +107,12 @@ export default function App() {
   const busyRef = useRef(false);
   const creatingConvRef = useRef(null);
   useEffect(() => { busyRef.current = busy; }, [busy]);
+  useEffect(() => { localStorage.setItem('fred_effort', effort); }, [effort]);
+  useEffect(() => {
+    function onDoc(e) { if (effortRef.current && !effortRef.current.contains(e.target)) setEffortOpen(false); }
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, []);
   // Ajusta a altura do campo de mensagem também quando o texto muda por código
   // (envio limpa; template/edição preenchem).
   useEffect(() => {
@@ -641,7 +650,7 @@ export default function App() {
 
     const body = team
       ? { message: text, model, orchestrate: true, orchestrateIds: effectiveTeam.map(a => a.id) }
-      : { message: text, model, assistantId, webSearch };
+      : { message: text, model, assistantId, webSearch, effort };
     try {
       const res = await fetch(`${API}/api/conversations/${conv.id}/chat`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
@@ -909,6 +918,20 @@ export default function App() {
         <div className="composer">
           <label className="upload" title="Anexar arquivo"><Upload size={18}/><input type="file" multiple onChange={uploadFiles}/></label>
           <button className={`webBtn ${webSearch ? 'on' : ''}`} onClick={() => setWebSearch(w => !w)} title={webSearch ? 'Pesquisa na internet ATIVADA — clique para desativar' : 'Ativar pesquisa na internet'} aria-label="Pesquisa na internet"><Globe size={18}/></button>
+          <div className="effortPick" ref={effortRef}>
+            <button className="webBtn effortBtn" onClick={() => setEffortOpen(o => !o)} title={`Esforço da IA: ${EFFORTS.find(e => e.id === effort)?.label}`} aria-label="Esforço da IA">
+              <Gauge size={18}/><span className="effIcon">{EFFORTS.find(e => e.id === effort)?.icon}</span>
+            </button>
+            {effortOpen && <div className="mpPanel effortPanel">
+              <div className="mpGroupLabel">Esforço da IA</div>
+              {EFFORTS.map(e => (
+                <button key={e.id} className={`mpItem ${effort === e.id ? 'sel' : ''}`} onClick={() => { setEffort(e.id); setEffortOpen(false); }}>
+                  <span className="mpItemName">{e.icon} {e.label}{effort === e.id && <Check size={13} style={{ marginLeft: 6 }}/>}</span>
+                  <span className="effDesc">{e.desc}</span>
+                </button>
+              ))}
+            </div>}
+          </div>
           <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)} onInput={e => { e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 160) + 'px'; }} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }} placeholder={listening ? 'Ouvindo... fale agora' : (webSearch ? 'Pesquisa na internet ativada — pergunte algo atual...' : 'Peça para analisar arquivos, gerar Word, Excel, PDF...')} />
           <button className={`mic ${listening ? 'on' : ''}`} onClick={toggleMic} title="Falar (ditado por voz)" aria-label="Ditado por voz"><Mic size={18}/></button>
           <button className="mic" onClick={sendAsTask} disabled={!input.trim()} title="Executar em segundo plano (fila de tarefas) — você pode continuar usando o app" aria-label="Enviar para a fila de tarefas"><Hourglass size={17}/></button>

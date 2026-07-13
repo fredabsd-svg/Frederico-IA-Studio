@@ -111,4 +111,12 @@ export const THEMES = [
   { id: 'sepia', label: 'Sépia (papel)', mode: 'light', swatch: ['#f3ecdf', '#9a6a2f', '#fbf6ec'] }
 ];
 
+// Esforço da IA (raciocínio + nº de etapas). Escolhido no chat.
+export const EFFORTS = [
+  { id: 'minimo', label: 'Mínimo', icon: '⚡', desc: 'Rápido e direto — mais barato' },
+  { id: 'moderado', label: 'Moderado', icon: '⚖️', desc: 'Equilíbrio (padrão)' },
+  { id: 'alto', label: 'Alto', icon: '🎯', desc: 'Pensa mais e confere os resultados' },
+  { id: 'extra', label: 'Extra', icon: '🧠', desc: 'Máximo cuidado — mais lento e caro' }
+];
+
 export const emptyForm = () => ({ id: null, name: '', emoji: '🤖', model: '', system_prompt: '', template: '', tools: TOOL_INFO.map(t => t.name), personality: { form: 50, det: 50, criat: 20 } });

@@ -9,6 +9,17 @@ import { execInSandbox, workspaceFor, pcFolderMounts } from './sandbox.js';
 import { db, now } from './db.js';
 import { nanoid } from 'nanoid';
 
+// Esforço da IA: controla o raciocínio (reasoning effort — funciona de verdade
+// nos modelos que raciocinam, via OpenRouter), o número máximo de etapas do
+// loop agêntico e uma instrução de sistema. Assim vale para qualquer modelo.
+const EFFORT = {
+  minimo:   { reasoning: 'low',  steps: 6,  nudge: 'Seja direto e objetivo. Entregue a resposta no menor número de passos possível, sem análises extras.' },
+  moderado: { reasoning: null,   steps: 14, nudge: null },
+  alto:     { reasoning: 'high', steps: 24, nudge: 'Pense passo a passo e confira os números e os resultados das ferramentas antes de responder.' },
+  extra:    { reasoning: 'high', steps: 40, nudge: 'Trabalhe com o máximo de cuidado: planeje, execute cada etapa, verifique os resultados e revise possíveis erros antes de finalizar.' }
+};
+const effortCfg = (e) => EFFORT[e] || EFFORT.moderado;
+
 // Lista os arquivos da pasta outputs (para detectar os que foram gerados)
 function listOutputs(conversationId) {
   const ws = workspaceFor(conversationId);
@@ -357,9 +368,10 @@ async function gate(control, onEvent) {
   return false;
 }
 
-export async function runAgent({ conversationId, userText, model, assistant, webSearch, onEvent }) {
+export async function runAgent({ conversationId, userText, model, assistant, webSearch, effort, onEvent }) {
   const chosenModel = model || assistant?.model || process.env.DEEPSEEK_MODEL || 'deepseek-chat';
   const chosenPrompt = promptFor(assistant);
+  const eff = effortCfg(effort);
   let tools = toolsFor(assistant);
   if (webSearch) tools = [...tools, ...webToolDefinitions];
   const temperature = temperatureFor(assistant?.personality);
@@ -367,6 +379,7 @@ export async function runAgent({ conversationId, userText, model, assistant, web
   // Economia de tokens: menos mensagens de histórico consideradas por resposta
   const historyLimit = getSettings().economy_mode ? 20 : Number(process.env.AGENT_HISTORY_LIMIT || 60);
   const messages = [{ role: 'system', content: chosenPrompt }, { role: 'system', content: toolAvailabilityNote(tools) }];
+  if (eff.nudge) messages.push({ role: 'system', content: eff.nudge });
   if (webSearch) messages.push({ role: 'system', content: `VOCÊ TEM ACESSO À INTERNET NESTA CONVERSA — o usuário ativou a pesquisa web.
 - Para buscar: ferramenta web_search. Para ler uma página: web_fetch.
 - NUNCA diga que "não tem acesso à internet": você tem, através dessas duas ferramentas. Use-as para informações atuais/externas (legislação, notícias, tabelas, cotações, prazos) e cite as fontes (links).
@@ -401,7 +414,7 @@ export async function runAgent({ conversationId, userText, model, assistant, web
 
   const control = initControl(conversationId);
   const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
-  const maxSteps = Number(process.env.AGENT_MAX_STEPS || 30);
+  const maxSteps = Number(process.env.AGENT_MAX_STEPS || eff.steps);
   const outputsBefore = new Map(listOutputs(conversationId).map(f => [f.path, f.mtimeMs]));
   let finalText = '';
   let stopped = false;
@@ -419,6 +432,7 @@ export async function runAgent({ conversationId, userText, model, assistant, web
       model: chosenModel,
       messages,
       ...(tools.length ? { tools, tool_choice: 'auto' } : {}),
+      ...(eff.reasoning ? { reasoning: { effort: eff.reasoning } } : {}),
       temperature,
       stream: true,
       stream_options: { include_usage: true }
