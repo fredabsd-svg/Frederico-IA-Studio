@@ -99,4 +99,16 @@ export const FISCAL_ANNUAL = [
   { when: 'Julho', name: 'ECF', desc: 'Escrituração Contábil Fiscal' }
 ];
 
+// Temas do aplicativo. `mode` (dark/light) mantém as regras base; a classe
+// t-<id> sobrescreve as cores. swatch = [fundo, destaque, painel] para a prévia.
+export const THEMES = [
+  { id: 'dark', label: 'Escuro (padrão)', mode: 'dark', swatch: ['#0b1020', '#4f8cff', '#111827'] },
+  { id: 'light', label: 'Claro', mode: 'light', swatch: ['#f3f6fb', '#1d4ed8', '#ffffff'] },
+  { id: 'slate', label: 'Ardósia', mode: 'dark', swatch: ['#0d1117', '#38bdf8', '#161b22'] },
+  { id: 'indigo', label: 'Índigo', mode: 'dark', swatch: ['#0e0b1e', '#8b7cff', '#171233'] },
+  { id: 'emerald', label: 'Esmeralda', mode: 'dark', swatch: ['#07120e', '#25c07d', '#0f1f18'] },
+  { id: 'amber', label: 'Âmbar', mode: 'dark', swatch: ['#14100a', '#f0a340', '#1f1710'] },
+  { id: 'sepia', label: 'Sépia (papel)', mode: 'light', swatch: ['#f3ecdf', '#9a6a2f', '#fbf6ec'] }
+];
+
 export const emptyForm = () => ({ id: null, name: '', emoji: '🤖', model: '', system_prompt: '', template: '', tools: TOOL_INFO.map(t => t.name), personality: { form: 50, det: 50, criat: 20 } });

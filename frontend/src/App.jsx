@@ -2,8 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench, CalendarClock, CalendarDays, Inbox } from 'lucide-react';
-import { API, FALLBACK_MODELS, TOOL_INFO, TEMPLATES, SUGGESTIONS, QUICK_ACTIONS, emptyForm } from './constants.js';
+import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench, CalendarClock, CalendarDays, Inbox, Palette } from 'lucide-react';
+import { API, FALLBACK_MODELS, TOOL_INFO, TEMPLATES, SUGGESTIONS, QUICK_ACTIONS, THEMES, emptyForm } from './constants.js';
 import { ToolStep, Slider, Modal, ModelPicker, Collapsible } from './components.jsx';
 import { MemoryPanel } from './MemoryPanel.jsx';
 import { PcFoldersPanel } from './PcFoldersPanel.jsx';
@@ -68,7 +68,8 @@ export default function App() {
   const [paused, setPaused] = useState(false);
   const [statusText, setStatusText] = useState('');
   const [nowTick, setNowTick] = useState(0);
-  const [dark, setDark] = useState(true);
+  const [theme, setTheme] = useState(() => localStorage.getItem('fred_theme') || 'dark');
+  const [themeOpen, setThemeOpen] = useState(false);
   const [listening, setListening] = useState(false);
   const [webSearch, setWebSearch] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -113,7 +114,11 @@ export default function App() {
   }, [input]);
 
   useEffect(() => { init(); }, []);
-  useEffect(() => { document.body.className = dark ? 'dark' : 'light'; }, [dark]);
+  useEffect(() => {
+    const t = THEMES.find(x => x.id === theme) || THEMES[0];
+    document.body.className = `${t.mode} t-${t.id}`;
+    localStorage.setItem('fred_theme', t.id);
+  }, [theme]);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
   // Enquanto processa, "bate um relógio" a cada segundo para os contadores vivos
   useEffect(() => {
@@ -782,7 +787,7 @@ export default function App() {
         <button className="studio" onClick={() => setFiscalOpen(true)} title="Vencimentos das principais obrigações do mês"><CalendarDays size={16}/> Calendário fiscal</button>
         <button className="studio" onClick={openAnalytics}><BarChart3 size={16}/> Análises</button>
         <button className="studio" onClick={() => window.open(`${API}/api/backup`, '_blank')} title="Baixa um arquivo .tar.gz com o banco e todos os workspaces"><HardDriveDownload size={16}/> Backup</button>
-        <button className="theme" onClick={() => setDark(!dark)}>{dark ? <Sun size={16}/> : <Moon size={16}/>} Tema</button>
+        <button className="theme" onClick={() => setThemeOpen(true)} title="Trocar o tema do aplicativo"><Palette size={16}/> Tema</button>
       </div>
     </aside>
 
@@ -973,6 +978,17 @@ export default function App() {
     {routinesOpen && <RoutinesPanel assistants={assistants} clients={clients} showToast={showToast} onClose={() => setRoutinesOpen(false)}/>}
     {fiscalOpen && <FiscalPanel showToast={showToast} onClose={() => setFiscalOpen(false)}/>}
     {inboxOpen && <InboxPanel clients={clients} clientId={clientId} showToast={showToast} onOpenConversation={(id) => { fetchConversations(); openConversation(id); }} onClose={() => setInboxOpen(false)}/>}
+    {themeOpen && <Modal title="Tema do aplicativo" icon={<Palette size={18}/>} onClose={() => setThemeOpen(false)}>
+      <p className="muted" style={{ margin: 0 }}>Escolha a aparência do app. A sua escolha fica salva neste computador.</p>
+      <div className="themeGrid">
+        {THEMES.map(t => (
+          <button key={t.id} className={`themeCard ${theme === t.id ? 'sel' : ''}`} onClick={() => setTheme(t.id)}>
+            <span className="themeSwatch">{t.swatch.map((c, i) => <i key={i} style={{ background: c }}/>)}</span>
+            <span className="themeName">{t.label}{theme === t.id && <Check size={14}/>}</span>
+          </button>
+        ))}
+      </div>
+    </Modal>}
 
     {analyticsOpen && <Modal title="Análises de uso" icon={<BarChart3 size={18}/>} onClose={() => setAnalyticsOpen(false)}>
       {!analytics && <div className="working"><span className="spin"/><span>Carregando...</span></div>}

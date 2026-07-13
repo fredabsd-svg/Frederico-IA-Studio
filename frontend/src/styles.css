@@ -306,3 +306,19 @@
 .inboxDrop:hover{border-color:var(--accent);color:var(--accent)}
 .inboxDrop input{display:none}
 .pcInfo b{display:flex;align-items:center;gap:6px}
+/* ===== Temas adicionais (sobrescrevem as cores do modo base) ===== */
+.t-slate{--bg:#0d1117;--panel:#161b22;--panel2:#11161d;--side:#0e1319;--text:#e6edf3;--muted:#8b949e;--line:#283039;--accent:#38bdf8;--bubble:#161d26;--bubble-user:#245a86}
+.t-indigo{--bg:#0e0b1e;--panel:#171233;--panel2:#130f2a;--side:#0f0b24;--text:#e8e5f5;--muted:#a29bc4;--line:#2b2350;--accent:#8b7cff;--bubble:#1a1440;--bubble-user:#5a45b8}
+.t-emerald{--bg:#07120e;--panel:#0f1f18;--panel2:#0b1a13;--side:#081511;--text:#e2f0e9;--muted:#8fb3a3;--line:#1d382f;--accent:#25c07d;--bubble:#0f241b;--bubble-user:#1f6b4c}
+.t-amber{--bg:#14100a;--panel:#1f1710;--panel2:#191309;--side:#150f08;--text:#f1e9db;--muted:#bcaa8f;--line:#3a2e1c;--accent:#f0a340;--bubble:#221a0f;--bubble-user:#8a5f24}
+.t-sepia{--bg:#f3ecdf;--panel:#fbf6ec;--panel2:#f6efe1;--side:#efe6d4;--text:#3a3226;--muted:#8a7c66;--line:#e2d7c1;--accent:#9a6a2f;--bubble:#fbf3e3;--bubble-user:#8a5a2a}
+.t-sepia .msg.user,.t-amber .msg.user,.t-indigo .msg.user,.t-emerald .msg.user,.t-slate .msg.user{color:#fff}
+/* Seletor de tema */
+.themeGrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.themeCard{display:flex;flex-direction:column;gap:8px;padding:10px;border:1px solid var(--line);background:var(--panel2);border-radius:12px;text-align:left}
+.themeCard:hover{border-color:var(--accent)}
+.themeCard.sel{box-shadow:inset 0 0 0 2px var(--accent);border-color:var(--accent)}
+.themeSwatch{display:flex;height:36px;border-radius:8px;overflow:hidden;border:1px solid var(--line)}
+.themeSwatch i{flex:1}
+.themeName{display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:13px;font-weight:600;color:var(--text)}
+@media(max-width:640px){.themeGrid{grid-template-columns:1fr}}
