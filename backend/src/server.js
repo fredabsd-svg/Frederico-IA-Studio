@@ -406,6 +406,7 @@ app.get('/api/analytics', (_, res) => {
 });
 
 app.get('/api/conversations', (req, res) => {
+  if (req.query.all === '1') return res.json(db.prepare('SELECT * FROM conversations ORDER BY updated_at DESC').all());
   const clientId = req.query.client || null;
   const rows = clientId
     ? db.prepare('SELECT * FROM conversations WHERE client_id=? ORDER BY updated_at DESC').all(clientId)

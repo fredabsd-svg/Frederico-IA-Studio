@@ -41,6 +41,7 @@ function MemoryTrace({ memory, onOpenMemory }) {
 
 export default function App() {
   const [conversations, setConversations] = useState([]);
+  const [allConvs, setAllConvs] = useState([]);
   const [current, setCurrent] = useState(null);
   const [messages, setMessages] = useState([]);
   const [files, setFiles] = useState([]);
@@ -370,7 +371,13 @@ export default function App() {
     const data = await res.json();
     const rows = Array.isArray(data) ? data : []; // nunca deixa um objeto de erro quebrar o render
     setConversations(rows);
+    loadAllConvs(); // mantém a lista global (todos os clientes) para a busca
     return rows;
+  }
+
+  // Todas as conversas, de qualquer cliente — usado pela busca da barra lateral
+  async function loadAllConvs() {
+    try { const d = await (await fetch(`${API}/api/conversations?all=1`)).json(); setAllConvs(Array.isArray(d) ? d : []); } catch {}
   }
 
   // Cria o registro da conversa só quando ele é realmente necessário (1ª
@@ -747,9 +754,14 @@ export default function App() {
       <div className="convList">
         {(() => {
           const q = convFilter.trim().toLowerCase();
-          const list = q ? conversations.filter(c => (c.title || '').toLowerCase().includes(q)) : conversations;
-          if (conversations.length === 0) return <p className="muted small">Suas conversas aparecerão aqui.</p>;
-          if (list.length === 0) return <p className="muted small">Nenhuma conversa encontrada.</p>;
+          // Sem busca: mostra as do cliente atual. Com busca: procura em TODAS
+          // as conversas (qualquer cliente) — assim nada "some" por causa do escopo.
+          const list = q ? allConvs.filter(c => (c.title || '').toLowerCase().includes(q)) : conversations;
+          const otherCount = allConvs.length - conversations.length;
+          if (list.length === 0) {
+            if (q) return <p className="muted small">Nenhuma conversa encontrada para "{convFilter}".</p>;
+            return <p className="muted small">Nenhuma conversa neste cliente ainda.{otherCount > 0 ? ` Há ${otherCount} em outros clientes — use a busca ou troque o cliente acima.` : ''}</p>;
+          }
           return list.map(c => (
             <div key={c.id} className={`convItem ${current?.id === c.id ? 'active' : ''}`}>
               <button className="convOpen" onClick={() => openConversation(c.id)} title={c.title}>{c.title}</button>
