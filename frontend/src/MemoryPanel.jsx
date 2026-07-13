@@ -241,6 +241,8 @@ export function MemoryPanel({ assistants, clients, clientId, showToast, onClose 
     </div>}
 
     {configOpen && config && <div className="memConfig">
+      <label className="chk"><input type="checkbox" checked={!!config.economy_mode} onChange={e => saveConfig({ economy_mode: e.target.checked ? 1 : 0 })}/> 💸 <b>Economia de tokens</b> — reduz o contexto enviado e as chamadas extras (mais barato; recomendado)</label>
+      <div className="teamHint" style={{ padding: '0 2px 4px' }}>Ligado, o app envia bem menos "memória" e histórico em cada mensagem e resume as conversas com menos frequência. Desligue só se precisar que a IA lembre de muitos detalhes de conversas antigas.</div>
       <label className="chk"><input type="checkbox" checked={!!config.memory_enabled} onChange={e => saveConfig({ memory_enabled: e.target.checked ? 1 : 0 })}/> Memória ativada (o app consulta o passado antes de responder)</label>
       <label className="chk"><input type="checkbox" checked={!!config.auto_memory} onChange={e => saveConfig({ auto_memory: e.target.checked ? 1 : 0 })}/> Memória automática (aprender fatos das conversas)</label>
       <label className="chk"><input type="checkbox" checked={!!config.review_auto_memory} onChange={e => saveConfig({ review_auto_memory: e.target.checked ? 1 : 0 })}/> Revisar memorias aprendidas antes de salvar</label>

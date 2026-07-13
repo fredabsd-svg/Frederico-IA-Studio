@@ -21,11 +21,16 @@ export const DEFAULT_SETTINGS = {
   memory_enabled: 1,          // memória ligada/desligada
   auto_memory: 1,             // extração automática de fatos
   review_auto_memory: 1,      // fatos aprendidos entram em fila para revisão
+  economy_mode: 1,            // economia de tokens: limita contexto/histórico e reduz chamadas extras
   context_target_tokens: 60000, // alvo do Context Builder (suba p/ modelos de 1M)
   max_memories: 12,           // memórias recuperadas por resposta
   max_chunks: 10,             // trechos de conversas antigas por resposta
   importance_threshold: 2     // importância mínima p/ salvar memória automática
 };
+
+// Teto de contexto no modo economia (o Context Builder já reduz memórias,
+// trechos e histórico proporcionalmente quando o orçamento é pequeno).
+export const ECONOMY_CONTEXT_TOKENS = 8000;
 
 export function getSettings() {
   const rows = db.prepare('SELECT key, value FROM settings').all();

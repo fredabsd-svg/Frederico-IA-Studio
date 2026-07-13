@@ -4,6 +4,7 @@ import path from 'path';
 import { toolDefinitions, webToolDefinitions, imageToolDefinitions, runTool } from './tools.js';
 import { buildContext, historyBudgetForModel, selectHistoryForContext } from './memory/contextBuilder.js';
 import { indexAfterReply } from './memory/indexer.js';
+import { getSettings } from './memory/memoryService.js';
 import { execInSandbox, workspaceFor, pcFolderMounts } from './sandbox.js';
 import { db, now } from './db.js';
 import { nanoid } from 'nanoid';
@@ -363,7 +364,8 @@ export async function runAgent({ conversationId, userText, model, assistant, web
   if (webSearch) tools = [...tools, ...webToolDefinitions];
   const temperature = temperatureFor(assistant?.personality);
   const userMsgId = saveMessage(conversationId, 'user', userText);
-  const historyLimit = Number(process.env.AGENT_HISTORY_LIMIT || 60);
+  // Economia de tokens: menos mensagens de histórico consideradas por resposta
+  const historyLimit = getSettings().economy_mode ? 20 : Number(process.env.AGENT_HISTORY_LIMIT || 60);
   const messages = [{ role: 'system', content: chosenPrompt }, { role: 'system', content: toolAvailabilityNote(tools) }];
   if (webSearch) messages.push({ role: 'system', content: `VOCÊ TEM ACESSO À INTERNET NESTA CONVERSA — o usuário ativou a pesquisa web.
 - Para buscar: ferramenta web_search. Para ler uma página: web_fetch.

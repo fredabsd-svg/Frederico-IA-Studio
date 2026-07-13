@@ -1,5 +1,5 @@
 import { db } from '../db.js';
-import { getSettings, searchMemories, searchChunks } from './memoryService.js';
+import { getSettings, searchMemories, searchChunks, ECONOMY_CONTEXT_TOKENS } from './memoryService.js';
 import { estimateTokens } from './indexer.js';
 
 // Context Builder 2.0
@@ -27,7 +27,10 @@ function modelContextCap(model) {
 }
 
 export function contextBudgetForModel(model, settings = getSettings()) {
-  const configured = Math.max(4000, Number(settings.context_target_tokens) || 60000);
+  let configured = Math.max(4000, Number(settings.context_target_tokens) || 60000);
+  // Economia de tokens: limita o contexto injetado por mensagem (isso também
+  // reduz memórias, trechos e histórico, que escalam com o orçamento).
+  if (settings.economy_mode) configured = Math.min(configured, ECONOMY_CONTEXT_TOKENS);
   const { cap } = modelContextCap(model);
   return Math.max(4000, Math.min(configured, cap));
 }

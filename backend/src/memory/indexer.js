@@ -65,8 +65,11 @@ export async function indexAfterReply(conversationId) {
       .run(nanoid(), conversationId, conv.title, chunkScope, content, vec, estimateTokens(content), now());
   }
 
-  // 2) Resumo + extração de fatos (uma única chamada barata de LLM)
+  // 2) Resumo + extração de fatos (uma chamada de LLM). No modo economia, roda
+  // só a cada 4 mensagens (em vez de a cada resposta) — o chunk acima, que é
+  // local/grátis, continua sendo salvo sempre.
   if (!s.auto_memory) return;
+  if (s.economy_mode && msgs.length % 4 !== 0) return;
   try {
     const recent = msgs.slice(-6).map(m => `${m.role === 'user' ? 'Usuário' : 'Assistente'}: ${m.content.slice(0, 700)}`).join('\n');
     const input = `Resumo atual da conversa: ${conv.summary_short || '(nenhum)'}\nTotal de mensagens: ${msgs.length}\n\nTrecho recente:\n${recent}`;
