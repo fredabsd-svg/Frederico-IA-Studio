@@ -53,9 +53,15 @@ export const QUICK_ACTIONS = [
   { icon: '🔎', label: 'Pesquisar um assunto', desc: 'Busca atualizada na internet', prompt: 'Pesquise na internet as novidades fiscais e contábeis mais recentes e me faça um resumo.' }
 ];
 
+// Regras de diagramação de Word, resumidas — carregadas no pedido para que
+// qualquer assistente produza um documento profissional.
+const DOC_RULES = 'Siga um padrão profissional de diagramação: fonte única (Arial/Calibri); corpo 11pt em cinza-escuro (não preto puro), justificado; margens 2 cm; uma cor principal (azul-marinho ou a marca do cliente) + neutros; capa com tipo do documento, título e dados do cliente; títulos de seção com destaque visual consistente (barra ou linha na cor principal) e maiores que o corpo; tabelas SEM bordas verticais, com cabeçalho colorido, números à direita e linha de total destacada; caixas de destaque para resumos; cabeçalho e rodapé com "Página X de Y". Gere o .docx com python-docx e, ao final, converta para PDF com soffice para conferir a diagramação. Salve em outputs/.';
+
 // "Apps embutidos": fluxos guiados que preparam um pedido forte para a IA
 // executar no sandbox (ler arquivos, calcular e gerar Excel/Word/PDF reais).
 export const EMBEDDED_APPS = [
+  { icon: '📄', title: 'Documento profissional', desc: 'Word bem diagramado (capa, tabelas, cores)', needsFile: false,
+    prompt: 'Quero criar um documento Word com diagramação profissional. Me pergunte o tipo (relatório, proposta, contrato, parecer, carta, ata...) e os dados necessários; depois gere o documento pronto para enviar ao cliente. ' + DOC_RULES },
   { icon: '🧾', title: 'NF-e / XML em lote', desc: 'Vira uma planilha com todas as notas', needsFile: true,
     prompt: 'Anexei vários arquivos XML de NF-e/NFC-e nesta conversa. Leia TODOS os XMLs e extraia os campos principais (número, série, data de emissão, CNPJ e nome do emitente e do destinatário, valor total, ICMS, e os itens: descrição, NCM, CFOP, quantidade, valor unitário e total). Gere uma planilha .xlsx profissional com uma aba de "Notas" (resumo por nota), uma aba de "Itens" e uma linha de totais.' },
   { icon: '🏦', title: 'Conciliação bancária', desc: 'Casa o extrato com seus lançamentos', needsFile: true,
