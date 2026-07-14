@@ -1,9 +1,18 @@
 // Configuração e dados estáticos da interface
 
-// Em produção o frontend é servido pelo mesmo domínio que a API (proxy),
-// então a base é vazia (mesma origem). Em desenvolvimento, o compose define
-// VITE_API_URL; sem ela, cai no localhost:3001.
-export const API = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:3001' : '');
+// Endereço da API.
+// - Produção: mesmo domínio que a API (proxy), base vazia (mesma origem).
+// - Desenvolvimento (docker compose local): se o app foi aberto de OUTRO
+//   aparelho (celular/tablet na mesma Wi-Fi, ou via Tailscale), "localhost"
+//   apontaria para o próprio aparelho — então usa o mesmo endereço da página
+//   na porta do backend (3001). No PC continua em localhost.
+export const API = (() => {
+  if (import.meta.env.DEV && typeof window !== 'undefined') {
+    const h = window.location.hostname;
+    if (h && h !== 'localhost' && h !== '127.0.0.1') return `http://${h}:3001`;
+  }
+  return import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:3001' : '');
+})();
 
 // Lista de reserva, usada só se a busca do catálogo do provedor falhar.
 export const FALLBACK_MODELS = [
