@@ -367,3 +367,5 @@
 .composer .cmpMenuBtn{height:40px;width:44px}
 .cmpMenuPanel .cmpItem{height:auto;width:100%}
 .cmpMenuPanel .cmpItem>span{flex:1;min-width:0}
+/* Alinha os botões da caixa com o campo de texto (mesma altura, 44px) */
+.composer .cmpMenuBtn,.composer .sendBtn{height:44px;width:44px}
