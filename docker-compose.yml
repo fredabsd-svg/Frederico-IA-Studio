@@ -36,4 +36,7 @@ services:
     volumes:
       - ./frontend:/app
     environment:
-      - VITE_API_URL=http://localhost:3001
+      # Sem VITE_API_URL: o app usa a mesma origem e o Vite repassa /api ao
+      # backend (veja vite.config.js). Assim funciona no PC, na rede e via
+      # Tailscale/HTTPS. O alvo do proxy é o serviço 'backend' na rede do Docker.
+      - VITE_PROXY_TARGET=http://backend:3001
