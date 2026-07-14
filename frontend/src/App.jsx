@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench, CalendarClock, CalendarDays, Inbox, Palette, Gauge } from 'lucide-react';
-import { API, FALLBACK_MODELS, TOOL_INFO, TEMPLATES, SUGGESTIONS, QUICK_ACTIONS, THEMES, EFFORTS, emptyForm } from './constants.js';
+import { API, FALLBACK_MODELS, TOOL_INFO, TEMPLATES, SUGGESTIONS, QUICK_ACTIONS, THEMES, EFFORTS, EFFORT_DESC, emptyForm } from './constants.js';
 import { ToolStep, Slider, Modal, ModelPicker, Collapsible } from './components.jsx';
 import { MemoryPanel } from './MemoryPanel.jsx';
 import { PcFoldersPanel } from './PcFoldersPanel.jsx';
@@ -72,7 +72,7 @@ export default function App() {
   const [themeOpen, setThemeOpen] = useState(false);
   const [listening, setListening] = useState(false);
   const [webSearch, setWebSearch] = useState(false);
-  const [effort, setEffort] = useState(() => localStorage.getItem('fred_effort') || 'moderado');
+  const [effort, setEffort] = useState(() => { const s = localStorage.getItem('fred_effort'); return EFFORTS.some(e => e.id === s) ? s : 'medio'; });
   const [effortOpen, setEffortOpen] = useState(false);
   const effortRef = useRef(null);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -919,16 +919,14 @@ export default function App() {
           <label className="upload" title="Anexar arquivo"><Upload size={18}/><input type="file" multiple onChange={uploadFiles}/></label>
           <button className={`webBtn ${webSearch ? 'on' : ''}`} onClick={() => setWebSearch(w => !w)} title={webSearch ? 'Pesquisa na internet ATIVADA — clique para desativar' : 'Ativar pesquisa na internet'} aria-label="Pesquisa na internet"><Globe size={18}/></button>
           <div className="effortPick" ref={effortRef}>
-            <button className="webBtn effortBtn" onClick={() => setEffortOpen(o => !o)} title={`Esforço da IA: ${EFFORTS.find(e => e.id === effort)?.label}`} aria-label="Esforço da IA">
-              <Gauge size={18}/><span className="effIcon">{EFFORTS.find(e => e.id === effort)?.icon}</span>
-            </button>
+            <button className="webBtn effortBtn" onClick={() => setEffortOpen(o => !o)} title={`Esforço da IA: ${EFFORTS.find(e => e.id === effort)?.label || 'Médio'}`} aria-label="Esforço da IA"><Gauge size={18}/></button>
             {effortOpen && <div className="effortPanel">
-              <div className="effortHead">Esforço da IA</div>
+              <div className="effortTitle">Esforço da IA</div>
+              <div className="effortDesc">{EFFORT_DESC}</div>
               {EFFORTS.map(e => (
                 <button key={e.id} className={`effortOpt ${effort === e.id ? 'sel' : ''}`} onClick={() => { setEffort(e.id); setEffortOpen(false); }}>
-                  <span className="effortEmoji">{e.icon}</span>
-                  <span className="effortText"><b>{e.label}</b><small>{e.desc}</small></span>
-                  {effort === e.id && <Check size={15} className="effortCheck"/>}
+                  <span className="effortLabel">{e.label}{e.badge && <span className="effortBadge">{e.badge}</span>}</span>
+                  {effort === e.id && <Check size={16} className="effortCheck"/>}
                 </button>
               ))}
             </div>}

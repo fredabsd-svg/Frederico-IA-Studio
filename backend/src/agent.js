@@ -13,12 +13,15 @@ import { nanoid } from 'nanoid';
 // nos modelos que raciocinam, via OpenRouter), o número máximo de etapas do
 // loop agêntico e uma instrução de sistema. Assim vale para qualquer modelo.
 const EFFORT = {
-  minimo:   { reasoning: 'low',  steps: 6,  nudge: 'Seja direto e objetivo. Entregue a resposta no menor número de passos possível, sem análises extras.' },
-  moderado: { reasoning: null,   steps: 14, nudge: null },
-  alto:     { reasoning: 'high', steps: 24, nudge: 'Pense passo a passo e confira os números e os resultados das ferramentas antes de responder.' },
-  extra:    { reasoning: 'high', steps: 40, nudge: 'Trabalhe com o máximo de cuidado: planeje, execute cada etapa, verifique os resultados e revise possíveis erros antes de finalizar.' }
+  baixo: { reasoning: 'low',    steps: 6,  nudge: 'Seja direto e objetivo. Entregue a resposta no menor número de passos possível, sem análises extras.' },
+  medio: { reasoning: null,     steps: 14, nudge: null },
+  alto:  { reasoning: 'high',   steps: 24, nudge: 'Pense passo a passo e confira os números e os resultados das ferramentas antes de responder.' },
+  extra: { reasoning: 'high',   steps: 40, nudge: 'Trabalhe com o máximo de cuidado: planeje, execute cada etapa, verifique os resultados e revise possíveis erros antes de finalizar.' },
+  max:   { reasoning: 'high',   steps: 60, nudge: 'Esforço máximo: planeje a solução, execute cada etapa com atenção, verifique todos os resultados intermediários e revise minuciosamente possíveis erros antes de finalizar.' }
 };
-const effortCfg = (e) => EFFORT[e] || EFFORT.moderado;
+// aceita também os nomes antigos (minimo/moderado) para não quebrar preferências salvas
+const EFFORT_ALIAS = { minimo: 'baixo', moderado: 'medio' };
+const effortCfg = (e) => EFFORT[EFFORT_ALIAS[e] || e] || EFFORT.medio;
 
 // Lista os arquivos da pasta outputs (para detectar os que foram gerados)
 function listOutputs(conversationId) {

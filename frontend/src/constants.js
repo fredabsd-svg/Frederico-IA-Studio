@@ -112,11 +112,13 @@ export const THEMES = [
 ];
 
 // Esforço da IA (raciocínio + nº de etapas). Escolhido no chat.
+export const EFFORT_DESC = 'Mais esforço = respostas mais completas, porém mais lentas e com maior consumo de tokens.';
 export const EFFORTS = [
-  { id: 'minimo', label: 'Mínimo', icon: '⚡', desc: 'Rápido e direto — mais barato' },
-  { id: 'moderado', label: 'Moderado', icon: '⚖️', desc: 'Equilíbrio (padrão)' },
-  { id: 'alto', label: 'Alto', icon: '🎯', desc: 'Pensa mais e confere os resultados' },
-  { id: 'extra', label: 'Extra', icon: '🧠', desc: 'Máximo cuidado — mais lento e caro' }
+  { id: 'baixo', label: 'Baixo' },
+  { id: 'medio', label: 'Médio', badge: 'Padrão' },
+  { id: 'alto', label: 'Alto' },
+  { id: 'extra', label: 'Extra' },
+  { id: 'max', label: 'Máx' }
 ];
 
 export const emptyForm = () => ({ id: null, name: '', emoji: '🤖', model: '', system_prompt: '', template: '', tools: TOOL_INFO.map(t => t.name), personality: { form: 50, det: 50, criat: 20 } });
