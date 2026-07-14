@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench, CalendarClock, CalendarDays, Inbox, Palette, Gauge } from 'lucide-react';
+import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench, CalendarClock, CalendarDays, Inbox, Palette, Gauge, SlidersHorizontal } from 'lucide-react';
 import { API, FALLBACK_MODELS, TOOL_INFO, TEMPLATES, SUGGESTIONS, QUICK_ACTIONS, THEMES, EFFORTS, EFFORT_DESC, emptyForm } from './constants.js';
 import { ToolStep, Slider, Modal, ModelPicker, Collapsible } from './components.jsx';
 import { MemoryPanel } from './MemoryPanel.jsx';
@@ -73,8 +73,10 @@ export default function App() {
   const [listening, setListening] = useState(false);
   const [webSearch, setWebSearch] = useState(false);
   const [effort, setEffort] = useState(() => { const s = localStorage.getItem('fred_effort'); return EFFORTS.some(e => e.id === s) ? s : 'medio'; });
-  const [effortOpen, setEffortOpen] = useState(false);
-  const effortRef = useRef(null);
+  const [composerMenuOpen, setComposerMenuOpen] = useState(false);
+  const [menuView, setMenuView] = useState('main');
+  const cmpMenuRef = useRef(null);
+  const fileInputRef = useRef(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [sideHidden, setSideHidden] = useState(() => localStorage.getItem('fred_side_hidden') === '1');
   const [convFilter, setConvFilter] = useState('');
@@ -109,7 +111,7 @@ export default function App() {
   useEffect(() => { busyRef.current = busy; }, [busy]);
   useEffect(() => { localStorage.setItem('fred_effort', effort); }, [effort]);
   useEffect(() => {
-    function onDoc(e) { if (effortRef.current && !effortRef.current.contains(e.target)) setEffortOpen(false); }
+    function onDoc(e) { if (cmpMenuRef.current && !cmpMenuRef.current.contains(e.target)) setComposerMenuOpen(false); }
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
   }, []);
@@ -916,24 +918,29 @@ export default function App() {
         </div>}
         {uploadingFiles && <div className="attachStatus"><span className="spin sm"/><span>Anexando arquivo...</span></div>}
         <div className="composer">
-          <label className="upload" title="Anexar arquivo"><Upload size={18}/><input type="file" multiple onChange={uploadFiles}/></label>
-          <button className={`webBtn ${webSearch ? 'on' : ''}`} onClick={() => setWebSearch(w => !w)} title={webSearch ? 'Pesquisa na internet ATIVADA — clique para desativar' : 'Ativar pesquisa na internet'} aria-label="Pesquisa na internet"><Globe size={18}/></button>
-          <div className="effortPick" ref={effortRef}>
-            <button className="webBtn effortBtn" onClick={() => setEffortOpen(o => !o)} title={`Esforço da IA: ${EFFORTS.find(e => e.id === effort)?.label || 'Médio'}`} aria-label="Esforço da IA"><Gauge size={18}/></button>
-            {effortOpen && <div className="effortPanel">
-              <div className="effortTitle">Esforço da IA</div>
-              <div className="effortDesc">{EFFORT_DESC}</div>
-              {EFFORTS.map(e => (
-                <button key={e.id} className={`effortOpt ${effort === e.id ? 'sel' : ''}`} onClick={() => { setEffort(e.id); setEffortOpen(false); }}>
-                  <span className="effortLabel">{e.label}{e.badge && <span className="effortBadge">{e.badge}</span>}</span>
-                  {effort === e.id && <Check size={16} className="effortCheck"/>}
-                </button>
-              ))}
+          <div className="cmpMenu" ref={cmpMenuRef}>
+            <button className={`cmpMenuBtn ${webSearch || listening ? 'active' : ''}`} onClick={() => { setComposerMenuOpen(o => !o); setMenuView('main'); }} title="Opções da mensagem" aria-label="Opções da mensagem"><SlidersHorizontal size={19}/></button>
+            {composerMenuOpen && <div className="cmpMenuPanel">
+              {menuView === 'main' ? <>
+                <button className="cmpItem" onClick={() => fileInputRef.current?.click()}><Upload size={16}/><span>Anexar arquivo</span></button>
+                <button className="cmpItem" onClick={() => setWebSearch(w => !w)}><Globe size={16}/><span>Pesquisa na internet</span>{webSearch && <Check size={15} className="cmpChk"/>}</button>
+                <button className="cmpItem" onClick={() => setMenuView('effort')}><Gauge size={16}/><span>Esforço da IA</span><span className="cmpVal">{EFFORTS.find(e => e.id === effort)?.label} ›</span></button>
+                <button className={`cmpItem ${listening ? 'on' : ''}`} onClick={() => { toggleMic(); setComposerMenuOpen(false); }}><Mic size={16}/><span>{listening ? 'Parar ditado' : 'Ditar por voz'}</span></button>
+                <button className="cmpItem" disabled={!input.trim()} onClick={() => { sendAsTask(); setComposerMenuOpen(false); }}><Hourglass size={16}/><span>Executar em segundo plano</span></button>
+              </> : <>
+                <button className="cmpItem cmpBack" onClick={() => setMenuView('main')}><span>‹ Esforço da IA</span></button>
+                <div className="cmpDesc">{EFFORT_DESC}</div>
+                {EFFORTS.map(e => (
+                  <button key={e.id} className="cmpItem" onClick={() => { setEffort(e.id); setMenuView('main'); }}>
+                    <span className="effortLabel">{e.label}{e.badge && <span className="effortBadge">{e.badge}</span>}</span>
+                    {effort === e.id && <Check size={15} className="cmpChk"/>}
+                  </button>
+                ))}
+              </>}
             </div>}
           </div>
+          <input ref={fileInputRef} type="file" multiple onChange={uploadFiles} style={{ display: 'none' }}/>
           <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)} onInput={e => { e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 160) + 'px'; }} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }} placeholder={listening ? 'Ouvindo... fale agora' : (webSearch ? 'Pesquisa na internet ativada — pergunte algo atual...' : 'Peça para analisar arquivos, gerar Word, Excel, PDF...')} />
-          <button className={`mic ${listening ? 'on' : ''}`} onClick={toggleMic} title="Falar (ditado por voz)" aria-label="Ditado por voz"><Mic size={18}/></button>
-          <button className="mic" onClick={sendAsTask} disabled={!input.trim()} title="Executar em segundo plano (fila de tarefas) — você pode continuar usando o app" aria-label="Enviar para a fila de tarefas"><Hourglass size={17}/></button>
           <button className="sendBtn" onClick={sendMessage} disabled={busy} aria-label="Enviar"><Send size={18}/></button>
         </div>
       </footer>
