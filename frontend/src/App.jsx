@@ -922,12 +922,13 @@ export default function App() {
             <button className="webBtn effortBtn" onClick={() => setEffortOpen(o => !o)} title={`Esforço da IA: ${EFFORTS.find(e => e.id === effort)?.label}`} aria-label="Esforço da IA">
               <Gauge size={18}/><span className="effIcon">{EFFORTS.find(e => e.id === effort)?.icon}</span>
             </button>
-            {effortOpen && <div className="mpPanel effortPanel">
-              <div className="mpGroupLabel">Esforço da IA</div>
+            {effortOpen && <div className="effortPanel">
+              <div className="effortHead">Esforço da IA</div>
               {EFFORTS.map(e => (
-                <button key={e.id} className={`mpItem ${effort === e.id ? 'sel' : ''}`} onClick={() => { setEffort(e.id); setEffortOpen(false); }}>
-                  <span className="mpItemName">{e.icon} {e.label}{effort === e.id && <Check size={13} style={{ marginLeft: 6 }}/>}</span>
-                  <span className="effDesc">{e.desc}</span>
+                <button key={e.id} className={`effortOpt ${effort === e.id ? 'sel' : ''}`} onClick={() => { setEffort(e.id); setEffortOpen(false); }}>
+                  <span className="effortEmoji">{e.icon}</span>
+                  <span className="effortText"><b>{e.label}</b><small>{e.desc}</small></span>
+                  {effort === e.id && <Check size={15} className="effortCheck"/>}
                 </button>
               ))}
             </div>}
