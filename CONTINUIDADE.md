@@ -1,7 +1,55 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
 > Documento de handoff para continuar o desenvolvimento em uma nova sessão.
-> Última atualização: 2026-07-09. Leia isto ANTES de qualquer mudança.
+> Última atualização: 2026-07-14. Leia isto ANTES de qualquer mudança.
+
+## 0. PONTO ATUAL (2026-07-14) — o que foi feito depois da v. de memória
+
+Branch `claude/new-session-ohbtj0`, PR #1. Tudo validado (esbuild/node --check)
+e enviado. Desde a versão de memória, foi adicionado/corrigido:
+
+- **Reforma visual (ChatGPT/Claude/Jan.ai):** abre em tela de boas-vindas
+  (conversa "rascunho" — registro só no 1º envio via `ensureConversation`,
+  single-flight); barra lateral **recolhível** (`sideHidden`); busca de
+  conversas (procura em TODOS os clientes via `?all=1`); tela de boas-vindas
+  com cards; campo de mensagem arredondado.
+- **Layout da barra lateral:** conversas + ferramentas num único scroll
+  (`.sideScroll`) — histórico com espaço garantido, nada cortado.
+- **Caixa de mensagem:** todos os botões agrupados num **menu único**
+  (`.cmpMenu`, ícone SlidersHorizontal): Anexar, Pesquisa web, Esforço,
+  Ditar, Segundo plano. Só menu + textarea + enviar visíveis. CUIDADO: a regra
+  base `.composer button{height:48px;width:52px}` sobrescreve botões novos —
+  use seletores mais específicos (`.composer .cmpMenuBtn`, `.cmpMenuPanel .cmpItem`).
+- **Seletor de modelos:** filtros (família via `<select>`, lançamentos/NOVO,
+  grátis, contexto, capacidades), favoritos (localStorage), ordenar por
+  novos/baratos. `/api/models` expõe created, context, price, vision, free.
+- **7 temas** (claro/escuro + slate/indigo/emerald/amber/sepia) via classes
+  `.t-<id>` + `theme` state; botão Tema abre seletor.
+- **Esforço da IA** (baixo/medio/alto/extra/max): reasoning effort (OpenRouter)
+  + maxSteps + nudge. Enviado no body do chat; aliases p/ nomes antigos.
+- **Correção de bugs (revisão com 4 agentes):** symlink escape (safeJoin +
+  realInside), BLOCKED_PATHS/isDangerousHostPath, SSRF no web_fetch,
+  execInSandbox (error handler + demux + cap), getContainer single-flight,
+  vazamento de memória entre clientes (findSimilar por escopo + 'passage'),
+  guardas Array.isArray no front, etc.
+- **Economia de tokens** (`economy_mode`, LIGADO por padrão): contexto ~8k,
+  histórico 20, extração de memória só a cada 4 msgs.
+- **Recursos novos:** Ferramentas/apps embutidos (EMBEDDED_APPS: NF-e, OCR,
+  conciliação, comparador de regimes, dashboard, doc profissional), assistente
+  "Documentos profissionais" (seed único via settings.seeded_docpro, Word Design
+  em python-docx), Rotinas agendadas (tabela `schedules` + agendador 1x/min),
+  Calendário fiscal (com obrigações de Tocantins: GIAM/ICMS dia 9, SPED Fiscal
+  dia 15), Caixa de entrada de documentos por cliente (data/inbox).
+- **Heartbeat SSE** (": ping" a cada 15s) contra "Upstream idle timeout".
+- **Acesso no celular:** app agora usa **mesma origem** (API relativa "" +
+  Vite `server.proxy` /api → `backend:3001`; `host:true`, `allowedHosts:true`;
+  compose usa `VITE_PROXY_TARGET`). Habilita Tailscale/HTTPS numa porta só.
+
+**PENDENTE / em andamento:** o usuário ia testar **Tailscale Serve** no Windows
+(`tailscale serve --bg 5173` → `https://<pc>.<tailnet>.ts.net`), com HTTPS ligado
+no admin do Tailscale, para acesso pelo celular com microfone. Confirmar se
+abriu. Próximo passo opcional oferecido: fazer o app/serve iniciar sozinho com
+o Windows. NÃO foi testado de ponta a ponta em Docker (sem Docker neste ambiente).
 
 ## 1. O que é o projeto
 
