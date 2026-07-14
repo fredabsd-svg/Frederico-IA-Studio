@@ -369,3 +369,9 @@
 .cmpMenuPanel .cmpItem>span{flex:1;min-width:0}
 /* Alinha os botões da caixa com o campo de texto (mesma altura, 44px) */
 .composer .cmpMenuBtn,.composer .sendBtn{height:44px;width:44px}
+/* Caixa de mensagem mais limpa: botão de opções sem borda, alinhado ao texto */
+.composer{align-items:center}
+.composer .cmpMenuBtn{height:40px;width:40px;border:none;background:transparent;color:var(--muted);border-radius:11px}
+.composer .cmpMenuBtn:hover{background:var(--panel2);color:var(--accent)}
+.composer .sendBtn{height:40px;width:40px;border-radius:12px}
+.composer textarea{align-self:center}
