@@ -767,6 +767,7 @@ export default function App() {
         <input value={convFilter} onChange={e => setConvFilter(e.target.value)} placeholder="Buscar conversas..."/>
         {convFilter && <button className="convSearchX" onClick={() => setConvFilter('')} aria-label="Limpar busca"><X size={13}/></button>}
       </div>
+      <div className="sideScroll">
       <div className="convList">
         {(() => {
           const q = convFilter.trim().toLowerCase();
@@ -799,6 +800,7 @@ export default function App() {
         <button className="studio" onClick={openAnalytics}><BarChart3 size={16}/> Análises</button>
         <button className="studio" onClick={() => window.open(`${API}/api/backup`, '_blank')} title="Baixa um arquivo .tar.gz com o banco e todos os workspaces"><HardDriveDownload size={16}/> Backup</button>
         <button className="theme" onClick={() => setThemeOpen(true)} title="Trocar o tema do aplicativo"><Palette size={16}/> Tema</button>
+      </div>
       </div>
     </aside>
 
