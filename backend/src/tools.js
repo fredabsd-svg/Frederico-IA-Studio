@@ -4,14 +4,15 @@ import { execInSandbox, workspaceFor, safeJoin } from './sandbox.js';
 
 export const toolDefinitions = [
   { type: 'function', function: { name: 'run_python', description: 'Executa Python 3.12 real na sandbox Linux isolada. Use para análises, planilhas, Word, PDF, gráficos, OCR e automações. Pacotes instalados incluem pandas, numpy, openpyxl, xlsxwriter, xlrd, pyxlsb, odfpy, python-docx, python-pptx, reportlab, weasyprint, PyMuPDF/fitz, pdfplumber, camelot, ocrmypdf, pytesseract, duckdb, polars, pyarrow, plotly, seaborn, num2words, xmltodict e jsonschema.', parameters: { type: 'object', properties: { code: { type: 'string' } }, required: ['code'] } } },
-  { type: 'function', function: { name: 'bash', description: 'Executa comando bash na sandbox. Programas DISPONÍVEIS: soffice/LibreOffice headless (converter .xls/.ods/.doc/.odt/.pptx e gerar PDF), ffmpeg, pdftotext, ocrmypdf, tesseract, jq, xmlstarlet, qpdf, imagemagick, zip/unzip, node e java. SEM internet: pip/apt/npm install não funcionam.', parameters: { type: 'object', properties: { command: { type: 'string' } }, required: ['command'] } } },
+  { type: 'function', function: { name: 'bash', description: 'Executa comando bash na sandbox. Programas DISPONÍVEIS: soffice/LibreOffice headless (converter .xls/.ods/.doc/.odt/.pptx e gerar PDF), ffmpeg, pdftotext, ocrmypdf, tesseract, jq, xmlstarlet, qpdf, imagemagick, zip/unzip, node e java. TEM internet: curl/wget funcionam e dá para "pip install --user" e "npm install" (apt install NÃO — sem root).', parameters: { type: 'object', properties: { command: { type: 'string' } }, required: ['command'] } } },
   { type: 'function', function: { name: 'write_file', description: 'Cria ou sobrescreve arquivo no workspace da sessão.', parameters: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path','content'] } } },
   { type: 'function', function: { name: 'read_file', description: 'Lê um arquivo de texto do workspace da sessão.', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } } },
   { type: 'function', function: { name: 'list_files', description: 'Lista arquivos enviados e gerados na sessão.', parameters: { type: 'object', properties: { folder: { type: 'string', enum: ['uploads','outputs','.'] } } } } },
   { type: 'function', function: { name: 'zip_outputs', description: 'Compacta a pasta outputs em um arquivo ZIP.', parameters: { type: 'object', properties: { zip_name: { type: 'string' } } } } }
 ];
 
-// Ferramentas de internet (rodam no BACKEND, que tem rede — o sandbox não tem).
+// Ferramentas de busca web (rodam no BACKEND): entregam resultados prontos com
+// fontes. O sandbox também tem rede direta para baixar dados/consumir APIs.
 // Só são oferecidas ao modelo quando o usuário liga o botão de pesquisa.
 export const webToolDefinitions = [
   { type: 'function', function: { name: 'web_search', description: 'Pesquisa na internet e retorna os principais resultados (título, link e resumo). Use para informações atuais: notícias, legislação, tabelas, cotações, prazos.', parameters: { type: 'object', properties: { query: { type: 'string', description: 'Termos da pesquisa' } }, required: ['query'] } } },
@@ -134,18 +135,15 @@ async function generateImage(ws, args) {
   return { ok: true, saved, note: 'Imagem salva em outputs — o sistema exibirá a prévia e o download ao usuário.' };
 }
 
-const blocked = ['rm -rf /', 'mkfs', ':(){', 'shutdown', 'reboot', 'docker ', 'sudo ', 'su ', 'curl ', 'wget ', 'ssh ', 'scp '];
-// Instalações são bloqueadas com mensagem educativa: o sandbox não tem rede.
-const installCmds = ['pip install', 'pip3 install', 'python -m pip', 'apt install', 'apt-get install', 'npm install', 'npm i '];
+// Rede ligada: curl/wget e instalações (pip/npm) são permitidos. Continuam
+// bloqueados apenas comandos destrutivos ou que tentam escalar privilégios.
+const blocked = ['rm -rf /', 'mkfs', ':(){', 'shutdown', 'reboot', 'docker ', 'sudo ', 'su '];
 function guardCommand(command) {
   const lower = String(command).toLowerCase();
-  for (const bad of installCmds) if (lower.includes(bad)) {
-    throw new Error('O sandbox NÃO tem internet: instalar pacotes é impossível. Use somente as bibliotecas já instaladas (pandas, openpyxl, xlrd, PyMuPDF, ffmpeg etc.). Se uma biblioteca essencial estiver faltando, diga ao usuário qual é.');
-  }
   for (const bad of blocked) if (lower.includes(bad)) throw new Error(`Comando bloqueado: ${bad}`);
 }
 
-export async function runTool(conversationId, name, args = {}) {
+export async function runTool(conversationId, name, args = {}, sandboxOptions = {}) {
   if (name === 'web_search') return JSON.stringify(await webSearch(args.query || ''));
   if (name === 'web_fetch') return JSON.stringify(await webFetch(args.url || ''));
   const ws = workspaceFor(conversationId);
@@ -155,7 +153,7 @@ export async function runTool(conversationId, name, args = {}) {
     fs.writeFileSync(script, args.code || '', 'utf8');
     try { fs.chownSync(script, 1000, 1000); } catch {}
     try {
-      const result = await execInSandbox(conversationId, `python ${path.basename(script)}`);
+      const result = await execInSandbox(conversationId, `python ${path.basename(script)}`, undefined, sandboxOptions);
       return JSON.stringify(result);
     } finally {
       try { fs.unlinkSync(script); } catch {}
@@ -163,7 +161,7 @@ export async function runTool(conversationId, name, args = {}) {
   }
   if (name === 'bash') {
     guardCommand(args.command || '');
-    return JSON.stringify(await execInSandbox(conversationId, args.command));
+    return JSON.stringify(await execInSandbox(conversationId, args.command, undefined, sandboxOptions));
   }
   if (name === 'write_file') {
     const target = safeJoin(ws.base, args.path);
@@ -186,7 +184,7 @@ export async function runTool(conversationId, name, args = {}) {
   if (name === 'zip_outputs') {
     const zip = (args.zip_name || 'outputs.zip').replace(/[^a-zA-Z0-9._-]/g, '_');
     return JSON.stringify(await execInSandbox(conversationId,
-      `cd /workspace && zip -r "outputs/${zip}" outputs -x "outputs/${zip}"`));
+      `cd /workspace && zip -r "outputs/${zip}" outputs -x "outputs/${zip}"`, undefined, sandboxOptions));
   }
   throw new Error(`Ferramenta desconhecida: ${name}`);
 }

@@ -36,7 +36,7 @@ function mentionsOutputPath(text) {
   return /(?:sandbox:)?(?:\/workspace\/|\/mnt\/user-data\/)?outputs\//i.test(String(text || ''));
 }
 
-async function recoverAlternateOutputs(conversationId) {
+async function recoverAlternateOutputs(conversationId, sandboxOptions = {}) {
   const script = [
     'mkdir -p /workspace/outputs',
     'target="$(readlink -f /workspace/outputs)"',
@@ -47,7 +47,7 @@ async function recoverAlternateOutputs(conversationId) {
     '  find "$d" -maxdepth 1 -type f -print0 | while IFS= read -r -d "" f; do cp -f "$f" "/workspace/outputs/$(basename "$f")"; done',
     'done'
   ].join('\n');
-  try { await execInSandbox(conversationId, script, 15000); } catch {}
+  try { await execInSandbox(conversationId, script, 15000, sandboxOptions); } catch {}
 }
 
 function referencedOutputFiles(text, files) {
@@ -67,10 +67,14 @@ function referencedOutputFiles(text, files) {
 }
 
 // Avisa o modelo sobre as pastas reais do PC liberadas pelo usuário
-function pcFoldersNote() {
+function pcFoldersNote(sandboxOptions = {}) {
   const mounts = pcFolderMounts();
   if (!mounts.length) return null;
-  const list = mounts.map(m => `- ${m.target}  →  pasta "${m.label}" do computador do usuário (${m.writable ? 'LEITURA + ESCRITA: você pode ler, renomear, mover e organizar' : 'SOMENTE LEITURA: nunca altere/apague'})`).join('\n');
+  const onlyFolderId = sandboxOptions.readOnlyPc ? null : (sandboxOptions.writablePcFolderId ? String(sandboxOptions.writablePcFolderId) : null);
+  const list = mounts.map(m => {
+    const writable = !sandboxOptions.readOnlyPc && !!m.writable && (!onlyFolderId || m.id === onlyFolderId);
+    return `- ${m.target}  →  pasta "${m.label}" do computador do usuário (${writable ? 'LEITURA + ESCRITA: você pode ler, renomear, mover e organizar' : 'SOMENTE LEITURA: nunca altere/apague'})`;
+  }).join('\n');
   return `PASTAS DO COMPUTADOR DO USUÁRIO disponíveis no sandbox (arquivos REAIS da máquina dele):
 ${list}
 
@@ -128,12 +132,15 @@ Responda em português do Brasil, de forma objetiva e técnica.
 Você PODE e DEVE escrever, executar e testar código usando as ferramentas (run_python, bash, write_file, read_file, list_files, zip_outputs).
 
 Fluxo de trabalho:
-- Antes de responder, EXECUTE o código no sandbox e confira o exit code; se der erro, corrija e rode de novo até funcionar.
-- Salve os arquivos do projeto em /workspace/outputs para o usuário baixar. Em projetos com vários arquivos, crie a estrutura de pastas e use zip_outputs para empacotar tudo em um .zip.
-- Mostre os trechos de código relevantes em blocos markdown com a linguagem correta, e explique de forma resumida o que fez e como rodar.
+- Antes de editar um projeto existente, leia as instruções locais (AGENTS.md/AGENTS.override.md), o README, os manifests de dependências e os comandos de teste já existentes. Entenda a estrutura antes de propor mudanças.
+- Preserve mudanças que já existam no diretório: nunca use git reset, git checkout, limpeza destrutiva ou exclusões em massa para "arrumar" o ambiente.
+- Faça alterações pequenas e coerentes com os padrões do projeto. Depois, execute a verificação mais relevante disponível e confira o exit code; se der erro, corrija quando estiver dentro do escopo.
+- Quando estiver trabalhando em uma pasta montada em /mnt/pc/, ela é a fonte de verdade do projeto. Use /workspace/outputs apenas para novos projetos ou arquivos que o usuário queira baixar.
+- Em revisão de código, priorize bugs, regressões, riscos e testes ausentes; não altere o diretório de trabalho a menos que o modo ou o usuário peça explicitamente.
+- Ao concluir, informe de forma curta os arquivos alterados, a verificação executada e qualquer limitação que permaneceu.
 
 Limites importantes do sandbox:
-- NÃO há internet: não é possível instalar pacotes novos (pip/npm) nem baixar nada. Use a biblioteca padrão do Python 3.12 e os pacotes já instalados (pandas, numpy, openpyxl, python-docx, reportlab, matplotlib, pillow, beautifulsoup4, lxml, etc.). Se algo exigir um pacote ausente, avise o usuário em vez de tentar instalar.
+- HÁ internet: você pode baixar dados e instalar pacotes com "pip install --user <pacote>" ou "npm install <pacote>" quando faltar algo. O "apt install" não funciona (sem root). Já vêm instalados pandas, numpy, openpyxl, python-docx, reportlab, matplotlib, pillow, beautifulsoup4, lxml, etc.; prefira-os e instale só o que realmente faltar (instalar leva tempo).
 - A execução roda como usuário sem privilégios, com tempo limitado por comando. Divida tarefas longas.
 - Python e shell são executados de verdade; para outras linguagens, escreva os arquivos e explique como o usuário roda na máquina dele.
 
@@ -188,7 +195,8 @@ REGRAS DO SANDBOX (muito importante):
 - Evite muitas execuções exploratórias; planeje e faça de uma vez. Salve os arquivos finais em /workspace/outputs.
 - Para GERAR ou EDITAR IMAGENS com IA, use a ferramenta generate_image (não tente desenhar via matplotlib quando o usuário pedir uma imagem artística/realista).
 - SEMPRE escreva uma frase curta explicando o que vai fazer ANTES de cada chamada de ferramenta, e verifique o resultado (exit code/erro) depois. Nunca encadeie ferramentas em silêncio.
-- O sandbox NÃO tem internet e NÃO instala pacotes (pip/apt/npm sem rede). Use somente o inventário já instalado informado nesta chamada. Se algo exigir uma biblioteca fora desta lista, avise o usuário.`;
+- O sandbox TEM acesso à internet. Você pode baixar dados, consumir APIs (requests/urllib), usar curl/wget e instalar pacotes com "pip install --user <pacote>" ou "npm install <pacote>". O "apt install" NÃO funciona (o sandbox roda sem privilégios de root). Instalar leva tempo: prefira o que já está instalado e só instale quando realmente faltar.
+- RESPONSABILIDADE com a internet: acesse ou baixe apenas o que a tarefa pedir. NUNCA envie arquivos, conteúdo ou dados do usuário para serviços/endereços externos sem que o usuário tenha pedido isso explicitamente.`;
 
 function promptFor(assistant) {
   const base = assistant ? (assistant.system_prompt || AGENTS.geral.prompt) : AGENTS.geral.prompt;
@@ -199,6 +207,29 @@ function toolsFor(assistant) {
   const allowed = assistant?.tools;
   if (!Array.isArray(allowed) || !allowed.length) return all;
   return all.filter(t => allowed.includes(t.function.name));
+}
+
+function developerContextFor(request) {
+  if (!request || typeof request !== 'object') return null;
+  const mode = ['plan', 'build', 'review'].includes(request.mode) ? request.mode : null;
+  if (!mode) return null;
+  const projectId = String(request.projectId || '');
+  const project = projectId ? pcFolderMounts().find(folder => folder.id === projectId) : null;
+  const readOnlyProject = mode !== 'build' || !project?.writable;
+  const projectNote = project
+    ? `Projeto selecionado: "${project.label}" em ${project.target}. ${readOnlyProject ? 'Ele está montado somente para leitura nesta tarefa.' : 'Somente esta pasta do PC está autorizada para escrita nesta tarefa.'}`
+    : 'Nenhuma pasta do PC foi selecionada. Trabalhe apenas no workspace temporário e entregue arquivos em /workspace/outputs quando necessário.';
+  const modeNote = {
+    plan: 'PLANEJAR: investigue a base antes de sugerir mudanças. Leia AGENTS.md/AGENTS.override.md, README, manifests, comandos de teste e pontos de entrada. Não altere arquivos do projeto, não faça staging, commits ou instalações. Entregue uma leitura curta do projeto, um plano ordenado com arquivos prováveis, riscos e verificações.',
+    build: 'CONSTRUIR: antes da primeira edição, investigue o projeto e suas instruções locais. Faça somente mudanças dentro da missão, preserve alterações existentes e execute a verificação mais relevante disponível. Não instale dependências sem pedido explícito. Ao final, enumere arquivos alterados, verificações e limitações.',
+    review: 'REVISAR: examine git status e git diff, incluindo mudanças não rastreadas quando forem relevantes. Não altere arquivos, não faça staging, commits, reset ou revert. Responda primeiro com achados priorizados, apontando arquivo e causa; depois, lacunas de teste ou riscos restantes.'
+  }[mode];
+  const rules = String(request.rules || '').trim().slice(0, 6000);
+  return {
+    readOnlyProject,
+    sandboxOptions: readOnlyProject ? { readOnlyPc: true } : { writablePcFolderId: project.id },
+    note: ['MODO DESENVOLVEDOR ATIVO.', projectNote, modeNote, rules ? `REGRAS DO PROJETO:\n${rules}` : null].filter(Boolean).join('\n\n')
+  };
 }
 
 function toolAvailabilityNote(tools) {
@@ -278,7 +309,7 @@ function addUsage(acc, u) {
 
 // Valida automaticamente os arquivos gerados (abre? abas? erros de fórmula?)
 const VALIDATABLE = /\.(xlsx|pdf|docx)$/i;
-async function validateOutputs(conversationId, files, onEvent) {
+async function validateOutputs(conversationId, files, onEvent, sandboxOptions = {}) {
   const targets = files.filter(f => VALIDATABLE.test(f.name)).slice(0, 5);
   if (!targets.length) return {};
   onEvent({ type: 'status', content: 'Validando arquivos gerados...' });
@@ -324,7 +355,7 @@ async function validateOutputs(conversationId, files, onEvent) {
     'print(json.dumps(out))'
   ].join('\n');
   try {
-    const raw = await runTool(conversationId, 'run_python', { code });
+    const raw = await runTool(conversationId, 'run_python', { code }, sandboxOptions);
     const r = JSON.parse(raw);
     if (r.exitCode !== 0) return {};
     const line = String(r.output || '').trim().split('\n').pop();
@@ -370,22 +401,26 @@ async function gate(control, onEvent) {
   return false;
 }
 
-export async function runAgent({ conversationId, userText, model, assistant, webSearch, effort, onEvent }) {
+export async function runAgent({ conversationId, userText, model, assistant, webSearch, effort, developer, onEvent }) {
   const chosenModel = model || assistant?.model || process.env.DEEPSEEK_MODEL || 'deepseek-chat';
   const chosenPrompt = promptFor(assistant);
   const eff = effortCfg(effort);
+  const developerContext = developerContextFor(developer);
+  const sandboxOptions = developerContext?.sandboxOptions || {};
   let tools = toolsFor(assistant);
+  if (developerContext?.readOnlyProject) tools = tools.filter(tool => !['write_file', 'zip_outputs', 'generate_image'].includes(tool.function.name));
   if (webSearch) tools = [...tools, ...webToolDefinitions];
   const temperature = temperatureFor(assistant?.personality);
   const userMsgId = saveMessage(conversationId, 'user', userText);
   // Economia de tokens: menos mensagens de histórico consideradas por resposta
   const historyLimit = getSettings().economy_mode ? 20 : Number(process.env.AGENT_HISTORY_LIMIT || 60);
   const messages = [{ role: 'system', content: chosenPrompt }, { role: 'system', content: toolAvailabilityNote(tools) }];
+  if (developerContext) messages.push({ role: 'system', content: developerContext.note });
   if (eff.nudge) messages.push({ role: 'system', content: eff.nudge });
   if (webSearch) messages.push({ role: 'system', content: `VOCÊ TEM ACESSO À INTERNET NESTA CONVERSA — o usuário ativou a pesquisa web.
 - Para buscar: ferramenta web_search. Para ler uma página: web_fetch.
 - NUNCA diga que "não tem acesso à internet": você tem, através dessas duas ferramentas. Use-as para informações atuais/externas (legislação, notícias, tabelas, cotações, prazos) e cite as fontes (links).
-- Atenção à diferença: o SANDBOX Python continua SEM rede (não tente pip install / requests / urllib lá dentro). Internet = somente via web_search/web_fetch. Se faltar uma biblioteca Python, diga qual é ao usuário em vez de tentar instalar.` });
+- O SANDBOX Python também tem internet direta: dá para usar requests/urllib e instalar com "pip install --user". Use web_search/web_fetch quando quiser resultados de busca prontos com fontes; use a rede do sandbox quando precisar baixar dados ou consumir uma API diretamente no código.` });
   let memoryMeta = null;
   // Memória de longo prazo: perfil, notas, resumos e recuperação semântica
   try {
@@ -400,7 +435,7 @@ export async function runAgent({ conversationId, userText, model, assistant, web
   }
   const note = uploadsNote(conversationId);
   if (note) messages.push({ role: 'system', content: note });
-  const pcNote = pcFoldersNote();
+  const pcNote = pcFoldersNote(sandboxOptions);
   if (pcNote) messages.push({ role: 'system', content: pcNote });
   const historyPlan = selectHistoryForContext({
     conversationId,
@@ -476,7 +511,7 @@ export async function runAgent({ conversationId, userText, model, assistant, web
       const preview = String(args.code || args.command || args.prompt || args.path || args.query || args.url || '').slice(0, 400);
       onEvent({ type: 'tool_start', name, preview });
       let result;
-      try { result = await runTool(conversationId, name, args); }
+      try { result = await runTool(conversationId, name, args, sandboxOptions); }
       catch (err) { result = JSON.stringify({ error: err.message }); }
       onEvent({ type: 'tool_result', name, content: result.slice(0, 2000) });
       messages.push({ role: 'tool', tool_call_id: call.id, content: result });
@@ -518,13 +553,13 @@ export async function runAgent({ conversationId, userText, model, assistant, web
   let outputsAfter = listOutputs(conversationId);
   let newFiles = outputsAfter.filter(f => outputsBefore.get(f.path) !== f.mtimeMs);
   if (!newFiles.length && mentionsOutputPath(finalText)) {
-    await recoverAlternateOutputs(conversationId);
+    await recoverAlternateOutputs(conversationId, sandboxOptions);
     outputsAfter = listOutputs(conversationId);
     newFiles = outputsAfter.filter(f => outputsBefore.get(f.path) !== f.mtimeMs);
   }
   if (!newFiles.length && mentionsOutputPath(finalText)) newFiles = referencedOutputFiles(finalText, outputsAfter);
   if (newFiles.length) {
-    const checks = stopped ? {} : await validateOutputs(conversationId, newFiles, onEvent);
+    const checks = stopped ? {} : await validateOutputs(conversationId, newFiles, onEvent, sandboxOptions);
     const stmt = db.prepare('INSERT INTO files (id,conversation_id,message_id,kind,name,path,size,created_at) VALUES (?,?,?,?,?,?,?,?)');
     const cards = [];
     for (const f of newFiles) { const id = nanoid(); stmt.run(id, conversationId, msgId, 'output', f.name, f.path, f.size, now()); cards.push({ id, name: f.name, path: f.path, size: f.size, check: checks[f.path] }); }

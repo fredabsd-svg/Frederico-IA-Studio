@@ -17,7 +17,7 @@ export function pcFolderMounts() {
     let label = String(r.label || 'pasta').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9_-]/g, '_').slice(0, 30) || 'pasta';
     while (used.has(label)) label = `${label}_`;
     used.add(label);
-    return { source: r.host_path, target: `/mnt/pc/${label}`, writable: !!r.writable, label: r.label };
+    return { id: r.id, source: r.host_path, target: `/mnt/pc/${label}`, writable: !!r.writable, label: r.label };
   });
 }
 
@@ -39,7 +39,7 @@ const memory = process.env.SANDBOX_MEMORY || '1024m';
 const cpus = Number(process.env.SANDBOX_CPUS || 1);
 
 fs.mkdirSync(root, { recursive: true });
-const sessions = new Map(); // id -> { container, lastUsed }
+const sessions = new Map(); // id -> { container, lastUsed, policyKey }
 
 // Remove containers ociosos (sem exec há 30 min) para não acumular
 const IDLE_TTL_MS = Number(process.env.SANDBOX_IDLE_TTL_MS || 30 * 60 * 1000);
@@ -82,24 +82,49 @@ export async function ensureSandboxImage() {
 // da mesma conversa criem dois containers, deixando um órfão para sempre.
 const creating = new Map();
 
-export async function getContainer(conversationId) {
-  const entry = sessions.get(conversationId);
-  if (entry) { entry.lastUsed = Date.now(); return entry.container; }
-  if (creating.has(conversationId)) return creating.get(conversationId);
-  const p = createContainer(conversationId);
-  creating.set(conversationId, p);
-  try { return await p; }
-  finally { creating.delete(conversationId); }
+function sandboxPolicy(options = {}) {
+  const readOnlyPc = !!options.readOnlyPc;
+  const writablePcFolderId = readOnlyPc || !options.writablePcFolderId ? null : String(options.writablePcFolderId);
+  return {
+    readOnlyPc,
+    writablePcFolderId,
+    key: readOnlyPc ? 'read-only' : (writablePcFolderId ? `write:${writablePcFolderId}` : 'default')
+  };
 }
 
-async function createContainer(conversationId) {
+async function dropSession(conversationId) {
+  const entry = sessions.get(conversationId);
+  if (!entry) return;
+  sessions.delete(conversationId);
+  try { await entry.container.remove({ force: true }); } catch {}
+}
+
+export async function getContainer(conversationId, options = {}) {
+  const policy = sandboxPolicy(options);
+  const entry = sessions.get(conversationId);
+  if (entry?.policyKey === policy.key) { entry.lastUsed = Date.now(); return entry.container; }
+  if (entry) await dropSession(conversationId);
+  const creatingKey = `${conversationId}:${policy.key}`;
+  if (creating.has(creatingKey)) return creating.get(creatingKey);
+  const p = createContainer(conversationId, policy);
+  creating.set(creatingKey, p);
+  try { return await p; }
+  finally { creating.delete(creatingKey); }
+}
+
+async function createContainer(conversationId, policy) {
   await ensureSandboxImage();
   const { base } = workspaceFor(conversationId);
   const hostBase = path.join(hostRoot, conversationId);
   const name = `frederico-ai-${conversationId}-${nanoid(5)}`;
   // Pastas do PC do usuário viram mounts /mnt/pc/<label> (Mounts evita o
   // problema de parsing de caminhos do Windows com ":" no formato de Bind).
-  const mounts = pcFolderMounts().map(m => ({ Type: 'bind', Source: m.source, Target: m.target, ReadOnly: !m.writable }));
+  const mounts = pcFolderMounts().map(m => ({
+    Type: 'bind',
+    Source: m.source,
+    Target: m.target,
+    ReadOnly: policy.readOnlyPc || !m.writable || (policy.writablePcFolderId !== null && m.id !== policy.writablePcFolderId)
+  }));
   const container = await docker.createContainer({
     Image: image,
     name,
@@ -107,7 +132,12 @@ async function createContainer(conversationId) {
     Cmd: ['sleep', 'infinity'],
     Tty: false,
     OpenStdin: false,
-    NetworkDisabled: true,
+    // Rede LIGADA por opção do usuário: o sandbox tem acesso à internet.
+    // ATENÇÃO: isto reduz o isolamento — código gerado pela IA (ou injetado
+    // por um documento malicioso) passa a poder acessar a rede e, em tese,
+    // exfiltrar dados/arquivos montados. Demais proteções seguem ativas
+    // (CapDrop ALL, no-new-privileges, uid 1000, limites de CPU/RAM/PIDs).
+    NetworkDisabled: false,
     HostConfig: {
       Binds: [`${hostBase}:/workspace`],
       Mounts: mounts,
@@ -121,7 +151,7 @@ async function createContainer(conversationId) {
     }
   });
   await container.start();
-  sessions.set(conversationId, { container, lastUsed: Date.now() });
+  sessions.set(conversationId, { container, lastUsed: Date.now(), policyKey: policy.key });
   return container;
 }
 
@@ -134,8 +164,8 @@ function parseMemory(value) {
 
 const MAX_OUTPUT_BYTES = Number(process.env.SANDBOX_MAX_OUTPUT_BYTES || 8 * 1024 * 1024);
 
-export async function execInSandbox(conversationId, cmd, timeoutMs = Number(process.env.TOOL_TIMEOUT_MS || 45000)) {
-  let container = await getContainer(conversationId);
+export async function execInSandbox(conversationId, cmd, timeoutMs = Number(process.env.TOOL_TIMEOUT_MS || 45000), options = {}) {
+  let container = await getContainer(conversationId, options);
   const makeExec = (c) => c.exec({ Cmd: ['bash', '-lc', cmd], AttachStdout: true, AttachStderr: true, WorkingDir: '/workspace', User: 'sandbox' });
   let exec;
   try {
@@ -144,7 +174,7 @@ export async function execInSandbox(conversationId, cmd, timeoutMs = Number(proc
     // Container morreu (ex.: kill por timeout anterior + AutoRemove).
     // Remove a referência morta e recria uma vez.
     sessions.delete(conversationId);
-    container = await getContainer(conversationId);
+    container = await getContainer(conversationId, options);
     exec = await makeExec(container);
   }
   const stream = await exec.start({ hijack: true, stdin: false });
