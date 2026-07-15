@@ -2,14 +2,13 @@ import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Download, FileText, FileSpreadsheet, FilePenLine, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench, CalendarClock, CalendarDays, Inbox, Palette, Gauge, SlidersHorizontal, Paperclip, MoreHorizontal, FolderOpen } from 'lucide-react';
+import { Download, FileText, FileSpreadsheet, FilePenLine, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench, CalendarClock, Inbox, Palette, Gauge, SlidersHorizontal, Paperclip, MoreHorizontal, FolderOpen } from 'lucide-react';
 import { API, FALLBACK_MODELS, TOOL_INFO, TEMPLATES, SUGGESTIONS, QUICK_ACTIONS, THEMES, EFFORTS, EFFORT_DESC, emptyForm } from './constants.js';
 import { ToolStep, Slider, Modal, Drawer, ModelPicker, Collapsible, useAppDialog } from './components.jsx';
 import { MemoryPanel } from './MemoryPanel.jsx';
 import { PcFoldersPanel } from './PcFoldersPanel.jsx';
 import { ToolsPanel } from './ToolsPanel.jsx';
 import { RoutinesPanel } from './RoutinesPanel.jsx';
-import { FiscalPanel } from './FiscalPanel.jsx';
 import { InboxPanel } from './InboxPanel.jsx';
 
 const QUICK_ACTION_ICON = {
@@ -63,7 +62,6 @@ export default function App() {
   const [pcOpen, setPcOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [routinesOpen, setRoutinesOpen] = useState(false);
-  const [fiscalOpen, setFiscalOpen] = useState(false);
   const [inboxOpen, setInboxOpen] = useState(false);
   const [team, setTeam] = useState(false);
   const [teamOpen, setTeamOpen] = useState(false);
@@ -871,7 +869,7 @@ export default function App() {
       <nav className="sideBottom" aria-label="Recursos do app">
         <div className="navGroup">
           <div className="navGroupTitle">Produção</div>
-          <button className="studio toolsBtn" onClick={() => setToolsOpen(true)} title="Fluxos prontos: NF-e, conciliação, OCR e comparador de regimes"><Wrench size={16}/> Ferramentas</button>
+          <button className="studio toolsBtn" onClick={() => setToolsOpen(true)} title="Fluxos prontos: documentos, planilhas, OCR e dashboards"><Wrench size={16}/> Ferramentas</button>
           <button className="studio" onClick={() => setInboxOpen(true)} title="Acumule documentos por cliente e abra tudo numa conversa"><Inbox size={16}/> Caixa de entrada</button>
           <button className="studio" onClick={openTemplates}><BookMarked size={16}/> Templates</button>
         </div>
@@ -879,7 +877,6 @@ export default function App() {
           <div className="navGroupTitle">Automação</div>
           <button className="studio" onClick={() => { setTasksOpen(true); pollTasks(); }}><ListTodo size={16}/> Tarefas{tasksActive && <span className="badge">{tasks.filter(t => t.status === 'queued' || t.status === 'running').length}</span>}</button>
           <button className="studio" onClick={() => setRoutinesOpen(true)} title="Programe tarefas para rodarem sozinhas"><CalendarClock size={16}/> Rotinas</button>
-          <button className="studio" onClick={() => setFiscalOpen(true)} title="Vencimentos das principais obrigações do mês"><CalendarDays size={16}/> Calendário fiscal</button>
         </div>
         <div className="navGroup">
           <div className="navGroupTitle">Conhecimento</div>
@@ -1082,7 +1079,7 @@ export default function App() {
     {studioOpen && <Modal title={form.id ? 'Editar assistente' : 'Novo assistente'} icon={<Bot size={18}/>} onClose={() => setStudioOpen(false)}>
       <div className="frow">
         <label className="grow">Nome
-          <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Ex.: Assistente Contábil"/>
+          <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Ex.: Assistente de escrita"/>
         </label>
         <label className="emojiField">Ícone
           <input value={form.emoji} onChange={e => setForm(f => ({ ...f, emoji: e.target.value }))} maxLength={2}/>
@@ -1136,7 +1133,6 @@ export default function App() {
     {pcOpen && <PcFoldersPanel showToast={showToast} askConfirm={askConfirm} onClose={() => setPcOpen(false)}/>}
     {toolsOpen && <ToolsPanel onPick={pickTool} onClose={() => setToolsOpen(false)}/>}
     {routinesOpen && <RoutinesPanel assistants={assistants} clients={clients} showToast={showToast} askConfirm={askConfirm} onClose={() => setRoutinesOpen(false)}/>}
-    {fiscalOpen && <FiscalPanel showToast={showToast} onClose={() => setFiscalOpen(false)}/>}
     {inboxOpen && <InboxPanel clients={clients} clientId={clientId} showToast={showToast} askConfirm={askConfirm} onOpenConversation={(id) => { fetchConversations(); openConversation(id); }} onClose={() => setInboxOpen(false)}/>}
     {themeOpen && <Modal title="Tema do aplicativo" icon={<Palette size={18}/>} onClose={() => setThemeOpen(false)}>
       <p className="muted" style={{ margin: 0 }}>Escolha a aparência do app. A sua escolha fica salva neste computador.</p>

@@ -205,7 +205,7 @@ export function MemoryPanel({ assistants, clients, clientId, showToast, onClose,
       </div>
 
       <div className="memAdd">
-        <input value={newContent} onChange={e => setNewContent(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); add(); } }} placeholder="Adicionar memória manual (ex.: Meu nome é Frederico, sou contador, CRC TO-006157/O-8)"/>
+        <input value={newContent} onChange={e => setNewContent(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); add(); } }} placeholder="Adicionar memória manual (ex.: Meu nome é Frederico e prefiro respostas curtas)"/>
         <select value={newScope} onChange={e => setNewScope(e.target.value)} title="Escopo">
           <option value="global">🌐 Global</option>
           <option value="office">Escritorio</option>

@@ -33,7 +33,7 @@ const EXTRACT_PROMPT = `Você é o módulo de memória de um assistente. Analise
 }
 Regras para facts:
 - Salve apenas o que for útil no FUTURO: identidade (nome, profissão, registro), preferências de resposta/formato, projetos em andamento, decisões tomadas, pendências.
-- Escreva cada fato de forma independente (ex.: "O usuário é contador, CRC TO-006157/O-8").
+- Escreva cada fato de forma independente (ex.: "O usuário prefere respostas curtas e diretas").
 - NÃO salve: dados temporários, senhas/chaves/tokens, conteúdo ambíguo, detalhes sem valor futuro.
 - Se não houver nada digno de memória, devolva "facts": [].`;
 

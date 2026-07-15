@@ -51,7 +51,7 @@ function seedAssistants() {
   if (db.prepare('SELECT COUNT(*) c FROM assistants').get().c > 0) return;
   const defaultModel = process.env.DEEPSEEK_MODEL || 'deepseek/deepseek-chat';
   const defaults = [
-    { name: 'Contábil / Fiscal', emoji: '📊', prompt: AGENTS.contabil.prompt },
+    { name: 'Assistente geral', emoji: '🤖', prompt: AGENTS.geral.prompt },
     { name: 'Programação (Codex)', emoji: '💻', prompt: AGENTS.codigo.prompt }
   ];
   const stmt = db.prepare('INSERT INTO assistants (id,name,emoji,model,system_prompt,tools,personality,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)');
@@ -79,7 +79,7 @@ TABELAS profissionais: SEM bordas verticais (só horizontais); cabeçalho com fu
 
 DESTAQUES: caixas de resumo/alerta com fundo suave + barra colorida à esquerda + rótulo em caixa alta. KPIs: valores grandes em negrito na cor principal com rótulos pequenos em cinza embaixo.
 
-CABEÇALHO/RODAPÉ (a partir da 2ª página): nome do documento à esquerda, empresa à direita, linha fina; rodapé com emissor à esquerda e "Página X de Y" à direita (campo). Em documentos contábeis/jurídicos, inclua CRC/OAB e endereço no rodapé.
+CABEÇALHO/RODAPÉ (a partir da 2ª página): nome do documento à esquerda, empresa à direita, linha fina; rodapé com emissor à esquerda e "Página X de Y" à direita (campo). Quando houver dados de registro profissional ou endereço do emissor, inclua-os no rodapé.
 
 REGISTRO POR TIPO: relatório/proposta = design forte (capa, KPIs, callouts, cores). Contrato/ata/documento registrável = SÓBRIO: sem cores fortes, justificado, numeração rígida, negrito só estrutural. Parecer = intermediário.
 
@@ -104,11 +104,10 @@ seedDocProAssistant();
 function seedTemplates() {
   if (db.prepare('SELECT COUNT(*) c FROM templates').get().c > 0) return;
   const seeds = [
-    { name: '📊 DFC (Demonstração do Fluxo de Caixa)', content: 'Analise o arquivo enviado (razão/extratos) e gere uma planilha Excel com a DFC pelo método direto: abas Resumo, DFC (Operacional, Investimento e Financiamento) e Lançamentos classificados. Valide que os líquidos por atividade batem entre as abas, que o saldo final = saldo inicial + variação, e que não há erros de fórmula. Formate profissionalmente (moeda R$, datas dd/mm/aaaa, cabeçalhos congelados) e inclua gráficos da evolução do caixa.' },
-    { name: '💰 Fluxo de caixa projetado 12 meses', content: 'Gere uma planilha Excel de fluxo de caixa projetado para 12 meses, com seções de entradas e saídas por categoria, totais mensais, saldo acumulado, formatação profissional em tons de azul e um gráfico de linha com a evolução do saldo. Inclua uma aba de premissas editável.' },
+    { name: '📊 Planilha a partir de dados', content: 'Analise o arquivo enviado (CSV, Excel, texto ou PDF) e gere uma planilha Excel bem organizada: uma aba de dados limpos, uma aba de resumo com totais e indicadores, e gráficos quando fizer sentido. Formate profissionalmente (cabeçalhos congelados, números alinhados à direita) e explique o que fez.' },
     { name: '📄 Proposta comercial', content: 'Crie um documento Word com uma proposta comercial profissional contendo: capa com título e data, apresentação da empresa, escopo dos serviços, cronograma, investimento (tabela de valores), condições de pagamento, validade da proposta e espaço para assinaturas. Use linguagem formal e formatação elegante.' },
-    { name: '⚖️ Petição (estrutura)', content: 'Crie um documento Word com a estrutura de uma petição: endereçamento, qualificação das partes, título da ação, seção DOS FATOS, seção DO DIREITO com espaço para fundamentação, DOS PEDIDOS numerados, valor da causa e fechamento com local, data e assinatura do advogado (nome e OAB). Deixe marcadores [PREENCHER] nos pontos que dependem do caso concreto.' },
-    { name: '📝 Contrato de prestação de serviços', content: 'Crie um documento Word com um contrato de prestação de serviços completo: qualificação das partes (CONTRATANTE e CONTRATADA com espaços para dados), objeto, obrigações de cada parte, valor e forma de pagamento, prazo e vigência, rescisão, multas, confidencialidade, foro e assinaturas com testemunhas. Linguagem jurídica clara.' },
+    { name: '📝 Contrato de prestação de serviços', content: 'Crie um documento Word com um contrato de prestação de serviços completo: qualificação das partes (CONTRATANTE e CONTRATADA com espaços para dados), objeto, obrigações de cada parte, valor e forma de pagamento, prazo e vigência, rescisão, multas, confidencialidade, foro e assinaturas com testemunhas. Linguagem clara.' },
+    { name: '✉️ E-mail profissional', content: 'Escreva um e-mail profissional a partir do assunto e dos pontos que eu indicar. Me pergunte o objetivo, o destinatário e o tom desejado (formal ou cordial), e devolva o texto pronto para enviar, com assunto sugerido.' },
     { name: '📈 Relatório mensal', content: 'Analise os arquivos enviados e gere um relatório mensal em PDF com: capa, sumário executivo com os principais números, análise por seção com tabelas e gráficos, destaques e pontos de atenção do período, e conclusão com recomendações. Visual profissional e limpo.' }
   ];
   const stmt = db.prepare('INSERT INTO templates (id,name,content,created_at) VALUES (?,?,?,?)');

@@ -112,10 +112,10 @@ const client = new OpenAI({
 // Modos de assistente (cada um com um system prompt pré-definido).
 // O usuário escolhe no seletor "Assistente" da interface.
 export const AGENTS = {
-  contabil: {
-    label: 'Contábil / Fiscal',
-    prompt: `Você é o Frederico AI Studio, um assistente profissional com sandbox Linux.
-Responda em português do Brasil. Foque em contabilidade, fiscal, financeiro, Excel, Word, PDF e automação.
+  geral: {
+    label: 'Uso geral',
+    prompt: `Você é o Frederico AI Studio, um assistente pessoal versátil com um sandbox Linux real.
+Responda em português do Brasil, de forma clara e útil.
 Quando o usuário pedir arquivos, gere arquivos reais dentro de /workspace/outputs usando Python.
 Para Excel use openpyxl ou xlsxwriter; para Word use python-docx; para PDF use reportlab/weasyprint.
 Sempre valide os arquivos gerados listando a pasta outputs. Não invente links: os links serão exibidos pelo sistema.
@@ -142,7 +142,7 @@ Nunca invente links de download: o sistema exibe os arquivos automaticamente.`
 };
 
 // Mantido por compatibilidade
-export const systemPrompt = AGENTS.contabil.prompt;
+export const systemPrompt = AGENTS.geral.prompt;
 
 // Ajusta o prompt conforme os sliders de personalidade do assistente
 function personalitySuffix(p) {
@@ -161,7 +161,7 @@ const PYTHON_INVENTORY = [
   'Planilhas/dados: pandas, numpy, openpyxl, xlsxwriter, xlrd (.xls antigo), pyxlsb (.xlsb), odfpy (.ods), duckdb, polars, pyarrow, tabulate.',
   'Documentos/relatórios: python-docx, python-pptx, reportlab, weasyprint, jinja2, matplotlib, pillow, plotly, seaborn.',
   'PDF/OCR: PyMuPDF/fitz, pypdf, PyPDF2, pdfplumber, camelot, ocrmypdf, pdf2image, pytesseract (idioma por), opencv-python-headless.',
-  'Fiscal/contábil BR: validate-docbr (CPF/CNPJ/PIS/CNH/título), num2words (valor por extenso pt_BR), xmltodict (NF-e/CT-e), signxml (XML-DSig offline), jsonschema (eSocial/Reinf/DCTFWeb), rapidfuzz, phonenumbers, unidecode, python-dateutil, pytz, tzdata, PyYAML.',
+  'Utilidades: python-dateutil, pytz, tzdata, PyYAML, rapidfuzz, phonenumbers, unidecode, xmltodict (ler XML), jsonschema (validar JSON), num2words (número por extenso).',
   'Web/texto offline: beautifulsoup4, lxml.'
 ];
 
@@ -188,11 +188,10 @@ REGRAS DO SANDBOX (muito importante):
 - Evite muitas execuções exploratórias; planeje e faça de uma vez. Salve os arquivos finais em /workspace/outputs.
 - Para GERAR ou EDITAR IMAGENS com IA, use a ferramenta generate_image (não tente desenhar via matplotlib quando o usuário pedir uma imagem artística/realista).
 - SEMPRE escreva uma frase curta explicando o que vai fazer ANTES de cada chamada de ferramenta, e verifique o resultado (exit code/erro) depois. Nunca encadeie ferramentas em silêncio.
-- O sandbox NÃO tem internet e NÃO instala pacotes (pip/apt/npm sem rede). Use somente o inventário já instalado informado nesta chamada.
-- SEM acesso à SEFAZ/Receita (sandbox sem rede): dá para LER, VALIDAR e ASSINAR XML fiscal offline, mas NÃO transmitir. Se algo exigir uma biblioteca fora desta lista, avise o usuário.`;
+- O sandbox NÃO tem internet e NÃO instala pacotes (pip/apt/npm sem rede). Use somente o inventário já instalado informado nesta chamada. Se algo exigir uma biblioteca fora desta lista, avise o usuário.`;
 
 function promptFor(assistant) {
-  const base = assistant ? (assistant.system_prompt || AGENTS.contabil.prompt) : AGENTS.contabil.prompt;
+  const base = assistant ? (assistant.system_prompt || AGENTS.geral.prompt) : AGENTS.geral.prompt;
   return base + personalitySuffix(assistant?.personality) + SANDBOX_RULES;
 }
 function toolsFor(assistant) {
@@ -505,7 +504,7 @@ export async function runAgent({ conversationId, userText, model, assistant, web
   }
   else if (!completedNaturally) {
     // Atingiu o limite de etapas ainda usando ferramentas: avisa o usuário
-    const note = `\n\n_⚠️ Atingi o limite de ${maxSteps} etapas de processamento nesta tarefa. Ela ficou muito longa — provavelmente pela dificuldade de extrair os dados. Sugestão: peça em partes (ex.: 1º "extraia os lançamentos do Razão para um CSV", depois "gere a planilha DFC a partir do CSV")._`;
+    const note = `\n\n_⚠️ Atingi o limite de ${maxSteps} etapas de processamento nesta tarefa. Ela ficou muito longa — provavelmente pela dificuldade de extrair os dados. Sugestão: peça em partes (ex.: 1º "extraia os dados do arquivo para um CSV", depois "gere a planilha final a partir do CSV")._`;
     finalText += note;
     onEvent({ type: 'delta', content: note });
   } else if (!finalText.trim()) {
