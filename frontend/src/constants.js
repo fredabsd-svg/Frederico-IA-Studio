@@ -49,10 +49,10 @@ export const SUGGESTIONS = [
 
 // Cards de ação rápida da tela de boas-vindas (estilo ChatGPT/Claude/Jan.ai)
 export const QUICK_ACTIONS = [
-  { icon: '📄', label: 'Resumir um documento', desc: 'Envie um PDF ou Word e receba um resumo', prompt: 'Analise o arquivo que enviei e faça um resumo com os principais números e pontos importantes.' },
-  { icon: '📊', label: 'Gerar uma planilha', desc: 'Excel pronto com fórmulas e totais', prompt: 'Gere uma planilha xlsx com um fluxo de caixa de 12 meses, com totais e formatação profissional.' },
-  { icon: '✍️', label: 'Criar um documento', desc: 'Word, proposta, contrato ou carta', prompt: 'Crie um documento Word com uma proposta de serviços contábeis, bem formatado.' },
-  { icon: '🔎', label: 'Pesquisar um assunto', desc: 'Busca atualizada na internet', prompt: 'Pesquise na internet as novidades fiscais e contábeis mais recentes e me faça um resumo.' }
+  { icon: 'document', label: 'Resumir um documento', desc: 'Envie um PDF ou Word e receba um resumo', prompt: 'Analise o arquivo que enviei e faça um resumo com os principais números e pontos importantes.' },
+  { icon: 'spreadsheet', label: 'Gerar uma planilha', desc: 'Excel pronto com fórmulas e totais', prompt: 'Gere uma planilha xlsx com um fluxo de caixa de 12 meses, com totais e formatação profissional.' },
+  { icon: 'writing', label: 'Criar um documento', desc: 'Word, proposta, contrato ou carta', prompt: 'Crie um documento Word com uma proposta de serviços contábeis, bem formatado.' },
+  { icon: 'search', label: 'Pesquisar um assunto', desc: 'Busca atualizada na internet', prompt: 'Pesquise na internet as novidades fiscais e contábeis mais recentes e me faça um resumo.' }
 ];
 
 // Regras de diagramação de Word, resumidas — carregadas no pedido para que

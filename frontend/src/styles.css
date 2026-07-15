@@ -210,6 +210,7 @@
 .quickCard{padding:14px 16px;background:transparent;border-radius:14px;box-shadow:none}
 .quickCard:hover{border-color:var(--accent);background:var(--panel2);transform:none;box-shadow:none}
 .qcIcon{background:var(--panel2);border-color:transparent}
+.qcIcon svg{color:var(--accent)}
 /* Campo de mensagem com sombra mais leve */
 .composer{box-shadow:0 2px 12px rgba(0,0,0,.06)}
 .composer:focus-within{box-shadow:0 2px 16px rgba(79,140,255,.14)}
@@ -375,3 +376,153 @@
 .composer .cmpMenuBtn:hover{background:var(--panel2);color:var(--accent)}
 .composer .sendBtn{height:40px;width:40px;border-radius:12px}
 .composer textarea{align-self:center}
+
+/* ===== Coesao de navegacao, gavetas e formulários ===== */
+:where(button,a,input,textarea,select):focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.clientLabel{display:block;margin:0 0 6px;font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
+.sideSectionTitle,.navGroupTitle{font-size:10.5px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
+.sideSectionTitle{padding:2px 5px 4px}
+.sideBottom{gap:14px;padding-top:14px}
+.navGroup{display:flex;flex-direction:column;gap:3px}
+.navGroupTitle{padding:0 6px 4px}
+.navGroup .studio{margin:0;min-height:34px}
+.navGroupAdmin{padding-top:2px}
+
+/* Os recursos de conversa ficam agrupados no desktop e recolhidos em um menu no celular. */
+.mobileTopActions{display:none}
+.drawerOverlay{position:fixed;inset:0;z-index:80;display:flex;justify-content:flex-end;background:rgba(2,6,20,.34)}
+.drawer{height:100%;width:min(640px,100vw);display:flex;flex-direction:column;background:var(--panel);border-left:1px solid var(--line);box-shadow:-18px 0 48px rgba(0,0,0,.28)}
+.drawer .modalHead{flex:none;padding:16px 20px}
+.drawer .modalBody{flex:1;min-height:0;overflow-y:auto;padding:18px 20px 26px}
+.modalOverlay{z-index:100}
+.modalHead .x{display:flex;align-items:center;justify-content:center;width:36px;height:36px;padding:0;border-radius:8px}
+.modalHead .x:hover{background:var(--panel2);color:var(--accent)}
+.drawerIntro{margin:0;color:var(--muted);font-size:13.5px;line-height:1.5}
+.drawerEmpty{min-height:150px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;border:1px dashed var(--line);border-radius:10px;color:var(--muted);text-align:center;padding:18px;font-size:13px}
+.drawerEmpty svg{color:var(--accent)}
+.decisionDialog{max-width:430px}
+.dialogCopy{margin:0;color:var(--text);line-height:1.5}
+.dialogForm{display:flex;flex-direction:column;gap:16px}
+.dialogForm label{display:flex;flex-direction:column;gap:7px;font-size:13px;font-weight:600;color:var(--muted)}
+.dialogForm input{border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:8px;padding:10px 12px;font:inherit}
+
+/* Arquivos viram uma superfície própria, sem exigir que a pessoa procure o histórico. */
+.assetList{display:flex;flex-direction:column;gap:8px}
+.assetRow{display:flex;align-items:stretch;gap:7px}
+.assetOpen{flex:1;min-width:0;display:flex;align-items:center;gap:11px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--text);padding:10px 12px;text-decoration:none}
+.assetOpen:hover{border-color:var(--accent)}
+.assetIcon{flex:none;width:34px;height:34px;display:flex;align-items:center;justify-content:center;border-radius:8px;background:var(--panel);color:var(--accent)}
+.assetInfo{min-width:0;flex:1;display:flex;flex-direction:column;gap:2px}
+.assetInfo b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13.5px}
+.assetInfo small{color:var(--muted);font-size:11.5px}
+.assetDelete{flex:none;width:40px;padding:0;display:flex;align-items:center;justify-content:center;color:var(--muted)}
+.assetDelete:hover{color:#ef4444;border-color:#ef4444}
+
+/* Memória: cada atividade tem sua própria área para evitar um painel denso demais. */
+.memTabs{display:flex;gap:4px;overflow-x:auto;padding-bottom:2px;border-bottom:1px solid var(--line)}
+.memTabs button{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;border:none;border-radius:7px;background:transparent;color:var(--muted);padding:8px 10px;font-size:12.5px;font-weight:600}
+.memTabs button:hover{background:var(--panel2);color:var(--text)}
+.memTabs button.on{background:var(--panel2);color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)}
+.memTabBadge{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;border-radius:999px;background:var(--accent);color:#fff;font-size:10px;font-variant-numeric:tabular-nums}
+.memPanelSection{display:flex;flex-direction:column;gap:14px}
+.sectionLead{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted);line-height:1.45}
+.sectionLead b{color:var(--text);font-size:14px}
+.suggestBox{display:flex;flex-direction:column;gap:9px}
+.suggestItem{display:flex;flex-direction:column;gap:9px;border:1px solid var(--line);border-radius:10px;background:var(--panel2);padding:12px}
+.suggestActions{display:flex;flex-wrap:wrap;gap:7px}
+.suggestActions button{display:inline-flex;align-items:center;gap:6px;padding:7px 10px;font-size:12.5px}
+.suggestActions .primary{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:600}
+.suggestActions .danger{color:#ef4444;border-color:#ef4444}
+.memImportActions{padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--panel2)}
+.memImportActions .memScopePicker{flex:1;min-width:190px}
+.memoryDrawer .memConfig{margin:0}
+
+/* Anexar é uma ação principal do compositor e não fica escondida em um menu. */
+.composer .attachBtn{height:40px;width:40px;flex:none;border:none;background:transparent;color:var(--muted);border-radius:11px;padding:0;display:flex;align-items:center;justify-content:center}
+.composer .attachBtn:hover{background:var(--panel2);color:var(--accent)}
+
+@media(max-width:980px){
+  .topbar{position:relative;min-height:64px;padding:8px 12px;gap:8px}
+  .topLeft{flex:1;min-width:0;gap:7px}
+  .topLeft .mpicker{flex:1;min-width:0}
+  .topLeft .mpBtn{width:100%;max-width:none;min-width:0;justify-content:space-between;padding:9px 10px}
+  .topLeft .mpBtn .mpName{max-width:none}
+  .desktopPickers{display:none}
+  .mobileTopActions{display:block;flex:none}
+  .mobileTopActions>.gear{width:40px;height:40px;padding:0}
+  .mobileTopPanel{position:absolute;right:0;top:calc(100% + 8px);z-index:65;width:min(360px,calc(100vw - 24px));max-height:calc(100dvh - 82px);overflow:auto;display:flex;flex-direction:column;gap:12px;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--panel);box-shadow:0 16px 42px rgba(0,0,0,.32)}
+  .mobileTopSection{display:flex;flex-direction:column;gap:8px;padding-bottom:12px;border-bottom:1px solid var(--line)}
+  .mobileTopSection:last-child{padding-bottom:0;border-bottom:0}
+  .mobileTopLabel{font-size:11px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
+  .mobileTopPanel .teamPanel{width:auto;padding:0;gap:7px}
+  .mobileTopPanel .teamHint{font-size:11.5px}
+  .mobileTopField{display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:700;color:var(--muted)}
+  .mobileTopField select{width:100%;padding:9px 10px;font-weight:400}
+  .mobileTopButtonGrid{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+  .mobileTopButtonGrid button{min-width:0;display:flex;align-items:center;justify-content:center;gap:6px;border-radius:8px;padding:9px 8px;font-size:12.5px}
+  .drawer{width:min(600px,100vw)}
+}
+
+@media(max-width:640px){
+  .modalOverlay{padding:12px}
+  .modal{border-radius:10px}
+  .modalHead,.drawer .modalHead{padding:14px 16px}
+  .modalHead h2{font-size:16px}
+  .modalBody,.drawer .modalBody{padding:16px}
+  .frow,.memAdd,.statRow{flex-direction:column}
+  .memAdd select,.memAdd .primary{width:100%}
+  .cfgRow{align-items:stretch;flex-direction:column;gap:6px}
+  .cfgRow input{width:100%;text-align:left}
+  .memTabs button{padding:8px 9px}
+  .suggestActions button{flex:1;justify-content:center}
+  .assetOpen{padding:9px 10px}
+  .assetInfo small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .analyticsDrawer .field{min-width:0;overflow-x:auto}
+  .analyticsDrawer .atable{min-width:440px}
+}
+
+/* Seletor de modelos: escolha guiada primeiro, catálogo detalhado depois. */
+.mpPanel{width:min(480px,calc(100vw - 24px));max-height:min(620px,78vh);border-radius:10px}
+.mpSearch{min-height:48px}
+.mpSearchClear{flex:none;border:none;background:transparent;color:var(--muted);padding:4px;display:flex;border-radius:6px}
+.mpSearchClear:hover{color:var(--accent);background:var(--panel2)}
+.mpPrimaryControls{display:flex;align-items:end;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line)}
+.mpPurposeField{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px;color:var(--muted);font-size:10.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase}
+.mpPurposeField select{width:100%;min-width:0;border-radius:8px;padding:8px 10px;font-size:13px;font-weight:600;letter-spacing:0;text-transform:none}
+.mpFilterToggle{height:35px;flex:none;display:inline-flex;align-items:center;justify-content:center;gap:6px;border-radius:8px;padding:0 10px;font-size:12.5px;font-weight:700;color:var(--muted)}
+.mpFilterToggle:hover,.mpFilterToggle.on{border-color:var(--accent);color:var(--accent)}
+.mpFilterToggle b{min-width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;border-radius:999px;background:var(--accent);color:#fff;font-size:10px;font-variant-numeric:tabular-nums}
+.mpViewTabs{display:flex;gap:2px;padding:7px 12px 0;border-bottom:1px solid var(--line)}
+.mpViewTabs button{flex:1;min-width:0;border:none;border-radius:7px 7px 0 0;background:transparent;color:var(--muted);padding:8px 6px;font-size:12px;font-weight:700;white-space:nowrap}
+.mpViewTabs button:hover{background:var(--panel2);color:var(--text)}
+.mpViewTabs button.on{color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)}
+.mpAdvanced{padding:10px 12px 12px;border-bottom:1px solid var(--line);background:var(--panel2)}
+.mpAdvancedHead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;font-size:11px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
+.mpAdvancedHead button{border:none;background:transparent;color:var(--accent);padding:0;font-size:12px;font-weight:700;text-transform:none;letter-spacing:0}
+.mpAdvancedFields{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.mpAdvancedFields label{display:flex;flex-direction:column;gap:4px;font-size:11px;font-weight:700;color:var(--muted)}
+.mpAdvancedFields select{width:100%;min-width:0;border-radius:7px;padding:7px 8px;font-size:12px;color:var(--text)}
+.mpFilterChecks{display:grid;grid-template-columns:1fr 1fr;gap:7px 10px;margin-top:10px}
+.mpFilterChecks label{display:flex;align-items:center;gap:7px;min-width:0;color:var(--text);font-size:12px;line-height:1.2}
+.mpFilterChecks input{width:15px;height:15px;margin:0;accent-color:var(--accent);flex:none}
+.mpList{padding:6px 6px 10px}
+.mpPurposeHint{display:flex;flex-direction:column;gap:3px;padding:9px 10px 5px;color:var(--muted);font-size:12px;line-height:1.35}
+.mpPurposeHint strong{color:var(--text);font-size:13px}
+.mpSection{padding-top:2px}
+.mpSectionHead{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 10px 4px;color:var(--muted);font-size:10.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase}
+.mpSectionHead em{font-style:normal;font-variant-numeric:tabular-nums}
+.mpCatalogLink{display:block;width:calc(100% - 12px);margin:7px 6px 2px;border:1px solid var(--line);border-radius:8px;background:transparent;color:var(--accent);padding:8px 10px;font-size:12.5px;font-weight:700;text-align:center}
+.mpCatalogLink:hover{border-color:var(--accent);background:rgba(79,140,255,.08)}
+.mpItem{border-radius:8px}
+.mpPick{border-radius:7px}
+
+@media(max-width:520px){
+  .mpPrimaryControls{align-items:stretch;flex-direction:column}
+  .mpFilterToggle{height:36px}
+  .mpAdvancedFields{grid-template-columns:1fr}
+  .mpViewTabs button{font-size:11.5px;padding-inline:4px}
+}
+
+@media(max-width:640px){
+  .topLeft .mpPanel{position:fixed;top:72px;left:12px;right:12px;width:auto;max-height:calc(100dvh - 84px)}
+}

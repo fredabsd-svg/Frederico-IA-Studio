@@ -2,15 +2,22 @@ import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Download, FileText, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench, CalendarClock, CalendarDays, Inbox, Palette, Gauge, SlidersHorizontal } from 'lucide-react';
+import { Download, FileText, FileSpreadsheet, FilePenLine, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench, CalendarClock, CalendarDays, Inbox, Palette, Gauge, SlidersHorizontal, Paperclip, MoreHorizontal, FolderOpen } from 'lucide-react';
 import { API, FALLBACK_MODELS, TOOL_INFO, TEMPLATES, SUGGESTIONS, QUICK_ACTIONS, THEMES, EFFORTS, EFFORT_DESC, emptyForm } from './constants.js';
-import { ToolStep, Slider, Modal, ModelPicker, Collapsible } from './components.jsx';
+import { ToolStep, Slider, Modal, Drawer, ModelPicker, Collapsible, useAppDialog } from './components.jsx';
 import { MemoryPanel } from './MemoryPanel.jsx';
 import { PcFoldersPanel } from './PcFoldersPanel.jsx';
 import { ToolsPanel } from './ToolsPanel.jsx';
 import { RoutinesPanel } from './RoutinesPanel.jsx';
 import { FiscalPanel } from './FiscalPanel.jsx';
 import { InboxPanel } from './InboxPanel.jsx';
+
+const QUICK_ACTION_ICON = {
+  document: FileText,
+  spreadsheet: FileSpreadsheet,
+  writing: FilePenLine,
+  search: Search
+};
 
 function MemoryTrace({ memory, onOpenMemory }) {
   if (!memory?.enabled) return null;
@@ -97,17 +104,21 @@ export default function App() {
   const [clientId, setClientId] = useState(() => localStorage.getItem('fred_client') || '');
   const [exportOpen, setExportOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [filesDrawerOpen, setFilesDrawerOpen] = useState(false);
+  const [topActionsOpen, setTopActionsOpen] = useState(false);
   const [tasks, setTasks] = useState([]);
   const [tasksOpen, setTasksOpen] = useState(false);
   const prevTasksRef = useRef([]);
   const endRef = useRef(null);
   const inputRef = useRef(null);
   const recognitionRef = useRef(null);
+  const topActionsRef = useRef(null);
   const toastTimer = useRef(null);
   const copyTimer = useRef(null);
   const dragDepth = useRef(0);
   const busyRef = useRef(false);
   const creatingConvRef = useRef(null);
+  const { askConfirm, askPrompt, dialog: appDialog } = useAppDialog();
   useEffect(() => { busyRef.current = busy; }, [busy]);
   useEffect(() => { localStorage.setItem('fred_effort', effort); }, [effort]);
   useEffect(() => {
@@ -140,6 +151,11 @@ export default function App() {
   // Fecha o painel da equipe ao clicar fora
   useEffect(() => {
     function onDoc(e) { if (teamRef.current && !teamRef.current.contains(e.target)) setTeamOpen(false); }
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, []);
+  useEffect(() => {
+    function onDoc(e) { if (topActionsRef.current && !topActionsRef.current.contains(e.target)) setTopActionsOpen(false); }
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
   }, []);
@@ -224,7 +240,12 @@ export default function App() {
   function openTemplates() { loadTemplates(); setTplOpen(true); }
   function useTemplate(t) { setInput(t.content); setTplOpen(false); inputRef.current?.focus(); }
   async function saveAsTemplate(m) {
-    const name = prompt('Nome do template:', (m.content || '').slice(0, 40));
+    const name = await askPrompt({
+      title: 'Salvar template',
+      label: 'Nome do template',
+      initialValue: (m.content || '').slice(0, 40),
+      confirmLabel: 'Salvar template'
+    });
     if (!name?.trim()) return;
     try {
       await fetch(`${API}/api/templates`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name.trim(), content: m.content }) });
@@ -233,7 +254,13 @@ export default function App() {
   }
   async function deleteTemplate(id, e) {
     e.stopPropagation();
-    if (!confirm('Excluir este template?')) return;
+    const confirmed = await askConfirm({
+      title: 'Excluir template',
+      message: 'Este template será removido da sua biblioteca. Essa ação não pode ser desfeita.',
+      confirmLabel: 'Excluir template',
+      destructive: true
+    });
+    if (!confirmed) return;
     try { await fetch(`${API}/api/templates/${id}`, { method: 'DELETE' }); await loadTemplates(); } catch {}
   }
 
@@ -257,7 +284,13 @@ export default function App() {
   async function editMessage(m, idx) {
     const isSaved = m.id && !String(m.id).startsWith('local-');
     if (isSaved) {
-      if (!confirm('Editar esta mensagem vai apagá-la junto com tudo o que veio depois nesta conversa, para regravar a partir daqui. Continuar?')) return;
+      const confirmed = await askConfirm({
+        title: 'Editar e regravar a conversa?',
+        message: 'Esta mensagem e tudo o que veio depois serão removidos para que a conversa seja regravada a partir daqui.',
+        confirmLabel: 'Continuar',
+        destructive: true
+      });
+      if (!confirmed) return;
       try {
         const res = await fetch(`${API}/api/conversations/${current.id}/truncate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messageId: m.id }) });
         if (!res.ok) throw new Error();
@@ -297,7 +330,7 @@ export default function App() {
     setToolsOpen(false);
     startNewChat();
     setInput(app.prompt);
-    if (app.needsFile) showToast('Agora anexe o(s) arquivo(s) no clipe 📎 e clique em Enviar.', 'ok');
+    if (app.needsFile) showToast('Agora anexe o(s) arquivo(s) no botão Anexar e clique em Enviar.', 'ok');
     setTimeout(() => inputRef.current?.focus(), 60);
   }
 
@@ -308,6 +341,8 @@ export default function App() {
     setFiles([]);
     setInput('');
     setMenuOpen(false);
+    setFilesDrawerOpen(false);
+    setTopActionsOpen(false);
   }
 
   // ---- Clientes / Projetos ----
@@ -323,7 +358,11 @@ export default function App() {
     } catch {}
   }
   async function addClient() {
-    const name = prompt('Nome do cliente ou projeto:');
+    const name = await askPrompt({
+      title: 'Novo cliente ou projeto',
+      label: 'Nome',
+      confirmLabel: 'Criar cliente'
+    });
     if (!name?.trim()) return;
     try {
       const c = await (await fetch(`${API}/api/clients`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name.trim() }) })).json();
@@ -334,7 +373,13 @@ export default function App() {
   async function removeClient() {
     if (!clientId) return;
     const c = clients.find(x => x.id === clientId);
-    if (!confirm(`Remover o cliente "${c?.name || ''}"? As conversas dele NÃO são apagadas — voltam para "Geral".`)) return;
+    const confirmed = await askConfirm({
+      title: `Remover ${c?.name || 'este cliente'}?`,
+      message: 'As conversas não serão apagadas: elas voltarão para Geral.',
+      confirmLabel: 'Remover cliente',
+      destructive: true
+    });
+    if (!confirmed) return;
     try {
       await fetch(`${API}/api/clients/${clientId}`, { method: 'DELETE' });
       await loadClients();
@@ -440,7 +485,13 @@ export default function App() {
 
   async function deleteConversation(id, e) {
     e.stopPropagation();
-    if (!confirm('Apagar esta conversa e todos os seus arquivos? Esta ação não pode ser desfeita.')) return;
+    const confirmed = await askConfirm({
+      title: 'Apagar conversa?',
+      message: 'A conversa e todos os arquivos dela serão apagados. Essa ação não pode ser desfeita.',
+      confirmLabel: 'Apagar conversa',
+      destructive: true
+    });
+    if (!confirmed) return;
     try {
       await fetch(`${API}/api/conversations/${id}`, { method: 'DELETE' });
       await fetchConversations();
@@ -457,6 +508,12 @@ export default function App() {
       const d = await res.json();
       setFiles(Array.isArray(d) ? d : []);
     } catch {}
+  }
+
+  async function openFilesDrawer() {
+    if (!current?.id) { showToast('Abra uma conversa para ver os arquivos dela.'); return; }
+    await loadFiles(current.id);
+    setFilesDrawerOpen(true);
   }
 
   // ---- Ditado por voz (Web Speech API) ----
@@ -487,7 +544,13 @@ export default function App() {
 
   async function deleteFile(f) {
     if (!current) return;
-    if (!confirm(`Excluir o arquivo "${f.name}"?`)) return;
+    const confirmed = await askConfirm({
+      title: 'Excluir arquivo?',
+      message: `"${f.name}" será removido desta conversa.`,
+      confirmLabel: 'Excluir arquivo',
+      destructive: true
+    });
+    if (!confirmed) return;
     try {
       const encoded = f.path.split('/').map(encodeURIComponent).join('/');
       await fetch(`${API}/api/conversations/${current.id}/files/${encoded}`, { method: 'DELETE' });
@@ -596,7 +659,13 @@ export default function App() {
 
   async function deleteAssistant() {
     if (!form.id) return;
-    if (!confirm('Excluir este assistente?')) return;
+    const confirmed = await askConfirm({
+      title: 'Excluir assistente?',
+      message: 'O assistente será removido. As conversas existentes continuarão preservadas.',
+      confirmLabel: 'Excluir assistente',
+      destructive: true
+    });
+    if (!confirmed) return;
     try {
       await fetch(`${API}/api/assistants/${form.id}`, { method: 'DELETE' });
       setStudioOpen(false);
@@ -721,6 +790,16 @@ export default function App() {
 
   const currentAssistant = assistants.find(a => a.id === assistantId);
   const uploads = files.filter(f => f.kind === 'upload');
+  const teamControls = <>
+    <label className="chk teamSwitch"><input type="checkbox" checked={team} onChange={e => setTeam(e.target.checked)}/> <b>Modo Equipe ativado</b></label>
+    <div className="teamHint">Quem participa da consulta:</div>
+    {assistants.map(a => (
+      <label key={a.id} className="chk teamMember">
+        <input type="checkbox" checked={!teamIds || teamIds.includes(a.id)} onChange={() => toggleTeamMember(a.id)}/> {a.emoji || '🤖'} {a.name}
+      </label>
+    ))}
+    <div className="teamHint">A equipe completa é consultada só na <b>1ª mensagem</b>. Depois, o coordenador continua sozinho para reduzir custo e tempo.</div>
+  </>;
 
   // Tela de login (produção com APP_PASSWORD definida)
   if (needLogin) {
@@ -748,13 +827,14 @@ export default function App() {
 
   return <div className={`app ${sideHidden ? 'sideHidden' : ''}`}>
     {menuOpen && <div className="scrim" onClick={() => setMenuOpen(false)}/>}
-    <aside className={`sidebar ${menuOpen ? 'open' : ''}`}>
+    <aside className={`sidebar ${menuOpen ? 'open' : ''}`} aria-label="Navegação do app">
       <div className="brandRow">
         <div className="brand">Frederico <span>AI Studio</span></div>
         <button className="sideCollapse" onClick={toggleSide} title="Esconder a barra lateral" aria-label="Esconder a barra lateral"><PanelLeft size={17}/></button>
       </div>
+      <label className="clientLabel" htmlFor="active-client">Cliente ou projeto</label>
       <div className="clientRow">
-        <select value={clientId} onChange={e => switchClient(e.target.value)} title="Cliente / Projeto ativo">
+        <select id="active-client" value={clientId} onChange={e => switchClient(e.target.value)} title="Cliente / Projeto ativo" aria-label="Cliente ou projeto ativo">
           <option value="">🗂️ Geral (sem cliente)</option>
           {clients.map(c => <option key={c.id} value={c.id}>👤 {c.name}</option>)}
         </select>
@@ -768,6 +848,7 @@ export default function App() {
         {convFilter && <button className="convSearchX" onClick={() => setConvFilter('')} aria-label="Limpar busca"><X size={13}/></button>}
       </div>
       <div className="sideScroll">
+      <div className="sideSectionTitle">Conversas</div>
       <div className="convList">
         {(() => {
           const q = convFilter.trim().toLowerCase();
@@ -787,20 +868,32 @@ export default function App() {
           ));
         })()}
       </div>
-      <div className="sideBottom">
-        <button className="studio toolsBtn" onClick={() => setToolsOpen(true)} title="Fluxos prontos: NF-e, conciliação, OCR, comparador de regimes…"><Wrench size={16}/> Ferramentas</button>
-        <button className="studio" onClick={openStudioNew}><Bot size={16}/> Criar assistente</button>
-        <button className="studio" onClick={openTemplates}><BookMarked size={16}/> Templates</button>
-        <button className="studio" onClick={() => setMemoryOpen(true)}><Brain size={16}/> Memória</button>
-        <button className="studio" onClick={() => setPcOpen(true)} title="Libere pastas do seu PC para o assistente procurar, ler e organizar arquivos"><FolderCog size={16}/> Pastas do PC</button>
-        <button className="studio" onClick={() => setInboxOpen(true)} title="Acumule documentos por cliente e abra tudo numa conversa"><Inbox size={16}/> Caixa de entrada</button>
-        <button className="studio" onClick={() => { setTasksOpen(true); pollTasks(); }}><ListTodo size={16}/> Tarefas{tasksActive && <span className="badge">{tasks.filter(t => t.status === 'queued' || t.status === 'running').length}</span>}</button>
-        <button className="studio" onClick={() => setRoutinesOpen(true)} title="Programe tarefas para rodarem sozinhas (diária, semanal ou mensal)"><CalendarClock size={16}/> Rotinas</button>
-        <button className="studio" onClick={() => setFiscalOpen(true)} title="Vencimentos das principais obrigações do mês"><CalendarDays size={16}/> Calendário fiscal</button>
-        <button className="studio" onClick={openAnalytics}><BarChart3 size={16}/> Análises</button>
-        <button className="studio" onClick={() => window.open(`${API}/api/backup`, '_blank')} title="Baixa um arquivo .tar.gz com o banco e todos os workspaces"><HardDriveDownload size={16}/> Backup</button>
-        <button className="theme" onClick={() => setThemeOpen(true)} title="Trocar o tema do aplicativo"><Palette size={16}/> Tema</button>
-      </div>
+      <nav className="sideBottom" aria-label="Recursos do app">
+        <div className="navGroup">
+          <div className="navGroupTitle">Produção</div>
+          <button className="studio toolsBtn" onClick={() => setToolsOpen(true)} title="Fluxos prontos: NF-e, conciliação, OCR e comparador de regimes"><Wrench size={16}/> Ferramentas</button>
+          <button className="studio" onClick={() => setInboxOpen(true)} title="Acumule documentos por cliente e abra tudo numa conversa"><Inbox size={16}/> Caixa de entrada</button>
+          <button className="studio" onClick={openTemplates}><BookMarked size={16}/> Templates</button>
+        </div>
+        <div className="navGroup">
+          <div className="navGroupTitle">Automação</div>
+          <button className="studio" onClick={() => { setTasksOpen(true); pollTasks(); }}><ListTodo size={16}/> Tarefas{tasksActive && <span className="badge">{tasks.filter(t => t.status === 'queued' || t.status === 'running').length}</span>}</button>
+          <button className="studio" onClick={() => setRoutinesOpen(true)} title="Programe tarefas para rodarem sozinhas"><CalendarClock size={16}/> Rotinas</button>
+          <button className="studio" onClick={() => setFiscalOpen(true)} title="Vencimentos das principais obrigações do mês"><CalendarDays size={16}/> Calendário fiscal</button>
+        </div>
+        <div className="navGroup">
+          <div className="navGroupTitle">Conhecimento</div>
+          <button className="studio" onClick={() => setMemoryOpen(true)}><Brain size={16}/> Memória</button>
+          <button className="studio" onClick={() => setPcOpen(true)} title="Libere pastas do seu PC para o assistente procurar, ler e organizar arquivos"><FolderCog size={16}/> Pastas do PC</button>
+        </div>
+        <div className="navGroup navGroupAdmin">
+          <div className="navGroupTitle">Administração</div>
+          <button className="studio" onClick={openStudioNew}><Bot size={16}/> Assistentes</button>
+          <button className="studio" onClick={openAnalytics}><BarChart3 size={16}/> Análises</button>
+          <button className="studio" onClick={() => window.open(`${API}/api/backup`, '_blank')} title="Baixa um arquivo com o banco e todos os workspaces"><HardDriveDownload size={16}/> Backup</button>
+          <button className="studio" onClick={() => setThemeOpen(true)} title="Trocar o tema do aplicativo"><Palette size={16}/> Tema</button>
+        </div>
+      </nav>
       </div>
     </aside>
 
@@ -820,31 +913,48 @@ export default function App() {
           <div className="titleblock"><strong>{current?.title || 'Nova conversa'}</strong><small>{team ? `🧑‍🤝‍🧑 Equipe (${assistants.length} assistentes)` : (currentAssistant ? `${currentAssistant.emoji || '🤖'} ${currentAssistant.name}` : 'Assistente')}</small></div>
           <ModelPicker models={allModels} value={model} onChange={setModel}/>
         </div>
-        <div className="pickers">
+        <div className="pickers desktopPickers">
           <div className="mpicker" ref={teamRef}>
             <button className={`teamBtn ${team ? 'on' : ''}`} onClick={() => setTeamOpen(o => !o)} title="Modo Equipe: escolha os assistentes e junte as perspectivas"><Users size={15}/> Equipe{team ? ` (${effectiveTeam.length})` : ''}</button>
-            {teamOpen && <div className="mpPanel teamPanel">
-              <label className="chk teamSwitch"><input type="checkbox" checked={team} onChange={e => setTeam(e.target.checked)}/> <b>Modo Equipe ativado</b></label>
-              <div className="teamHint">Quem participa da consulta:</div>
-              {assistants.map(a => (
-                <label key={a.id} className="chk">
-                  <input type="checkbox" checked={!teamIds || teamIds.includes(a.id)} onChange={() => toggleTeamMember(a.id)}/> {a.emoji || '🤖'} {a.name}
-                </label>
-              ))}
-              <div className="teamHint">💡 A equipe completa é consultada só na <b>1ª mensagem</b> da conversa; depois o coordenador continua sozinho (sem gastar tokens). Escreva <b>"consulte a equipe"</b> quando quiser uma nova rodada.</div>
-            </div>}
+            {teamOpen && <div className="mpPanel teamPanel">{teamControls}</div>}
           </div>
-          <select value={assistantId || ''} onChange={e => pickAssistant(e.target.value)} disabled={team} title="Assistente">
+          <select value={assistantId || ''} onChange={e => pickAssistant(e.target.value)} disabled={team} title="Assistente" aria-label="Assistente">
             {assistants.map(a => <option key={a.id} value={a.id}>{a.emoji || '🤖'} {a.name}</option>)}
           </select>
           <button className="gear" onClick={() => currentAssistant ? openStudioEdit(currentAssistant) : openStudioNew()} title="Editar assistente" disabled={team}><Settings size={16}/></button>
+          <button className="gear" onClick={openFilesDrawer} title="Arquivos da conversa" aria-label="Arquivos da conversa" disabled={!current?.id}><FolderOpen size={16}/></button>
           <div className="mpicker">
             <button className="gear" onClick={() => setExportOpen(o => !o)} title="Exportar conversa" disabled={exporting}>{exporting ? <span className="spin sm"/> : <FileDown size={16}/>}</button>
             {exportOpen && <div className="mpPanel exportPanel">
-              <button className="mpItem" onClick={() => exportConv('pdf')}><span className="mpItemName">📄 Exportar como PDF</span></button>
-              <button className="mpItem" onClick={() => exportConv('docx')}><span className="mpItemName">📝 Exportar como Word (.docx)</span></button>
+              <button className="mpItem" onClick={() => exportConv('pdf')}><span className="mpItemName">Exportar como PDF</span></button>
+              <button className="mpItem" onClick={() => exportConv('docx')}><span className="mpItemName">Exportar como Word (.docx)</span></button>
             </div>}
           </div>
+        </div>
+        <div className="mobileTopActions mpicker" ref={topActionsRef}>
+          <button className="gear" onClick={() => setTopActionsOpen(o => !o)} title="Mais opções da conversa" aria-label="Mais opções da conversa"><MoreHorizontal size={19}/></button>
+          {topActionsOpen && <div className="mobileTopPanel">
+            <div className="mobileTopSection">
+              <div className="mobileTopLabel">Modo de trabalho</div>
+              <div className="teamPanel mobileTeamPanel">{teamControls}</div>
+            </div>
+            <label className="mobileTopField">Assistente
+              <select value={assistantId || ''} onChange={e => pickAssistant(e.target.value)} disabled={team}>
+                {assistants.map(a => <option key={a.id} value={a.id}>{a.emoji || '🤖'} {a.name}</option>)}
+              </select>
+            </label>
+            <div className="mobileTopButtonGrid">
+              <button onClick={() => { setTopActionsOpen(false); currentAssistant ? openStudioEdit(currentAssistant) : openStudioNew(); }} disabled={team}><Settings size={15}/> Editar assistente</button>
+              <button onClick={() => { setTopActionsOpen(false); openFilesDrawer(); }} disabled={!current?.id}><FolderOpen size={15}/> Arquivos</button>
+            </div>
+            <div className="mobileTopSection">
+              <div className="mobileTopLabel">Exportar conversa</div>
+              <div className="mobileTopButtonGrid">
+                <button onClick={() => exportConv('pdf')} disabled={!current?.id || !messages.length || exporting}><FileDown size={15}/> PDF</button>
+                <button onClick={() => exportConv('docx')} disabled={!current?.id || !messages.length || exporting}><FileText size={15}/> Word</button>
+              </div>
+            </div>
+          </div>}
         </div>
       </header>
       {unprotected && !authWarnHidden && <div className="authWarn">
@@ -857,12 +967,13 @@ export default function App() {
           <h2>Olá! Como posso ajudar você hoje?</h2>
           <p>Envie um arquivo, peça uma planilha, um documento, um código ou uma pesquisa.</p>
           <div className="quickCards">
-            {QUICK_ACTIONS.map((q, i) => (
-              <button key={i} className="quickCard" onClick={() => { setInput(q.prompt); inputRef.current?.focus(); }}>
-                <span className="qcIcon" aria-hidden="true">{q.icon}</span>
+            {QUICK_ACTIONS.map((q, i) => {
+              const QuickActionIcon = QUICK_ACTION_ICON[q.icon] || Sparkles;
+              return <button key={i} className="quickCard" onClick={() => { setInput(q.prompt); inputRef.current?.focus(); }}>
+                <span className="qcIcon" aria-hidden="true"><QuickActionIcon size={20}/></span>
                 <span className="qcText"><b>{q.label}</b><small>{q.desc}</small></span>
-              </button>
-            ))}
+              </button>;
+            })}
           </div>
         </div>}
         {messages.map((m, idx) => (
@@ -920,11 +1031,11 @@ export default function App() {
         </div>}
         {uploadingFiles && <div className="attachStatus"><span className="spin sm"/><span>Anexando arquivo...</span></div>}
         <div className="composer">
+          <button className="attachBtn" onClick={() => fileInputRef.current?.click()} title="Anexar arquivo" aria-label="Anexar arquivo"><Paperclip size={19}/></button>
           <div className="cmpMenu" ref={cmpMenuRef}>
             <button className={`cmpMenuBtn ${webSearch || listening ? 'active' : ''}`} onClick={() => { setComposerMenuOpen(o => !o); setMenuView('main'); }} title="Opções da mensagem" aria-label="Opções da mensagem"><SlidersHorizontal size={19}/></button>
             {composerMenuOpen && <div className="cmpMenuPanel">
               {menuView === 'main' ? <>
-                <button className="cmpItem" onClick={() => fileInputRef.current?.click()}><Upload size={16}/><span>Anexar arquivo</span></button>
                 <button className="cmpItem" onClick={() => setWebSearch(w => !w)}><Globe size={16}/><span>Pesquisa na internet</span>{webSearch && <Check size={15} className="cmpChk"/>}</button>
                 <button className="cmpItem" onClick={() => setMenuView('effort')}><Gauge size={16}/><span>Esforço da IA</span><span className="cmpVal">{EFFORTS.find(e => e.id === effort)?.label} ›</span></button>
                 <button className={`cmpItem ${listening ? 'on' : ''}`} onClick={() => { toggleMic(); setComposerMenuOpen(false); }}><Mic size={16}/><span>{listening ? 'Parar ditado' : 'Ditar por voz'}</span></button>
@@ -947,6 +1058,24 @@ export default function App() {
         </div>
       </footer>
     </main>
+
+    {filesDrawerOpen && <Drawer title="Arquivos da conversa" icon={<FolderOpen size={18}/>} onClose={() => setFilesDrawerOpen(false)} className="filesDrawer">
+      <p className="muted drawerIntro">Anexos e arquivos gerados nesta conversa ficam reunidos aqui para você encontrar, abrir ou baixar sem procurar no histórico.</p>
+      {!files.length && <div className="drawerEmpty"><FolderOpen size={28}/><b>Nenhum arquivo nesta conversa</b><span>Anexe um documento ou peça para a IA gerar um arquivo.</span></div>}
+      <div className="assetList">
+        {files.map(f => {
+          const url = `${API}/api/conversations/${current?.id}/download/${f.path}`;
+          return <div className="assetRow" key={f.id || f.path}>
+            <a className="assetOpen" href={url} target="_blank" rel="noreferrer">
+              <span className="assetIcon"><FileText size={18}/></span>
+              <span className="assetInfo"><b>{f.name}</b><small>{f.kind === 'upload' ? 'Anexado' : 'Gerado pela IA'} · {Math.ceil((f.size || 0) / 1024)} KB</small></span>
+              <Download size={16}/>
+            </a>
+            <button className="assetDelete" onClick={() => deleteFile(f)} title="Excluir arquivo" aria-label={`Excluir ${f.name}`}><Trash2 size={15}/></button>
+          </div>;
+        })}
+      </div>
+    </Drawer>}
 
     {toast && <div className={`toast ${toast.kind || 'err'}`} role="alert">{toast.text}<button onClick={() => setToast(null)} aria-label="Fechar aviso"><X size={14}/></button></div>}
 
@@ -1003,12 +1132,12 @@ export default function App() {
       </div>
     </Modal>}
 
-    {memoryOpen && <MemoryPanel assistants={assistants} clients={clients} clientId={clientId} showToast={showToast} onClose={() => setMemoryOpen(false)}/>}
-    {pcOpen && <PcFoldersPanel showToast={showToast} onClose={() => setPcOpen(false)}/>}
+    {memoryOpen && <MemoryPanel assistants={assistants} clients={clients} clientId={clientId} showToast={showToast} askConfirm={askConfirm} askPrompt={askPrompt} onClose={() => setMemoryOpen(false)}/>}
+    {pcOpen && <PcFoldersPanel showToast={showToast} askConfirm={askConfirm} onClose={() => setPcOpen(false)}/>}
     {toolsOpen && <ToolsPanel onPick={pickTool} onClose={() => setToolsOpen(false)}/>}
-    {routinesOpen && <RoutinesPanel assistants={assistants} clients={clients} showToast={showToast} onClose={() => setRoutinesOpen(false)}/>}
+    {routinesOpen && <RoutinesPanel assistants={assistants} clients={clients} showToast={showToast} askConfirm={askConfirm} onClose={() => setRoutinesOpen(false)}/>}
     {fiscalOpen && <FiscalPanel showToast={showToast} onClose={() => setFiscalOpen(false)}/>}
-    {inboxOpen && <InboxPanel clients={clients} clientId={clientId} showToast={showToast} onOpenConversation={(id) => { fetchConversations(); openConversation(id); }} onClose={() => setInboxOpen(false)}/>}
+    {inboxOpen && <InboxPanel clients={clients} clientId={clientId} showToast={showToast} askConfirm={askConfirm} onOpenConversation={(id) => { fetchConversations(); openConversation(id); }} onClose={() => setInboxOpen(false)}/>}
     {themeOpen && <Modal title="Tema do aplicativo" icon={<Palette size={18}/>} onClose={() => setThemeOpen(false)}>
       <p className="muted" style={{ margin: 0 }}>Escolha a aparência do app. A sua escolha fica salva neste computador.</p>
       <div className="themeGrid">
@@ -1021,7 +1150,7 @@ export default function App() {
       </div>
     </Modal>}
 
-    {analyticsOpen && <Modal title="Análises de uso" icon={<BarChart3 size={18}/>} onClose={() => setAnalyticsOpen(false)}>
+    {analyticsOpen && <Drawer title="Análises de uso" icon={<BarChart3 size={18}/>} onClose={() => setAnalyticsOpen(false)} className="analyticsDrawer">
       {!analytics && <div className="working"><span className="spin"/><span>Carregando...</span></div>}
       {analytics && <>
         <div className="statRow">
@@ -1052,7 +1181,7 @@ export default function App() {
         </div>
         <p className="muted" style={{ margin: 0, fontSize: 12 }}>Tokens são a medida de consumo dos modelos. O custo em R$/US$ depende do preço de cada modelo no OpenRouter.</p>
       </>}
-    </Modal>}
+    </Drawer>}
 
     {tplOpen && <Modal title="Templates de pedido" icon={<BookMarked size={18}/>} onClose={() => setTplOpen(false)}>
       <p className="muted" style={{ margin: 0 }}>Clique num template para usá-lo na conversa. Para criar o seu, passe o mouse numa mensagem sua no chat e clique no ícone de marcador.</p>
@@ -1068,7 +1197,7 @@ export default function App() {
       </div>
     </Modal>}
 
-    {tasksOpen && <Modal title="Fila de tarefas" icon={<ListTodo size={18}/>} onClose={() => setTasksOpen(false)}>
+    {tasksOpen && <Drawer title="Fila de tarefas" icon={<ListTodo size={18}/>} onClose={() => setTasksOpen(false)} className="tasksDrawer">
       <p className="muted" style={{ margin: 0 }}>Tarefas rodam em segundo plano — você pode trocar de conversa ou fechar o app; a fila continua no servidor. Para criar uma, escreva o pedido e clique na ⏳ ao lado do enviar.</p>
       <div className="memList">
         {tasks.length === 0 && <p className="muted">Nenhuma tarefa ainda.</p>}
@@ -1094,6 +1223,7 @@ export default function App() {
           </div>
         ))}
       </div>
-    </Modal>}
+    </Drawer>}
+    {appDialog}
   </div>;
 }

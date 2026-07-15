@@ -1,14 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { FolderCog, X, Lock, Unlock } from 'lucide-react';
 import { API } from './constants.js';
-import { Modal } from './components.jsx';
+import { Drawer } from './components.jsx';
 
 // "Pastas do Computador": libera pastas reais do PC para o assistente acessar
-export function PcFoldersPanel({ showToast, onClose }) {
+export function PcFoldersPanel({ showToast, onClose, askConfirm }) {
   const [items, setItems] = useState(null);
   const [label, setLabel] = useState('');
   const [pathv, setPathv] = useState('');
-  const [writable, setWritable] = useState(true);
+  const [writable, setWritable] = useState(false);
 
   useEffect(() => { load(); }, []);
   async function load() {
@@ -24,7 +24,7 @@ export function PcFoldersPanel({ showToast, onClose }) {
       const res = await fetch(`${API}/api/pc-folders`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label: label.trim(), host_path: pathv.trim(), writable }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || '');
-      setLabel(''); setPathv(''); setWritable(true);
+       setLabel(''); setPathv(''); setWritable(false);
       showToast('Pasta liberada. Vale nas próximas mensagens (o sandbox foi reiniciado).', 'ok');
       load();
     } catch (e) { showToast(e.message || 'Não foi possível liberar a pasta.'); }
@@ -33,12 +33,12 @@ export function PcFoldersPanel({ showToast, onClose }) {
     try { await fetch(`${API}/api/pc-folders/${f.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ writable: f.writable ? 0 : 1 }) }); load(); } catch {}
   }
   async function remove(id) {
-    if (!confirm('Remover o acesso a esta pasta? (Os arquivos não são apagados — o assistente apenas deixa de enxergá-los.)')) return;
+    if (!await askConfirm({ title: 'Remover acesso à pasta?', message: 'Os arquivos não serão apagados. O assistente apenas deixará de enxergar esta pasta.', confirmLabel: 'Remover acesso', destructive: true })) return;
     try { await fetch(`${API}/api/pc-folders/${id}`, { method: 'DELETE' }); load(); } catch {}
   }
 
-  return <Modal title="Pastas do Computador" icon={<FolderCog size={18}/>} onClose={onClose}>
-    <p className="muted" style={{ margin: 0 }}>Libere pastas específicas do seu PC para o assistente <b>procurar, ler e organizar</b> arquivos reais. Ele só enxerga o que você liberar aqui.</p>
+  return <Drawer title="Pastas do computador" icon={<FolderCog size={18}/>} onClose={onClose} className="pcFoldersDrawer">
+    <p className="drawerIntro">Libere pastas específicas para o assistente procurar e ler arquivos reais. Ele só enxerga o que você permitir aqui.</p>
     <div className="pcWarn">⚠️ Em pastas com <b>escrita</b>, o assistente pode mover/renomear arquivos reais e pode errar. Comece pelo essencial, prefira <b>só leitura</b> quando tiver dúvida, e mantenha backup do que for importante.</div>
 
     <label>Nome (como você chama a pasta)
@@ -68,5 +68,5 @@ export function PcFoldersPanel({ showToast, onClose }) {
         </div>
       ))}
     </div>
-  </Modal>;
+  </Drawer>;
 }

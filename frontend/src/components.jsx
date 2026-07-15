@@ -1,5 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { Search, ChevronDown, Check, Cpu, Star } from 'lucide-react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Search, ChevronDown, Check, Cpu, Star, SlidersHorizontal, X } from 'lucide-react';
 
 // Ids (ou prefixos) dos modelos mais confiáveis para gerar planilhas/arquivos
 const BEST_FOR_FILES = [
@@ -7,34 +7,52 @@ const BEST_FOR_FILES = [
   'anthropic/claude-sonnet', 'anthropic/claude-3.5-sonnet', 'anthropic/claude-3.7-sonnet',
   'google/gemini-2.5-flash', 'google/gemini-2.5-pro', 'mistralai/mistral-large'
 ];
+const GENERAL_RECOMMENDATIONS = [
+  'anthropic/claude-sonnet', 'openai/gpt-4.1', 'openai/gpt-4o',
+  'google/gemini-2.5-pro', 'google/gemini-2.5-flash',
+  'deepseek/deepseek-v4-pro', 'deepseek/deepseek-chat', 'mistralai/mistral-large'
+];
 
 // Famílias de modelos (prefixo do id → rótulo amigável)
 const FAMILY_META = {
-  openai: '🟢 OpenAI (GPT)', anthropic: '🟣 Anthropic (Claude)', google: '🔷 Google (Gemini)',
-  deepseek: '🐋 DeepSeek', 'meta-llama': '♾️ Meta (Llama)', mistralai: '🌬️ Mistral',
-  'x-ai': '✖️ xAI (Grok)', qwen: '🧧 Qwen', cohere: '🔗 Cohere', amazon: '📦 Amazon (Nova)',
-  microsoft: '🪟 Microsoft (Phi)', nvidia: '🟩 NVIDIA', perplexity: '🔎 Perplexity',
-  'z-ai': '🇿 Z.AI', moonshotai: '🌙 Moonshot (Kimi)', 'nousresearch': '🧠 Nous'
+  openai: 'OpenAI (GPT)', anthropic: 'Anthropic (Claude)', google: 'Google (Gemini)',
+  deepseek: 'DeepSeek', 'meta-llama': 'Meta (Llama)', mistralai: 'Mistral',
+  'x-ai': 'xAI (Grok)', qwen: 'Qwen', cohere: 'Cohere', amazon: 'Amazon (Nova)',
+  microsoft: 'Microsoft (Phi)', nvidia: 'NVIDIA', perplexity: 'Perplexity',
+  'z-ai': 'Z.AI', moonshotai: 'Moonshot (Kimi)', 'nousresearch': 'Nous'
 };
 const familyKey = id => { const s = String(id); return s.includes('/') ? s.split('/')[0] : s.split('-')[0]; };
-const familyLabel = key => FAMILY_META[key] || ('🤖 ' + (key.charAt(0).toUpperCase() + key.slice(1)));
-const NEW_DAYS = 60;
+const familyLabel = key => FAMILY_META[key] || (key.charAt(0).toUpperCase() + key.slice(1));
 const BIG_CTX = 100000;
-const isNewModel = m => m.created && (Date.now() / 1000 - m.created) < NEW_DAYS * 86400;
-const daysAgo = m => Math.max(0, Math.floor((Date.now() / 1000 - m.created) / 86400));
 const ctxLabel = n => !n ? '' : n >= 1000 ? `${Math.round(n / 1000)}k contexto` : `${n} contexto`;
 const priceLabel = m => m.free ? 'grátis' : (m.price ? `$${(m.price * 1e6).toFixed(2)}/1M` : '');
 const FAV_KEY = 'fred_fav_models';
-const loadFavs = () => { try { return JSON.parse(localStorage.getItem(FAV_KEY) || '[]'); } catch { return []; } };
+const RECENT_KEY = 'fred_recent_models';
+const loadStoredIds = key => {
+  try {
+    const value = JSON.parse(localStorage.getItem(key) || '[]');
+    return Array.isArray(value) ? value : [];
+  } catch {
+    return [];
+  }
+};
+const loadFavs = () => loadStoredIds(FAV_KEY);
+const loadRecent = () => loadStoredIds(RECENT_KEY);
 
-// Seletor de modelos com busca, filtros por família, lançamentos e capacidades
+
+// A escolha começa pelo trabalho que a pessoa quer fazer. O catálogo e os filtros
+// detalhados ficam disponíveis sem transformar a primeira tela numa taxonomia.
 export function ModelPicker({ models, value, onChange }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
-  const [fam, setFam] = useState('all');       // família selecionada
-  const [flags, setFlags] = useState([]);       // toggles ativos
-  const [sort, setSort] = useState('none');     // 'none' | 'new' | 'cheap'
-  const [favs, setFavs] = useState(loadFavs);   // ids favoritados
+  const [view, setView] = useState('recommended');
+  const [purpose, setPurpose] = useState('general');
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [fam, setFam] = useState('all');
+  const [flags, setFlags] = useState([]);
+  const [sort, setSort] = useState('none');
+  const [favs, setFavs] = useState(loadFavs);
+  const [recent, setRecent] = useState(loadRecent);
   const ref = useRef(null);
   const searchRef = useRef(null);
 
@@ -43,85 +61,134 @@ export function ModelPicker({ models, value, onChange }) {
     function onKey(e) { if (e.key === 'Escape') setOpen(false); }
     document.addEventListener('mousedown', onDoc);
     document.addEventListener('keydown', onKey);
-    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey); };
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
   }, []);
-  useEffect(() => { if (open) { setTimeout(() => searchRef.current?.focus(), 30); } }, [open]);
+  useEffect(() => {
+    if (open) setTimeout(() => searchRef.current?.focus(), 30);
+  }, [open]);
 
-  const current = models.find(m => m.id === value);
+  const current = models.find(model => model.id === value);
   const query = q.trim().toLowerCase();
-  const match = m => !query || (m.name || '').toLowerCase().includes(query) || m.id.toLowerCase().includes(query);
-  const isFree = m => m.free || m.id.endsWith(':free');
-  const isBest = m => BEST_FOR_FILES.some(p => m.id === p || m.id.startsWith(p));
-  const toggleFlag = f => setFlags(fl => fl.includes(f) ? fl.filter(x => x !== f) : [...fl, f]);
+  const match = model => !query || (model.name || '').toLowerCase().includes(query) || model.id.toLowerCase().includes(query);
+  const isFree = model => model.free || model.id.endsWith(':free');
+  const isBest = model => BEST_FOR_FILES.some(prefix => model.id === prefix || model.id.startsWith(prefix));
+  const isRecommended = model => GENERAL_RECOMMENDATIONS.some(prefix => model.id === prefix || model.id.startsWith(prefix));
   const isFav = id => favs.includes(id);
-  function toggleFav(id, e) {
-    e?.stopPropagation();
-    setFavs(prev => { const next = prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]; try { localStorage.setItem(FAV_KEY, JSON.stringify(next)); } catch {} return next; });
+  const priceValue = model => isFree(model) ? 0 : model.price || Infinity;
+  const purposes = [
+    { id: 'general', label: 'Trabalho geral', description: 'Conversa, análise e produção do dia a dia.', matches: model => (isRecommended(model) || model.id === value) && model.tools !== false && !model.image && !model.video },
+    { id: 'files', label: 'Documentos e planilhas', description: 'Modelos mais confiáveis para criar arquivos.', matches: model => model.tools !== false && isBest(model) },
+    { id: 'economy', label: 'Economia', description: 'Opções grátis e de menor custo.', matches: model => isFree(model) || Boolean(model.price) },
+    { id: 'vision', label: 'Analisar imagens', description: 'Modelos que leem imagens e documentos visuais.', matches: model => model.vision },
+    { id: 'image', label: 'Criar imagens', description: 'Modelos com geração de imagens.', matches: model => model.image },
+    { id: 'video', label: 'Criar vídeo', description: 'Modelos com geração de vídeo.', matches: model => model.video }
+  ];
+  const advancedFilters = [
+    { key: 'free', label: 'Apenas grátis' },
+    { key: 'ctx', label: 'Contexto amplo' },
+    { key: 'tools', label: 'Gera arquivos' },
+    { key: 'vision', label: 'Lê imagens' },
+    { key: 'image', label: 'Cria imagens' },
+    { key: 'video', label: 'Cria vídeo' }
+  ];
+  const selectedPurpose = purposes.find(item => item.id === purpose) || purposes[0];
+  const toggleFlag = key => setFlags(active => active.includes(key) ? active.filter(item => item !== key) : [...active, key]);
+
+  function toggleFav(id, event) {
+    event?.stopPropagation();
+    setFavs(previous => {
+      const next = previous.includes(id) ? previous.filter(item => item !== id) : [...previous, id];
+      try { localStorage.setItem(FAV_KEY, JSON.stringify(next)); } catch {}
+      return next;
+    });
   }
 
-  // Famílias presentes, ordenadas por quantidade
+  function rememberModel(id) {
+    setRecent(previous => {
+      const next = [id, ...previous.filter(item => item !== id)].slice(0, 5);
+      try { localStorage.setItem(RECENT_KEY, JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }
+
+  function pick(id) {
+    rememberModel(id);
+    onChange(id);
+    setOpen(false);
+  }
+
   const famCounts = {};
-  for (const m of models) { const k = familyKey(m.id); famCounts[k] = (famCounts[k] || 0) + 1; }
+  for (const model of models) {
+    const key = familyKey(model.id);
+    famCounts[key] = (famCounts[key] || 0) + 1;
+  }
   const families = Object.keys(famCounts).sort((a, b) => famCounts[b] - famCounts[a]);
-
-  // Filtros de capacidade (toggles rápidos)
-  const FLAGS = [
-    { key: 'fav', label: '⭐ Favoritos' },
-    { key: 'new', label: '🆕 Lançamentos' },
-    { key: 'free', label: '🆓 Grátis' },
-    { key: 'ctx', label: '🧠 Grande contexto' },
-    { key: 'tools', label: '🛠️ Geram arquivos' },
-    { key: 'vision', label: '👁️ Leem imagens' },
-    { key: 'image', label: '🖼️ Criam imagens' },
-    { key: 'video', label: '🎬 Criam vídeo' }
-  ];
-  const passFlags = m =>
-    (!flags.includes('fav') || isFav(m.id)) &&
-    (!flags.includes('new') || isNewModel(m)) &&
-    (!flags.includes('free') || isFree(m)) &&
-    (!flags.includes('ctx') || (m.context || 0) >= BIG_CTX) &&
-    (!flags.includes('tools') || m.tools !== false) &&
-    (!flags.includes('vision') || m.vision) &&
-    (!flags.includes('image') || m.image) &&
-    (!flags.includes('video') || m.video);
-  const passFam = m => fam === 'all' || familyKey(m.id) === fam;
-
-  const base = models.filter(m => match(m) && passFam(m) && passFlags(m));
-  const filtersOn = query || fam !== 'all' || flags.length > 0 || sort !== 'none';
+  const passFlags = model =>
+    (!flags.includes('free') || isFree(model)) &&
+    (!flags.includes('ctx') || (model.context || 0) >= BIG_CTX) &&
+    (!flags.includes('tools') || model.tools !== false) &&
+    (!flags.includes('vision') || model.vision) &&
+    (!flags.includes('image') || model.image) &&
+    (!flags.includes('video') || model.video);
+  const filteredModels = models.filter(model => match(model) && (fam === 'all' || familyKey(model.id) === fam) && passFlags(model));
+  const activeFilterCount = flags.length + Number(fam !== 'all') + Number(sort !== 'none');
   const sortFn = (a, b) => sort === 'new' ? (b.created || 0) - (a.created || 0)
-    : sort === 'cheap' ? (a.free ? 0 : a.price || Infinity) - (b.free ? 0 : b.price || Infinity)
+    : sort === 'cheap' ? priceValue(a) - priceValue(b)
     : String(a.name || a.id).localeCompare(String(b.name || b.id));
+  const generalRecommendationRank = model => {
+    const index = GENERAL_RECOMMENDATIONS.findIndex(prefix => model.id === prefix || model.id.startsWith(prefix));
+    return index === -1 ? GENERAL_RECOMMENDATIONS.length : index;
+  };
+  const recommendedSort = (a, b) => {
+    if (purpose === 'economy') return priceValue(a) - priceValue(b);
+    const score = model => (model.id === value ? 4 : 0) + (isFav(model.id) ? 2 : 0) + (purpose === 'files' && isBest(model) ? 1 : 0);
+    return score(b) - score(a) || (purpose === 'general' ? generalRecommendationRank(a) - generalRecommendationRank(b) : String(a.name || a.id).localeCompare(String(b.name || b.id)));
+  };
+  const recentModels = recent
+    .map(id => models.find(model => model.id === id))
+    .filter(Boolean)
+    .filter(model => filteredModels.some(item => item.id === model.id) && selectedPurpose.matches(model))
+    .slice(0, 3);
+  const recentIds = new Set(recentModels.map(model => model.id));
+  const matchingPurposeModels = filteredModels.filter(selectedPurpose.matches);
+  const recommendationFamily = model => {
+    const curatedPrefixes = purpose === 'general' ? GENERAL_RECOMMENDATIONS : purpose === 'files' ? BEST_FOR_FILES : [];
+    return curatedPrefixes.find(prefix => model.id === prefix || model.id.startsWith(prefix)) || familyKey(model.id);
+  };
+  const familyRepresentativeSort = (a, b) => purpose === 'economy'
+    ? priceValue(a) - priceValue(b) || (b.created || 0) - (a.created || 0)
+    : (b.created || 0) - (a.created || 0) || String(b.name || b.id).localeCompare(String(a.name || a.id));
+  const diverseRecommendedModels = [...matchingPurposeModels]
+    .sort(familyRepresentativeSort)
+    .filter((model, index, items) => !items.slice(0, index).some(previous => recommendationFamily(previous) === recommendationFamily(model)));
+  const recommendedModels = diverseRecommendedModels
+    .filter(model => !recentIds.has(model.id))
+    .sort(sort === 'none' ? recommendedSort : sortFn)
+    .slice(0, 6);
+  const favoriteModels = [...filteredModels].filter(model => isFav(model.id)).sort(sortFn);
+  const catalogModels = [...filteredModels].sort(sortFn);
+  const displayView = query ? 'search' : view;
 
-  // Com filtro/ordenação: lista única; sem filtro: categorias (visão padrão)
-  const flat = filtersOn ? [...base].sort(sortFn) : null;
-  const groups = filtersOn ? [] : [
-    { label: '⭐ Meus favoritos', items: base.filter(m => isFav(m.id)) },
-    { label: '⭐ Melhores para planilhas e arquivos', items: base.filter(m => m.tools !== false && !isFree(m) && !m.image && isBest(m)) },
-    { label: '🆕 Lançamentos recentes', items: [...base].filter(isNewModel).sort((a, b) => (b.created || 0) - (a.created || 0)).slice(0, 8) },
-    { label: '🖼️ Geram imagens', items: base.filter(m => m.image && !isFree(m)) },
-    { label: '🎬 Geram vídeo', items: base.filter(m => m.video) },
-    { label: '✅ Outros com ferramentas (geram arquivos)', items: base.filter(m => m.tools !== false && !isFree(m) && !m.image && !m.video && !isBest(m)) },
-    { label: '🆓 Gratuitos — sujeitos a fila e limites', items: base.filter(m => isFree(m)) },
-    { label: '💬 Só conversa (não geram arquivos)', items: base.filter(m => m.tools === false && !m.image && !m.video && !isFree(m)) }
-  ].filter(g => g.items.length);
-
-  function pick(id) { onChange(id); setOpen(false); }
-  function clearFilters() { setQ(''); setFam('all'); setFlags([]); setSort('none'); }
-  const toggleSort = s => setSort(cur => cur === s ? 'none' : s);
-
-  const row = m => (
-    <div key={m.id} className={`mpItem ${m.id === value ? 'sel' : ''}`}>
-      <button className="mpPick" onClick={() => pick(m.id)}>
-        <span className="mpItemName">{m.name}{isNewModel(m) && <span className="mpNew">NOVO</span>}{m.id === value && <Check size={13} className="mpInlineCheck"/>}</span>
-        <span className="mpItemId">{m.id}</span>
-        <span className="mpItemMeta">{[isNewModel(m) ? `há ${daysAgo(m)} dia(s)` : '', ctxLabel(m.context), priceLabel(m)].filter(Boolean).join(' · ')}</span>
+  const row = model => (
+    <div key={model.id} className={'mpItem ' + (model.id === value ? 'sel' : '')}>
+      <button className="mpPick" onClick={() => pick(model.id)}>
+        <span className="mpItemName">{model.name}{model.id === value && <Check size={13} className="mpInlineCheck" aria-label="Modelo em uso"/>}</span>
+        <span className="mpItemId">{model.id}</span>
+        <span className="mpItemMeta">{[ctxLabel(model.context), priceLabel(model)].filter(Boolean).join(' · ')}</span>
       </button>
-      <button className={`mpStar ${isFav(m.id) ? 'on' : ''}`} onClick={e => toggleFav(m.id, e)} title={isFav(m.id) ? 'Remover dos favoritos' : 'Favoritar'} aria-label="Favoritar"><Star size={14} fill={isFav(m.id) ? 'currentColor' : 'none'}/></button>
+      <button className={'mpStar ' + (isFav(model.id) ? 'on' : '')} onClick={event => toggleFav(model.id, event)} title={isFav(model.id) ? 'Remover dos favoritos' : 'Adicionar aos favoritos'} aria-label={isFav(model.id) ? 'Remover dos favoritos' : 'Adicionar aos favoritos'} aria-pressed={isFav(model.id)}><Star size={14} fill={isFav(model.id) ? 'currentColor' : 'none'}/></button>
     </div>
   );
+  const section = (title, items, empty) => <section className="mpSection">
+    <div className="mpSectionHead"><span>{title}</span><em>{items.length}</em></div>
+    {items.length ? items.map(row) : <p className="mpEmpty">{empty}</p>}
+  </section>;
 
   return <div className="mpicker" ref={ref}>
-    <button className="mpBtn" onClick={() => setOpen(o => !o)} title="Escolher o modelo de IA">
+    <button className="mpBtn" onClick={() => setOpen(isOpen => !isOpen)} title="Escolher o modelo de IA" aria-expanded={open}>
       <Cpu size={15} className="mpIco"/>
       <span className="mpName">{current?.name || value}</span>
       <ChevronDown size={14}/>
@@ -129,27 +196,54 @@ export function ModelPicker({ models, value, onChange }) {
     {open && <div className="mpPanel">
       <div className="mpSearch">
         <Search size={14}/>
-        <input ref={searchRef} value={q} onChange={e => setQ(e.target.value)} placeholder="Buscar modelo pelo nome..."/>
-        {filtersOn && <button className="mpClear" onClick={clearFilters} title="Limpar filtros">Limpar</button>}
+        <input ref={searchRef} value={q} onChange={event => setQ(event.target.value)} placeholder="Buscar modelo pelo nome" aria-label="Buscar modelo pelo nome"/>
+        {q && <button className="mpSearchClear" onClick={() => setQ('')} title="Limpar busca" aria-label="Limpar busca"><X size={14}/></button>}
       </div>
-      <div className="mpFilters">
-        {FLAGS.map(f => <button key={f.key} className={`mpChip ${flags.includes(f.key) ? 'on' : ''}`} onClick={() => toggleFlag(f.key)}>{f.label}</button>)}
-        <button className={`mpChip ${sort === 'new' ? 'on' : ''}`} onClick={() => toggleSort('new')} title="Ordenar dos mais recentes para os mais antigos">↕️ Mais novos</button>
-        <button className={`mpChip ${sort === 'cheap' ? 'on' : ''}`} onClick={() => toggleSort('cheap')} title="Ordenar dos mais baratos para os mais caros">💲 Mais baratos</button>
+      <div className="mpPrimaryControls">
+        <label className="mpPurposeField">
+          <span>Objetivo</span>
+          <select value={purpose} onChange={event => { setPurpose(event.target.value); setView('recommended'); }}>
+            {purposes.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
+          </select>
+        </label>
+        <button className={'mpFilterToggle ' + (filtersOpen || activeFilterCount ? 'on' : '')} onClick={() => setFiltersOpen(isVisible => !isVisible)} aria-expanded={filtersOpen} title="Abrir filtros avançados">
+          <SlidersHorizontal size={15}/><span>Filtros</span>{activeFilterCount > 0 && <b>{activeFilterCount}</b>}
+        </button>
       </div>
-      <div className="mpFamRow">
-        <label className="mpFamLabel">Família:</label>
-        <select className="mpFamSelect" value={fam} onChange={e => setFam(e.target.value)}>
-          <option value="all">Todas as famílias ({models.length})</option>
-          {families.map(k => <option key={k} value={k}>{familyLabel(k)} ({famCounts[k]})</option>)}
-        </select>
+      <div className="mpViewTabs" role="tablist" aria-label="Navegação de modelos">
+        {[['recommended', 'Recomendados'], ['favorites', 'Favoritos (' + favs.length + ')'], ['catalog', 'Catálogo']].map(([id, label]) => <button key={id} role="tab" aria-selected={view === id} className={view === id ? 'on' : ''} onClick={() => setView(id)}>{label}</button>)}
       </div>
-      <div className="mpList">
-        {filtersOn
-          ? (flat.length ? <div className="mpGroup"><div className="mpGroupLabel">{sort === 'new' ? '🆕 Mais novos primeiro' : sort === 'cheap' ? '💲 Mais baratos primeiro' : 'Resultados'} <em>{flat.length}</em></div>{flat.map(row)}</div>
-                         : <p className="mpEmpty">Nenhum modelo com esses filtros.</p>)
-          : (groups.length ? groups.map(g => <div key={g.label} className="mpGroup"><div className="mpGroupLabel">{g.label} <em>{g.items.length}</em></div>{g.items.map(row)}</div>)
-                           : <p className="mpEmpty">Nenhum modelo disponível.</p>)}
+      {filtersOpen && <div className="mpAdvanced" aria-label="Filtros avançados">
+        <div className="mpAdvancedHead"><span>Refinar catálogo</span>{activeFilterCount > 0 && <button onClick={() => { setFam('all'); setFlags([]); setSort('none'); }}>Limpar filtros</button>}</div>
+        <div className="mpAdvancedFields">
+          <label>Fornecedor
+            <select value={fam} onChange={event => setFam(event.target.value)}>
+              <option value="all">Todos ({models.length})</option>
+              {families.map(key => <option key={key} value={key}>{familyLabel(key)} ({famCounts[key]})</option>)}
+            </select>
+          </label>
+          <label>Ordenar
+            <select value={sort} onChange={event => setSort(event.target.value)}>
+              <option value="none">Nome do modelo</option>
+              <option value="new">Lançamentos</option>
+              <option value="cheap">Menor custo</option>
+            </select>
+          </label>
+        </div>
+        <div className="mpFilterChecks" role="group" aria-label="Capacidades">
+          {advancedFilters.map(filter => <label key={filter.key}><input type="checkbox" checked={flags.includes(filter.key)} onChange={() => toggleFlag(filter.key)}/><span>{filter.label}</span></label>)}
+        </div>
+      </div>}
+      <div className="mpList" role="tabpanel">
+        {displayView === 'search' && section('Resultados para "' + q.trim() + '"', catalogModels, 'Nenhum modelo encontrado com esta busca.')}
+        {displayView === 'recommended' && <>
+          <div className="mpPurposeHint"><strong>{selectedPurpose.label}</strong><span>{selectedPurpose.description}</span></div>
+          {recentModels.length > 0 && section('Usados recentemente', recentModels, '')}
+          {section(purpose === 'general' || purpose === 'files' ? 'Sugestões' : 'Modelos compatíveis', recommendedModels, 'Nenhum modelo atende a este objetivo com os filtros atuais.')}
+          <button className="mpCatalogLink" onClick={() => setView('catalog')}>Ver catálogo completo ({catalogModels.length})</button>
+        </>}
+        {displayView === 'favorites' && section('Favoritos', favoriteModels, 'Adicione modelos aos favoritos para acessá-los rapidamente.')}
+        {displayView === 'catalog' && section('Catálogo', catalogModels, 'Nenhum modelo atende aos filtros atuais.')}
       </div>
     </div>}
   </div>;
@@ -196,20 +290,111 @@ export function Collapsible({ text, limit = 700, children }) {
   </div>;
 }
 
-// Casca padrão dos modais (overlay + cabeçalho com fechar). Fecha no ESC.
-export function Modal({ title, icon, onClose, children }) {
+function useDialogFocus(ref, onClose) {
+  const closeRef = useRef(onClose);
+  useEffect(() => { closeRef.current = onClose; }, [onClose]);
+
   useEffect(() => {
-    function onKey(e) { if (e.key === 'Escape') onClose?.(); }
+    const previous = document.activeElement;
+    const selector = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+    const focusFirst = () => {
+      const target = ref.current?.querySelector('[data-autofocus]') || ref.current?.querySelector(selector) || ref.current;
+      target?.focus();
+    };
+    const frame = requestAnimationFrame(focusFirst);
+
+    function onKey(e) {
+      const dialogs = [...document.querySelectorAll('[role="dialog"][aria-modal="true"]')];
+      if (dialogs.at(-1) !== ref.current) return;
+      if (e.key === 'Escape') { e.preventDefault(); closeRef.current?.(); return; }
+      if (e.key !== 'Tab') return;
+      const focusable = [...(ref.current?.querySelectorAll(selector) || [])];
+      if (!focusable.length) { e.preventDefault(); ref.current?.focus(); return; }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    }
+
     document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
-  return <div className="modalOverlay" onClick={onClose}>
-    <div className="modal" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={title}>
+    return () => {
+      cancelAnimationFrame(frame);
+      document.removeEventListener('keydown', onKey);
+      previous?.focus?.();
+    };
+  }, [ref]);
+}
+
+function DialogShell({ title, icon, onClose, children, variant = 'modal', className = '' }) {
+  const ref = useRef(null);
+  useDialogFocus(ref, onClose);
+  const overlayClass = variant === 'drawer' ? 'drawerOverlay' : 'modalOverlay';
+  const panelClass = variant === 'drawer' ? `drawer ${className}` : `modal ${className}`;
+
+  return <div className={overlayClass} onMouseDown={onClose}>
+    <section ref={ref} className={panelClass} onMouseDown={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={title} tabIndex={-1}>
       <div className="modalHead">
         <h2>{icon} {title}</h2>
-        <button className="x" onClick={onClose} aria-label="Fechar">✕</button>
+        <button className="x" onClick={onClose} aria-label="Fechar" title="Fechar"><X size={18}/></button>
       </div>
       <div className="modalBody">{children}</div>
-    </div>
+    </section>
   </div>;
+}
+
+// Casca para tarefas curtas e decisões contextuais.
+export function Modal({ title, icon, onClose, children, className }) {
+  return <DialogShell title={title} icon={icon} onClose={onClose} className={className}>{children}</DialogShell>;
+}
+
+// Gaveta para tarefas de média duração que precisam preservar o contexto do chat.
+export function Drawer({ title, icon, onClose, children, className }) {
+  return <DialogShell title={title} icon={icon} onClose={onClose} variant="drawer" className={className}>{children}</DialogShell>;
+}
+
+function ConfirmDialog({ title = 'Confirmar ação', message, confirmLabel = 'Confirmar', cancelLabel = 'Cancelar', destructive, onConfirm, onClose }) {
+  return <Modal title={title} onClose={onClose} className="decisionDialog">
+    <p className="dialogCopy">{message}</p>
+    <div className="modalActions">
+      <div className="spacer"/>
+      <button onClick={onClose} data-autofocus>{cancelLabel}</button>
+      <button className={destructive ? 'danger' : 'primary'} onClick={onConfirm}>{confirmLabel}</button>
+    </div>
+  </Modal>;
+}
+
+function PromptDialog({ title = 'Preencher informação', label = 'Valor', initialValue = '', confirmLabel = 'Salvar', onConfirm, onClose }) {
+  const [value, setValue] = useState(initialValue);
+  function submit(e) { e.preventDefault(); onConfirm(value); }
+  return <Modal title={title} onClose={onClose} className="decisionDialog">
+    <form className="dialogForm" onSubmit={submit}>
+      <label>{label}
+        <input value={value} onChange={e => setValue(e.target.value)} data-autofocus autoComplete="off"/>
+      </label>
+      <div className="modalActions">
+        <div className="spacer"/>
+        <button type="button" onClick={onClose}>Cancelar</button>
+        <button className="primary" type="submit">{confirmLabel}</button>
+      </div>
+    </form>
+  </Modal>;
+}
+
+// Substitui prompt/confirm do navegador por decisões consistentes com o app.
+export function useAppDialog() {
+  const [request, setRequest] = useState(null);
+  const askConfirm = useCallback(options => new Promise(resolve => setRequest({ kind: 'confirm', ...options, resolve })), []);
+  const askPrompt = useCallback(options => new Promise(resolve => setRequest({ kind: 'prompt', ...options, resolve })), []);
+  const finish = useCallback(value => {
+    request?.resolve(value);
+    setRequest(null);
+  }, [request]);
+
+  const dialog = request?.kind === 'confirm'
+    ? <ConfirmDialog {...request} onClose={() => finish(false)} onConfirm={() => finish(true)}/>
+    : request?.kind === 'prompt'
+      ? <PromptDialog {...request} onClose={() => finish(null)} onConfirm={value => finish(value)}/>
+      : null;
+
+  return { askConfirm, askPrompt, dialog };
 }

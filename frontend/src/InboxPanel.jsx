@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { Inbox, X, Upload, FileText, FolderInput } from 'lucide-react';
 import { API } from './constants.js';
-import { Modal } from './components.jsx';
+import { Drawer } from './components.jsx';
 
 // Caixa de entrada de documentos por cliente: acumule arquivos e, com 1 clique,
 // abra uma conversa nova já com tudo anexado para a IA processar.
-export function InboxPanel({ clients = [], clientId = '', showToast, onOpenConversation, onClose }) {
+export function InboxPanel({ clients = [], clientId = '', showToast, onOpenConversation, onClose, askConfirm }) {
   const [client, setClient] = useState(clientId || 'geral');
   const [items, setItems] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -32,6 +32,7 @@ export function InboxPanel({ clients = [], clientId = '', showToast, onOpenConve
     finally { setBusy(false); }
   }
   async function remove(stored) {
+    if (!await askConfirm({ title: 'Remover documento?', message: 'Ele sairá desta caixa de entrada.', confirmLabel: 'Remover', destructive: true })) return;
     try { await fetch(`${API}/api/inbox/${client}/${encodeURIComponent(stored)}`, { method: 'DELETE' }); load(); } catch {}
   }
   async function analyze() {
@@ -48,8 +49,8 @@ export function InboxPanel({ clients = [], clientId = '', showToast, onOpenConve
 
   const clientName = client === 'geral' ? 'Geral' : (clients.find(c => c.id === client)?.name || 'Cliente');
 
-  return <Modal title="Caixa de entrada de documentos" icon={<Inbox size={18}/>} onClose={onClose}>
-    <p className="muted" style={{ margin: 0 }}>Guarde aqui os documentos que vão chegando de cada cliente. Quando quiser, abra tudo numa conversa nova para a IA <b>ler, organizar e resumir</b>.</p>
+  return <Drawer title="Caixa de entrada de documentos" icon={<Inbox size={18}/>} onClose={onClose} className="inboxDrawer">
+    <p className="drawerIntro">Guarde documentos por cliente e abra tudo em uma conversa nova quando for a hora de a IA ler, organizar e resumir.</p>
 
     <label>Cliente
       <select value={client} onChange={e => setClient(e.target.value)}>
@@ -76,5 +77,5 @@ export function InboxPanel({ clients = [], clientId = '', showToast, onOpenConve
     </div>
 
     {items?.length > 0 && <button className="primary" onClick={analyze} disabled={busy}><FolderInput size={16}/> Abrir {items.length} documento(s) em nova conversa</button>}
-  </Modal>;
+  </Drawer>;
 }

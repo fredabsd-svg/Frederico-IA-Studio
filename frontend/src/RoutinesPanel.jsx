@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { CalendarClock, X, Play, Power } from 'lucide-react';
 import { API } from './constants.js';
-import { Modal } from './components.jsx';
+import { Drawer } from './components.jsx';
 
 const WEEKDAYS = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
 const emptyRoutine = () => ({ title: '', prompt: '', assistant_id: '', client_id: '', cadence: 'monthly', day: 5, hour: 8, web_search: false });
@@ -13,7 +13,7 @@ function describe(r) {
   return `Todo dia ${r.day} do mês ${at}`;
 }
 
-export function RoutinesPanel({ assistants = [], clients = [], showToast, onClose }) {
+export function RoutinesPanel({ assistants = [], clients = [], showToast, onClose, askConfirm }) {
   const [items, setItems] = useState(null);
   const [form, setForm] = useState(emptyRoutine());
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -41,12 +41,12 @@ export function RoutinesPanel({ assistants = [], clients = [], showToast, onClos
     try { await fetch(`${API}/api/schedules/${r.id}/run`, { method: 'POST' }); showToast('Rotina disparada agora — acompanhe em "Tarefas".', 'ok'); } catch {}
   }
   async function remove(id) {
-    if (!confirm('Excluir esta rotina?')) return;
+    if (!await askConfirm({ title: 'Excluir rotina?', message: 'Ela deixará de ser executada automaticamente.', confirmLabel: 'Excluir', destructive: true })) return;
     try { await fetch(`${API}/api/schedules/${id}`, { method: 'DELETE' }); load(); } catch {}
   }
 
-  return <Modal title="Rotinas automáticas" icon={<CalendarClock size={18}/>} onClose={onClose}>
-    <p className="muted" style={{ margin: 0 }}>Programe tarefas para rodarem sozinhas — ex.: <i>"todo dia 5, gere o relatório do cliente X"</i>. Na hora marcada, o app cria a tarefa e o resultado aparece em <b>Tarefas</b>. (O computador precisa estar ligado com o app aberto.)</p>
+  return <Drawer title="Rotinas automáticas" icon={<CalendarClock size={18}/>} onClose={onClose} className="routinesDrawer">
+    <p className="drawerIntro">Programe tarefas para rodarem sozinhas. Na hora marcada, o app cria a tarefa e o resultado aparece em <b>Tarefas</b>. O computador precisa estar ligado com o app aberto.</p>
 
     <label>Nome da rotina
       <input value={form.title} onChange={e => set('title', e.target.value)} placeholder="Ex.: Relatório mensal — Padaria do João"/>
@@ -106,5 +106,5 @@ export function RoutinesPanel({ assistants = [], clients = [], showToast, onClos
         </div>
       ))}
     </div>
-  </Modal>;
+  </Drawer>;
 }
