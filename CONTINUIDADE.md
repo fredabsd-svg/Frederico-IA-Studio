@@ -1,0 +1,308 @@
+# CONTINUIDADE — Estado do projeto Frederico AI Studio
+
+> Documento de handoff para continuar o desenvolvimento em uma nova sessão.
+> Última atualização: 2026-07-16. Leia isto ANTES de qualquer mudança.
+
+## 0. PONTO ATUAL (2026-07-16) — protótipo v2, ícones/cor, faxina de CSS
+
+Sessão focada em aplicar o **protótipo aprovado no claude.ai/design**
+(`Frederico AI Studio v2.dc.html`) no app real, com validação ao vivo por
+estilo computado (o screenshot do painel não funciona nesta sessão).
+
+- **Camada `v2.css`** (novo arquivo, importado POR ÚLTIMO em `main.jsx`): refino
+  visual sobre as classes do `styles.css` + componentes novos. Vence empates por
+  ordem de carga. Cabeçalho do arquivo documenta a arquitetura. **Regra das 7
+  paletas:** cores saem de `var(--accent/--muted/--line)` ou `color-mix` — nunca
+  hex fixo, senão Claro/Sépia herdam azul.
+- **Protótipo v2 aplicado:** breadcrumb `cliente › conversa` na topbar; rodapé da
+  sidebar com status do servidor (verde/âmbar, derivado de `unprotected`); **chips
+  do composer** (Pesquisa web, Esforço, Ditar, Executar em 2º plano) — o menu ⚙
+  (`.cmpMenu`) foi **eliminado** por ser redundante com os chips; separador de data
+  + cabeçalho do assistente nas mensagens; marca com ladrilho "F"; botão enviar
+  `ArrowUp`; seletor de cliente custom `ClientPicker` (no lugar do `<select>`).
+- **Ícones Lucide + cor por assistente:** o campo `emoji` (banco/API) agora guarda
+  o **nome de um ícone Lucide** (`ASSISTANT_ICONS` em `constants.js`). COMPAT: se o
+  valor não for um nome de ícone conhecido (`isAssistantIcon`), renderiza como
+  TEXTO — assistentes antigos com emoji continuam funcionando, sem migração de
+  banco. Nova coluna `assistants.color` (ALTER TABLE em try/catch, `db.js`);
+  `server.js` INSERT/UPDATE incluem `color`; GET usa `SELECT *` (flui sozinho).
+- **`QUALITY_BAR`** (backend `agent.js`): padrão de qualidade em PT-BR (raciocínio,
+  honestidade sobre incerteza, anti-fabricação de fontes, tratar conteúdo externo
+  como dado não-confiável). Injetado nos 3 caminhos de resposta ao usuário
+  (resposta única + coordenador de equipe direto + síntese). Enxugado p/ não
+  duplicar `SANDBOX_RULES` nem a regra de idioma.
+- **Faxina de CSS (SUPERSEDE o aviso de §0/2026-07-14 sobre `.cmpMenu` e
+  `.composer button`):** o `styles.css` tinha ~4 gerações sobrepostas do composer;
+  a antiga (fonte de 3 bugs) foi removida e consolidada numa geração única. 16
+  classes órfãs removidas. **ARMADILHA (custou 3 regressões):** remover a geração
+  antiga derruba props load-bearing que a nova não tem (`display:flex`, `flex:1`,
+  `font:inherit`, `color`, e o `outline:none` que suprimia a regra global de
+  foco). Ao consolidar CSS: verificar o RENDER (geometria/fonte/cor), não uma
+  lista de props; e migrar TODA prop que só a regra antiga tinha.
+- **Armadilhas de deploy confirmadas:** HMR do Vite está morto (inotify não passa
+  no bind mount do Windows) → editar `frontend/src` exige `docker restart
+  frederico-ia-studio-frontend-1`. Backend NÃO tem bind mount do código → editar
+  `backend/src` exige `docker compose build backend`. Os dois falham em silêncio.
+
+### Trabalho de OUTRAS sessões incluído no commit e revisado em 2026-07-16
+
+O commit `49b9ac6` empacotou muita coisa que já estava na árvore sem commit.
+Foi revisado por leitura de diff (3 frentes) + suíte de testes (40/40 passam:
+36 backend `node --test` + 4 frontend `sse.test.js`) + build/boot. Resumo:
+
+- **Controle de concorrência por conversa** (`agent.js`): `acquireConversationControl`
+  / `releaseConversationControl` (idempotente) / `isConversationActive`. Impede 2
+  respostas simultâneas na mesma conversa; `DELETE`, `POST /tasks` e `/chat` retornam
+  **409** se a conversa está ativa (o DELETE protege a FK de mensagens/arquivos).
+- **Modo Equipe com Executor** (`agent.js runOrchestrator`): quando a tarefa exige
+  ferramentas, um assistente "executor" roda o `runAgent` de verdade usando os
+  pareceres da equipe como briefing (antes a equipe só gerava texto).
+- **Capacidades de modelo** (`modelCapabilities.js`): `buildModelCallPlan` bloqueia
+  modelo sem `text`/sem `tools` quando a tarefa exige (mensagem amigável), degrada
+  tools/reasoning não suportados, e faz fallback p/ texto quando o provedor responde
+  "no endpoints support tool use".
+- **Modo desenvolvedor** (`DeveloperPanel.jsx` + `App.jsx`): plan/build/review sobre
+  uma pasta de PC montada, com Missão (`brief`) e Regras (`rules`); injeta
+  `developer:{mode,projectId,rules}` no body do chat.
+- **Rotinas com timezone** (`scheduling.js`): `scheduleDue` usa `APP_TIMEZONE` (não
+  UTC), com clamp de dia mensal. **Classificação de tarefas** (`taskOutcome.js`):
+  `done`/`error`/`canceled` em vez de sempre "concluída".
+- **Turnos de baixo sinal** (`memory/retrievalPolicy.js`): saudações/confirmações
+  curtas não disparam recuperação de memória nem ferramentas.
+- **`tools.js` endurecido** (MELHORA a segurança): `web_fetch` valida host a cada
+  redirect + limite de tamanho; `write_file` recusa gravar fora do workspace;
+  caminhos de pasta de PC confinados por `resolveMountedPcPath`.
+- **Resiliência de streaming** (`agent.js`): retry em 408/429/5xx + timeouts, com
+  retomada. **Reparo de entrega**: materializa `.md/.txt` prometido mas não criado.
+- **`sse.js` (frontend)**: parser de SSE sem estado, tolerante a proxy sem separador
+  final e a evento malformado (relevante pro duplo proxy do Tailscale).
+
+## 0.1 PONTO 2026-07-14 — o que foi feito depois da v. de memória
+
+Branch `claude/new-session-ohbtj0`, PR #1. Tudo validado (esbuild/node --check)
+e enviado. Desde a versão de memória, foi adicionado/corrigido:
+
+- **Reforma visual (ChatGPT/Claude/Jan.ai):** abre em tela de boas-vindas
+  (conversa "rascunho" — registro só no 1º envio via `ensureConversation`,
+  single-flight); barra lateral **recolhível** (`sideHidden`); busca de
+  conversas (procura em TODOS os clientes via `?all=1`); tela de boas-vindas
+  com cards; campo de mensagem arredondado.
+- **Layout da barra lateral:** conversas + ferramentas num único scroll
+  (`.sideScroll`) — histórico com espaço garantido, nada cortado.
+- **Caixa de mensagem:** todos os botões agrupados num **menu único**
+  (`.cmpMenu`, ícone SlidersHorizontal): Anexar, Pesquisa web, Esforço,
+  Ditar, Segundo plano. Só menu + textarea + enviar visíveis. CUIDADO: a regra
+  base `.composer button{height:48px;width:52px}` sobrescreve botões novos —
+  use seletores mais específicos (`.composer .cmpMenuBtn`, `.cmpMenuPanel .cmpItem`).
+- **Seletor de modelos:** filtros (família via `<select>`, lançamentos/NOVO,
+  grátis, contexto, capacidades), favoritos (localStorage), ordenar por
+  novos/baratos. `/api/models` expõe created, context, price, vision, free.
+- **7 temas** (claro/escuro + slate/indigo/emerald/amber/sepia) via classes
+  `.t-<id>` + `theme` state; botão Tema abre seletor.
+- **Esforço da IA** (baixo/medio/alto/extra/max): reasoning effort (OpenRouter)
+  + maxSteps + nudge. Enviado no body do chat; aliases p/ nomes antigos.
+- **Correção de bugs (revisão com 4 agentes):** symlink escape (safeJoin +
+  realInside), BLOCKED_PATHS/isDangerousHostPath, SSRF no web_fetch,
+  execInSandbox (error handler + demux + cap), getContainer single-flight,
+  vazamento de memória entre clientes (findSimilar por escopo + 'passage'),
+  guardas Array.isArray no front, etc.
+- **Economia de tokens** (`economy_mode`, LIGADO por padrão): contexto ~8k,
+  histórico 20, extração de memória só a cada 4 msgs.
+- **Recursos novos:** Ferramentas/apps embutidos (EMBEDDED_APPS: NF-e, OCR,
+  conciliação, comparador de regimes, dashboard, doc profissional), assistente
+  "Documentos profissionais" (seed único via settings.seeded_docpro, Word Design
+  em python-docx), Rotinas agendadas (tabela `schedules` + agendador 1x/min),
+  Calendário fiscal (com obrigações de Tocantins: GIAM/ICMS dia 9, SPED Fiscal
+  dia 15), Caixa de entrada de documentos por cliente (data/inbox).
+- **Heartbeat SSE** (": ping" a cada 15s) contra "Upstream idle timeout".
+- **Acesso no celular:** app agora usa **mesma origem** (API relativa "" +
+  Vite `server.proxy` /api → `backend:3001`; `host:true`, `allowedHosts:true`;
+  compose usa `VITE_PROXY_TARGET`). Habilita Tailscale/HTTPS numa porta só.
+
+- **Reforma do seletor de modelos + ícones** (commit `20e298d`, 2026-07-14):
+  ModelPicker agora é guiado pela **finalidade** do trabalho (Trabalho geral,
+  Documentos e planilhas, Economia, Analisar imagens, Criar imagens, Criar
+  vídeo) em vez de taxonomia de famílias na 1ª tela; guarda modelos recentes
+  (localStorage `fred_recent_models`); filtros avançados recolhíveis. Emojis
+  trocados por ícones `lucide-react` (mapa `QUICK_ACTION_ICON` no App.jsx,
+  rótulos `FAMILY_META` sem emoji). Removido código morto de "novos modelos"
+  (`isNewModel`/`daysAgo`/`Date.now`). Validado com `vite build` (produção OK).
+
+**✅ CONCLUÍDO — Acesso pelo celular via Tailscale Serve + HTTPS** (2026-07-14,
+testado e confirmado pelo usuário no celular Motorola Edge 60 Pro):
+- `tailscale serve` ativo: `https://frederico.tail609192.ts.net/` → proxy
+  `http://127.0.0.1:5173`, modo **"tailnet only"** (só aparelhos da tailnet do
+  usuário; nada exposto à internet pública). Cadeado HTTPS válido no celular.
+- Cadeia completa verificada: HTTPS Tailscale → Vite (5173, proxy `/api`) →
+  backend (3001). SSE do chat passa pelos 2 proxies (X-Accel-Buffering:no,
+  Cache-Control:no-transform, heartbeat 15s).
+- **Sem senha** (`auth:false`) — aceitável SÓ por ser tailnet-only. Para liberar
+  a terceiros, ativar `APP_PASSWORD`.
+- Próximo passo opcional (não feito): fazer `tailscale serve` + Docker subirem
+  sozinhos com o Windows. NÃO testado de ponta a ponta em Docker por sessão
+  anterior sem Docker; ESTA sessão rodou com Docker Desktop ativo e tudo no ar.
+- **Armadilha resolvida:** `git config core.autocrlf` deve ficar **true** (repo
+  usa LF, working tree Windows usa CRLF). Com `false`, `git add` inflava o diff
+  de ~570 p/ ~2600 linhas de ruído CRLF. Não setar autocrlf=false neste repo.
+
+## 1. O que é o projeto
+
+**Frederico AI Studio**: aplicativo web de chat agêntico em PT-BR, conectado a
+APIs compatíveis com OpenAI (o usuário usa **OpenRouter**), com **um sandbox
+Docker por conversa** que executa Python/bash e gera **arquivos reais**
+(xlsx, docx, pdf, imagens, zip) baixáveis no chat. Roda via `docker compose`.
+
+- **Repositório**: `fredabsd-svg/Frederico-IA-Studio` (GitHub)
+- **Branch de trabalho**: `claude/new-session-ohbtj0` — TODO push vai para ela
+- **PR #1 aberto** contra `main` (main é um commit vazio criado só como base)
+- Último commit: `20e298d` — reforma do seletor de modelos + ícones (2026-07-14).
+  Acesso pelo celular via Tailscale/HTTPS funcionando (ver §0).
+
+## 2. Sobre o usuário (Frederico) — como trabalhar com ele
+
+- **Contador** (mencionou CRC TO-006157/O-8 como seu registro), usa o app para
+  trabalho contábil/fiscal (DFC, fluxo de caixa, propostas, relatórios).
+- **Leigo em programação**: explicar passo a passo, sem jargão, em PT-BR.
+- Ambiente: **Windows**, Docker Desktop, pasta do projeto clonada via git em
+  `C:\Users\conta\Downloads\Frederico-IA-Studio\Frederico-IA\Frederico-IA-Studio`.
+- Atualiza com: `git pull` + duplo clique em **`iniciar.bat`** (reconstrói) +
+  Ctrl+Shift+R no navegador. **Sempre terminar respostas com essas instruções**
+  quando houver mudança de código (dizer se backend mudou → rebuild).
+- `.env` dele: chave do **OpenRouter** (`DEEPSEEK_BASE_URL=https://openrouter.ai/api/v1`,
+  `DEEPSEEK_MODEL=deepseek/deepseek-chat`). Usa DeepSeek V3 e GPT-4o.
+- Manda **prints** quando algo dá errado; responder com diagnóstico + correção.
+- Plano futuro dele: servidor caseiro com **notebook Linux + Tailscale**
+  (guia pronto em `NOTEBOOK-SERVIDOR.md`; alternativa VPS em `VPS-DEPLOY.md`).
+
+## 3. Stack e estrutura
+
+- **Backend** (`backend/src/`, Node 20 ESM): Express, dockerode, better-sqlite3,
+  multer, nanoid, openai SDK, @xenova/transformers (embeddings locais).
+  - `server.js` — todas as rotas HTTP + SSE + auth + fila de tarefas
+  - `agent.js` — loop agêntico (streaming token a token), orquestrador (modo
+    Equipe), regras do sandbox, freio de loop de erros, validador de arquivos
+  - `tools.js` — ferramentas: run_python, bash, write/read/list, zip_outputs,
+    web_search/web_fetch (backend), generate_image (via IMAGE_MODEL)
+  - `sandbox.js` — ciclo de vida dos containers (1 por conversa)
+  - `auth.js` — login por senha (APP_PASSWORD; desligado sem ela)
+  - `memory/` — **sistema de memória de longo prazo** (ver §5)
+- **Frontend** (`frontend/src/`, React 19 + Vite 8, versões FIXADAS):
+  `App.jsx` (principal), `MemoryPanel.jsx` (Cérebro), `components.jsx`
+  (ToolStep/Slider/Modal/ModelPicker/Collapsible), `constants.js`, `styles.css`
+- **Sandbox** (`sandbox/Dockerfile`): python:3.12-slim + pandas, openpyxl,
+  xlsxwriter, python-docx, reportlab, weasyprint(+libs pango), matplotlib,
+  PyMuPDF, ocrmypdf, ghostscript, camelot, pdf2image, pytesseract(por),
+  **ffmpeg** (edição de vídeo/áudio). Sem rede, uid 1000, limites.
+- **Deploy**: `docker-compose.yml` (dev: 5173/3001) e `docker-compose.prod.yml`
+  (Caddy com HTTPS automático + frontend buildado + backend sem porta pública).
+- Utilitários Windows: `iniciar.bat` (limpa + sobe + abre navegador), `parar.bat`.
+
+## 4. Funcionalidades já entregues (todas funcionando)
+
+Assistentes personalizados (Studio com templates e sliders) · Biblioteca de
+templates de pedido (+ salvar mensagem como template) · Clientes/Projetos
+(conversas e memória isoladas por cliente) · Modo Equipe (orquestrador
+multi-assistente) · **Memória de longo prazo** (§5) · Fila de tarefas em 2º
+plano (sobrevive a reinício) · Pesquisa na internet (botão globo; Google via
+GOOGLE_API_KEY/CSE_ID ou DuckDuckGo) · Ditado por voz (Web Speech pt-BR) ·
+Geração/edição de imagens (generate_image, IMAGE_MODEL padrão
+google/gemini-2.5-flash-image, prévia no chat) · Edição de vídeo (ffmpeg) ·
+Validador automático de xlsx/pdf/docx gerados (selo no cartão) · Exportar
+conversa em PDF/Word · Backup .tar.gz de um botão · Análises (tokens por
+assistente/modelo/conversa) · Pausar/Continuar/Parar · Streaming ao vivo +
+chips de ferramenta expansíveis (mostram código executado e resultado) ·
+Editar mensagem estilo ChatGPT (trunca conversa) · Copiar mensagem ·
+Mensagens longas recolhíveis · Seletor de modelos com busca e categorias
+(⭐ melhores p/ planilhas; 🆓 free separados) · Erros da API traduzidos
+(429/401/402...) · Login por senha p/ produção · Arquivos como cartões no
+chat · Upload como chips · Tela responsiva (gaveta mobile) · Tema claro/escuro.
+
+## 5. Sistema de memória (recém-entregue — usuário AINDA NÃO TESTOU)
+
+- **Módulos** em `backend/src/memory/`: `embeddings.js` (locais,
+  Xenova/multilingual-e5-small ~112MB baixado 1x p/ ./data/models; fallback
+  automático para busca por palavras), `memoryService.js` (CRUD tipado:
+  perfil/preferencia/projeto/fato/manual + ranking sim+recência+importância+
+  fixada + dedupe + settings + guard de segredos looksSensitive em add E
+  update), `indexer.js` (após cada resposta: chunk com embedding + escopo do
+  cliente; LLM barato [EXTRACT_MODEL] gera resumo/tags e extrai fatos;
+  importação de exports do Claude/ChatGPT/json genérico/txt/md/html),
+  `contextBuilder.js` (monta contexto por prioridade respeitando
+  context_target_tokens, padrão 60k, configurável até 1M+).
+- **Rotas**: `/api/memories` (GET busca/POST/PUT/DELETE, /export, /import,
+  /reindex), `/api/memory-config`; legadas `/api/memory` mantidas.
+- **UI**: painel "Cérebro do Assistente" (MemoryPanel.jsx).
+- **Decisões da revisão adversarial** (5 fixes aplicados): chunks têm coluna
+  `scope` (isolamento por cliente); apagar/truncar conversa apaga chunks e
+  resumos; remover cliente move chunks p/ global; fallback do EXTRACT_MODEL
+  depende da base URL; MemoryPanel valida res.ok.
+- **Testes**: suíte E2E de 37 casos passou (script no scratchpad da sessão
+  antiga — recriar se precisar; testa modo degradado, não o modelo real).
+
+## 6. Decisões/armadilhas técnicas que NÃO podem regredir
+
+1. Binds do sandbox usam `HOST_WORKSPACE_ROOT` (caminho do HOST, não do container).
+2. Todo write no workspace: `chownSync(1000,1000)` (exec roda como uid 1000).
+3. Timeout mata o container; próximo exec recria sozinho; reaper de 30min.
+4. Backend em node:20-**slim** (alpine quebra better-sqlite3).
+5. Desconexão SSE: usar `res.on('close')` com `writableEnded` — `req.on('close')`
+   dispara imediatamente e matava toda resposta no 1º token (bug histórico grave).
+6. Streaming: reenviar ao histórico só {role, content, tool_calls}; emitir
+   fallback via delta se o modelo não gerar texto (senão balão vazio).
+7. SANDBOX_RULES no prompt: cada run_python é processo novo (sem estado);
+   narrar antes de cada ferramenta; ffmpeg disponível; generate_image p/ imagens.
+8. Freio: 5 falhas consecutivas de ferramenta → interrompe com o último erro.
+9. `AGENT_MAX_STEPS=30`, `AGENT_HISTORY_LIMIT=60` (env).
+10. Validação de caminhos com `insideBase()` (startsWith + separador) — nunca
+    voltar ao startsWith puro (path traversal).
+11. Frontend: dependências com versões fixadas (nunca "latest").
+12. Nome de arquivo de upload: converter latin1→utf8 (acentos).
+13. Container names sem `container_name` fixo no compose (evita conflito).
+
+## 7. Regras de trabalho (processo)
+
+- Commits em português, descritivos; push SEMPRE para `claude/new-session-ohbtj0`.
+- Validar antes de commitar: `node --check` em todo backend + bundle do
+  frontend com esbuild (`npx esbuild frontend/src/App.jsx --jsx=automatic
+  --bundle --external:react ...`) + `py_compile` em scripts Python embutidos.
+- Nunca expor chaves/tokens; nunca salvar dados sensíveis; avisos de
+  segurança/LGPD mantidos no README.
+- Não quebrar funcionalidades existentes; migrações de banco sempre
+  não-destrutivas (ALTER TABLE em try/catch).
+- Respostas ao usuário: PT-BR, passo a passo, com seção "Atualize aí" no final.
+
+## 8. Pendências / próximos passos sugeridos
+
+0. **[Segurança, revisão 2026-07-16] SSRF residual no `web_fetch`** (`tools.js`,
+   `isBlockedHost`): o bloqueio filtra por **texto do hostname**, então deixa passar
+   IPv6 entre colchetes (`http://[::1]/`), IP em decimal/hex/octal (`http://2130706433/`
+   = 127.0.0.1) e **DNS rebinding** (domínio público que resolve p/ IP interno). Como
+   o backend tem rede, isso alcança serviços internos. NÃO é regressão (pré-existente;
+   a validação de redirect até melhorou). Corrigir validando o **IP resolvido**
+   (desembrulhar colchetes IPv6, cobrir IPv4-mapeado, formatos numéricos) antes do
+   fetch. Também: `ENVIRONMENT_QUERY_RE` (`agent.js`) é amplo demais e dispara um
+   `bash` de auditoria no sandbox em mensagens comuns — estreitar.
+1. **Usuário testar a memória** (git pull + iniciar.bat; 1ª conversa baixa o
+   modelo de embeddings ~112MB) — perguntar "quem sou eu?" após algumas conversas.
+2. Testar **importação** do export do Claude (conversations.json).
+3. Futuro: consolidação/decaimento de memórias; indexação retroativa das
+   conversas antigas da instalação; geração de vídeo (fal.ai/Replicate);
+   multiusuário (contas separadas); montar o notebook-servidor com Tailscale.
+
+## 9. Estado do git
+
+- Último commit enviado ao GitHub era `0962d18` (2026-07-14). Desde então, a
+  árvore acumulou trabalho de VÁRIAS sessões sem commit (protótipo v2, modo
+  desenvolvedor, orquestrador c/ executor, catálogo de modelos, agendamento,
+  política de memória, testes, etc.). O **commit de 2026-07-16** empacota TODO
+  esse estado funcional de uma vez (backend/src + frontend/src + sandbox +
+  este CONTINUIDADE.md). Estado validado antes de commitar: `docker compose
+  build` do backend sobe limpo (health 200) e `vite build` do frontend passa.
+- **Deixados de fora de propósito** (não commitar sem intenção clara):
+  - `frontend/dist/` — saída de build (não versionar).
+  - `frontend/package-lock.json` (M): só teve remoção de binários de plataforma
+    pelo `npm install` do container Linux; `package.json` não mudou.
+  - Notas soltas no root: `CONTINUIDADE-MEU.md`, `CRITICA-DESIGN.md`,
+    `monitor_rotinas_dominio.py`, `guia_rotinas_automaticas_dominio.md`.
+- `backend/node_modules` local desta sessão de dev tinha transformers sem o
+  binário sharp (limitação do ambiente de dev, NÃO afeta o Docker do usuário).

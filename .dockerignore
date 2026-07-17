@@ -1,0 +1,10 @@
+# Mantém o contexto de build do Docker pequeno e sem dados sensíveis
+.git
+.env
+node_modules
+**/node_modules
+data
+workspaces
+*.log
+*.md
+.claude

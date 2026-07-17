@@ -1,0 +1,18 @@
+# DOMAIN vem do .env (docker-compose.prod.yml). Com um domínio real,
+# o Caddy emite e renova o certificado HTTPS sozinho (Let's Encrypt).
+# Sem domínio (DOMAIN=:80), serve em HTTP simples pelo IP.
+{$DOMAIN::80} {
+	encode gzip
+
+	# API -> backend (mesma origem: cookies e SSE funcionam sem CORS)
+	handle /api/* {
+		reverse_proxy backend:3001
+	}
+
+	# Frontend (SPA): qualquer rota desconhecida cai no index.html
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}

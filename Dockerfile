@@ -1,0 +1,9 @@
+FROM node:20-slim
+ENV NODE_ENV=production
+WORKDIR /app
+COPY backend/package*.json ./backend/
+RUN cd backend && npm install --omit=dev
+COPY backend ./backend
+WORKDIR /app/backend
+EXPOSE 3001
+CMD ["npm", "start"]
