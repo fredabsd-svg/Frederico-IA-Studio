@@ -1,0 +1,131 @@
+/* Tela de login/cadastro (Better Auth). Usa as variáveis dos 7 temas, então
+   segue claro/escuro e as paletas automaticamente. */
+.loginWrap {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  background: var(--bg);
+}
+.loginCard {
+  width: 100%;
+  max-width: 400px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, .25);
+  padding: 30px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.loginSub {
+  margin: 0 0 4px;
+  text-align: center;
+  color: var(--muted);
+  font-size: var(--fs-md);
+}
+.loginSocial { display: flex; flex-direction: column; gap: 10px; }
+.socialBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  padding: 11px 14px;
+  font-weight: 600;
+  font-size: var(--fs-md);
+  border: 1px solid var(--line);
+  background: var(--panel2);
+  color: var(--text);
+  border-radius: var(--r-md);
+  cursor: pointer;
+}
+.socialBtn:hover:not(:disabled) { border-color: var(--accent); }
+.socialBtn:disabled { opacity: .6; cursor: default; }
+.loginOr {
+  display: flex;
+  align-items: center;
+  text-align: center;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  gap: 10px;
+}
+.loginOr::before, .loginOr::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+.loginForm { display: flex; flex-direction: column; gap: 10px; }
+.loginInput {
+  border: 1px solid var(--line);
+  background: var(--panel2);
+  color: var(--text);
+  border-radius: var(--r-md);
+  padding: 11px 12px;
+  font: inherit;
+  outline: none;
+}
+.loginInput:focus { border-color: var(--accent); }
+.loginForm .primary,
+.loginCard .primary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: var(--accent);
+  color: var(--on-accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-md);
+  padding: 11px 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.loginForm .primary:disabled { opacity: .7; cursor: default; }
+.loginError {
+  margin: 0;
+  color: var(--danger);
+  font-size: var(--fs-sm);
+  text-align: center;
+}
+.loginToggle {
+  margin: 2px 0 0;
+  text-align: center;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+.loginToggle button {
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+}
+.spinIcon { animation: spin .8s linear infinite; }
+
+/* Rodapé da barra lateral: conta logada + botão Sair */
+.sideFootUser {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+.sideFootOut {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  border-radius: var(--r-sm);
+  padding: 5px 10px;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+.sideFootOut:hover { border-color: var(--danger); color: var(--danger); }

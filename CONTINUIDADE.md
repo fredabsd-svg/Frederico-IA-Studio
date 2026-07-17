@@ -11,6 +11,85 @@
 > comentários do `sandbox/Dockerfile` (também neutralizados agora). O app é um
 > **estúdio geral**, sem viés contábil/fiscal.
 
+## 0. ESTADO ATUAL — Transformação em SaaS multi-tenant (2026-07-17)
+
+> **LEIA PRIMEIRO.** O app está sendo transformado de single-user (sem login) em
+> **SaaS multi-tenant**, seguindo o plano em `PROMPTSAAS.md` (5 fases). Abaixo, o
+> ponto exato em que paramos.
+
+**Fases (do `PROMPTSAAS.md`):**
+1. ✅ **PostgreSQL** — CONCLUÍDA e testada (rodando na máquina do usuário).
+2. ✅ **Better Auth (login e-mail/senha + GitHub + Google)** — CONCLUÍDA e testada
+   pelo usuário (login pelo GitHub funcionando, IA respondendo).
+3. ⏳ **Isolamento por usuário (multi-tenancy) + BYOK** — PRÓXIMA. Não iniciada.
+4. ⏳ **Landing page** — não iniciada.
+5. ⏳ **Produção (VPS + domínio)** — não iniciada.
+
+**O que a Fase 1 fez (commit `15e6ebd`):** trocou SQLite (better-sqlite3, síncrono)
+por **PostgreSQL** (`pg`, assíncrono). `backend/src/db.js` virou uma casca de
+compatibilidade sobre o `pg` (mantém `db.prepare(sql).get/all/run`, mas agora
+tudo é `await`; traduz `?`→`$n`; transação real via AsyncLocalStorage). Schema em
+`backend/migrations/*.sql` + runner `backend/src/migrate.js` (roda no boot).
+Decisões: datas e JSON ficam como **TEXT** (preserva o comportamento antigo);
+embeddings viram **BYTEA**; `rowid`→coluna `seq BIGSERIAL` nas mensagens;
+`MAX(a,b)`→`GREATEST`; `COUNT/SUM` viram string no pg (usar `Number()`); GROUP BY
+estrito. Compose ganhou serviço `postgres:16-alpine`. **`getSettings()` e
+`pcFolderMounts()` continuam SÍNCRONOS via cache em memória** (carregado no boot),
+para não quebrar em cascata. Shim no `server.js` encaminha rejeições de handlers
+async ao middleware de erro (Express 4 não faz isso — sem ele, um erro de query
+derrubava o processo). `/api/backup` agora usa `pg_dump`.
+
+**O que a Fase 2 fez (commits `8a3f20a`, `cd9516a`, `92601d1`):** login com
+**Better Auth** (v1.6.x) usando o mesmo Postgres. Backend: `backend/src/auth.js`
+(instância `betterAuth` + middleware `requireAuth` que põe `req.userId`);
+`migrations/002_better_auth.sql` (tabelas `user/session/account/verification`,
+schema gerado pela CLI oficial — nomes camelCase entre aspas); no `server.js` o
+handler `/api/auth/*` é montado ANTES do `express.json`, e todas as rotas `/api`
+exigem login (exceto `/api/health` e `/api/auth/*`). Removidos a senha única
+antiga (APP_PASSWORD) e a rota `/api/login`. Frontend: `authClient.js`,
+`AuthGate.jsx` (portão que mostra login ou app), `LoginScreen.jsx` (e-mail/senha
++ GitHub/Google, ícones de marca em SVG inline), `auth.css`; o `App.jsx` recebe
+`user` por prop e ganhou botão "Sair". Como o app usa `fetch` relativo, o cookie
+de sessão vai automaticamente em toda chamada (inclusive SSE).
+
+**Variáveis novas no `.env`** (ver `.env.example`): `DATABASE_URL`, `DATA_DIR`,
+`BETTER_AUTH_URL`, `BETTER_AUTH_SECRET`, `ENCRYPTION_KEY`, `GITHUB_CLIENT_ID/SECRET`,
+`GOOGLE_CLIENT_ID/SECRET`. O usuário criou os OAuth Apps (GitHub/Google) com
+callbacks `http://localhost:5173/api/auth/callback/{github,google}` (dev). Os
+segredos (BETTER_AUTH_SECRET, ENCRYPTION_KEY) vieram de `openssl rand -hex 32`.
+**`ENCRYPTION_KEY` ainda NÃO é usada** — ela é para o BYOK da Fase 3 (criptografar
+a chave de API de cada usuário com AES-256-GCM).
+
+**Pendências conhecidas / próximos passos:**
+- **Fase 3** é a próxima: coluna `user_id` em toda entidade de topo (conversas,
+  assistentes, memórias, chunks, análises, configurações, tasks, schedules,
+  pc_folders, clients, templates, inbox), posse verificada na query
+  (`WHERE ... AND user_id=$userId`, 0 linhas → 404), workspaces por usuário
+  (`WORKSPACE_ROOT/<userId>/<conversationId>` + bind com `HOST_WORKSPACE_ROOT`),
+  chave do Map de sandboxes vira `${userId}:${conversationId}`, memória escopada
+  ao usuário, e **BYOK** (`user_settings` com a chave criptografada por
+  `ENCRYPTION_KEY`; `agent.js` usa a chave do usuário logado). Script opcional
+  `import-sqlite.mjs` para migrar os dados antigos do dono.
+- **Login no celular (Tailscale):** hoje os callbacks OAuth são só `localhost`.
+  Para o celular, adicionar a URL do Tailscale/domínio nos apps do GitHub/Google
+  e ajustar `BETTER_AUTH_URL`/`FRONTEND_URL`.
+- **Dado antigo:** ao subir a versão nova, o banco Postgres começa VAZIO (os
+  dados do SQLite antigo não migram sozinhos — é o esperado no multi-tenant).
+
+**Validação feita:** Fase 1 testada contra um Postgres real (migrations, transação
+commit/rollback, BYTEA, ON CONFLICT, ordenação/truncamento por `seq`, rotas da
+API) + suíte 36/36. Fase 2 testada via API server-side da Better Auth (cadastro,
+login, senha errada rejeitada) e **confirmada pelo usuário no navegador** (login
+GitHub + IA respondendo). Os testes de banco pulam sozinhos se não houver Postgres.
+
+**Ambiente Windows do usuário:** roda por `docker compose up --build` (o
+`iniciar.bat` teve os finais de linha corrigidos para CRLF via `.gitattributes`
+no commit `617d369`). Mudou o `.env`? Precisa recriar o container do backend
+(`docker compose up` de novo). Trocou de branch e o site mostra versão antiga?
+`docker compose down` + `up --build` (o container do frontend não recria sozinho).
+
+---
+
 ## 0. PONTO ATUAL (2026-07-16) — protótipo v2, ícones/cor, faxina de CSS
 
 Sessão focada em aplicar o **protótipo aprovado no claude.ai/design**

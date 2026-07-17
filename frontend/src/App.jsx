@@ -2,8 +2,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Download, FileText, FileSpreadsheet, FilePenLine, Plus, ArrowUp, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench, CalendarClock, Inbox, Palette, Gauge, SlidersHorizontal, Paperclip, MoreHorizontal, FolderOpen, Code2, Cpu, ChevronDown, ChevronRight, ChevronsUpDown, Calculator, Telescope, Scale, Briefcase, Receipt, Landmark, Megaphone, Lightbulb, ShieldCheck, GraduationCap, Stethoscope, Hammer, Leaf } from 'lucide-react';
+import { Download, FileText, FileSpreadsheet, FilePenLine, Plus, ArrowUp, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench, CalendarClock, Inbox, Palette, Gauge, SlidersHorizontal, Paperclip, MoreHorizontal, FolderOpen, Code2, Cpu, ChevronDown, ChevronRight, ChevronsUpDown, Calculator, Telescope, Scale, Briefcase, Receipt, Landmark, Megaphone, Lightbulb, ShieldCheck, GraduationCap, Stethoscope, Hammer, Leaf, LogOut } from 'lucide-react';
 import { API, FALLBACK_MODELS, TOOL_INFO, TEMPLATES, QUICK_ACTIONS, THEMES, WORKSPACES, EFFORTS, EFFORT_DESC, emptyForm, ASSISTANT_ICONS, ASSISTANT_COLORS, isAssistantIcon } from './constants.js';
+import { signOut } from './authClient.js';
 import { ToolStep, Slider, Modal, Drawer, ModelPicker, Collapsible, useAppDialog } from './components.jsx';
 import { MemoryPanel } from './MemoryPanel.jsx';
 import { PcFoldersPanel } from './PcFoldersPanel.jsx';
@@ -294,7 +295,7 @@ function MemoryTrace({ memory, onOpenMemory }) {
   </details>;
 }
 
-export default function App() {
+export default function App({ user } = {}) {
   const [conversations, setConversations] = useState([]);
   const [allConvs, setAllConvs] = useState([]);
   const [current, setCurrent] = useState(null);
@@ -1147,16 +1148,14 @@ export default function App() {
   const currentAssistant = assistants.find(a => a.id === assistantId);
   const uploads = files.filter(f => f.kind === 'upload');
 
-  // Tela de login (produção com APP_PASSWORD definida)
+  // Sessão expirada durante o uso: leva de volta ao login.
   if (needLogin) {
     return <div className="connError">
-      <form className="connErrorCard" onSubmit={doLogin}>
+      <div className="connErrorCard">
         <div className="brand" style={{ marginBottom: 0 }}>Frederico <span>AI Studio</span></div>
-        <p>Digite a senha de acesso para entrar.</p>
-        <input className="loginInput" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Senha" autoFocus/>
-        {loginError && <p className="loginError">{loginError}</p>}
-        <button className="primary" type="submit">Entrar</button>
-      </form>
+        <p>Sua sessão expirou. Entre novamente para continuar.</p>
+        <button className="primary" onClick={() => { window.location.href = '/'; }}>Ir para o login</button>
+      </div>
     </div>;
   }
 
@@ -1251,12 +1250,12 @@ export default function App() {
         </div>
       </nav>
       </div>
-      <div className={`sideFoot ${unprotected ? 'warn' : ''}`}
-        title={unprotected
-          ? 'Sem senha de acesso — use apenas na sua rede local'
-          : 'Acesso protegido por senha'}>
-        <span className="sideFootDot" aria-hidden="true"/>
-        <span>Servidor local · {unprotected ? 'sem senha' : 'protegido'}</span>
+      <div className="sideFoot" title={user?.email || 'Sua conta'}>
+        <span className="sideFootUser">{user?.name || user?.email || 'Minha conta'}</span>
+        <button className="sideFootOut" title="Sair da conta"
+          onClick={async () => { try { await signOut(); } catch {} window.location.href = '/'; }}>
+          <LogOut size={14}/> Sair
+        </button>
       </div>
     </aside>
 

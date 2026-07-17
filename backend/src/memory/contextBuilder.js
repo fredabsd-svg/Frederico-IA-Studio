@@ -49,10 +49,10 @@ function trimForTokens(text, maxTokens) {
   return raw.slice(0, maxChars - 80) + '\n\n[conteudo encurtado automaticamente para caber na janela de contexto]';
 }
 
-export function selectHistoryForContext({ conversationId, limit = 60, budgetTokens = 25000 } = {}) {
-  const rowsDesc = db.prepare(`
+export async function selectHistoryForContext({ conversationId, limit = 60, budgetTokens = 25000 } = {}) {
+  const rowsDesc = await db.prepare(`
     SELECT role, content, created_at FROM messages
-    WHERE conversation_id=? ORDER BY created_at DESC, rowid DESC LIMIT ?
+    WHERE conversation_id=? ORDER BY created_at DESC, seq DESC LIMIT ?
   `).all(conversationId, limit);
   const kept = [];
   let usedTokens = 0;
@@ -182,7 +182,7 @@ export async function buildContext({ conversationId, assistantId, clientScope, u
   const blocks = [];
 
   // 1) Perfil, preferencias e fixadas: prioridade maxima.
-  const profile = db.prepare(
+  const profile = await db.prepare(
     `SELECT * FROM memory WHERE scope IN (${ph}) AND (type IN ('perfil','preferencia') OR pinned=1)
      ORDER BY pinned DESC, importance DESC, updated_at DESC LIMIT 14`).all(...scopes);
   if (profile.length) {
@@ -195,8 +195,8 @@ export async function buildContext({ conversationId, assistantId, clientScope, u
 
   // 2) Notas manuais dos escopos aplicaveis.
   const profileIds = new Set(profile.map(p => p.id));
-  const manual = db.prepare(
-    `SELECT * FROM memory WHERE scope IN (${ph}) AND type='manual' ORDER BY updated_at DESC LIMIT 15`).all(...scopes)
+  const manual = (await db.prepare(
+    `SELECT * FROM memory WHERE scope IN (${ph}) AND type='manual' ORDER BY updated_at DESC LIMIT 15`).all(...scopes))
     .filter(m => !profileIds.has(m.id));
   if (manual.length) {
     blocks.push({
@@ -207,8 +207,8 @@ export async function buildContext({ conversationId, assistantId, clientScope, u
   }
 
   // 3) Resumo da conversa atual quando o inicio saiu da janela.
-  const conv = db.prepare('SELECT summary_long, summary_short FROM conversations WHERE id=?').get(conversationId);
-  const msgCount = db.prepare('SELECT COUNT(*) c FROM messages WHERE conversation_id=?').get(conversationId)?.c || 0;
+  const conv = await db.prepare('SELECT summary_long, summary_short FROM conversations WHERE id=?').get(conversationId);
+  const msgCount = Number((await db.prepare('SELECT COUNT(*) c FROM messages WHERE conversation_id=?').get(conversationId))?.c || 0);
   if (msgCount > historyLimit && (conv?.summary_long || conv?.summary_short)) {
     blocks.push({
       priority: 3,

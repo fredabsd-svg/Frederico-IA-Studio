@@ -9,9 +9,21 @@ const docker = new Docker({ socketPath: '/var/run/docker.sock' });
 
 // Pastas do computador do usuário liberadas para o assistente. Cada uma vira
 // um mount em /mnt/pc/<label> dentro do sandbox (só leitura ou leitura+escrita).
+// Cache em memória das pastas do PC. Como o pg é assíncrono, ler a cada chamada
+// tornaria pcFolderMounts() async — e ele é usado como valor padrão de parâmetro
+// (tools.js) e dentro de funções síncronas (agent.js). Mantemos um cache
+// carregado no boot (loadPcFolders) e atualizado sempre que as pastas mudam
+// (via destroyAllSandboxes, chamado pelas rotas de pastas do PC).
+let pcFoldersCache = [];
+
+export async function loadPcFolders() {
+  try { pcFoldersCache = await db.prepare('SELECT * FROM pc_folders ORDER BY created_at ASC').all(); }
+  catch { pcFoldersCache = []; }
+  return pcFoldersCache;
+}
+
 export function pcFolderMounts() {
-  let rows = [];
-  try { rows = db.prepare('SELECT * FROM pc_folders ORDER BY created_at ASC').all(); } catch {}
+  const rows = pcFoldersCache;
   const used = new Set();
   return rows.map(r => {
     let label = String(r.label || 'pasta').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9_-]/g, '_').slice(0, 30) || 'pasta';
@@ -28,6 +40,9 @@ export async function destroyAllSandboxes() {
     sessions.delete(id);
     try { await entry.container.remove({ force: true }); } catch {}
   }
+  // As pastas do PC podem ter mudado; atualiza o cache para os novos mounts
+  // entrarem em vigor na próxima execução.
+  await loadPcFolders();
 }
 const root = path.resolve(process.env.WORKSPACE_ROOT || './workspaces');
 // Caminho no HOST correspondente a `root`. Binds do Docker são interpretados

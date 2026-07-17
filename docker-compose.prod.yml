@@ -7,6 +7,21 @@ services:
     command: ["true"]
     restart: "no"
 
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=studio
+      - POSTGRES_PASSWORD=studio
+      - POSTGRES_DB=studio
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U studio -d studio"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   backend:
     build: .
     restart: unless-stopped
@@ -15,8 +30,9 @@ services:
       - .env
     environment:
       - WORKSPACE_ROOT=/app/workspaces
-      - DB_PATH=/app/data/app.sqlite
       - HOST_WORKSPACE_ROOT=${PWD}/workspaces
+      - DATA_DIR=/app/data
+      - DATABASE_URL=postgres://studio:studio@postgres:5432/studio
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./workspaces:/app/workspaces
@@ -24,6 +40,8 @@ services:
     depends_on:
       sandbox-image:
         condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
 
   web:
     build: ./frontend
@@ -40,5 +58,6 @@ services:
       - backend
 
 volumes:
+  pgdata:
   caddy_data:
   caddy_config:

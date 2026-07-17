@@ -440,21 +440,21 @@ O Frederico AI Studio tem sandbox com Python 3.12, bash, LibreOffice/soffice, ff
 No Modo Equipe, os especialistas individuais desta etapa NÃO executam ferramentas diretamente; eles analisam e orientam. Se a resposta final exigir arquivo, cálculo, conversão ou validação, indique claramente que isso deve ser executado pelas ferramentas do assistente principal.`;
 
 // Memória: global (todos) + do assistente atual + do cliente da conversa
-function clientScopeFor(conversationId) {
+async function clientScopeFor(conversationId) {
   try {
-    const conv = db.prepare('SELECT client_id FROM conversations WHERE id=?').get(conversationId);
+    const conv = await db.prepare('SELECT client_id FROM conversations WHERE id=?').get(conversationId);
     return conv?.client_id ? `client:${conv.client_id}` : null;
   } catch { return null; }
 }
 
-function memoryNote(assistantId, clientScope) {
+async function memoryNote(assistantId, clientScope) {
   const scopes = ['global'];
   if (assistantId) scopes.push(assistantId);
   if (clientScope) scopes.push(clientScope);
   let rows = [];
   try {
     const ph = scopes.map(() => '?').join(',');
-    rows = db.prepare(`SELECT scope, content FROM memory WHERE scope IN (${ph}) ORDER BY created_at ASC`).all(...scopes);
+    rows = await db.prepare(`SELECT scope, content FROM memory WHERE scope IN (${ph}) ORDER BY created_at ASC`).all(...scopes);
   } catch {}
   if (!rows.length) return null;
   const global = rows.filter(r => r.scope === 'global').map(r => `- ${r.content}`);
@@ -626,7 +626,7 @@ export async function runAgent({ conversationId, userText, model, assistant, web
   const ownsControl = !inheritedControl;
   try {
   const userMsgId = saveUserMessage || !existingUserMessageId
-    ? saveMessage(conversationId, 'user', userText)
+    ? await saveMessage(conversationId, 'user', userText)
     : existingUserMessageId;
 
   if (modelPlan.blocked) {
@@ -636,7 +636,7 @@ export async function runAgent({ conversationId, userText, model, assistant, web
       : 'Este modelo nao responde em texto.';
     onEvent({ type: 'status', content: status });
     onEvent({ type: 'delta', content: finalText });
-    const assistantMessageId = saveMessage(conversationId, 'assistant', finalText);
+    const assistantMessageId = await saveMessage(conversationId, 'assistant', finalText);
     onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId });
     indexAfterReply(conversationId).catch(() => {});
     return {
@@ -670,20 +670,20 @@ export async function runAgent({ conversationId, userText, model, assistant, web
   let memoryMeta = null;
   // Memória de longo prazo: perfil, notas, resumos e recuperação semântica
   try {
-    const contextPlan = await buildContext({ conversationId, assistantId: assistant?.id, clientScope: clientScopeFor(conversationId), userText, historyLimit, model: chosenModel });
+    const contextPlan = await buildContext({ conversationId, assistantId: assistant?.id, clientScope: await clientScopeFor(conversationId), userText, historyLimit, model: chosenModel });
     const ctxBlocks = contextPlan.blocks || [];
     memoryMeta = contextPlan.meta || null;
     for (const b of ctxBlocks) messages.push({ role: 'system', content: b });
   } catch (err) {
     console.error('[memória] contexto indisponível nesta resposta:', err.message);
-    const memory = memoryNote(assistant?.id, clientScopeFor(conversationId));
+    const memory = await memoryNote(assistant?.id, await clientScopeFor(conversationId));
     if (memory) messages.push({ role: 'system', content: memory });
   }
   const note = uploadsNote(conversationId);
   if (note) messages.push({ role: 'system', content: note });
   const pcNote = pcFoldersNote(sandboxOptions);
   if (pcNote) messages.push({ role: 'system', content: pcNote });
-  const historyPlan = selectHistoryForContext({
+  const historyPlan = await selectHistoryForContext({
     conversationId,
     limit: historyLimit,
     budgetTokens: historyBudgetForModel(chosenModel, memoryMeta?.budget)
@@ -930,7 +930,7 @@ export async function runAgent({ conversationId, userText, model, assistant, web
   }
   // Primeiro registra a resposta e os arquivos juntos. Assim o card sempre
   // aponta para uma mensagem que sobreviverá ao recarregamento da conversa.
-  const { msgId, cards } = persistAssistantReply(conversationId, finalText, memoryMeta, newFiles);
+  const { msgId, cards } = await persistAssistantReply(conversationId, finalText, memoryMeta, newFiles);
   // O download é a entrega principal. Não o faça esperar a inspeção de DOCX,
   // XLSX ou PDF, que pode levar alguns segundos em arquivos maiores.
   if (cards.length) onEvent({ type: 'files', files: cards });
@@ -955,7 +955,7 @@ export async function runAgent({ conversationId, userText, model, assistant, web
 export async function runOrchestrator({ conversationId, userText, model, assistants = [], executor = null, webSearch = false, effort, developer, onEvent }) {
   const control = acquireConversationControl(conversationId);
   try {
-  const userMsgId = saveMessage(conversationId, 'user', userText);
+  const userMsgId = await saveMessage(conversationId, 'user', userText);
   const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
   const coordModel = model || process.env.DEEPSEEK_MODEL || 'deepseek-chat';
   const lowSignalTurn = isLowSignalTurn(userText);
@@ -968,18 +968,18 @@ export async function runOrchestrator({ conversationId, userText, model, assista
   let memory = null;
   let memoryMeta = null;
   try {
-    const contextPlan = await buildContext({ conversationId, assistantId: null, clientScope: clientScopeFor(conversationId), userText, model: coordModel });
+    const contextPlan = await buildContext({ conversationId, assistantId: null, clientScope: await clientScopeFor(conversationId), userText, model: coordModel });
     memory = (contextPlan.blocks || []).join('\n\n') || null;
     memoryMeta = contextPlan.meta || null;
     if (memoryMeta) onEvent({ type: 'memory_context', memory: memoryMeta });
   }
-  catch { memory = memoryNote(null, clientScopeFor(conversationId)); }
+  catch { memory = await memoryNote(null, await clientScopeFor(conversationId)); }
   // Histórico da conversa (a mensagem atual do usuário já foi salva — exclui ela)
-  const histRows = db.prepare(`
+  const histRows = (await db.prepare(`
     SELECT role, content FROM (
-      SELECT role, content, created_at, rowid FROM messages
-      WHERE conversation_id=? ORDER BY created_at DESC, rowid DESC LIMIT 13
-    ) ORDER BY created_at ASC, rowid ASC`).all(conversationId).slice(0, -1);
+      SELECT role, content, created_at, seq FROM messages
+      WHERE conversation_id=? ORDER BY created_at DESC, seq DESC LIMIT 13
+    ) sub ORDER BY created_at ASC, seq ASC`).all(conversationId)).slice(0, -1);
   const historyText = histRows.map(m => `${m.role === 'user' ? 'Usuário' : 'Equipe'}: ${String(m.content).slice(0, 600)}`).join('\n');
   const isFollowUp = histRows.some(m => m.role === 'assistant');
 
@@ -1087,7 +1087,7 @@ export async function runOrchestrator({ conversationId, userText, model, assista
       onEvent({ type: 'status', content: 'Interrompido pelo usuário' });
       finalText = perspectives.length ? perspectives.map(p => `### ${p.emoji || ''} ${p.name}\n${p.text}`).join('\n\n') : '_Processamento interrompido pelo usuário._';
       onEvent({ type: 'delta', content: finalText });
-      const stoppedMsgId = saveMessage(conversationId, 'assistant', finalText, { memoryMeta });
+      const stoppedMsgId = await saveMessage(conversationId, 'assistant', finalText, { memoryMeta });
       onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId: stoppedMsgId });
       releaseConversationControl(conversationId, control);
       return { text: finalText, usage, model: coordModel };
@@ -1111,7 +1111,7 @@ export async function runOrchestrator({ conversationId, userText, model, assista
   }
   try {
     if (!finalText.trim()) { finalText = 'Concluído.'; onEvent({ type: 'delta', content: finalText }); }
-    const doneMsgId = saveMessage(conversationId, 'assistant', finalText, { memoryMeta });
+    const doneMsgId = await saveMessage(conversationId, 'assistant', finalText, { memoryMeta });
     onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId: doneMsgId });
     indexAfterReply(conversationId).catch(() => {});
     return { text: finalText, usage, model: coordModel };
@@ -1123,23 +1123,23 @@ export async function runOrchestrator({ conversationId, userText, model, assista
   }
 }
 
-export function saveMessage(conversationId, role, content, extra = {}) {
+export async function saveMessage(conversationId, role, content, extra = {}) {
   const id = nanoid();
   const memoryMeta = extra.memoryMeta ? JSON.stringify(extra.memoryMeta).slice(0, 20000) : null;
-  db.prepare('INSERT INTO messages (id, conversation_id, role, content, memory_meta, created_at) VALUES (?,?,?,?,?,?)')
+  await db.prepare('INSERT INTO messages (id, conversation_id, role, content, memory_meta, created_at) VALUES (?,?,?,?,?,?)')
     .run(id, conversationId, role, content, memoryMeta, now());
-  db.prepare('UPDATE conversations SET updated_at=? WHERE id=?').run(now(), conversationId);
+  await db.prepare('UPDATE conversations SET updated_at=? WHERE id=?').run(now(), conversationId);
   return id;
 }
 
-export function persistAssistantReply(conversationId, content, memoryMeta, files = []) {
-  const persist = db.transaction((replyFiles) => {
-    const msgId = saveMessage(conversationId, 'assistant', content, { memoryMeta });
+export async function persistAssistantReply(conversationId, content, memoryMeta, files = []) {
+  const persist = db.transaction(async (replyFiles) => {
+    const msgId = await saveMessage(conversationId, 'assistant', content, { memoryMeta });
     const stmt = db.prepare('INSERT INTO files (id,conversation_id,message_id,kind,name,path,size,created_at) VALUES (?,?,?,?,?,?,?,?)');
     const cards = [];
     for (const file of replyFiles) {
       const id = nanoid();
-      stmt.run(id, conversationId, msgId, 'output', file.name, file.path, file.size, now());
+      await stmt.run(id, conversationId, msgId, 'output', file.name, file.path, file.size, now());
       cards.push({ id, name: file.name, path: file.path, size: file.size });
     }
     return { msgId, cards };

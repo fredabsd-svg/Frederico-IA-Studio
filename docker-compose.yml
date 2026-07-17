@@ -6,6 +6,22 @@ services:
     command: ["true"]
     restart: "no"
 
+  # Banco de dados PostgreSQL (substitui o SQLite anterior)
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=studio
+      - POSTGRES_PASSWORD=studio
+      - POSTGRES_DB=studio
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U studio -d studio"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   backend:
     build: .
     ports:
@@ -15,10 +31,13 @@ services:
     environment:
       # Caminho DENTRO do container do backend
       - WORKSPACE_ROOT=/app/workspaces
-      - DB_PATH=/app/data/app.sqlite
       # Caminho NO HOST do mesmo diretório — usado nos binds dos sandboxes.
       # Docker interpreta binds como caminhos do host, não do container.
       - HOST_WORKSPACE_ROOT=${PWD}/workspaces
+      # Diretório de dados (cache de embeddings, inbox) — no volume montado
+      - DATA_DIR=/app/data
+      # Conexão com o Postgres (serviço acima, na rede do Docker)
+      - DATABASE_URL=postgres://studio:studio@postgres:5432/studio
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./workspaces:/app/workspaces
@@ -26,6 +45,8 @@ services:
     depends_on:
       sandbox-image:
         condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
 
   frontend:
     image: node:20-alpine
@@ -40,3 +61,6 @@ services:
       # backend (veja vite.config.js). Assim funciona no PC, na rede e via
       # Tailscale/HTTPS. O alvo do proxy é o serviço 'backend' na rede do Docker.
       - VITE_PROXY_TARGET=http://backend:3001
+
+volumes:
+  pgdata:

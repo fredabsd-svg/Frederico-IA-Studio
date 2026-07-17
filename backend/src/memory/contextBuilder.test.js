@@ -1,14 +1,21 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-process.env.DB_PATH = ':memory:';
 const { buildContext } = await import('./contextBuilder.js');
 const { db } = await import('../db.js');
 
-test('does not attach stored context to a greeting', async () => {
-  db.prepare('INSERT OR REPLACE INTO memory (id, scope, content, created_at) VALUES (?,?,?,?)')
+// O banco agora é PostgreSQL. Este teste só roda quando há um Postgres acessível
+// (DATABASE_URL); sem ele, é pulado (não falha).
+let dbReady = true;
+try { await db.prepare('SELECT 1 AS ok').get(); } catch { dbReady = false; }
+if (dbReady) { const { runMigrations } = await import('../migrate.js'); await runMigrations(); }
+
+test('does not attach stored context to a greeting', { skip: dbReady ? false : 'requer PostgreSQL (DATABASE_URL)' }, async () => {
+  await db.prepare(`INSERT INTO memory (id, scope, content, created_at) VALUES (?,?,?,?)
+    ON CONFLICT (id) DO UPDATE SET content=excluded.content`)
     .run('greeting-memory', 'global', 'Contexto antigo que nao deve aparecer numa saudacao.', '2026-01-01T00:00:00.000Z');
-  db.prepare('INSERT OR REPLACE INTO conversation_chunks (id, conversation_id, source_title, scope, content, created_at) VALUES (?,?,?,?,?,?)')
+  await db.prepare(`INSERT INTO conversation_chunks (id, conversation_id, source_title, scope, content, created_at) VALUES (?,?,?,?,?,?)
+    ON CONFLICT (id) DO UPDATE SET content=excluded.content`)
     .run('greeting-chunk', 'old-conversation', 'Conversa anterior', 'global', 'Trecho antigo que nao deve aparecer numa saudacao.', '2026-01-01T00:00:00.000Z');
 
   const plan = await buildContext({

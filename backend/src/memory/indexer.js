@@ -49,9 +49,9 @@ function parseJson(text) {
 export async function indexAfterReply(conversationId) {
   const s = getSettings();
   if (!s.memory_enabled) return;
-  const conv = db.prepare('SELECT * FROM conversations WHERE id=?').get(conversationId);
+  const conv = await db.prepare('SELECT * FROM conversations WHERE id=?').get(conversationId);
   if (!conv) return;
-  const msgs = db.prepare('SELECT role, content, created_at FROM messages WHERE conversation_id=? ORDER BY created_at ASC, rowid ASC').all(conversationId);
+  const msgs = await db.prepare('SELECT role, content, created_at FROM messages WHERE conversation_id=? ORDER BY created_at ASC, seq ASC').all(conversationId);
   if (msgs.length < 2) return;
 
   // 1) Chunk do último par pergunta/resposta (para busca semântica futura)
@@ -61,7 +61,7 @@ export async function indexAfterReply(conversationId) {
     const content = `Usuário: ${lastUser.content.slice(0, 1100)}\nAssistente: ${lastAsst.content.slice(0, 1100)}`;
     const [vec] = await embed([content], 'passage');
     const chunkScope = conv.client_id ? `client:${conv.client_id}` : 'global';
-    db.prepare('INSERT INTO conversation_chunks (id, conversation_id, source_title, scope, content, embedding, token_count, created_at) VALUES (?,?,?,?,?,?,?,?)')
+    await db.prepare('INSERT INTO conversation_chunks (id, conversation_id, source_title, scope, content, embedding, token_count, created_at) VALUES (?,?,?,?,?,?,?,?)')
       .run(nanoid(), conversationId, conv.title, chunkScope, content, vec, estimateTokens(content), now());
   }
 
@@ -81,11 +81,11 @@ export async function indexAfterReply(conversationId) {
     const data = parseJson(completion.choices[0].message.content);
 
     if (data.summary_short) {
-      db.prepare('UPDATE conversations SET summary_short=?, tags=? WHERE id=?')
+      await db.prepare('UPDATE conversations SET summary_short=?, tags=? WHERE id=?')
         .run(String(data.summary_short).slice(0, 300), JSON.stringify(data.tags || []).slice(0, 300), conversationId);
     }
     if (data.summary_long && msgs.length >= 8) {
-      db.prepare('UPDATE conversations SET summary_long=? WHERE id=?').run(String(data.summary_long).slice(0, 1500), conversationId);
+      await db.prepare('UPDATE conversations SET summary_long=? WHERE id=?').run(String(data.summary_long).slice(0, 1500), conversationId);
     }
 
     const clientScope = conv.client_id ? `client:${conv.client_id}` : 'global';
@@ -104,10 +104,10 @@ export async function indexAfterReply(conversationId) {
       const scope = isClient ? clientScope : ((type === 'perfil' || type === 'preferencia') ? 'global' : clientScope);
       const dup = await findSimilar(content, 0.88, scope);
       if (dup) {
-        db.prepare('UPDATE memory SET importance=MAX(importance,?), updated_at=? WHERE id=?').run(importance, now(), dup.id);
+        await db.prepare('UPDATE memory SET importance=GREATEST(importance,?), updated_at=? WHERE id=?').run(importance, now(), dup.id);
         continue;
       }
-      if (s.review_auto_memory) addMemorySuggestion({ content, type, scope, importance, confidence, source_type: 'auto', source_id: conversationId });
+      if (s.review_auto_memory) await addMemorySuggestion({ content, type, scope, importance, confidence, source_type: 'auto', source_id: conversationId });
       else await addMemory({ content, type, scope, importance, confidence, source_type: 'auto', source_id: conversationId });
     }
   } catch (err) {
@@ -200,11 +200,11 @@ export async function importConversations(fileName, buffer, scope = 'global') {
     for (let i = 0; i < pieces.length; i += 16) {
       const batch = pieces.slice(i, i + 16);
       const vecs = await embed(batch, 'passage');
-      batch.forEach((p, j) => {
-        db.prepare('INSERT INTO conversation_chunks (id, conversation_id, source_title, scope, content, embedding, token_count, created_at) VALUES (?,?,?,?,?,?,?,?)')
-          .run(nanoid(), null, title, targetScope, p, vecs[j], estimateTokens(p), now());
+      for (let j = 0; j < batch.length; j++) {
+        await db.prepare('INSERT INTO conversation_chunks (id, conversation_id, source_title, scope, content, embedding, token_count, created_at) VALUES (?,?,?,?,?,?,?,?)')
+          .run(nanoid(), null, title, targetScope, batch[j], vecs[j], estimateTokens(batch[j]), now());
         chunks++;
-      });
+      }
     }
     // colhe fatos do começo da conversa importada (perfil, preferências...)
     try {
@@ -221,7 +221,7 @@ export async function importConversations(fileName, buffer, scope = 'global') {
         if (dup) continue;
         const type = ['perfil', 'preferencia', 'projeto', 'fato'].includes(f.type) ? f.type : 'fato';
         const payload = { content, type, scope: targetScope, importance: Math.min(5, Number(f.importance) || 3), confidence: Number(f.confidence) || 0.7, source_type: 'import', source_id: title };
-        if (getSettings().review_auto_memory) addMemorySuggestion(payload);
+        if (getSettings().review_auto_memory) await addMemorySuggestion(payload);
         else await addMemory(payload);
         facts++;
       }
