@@ -1,7 +1,15 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
 > Documento de handoff para continuar o desenvolvimento em uma nova sessão.
-> Última atualização: 2026-07-16. Leia isto ANTES de qualquer mudança.
+> Última atualização: 2026-07-17. Leia isto ANTES de qualquer mudança.
+>
+> **2026-07-17 — Faxina de documentação:** removidas menções a recursos que
+> NÃO existem mais no app — o **Calendário fiscal** (obrigações de Tocantins:
+> GIAM/ICMS, SPED Fiscal) e os apps embutidos de viés fiscal (NF-e, conciliação,
+> comparador de regimes). Eles foram retirados do código no commit `bbd2d19`
+> ("torna o app um estúdio geral"); só sobravam nestas anotações e nos
+> comentários do `sandbox/Dockerfile` (também neutralizados agora). O app é um
+> **estúdio geral**, sem viés contábil/fiscal.
 
 ## 0. PONTO ATUAL (2026-07-16) — protótipo v2, ícones/cor, faxina de CSS
 
@@ -108,12 +116,12 @@ e enviado. Desde a versão de memória, foi adicionado/corrigido:
   guardas Array.isArray no front, etc.
 - **Economia de tokens** (`economy_mode`, LIGADO por padrão): contexto ~8k,
   histórico 20, extração de memória só a cada 4 msgs.
-- **Recursos novos:** Ferramentas/apps embutidos (EMBEDDED_APPS: NF-e, OCR,
-  conciliação, comparador de regimes, dashboard, doc profissional), assistente
+- **Recursos novos:** Ferramentas/apps embutidos (EMBEDDED_APPS: documento
+  profissional, planilha a partir de dados, OCR de imagens/PDF, dashboard de
+  dados, proposta/contrato — todos GENÉRICOS, sem viés fiscal), assistente
   "Documentos profissionais" (seed único via settings.seeded_docpro, Word Design
   em python-docx), Rotinas agendadas (tabela `schedules` + agendador 1x/min),
-  Calendário fiscal (com obrigações de Tocantins: GIAM/ICMS dia 9, SPED Fiscal
-  dia 15), Caixa de entrada de documentos por cliente (data/inbox).
+  Caixa de entrada de documentos por cliente (data/inbox).
 - **Heartbeat SSE** (": ping" a cada 15s) contra "Upstream idle timeout".
 - **Acesso no celular:** app agora usa **mesma origem** (API relativa "" +
   Vite `server.proxy` /api → `backend:3001`; `host:true`, `allowedHosts:true`;
@@ -160,8 +168,9 @@ Docker por conversa** que executa Python/bash e gera **arquivos reais**
 
 ## 2. Sobre o usuário (Frederico) — como trabalhar com ele
 
-- **Contador** (mencionou CRC TO-006157/O-8 como seu registro), usa o app para
-  trabalho contábil/fiscal (DFC, fluxo de caixa, propostas, relatórios).
+- **Contador de formação** (mencionou CRC TO-006157/O-8), mas o app é um
+  **estúdio geral** (sem viés contábil/fiscal): usa para documentos, planilhas,
+  análise de dados, propostas e relatórios em geral.
 - **Leigo em programação**: explicar passo a passo, sem jargão, em PT-BR.
 - Ambiente: **Windows**, Docker Desktop, pasta do projeto clonada via git em
   `C:\Users\conta\Downloads\Frederico-IA-Studio\Frederico-IA\Frederico-IA-Studio`.
