@@ -45,19 +45,19 @@ RUN pip install --no-cache-dir \
     # PyMuPDF (fitz): extração robusta de texto/layout, o melhor para PDFs difíceis
     # pdf2image: converte páginas em imagens (para OCR com pytesseract)
     # ocrmypdf: adiciona camada de texto OCR a PDFs escaneados
-    # camelot + opencv: extração de tabelas com linhas (relatórios contábeis)
+    # camelot + opencv: extração de tabelas com linhas em PDFs/relatórios
     PyMuPDF pdf2image ocrmypdf "camelot-py[base]" opencv-python-headless
 RUN pip install --no-cache-dir \
-    # Fiscal/contábil brasileiro (funcionam OFFLINE, sem acesso à SEFAZ):
+    # Utilitários brasileiros de uso geral (funcionam OFFLINE):
     # validate-docbr: valida CPF/CNPJ/PIS/CNH/título etc.
-    # num2words: valor por extenso em pt_BR (cheques, recibos, contratos)
-    # xmltodict: XML fiscal (NF-e/CT-e) <-> dicionário Python
-    # signxml: assinatura XML-DSig (base para NF-e/eSocial; SEM transmissão)
-    # jsonschema: valida JSON de eSocial/Reinf/DCTFWeb contra schema
+    # num2words: valor por extenso em pt_BR (recibos, contratos, cheques)
+    # xmltodict: XML <-> dicionário Python
+    # signxml: assinatura XML-DSig genérica (SEM transmissão a terceiros)
+    # jsonschema: valida documentos JSON contra um schema
     validate-docbr num2words xmltodict signxml jsonschema \
     # Produtividade e análise (offline):
-    # duckdb: banco analítico embutido para grandes volumes fiscais
-    # jinja2: templates de relatórios; rapidfuzz: casar nomes de empresas
+    # duckdb: banco analítico embutido para grandes volumes de dados
+    # jinja2: templates de relatórios; rapidfuzz: casar nomes/textos
     # phonenumbers: valida telefones BR; unidecode: normaliza texto
     duckdb jinja2 rapidfuzz phonenumbers Unidecode PyYAML \
     python-dateutil pytz tzdata \
