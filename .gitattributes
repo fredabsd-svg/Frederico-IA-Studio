@@ -1,0 +1,6 @@
+# Scripts .bat/.cmd DEVEM ter quebras de linha do Windows (CRLF), senão o
+# Prompt de Comando pode fechar a janela sozinho ao executar.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+# O restante do repo usa LF (o working tree do Windows converte via autocrlf).
+* text=auto
