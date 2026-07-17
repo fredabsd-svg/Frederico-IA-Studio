@@ -5,14 +5,14 @@ import { embed, embedOne, cosine, keywordScore, embeddingsDegraded, embeddingMod
 // Se o modelo de embeddings mudou desde a última execução, os vetores antigos
 // ficam incompatíveis (a busca semântica silenciosamente vira busca por
 // palavras). Detecta a troca e reindexa em segundo plano, uma vez.
-export function maybeReindexOnModelChange() {
+export async function maybeReindexOnModelChange() {
   try {
-    const prev = db.prepare("SELECT value FROM settings WHERE key='embedding_model'").get()?.value;
+    const prev = (await db.prepare("SELECT value FROM settings WHERE key='embedding_model'").get())?.value;
     if (prev && prev !== embeddingModelId) {
       console.log(`[memória] modelo de embeddings mudou (${prev} → ${embeddingModelId}); reindexando em segundo plano...`);
       reindexAll().then(() => console.log('[memória] reindexação concluída.')).catch(e => console.error('[memória] reindex falhou:', e.message));
     }
-    db.prepare("INSERT INTO settings (key,value) VALUES ('embedding_model',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(embeddingModelId);
+    await db.prepare("INSERT INTO settings (key,value) VALUES ('embedding_model',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(embeddingModelId);
   } catch (e) { console.error('[memória] verificação de modelo falhou:', e.message); }
 }
 
@@ -32,19 +32,33 @@ export const DEFAULT_SETTINGS = {
 // trechos e histórico proporcionalmente quando o orçamento é pequeno).
 export const ECONOMY_CONTEXT_TOKENS = 8000;
 
-export function getSettings() {
-  const rows = db.prepare('SELECT key, value FROM settings').all();
-  const out = { ...DEFAULT_SETTINGS };
-  for (const r of rows) if (r.key in out) out[r.key] = Number(r.value);
-  return out;
+// Cache em memória das configurações. Com o Postgres (async), ler settings a
+// cada chamada tornaria getSettings() assíncrono e isso quebraria os usos como
+// valor padrão de parâmetro (ex.: contextBuilder). Mantemos um cache carregado
+// no boot (loadSettings) e atualizado a cada setSettings — assim getSettings()
+// continua SÍNCRONO e o comportamento do app não muda.
+let settingsCache = { ...DEFAULT_SETTINGS };
+
+export async function loadSettings() {
+  try {
+    const rows = await db.prepare('SELECT key, value FROM settings').all();
+    const out = { ...DEFAULT_SETTINGS };
+    for (const r of rows) if (r.key in out) out[r.key] = Number(r.value);
+    settingsCache = out;
+  } catch (e) { console.error('[memória] loadSettings falhou:', e.message); }
+  return { ...settingsCache };
 }
 
-export function setSettings(partial) {
+export function getSettings() {
+  return { ...settingsCache };
+}
+
+export async function setSettings(partial) {
   const stmt = db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value');
   for (const [k, v] of Object.entries(partial || {})) {
-    if (k in DEFAULT_SETTINGS && v !== undefined && v !== null && !Number.isNaN(Number(v))) stmt.run(k, String(Number(v)));
+    if (k in DEFAULT_SETTINGS && v !== undefined && v !== null && !Number.isNaN(Number(v))) await stmt.run(k, String(Number(v)));
   }
-  return getSettings();
+  return loadSettings();
 }
 
 // ---- Proteção: nunca salvar segredos automaticamente ----
@@ -59,25 +73,25 @@ export async function addMemory({ content, type = 'manual', scope = 'global', im
   const [vec] = await embed([content], 'passage');
   const id = nanoid();
   const t = now();
-  db.prepare(`INSERT INTO memory (id, scope, content, type, source_type, source_id, importance, confidence, pinned, tags, created_at, updated_at, embedding)
+  await db.prepare(`INSERT INTO memory (id, scope, content, type, source_type, source_id, importance, confidence, pinned, tags, created_at, updated_at, embedding)
               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run(id, scope, content, type, source_type, source_id, importance, confidence, pinned ? 1 : 0, tags, t, t, vec);
   return getMemory(id);
 }
 
-export function getMemory(id) {
-  const m = db.prepare('SELECT * FROM memory WHERE id=?').get(id);
+export async function getMemory(id) {
+  const m = await db.prepare('SELECT * FROM memory WHERE id=?').get(id);
   if (m) delete m.embedding;
   return m;
 }
 
 export async function updateMemory(id, fields = {}) {
-  const cur = db.prepare('SELECT * FROM memory WHERE id=?').get(id);
+  const cur = await db.prepare('SELECT * FROM memory WHERE id=?').get(id);
   if (!cur) return null;
   const content = fields.content !== undefined ? String(fields.content).trim() : cur.content;
   if (fields.content !== undefined && looksSensitive(content)) throw new Error('Este conteúdo parece conter senha/chave — por segurança, não é salvo na memória.');
   const vec = fields.content !== undefined && content !== cur.content ? await embedOne(content, 'passage') : cur.embedding;
-  db.prepare(`UPDATE memory SET content=?, type=?, scope=?, importance=?, pinned=?, tags=?, updated_at=?, embedding=? WHERE id=?`)
+  await db.prepare(`UPDATE memory SET content=?, type=?, scope=?, importance=?, pinned=?, tags=?, updated_at=?, embedding=? WHERE id=?`)
     .run(content,
       fields.type !== undefined ? fields.type : cur.type,
       fields.scope !== undefined ? fields.scope : cur.scope,
@@ -88,12 +102,12 @@ export async function updateMemory(id, fields = {}) {
   return getMemory(id);
 }
 
-export function deleteMemory(id) { db.prepare('DELETE FROM memory WHERE id=?').run(id); }
+export async function deleteMemory(id) { await db.prepare('DELETE FROM memory WHERE id=?').run(id); }
 
-export function deleteAllMemories({ scope = null, source_type = null } = {}) {
-  if (scope) { db.prepare('DELETE FROM memory WHERE scope=?').run(scope); db.prepare('DELETE FROM memory_suggestions WHERE scope=?').run(scope); db.prepare('DELETE FROM conversation_chunks WHERE scope=?').run(scope); }
-  else if (source_type) { db.prepare('DELETE FROM memory WHERE source_type=?').run(source_type); db.prepare('DELETE FROM memory_suggestions WHERE source_type=?').run(source_type); }
-  else { db.prepare('DELETE FROM memory').run(); db.prepare('DELETE FROM memory_suggestions').run(); db.prepare('DELETE FROM conversation_chunks').run(); }
+export async function deleteAllMemories({ scope = null, source_type = null } = {}) {
+  if (scope) { await db.prepare('DELETE FROM memory WHERE scope=?').run(scope); await db.prepare('DELETE FROM memory_suggestions WHERE scope=?').run(scope); await db.prepare('DELETE FROM conversation_chunks WHERE scope=?').run(scope); }
+  else if (source_type) { await db.prepare('DELETE FROM memory WHERE source_type=?').run(source_type); await db.prepare('DELETE FROM memory_suggestions WHERE source_type=?').run(source_type); }
+  else { await db.prepare('DELETE FROM memory').run(); await db.prepare('DELETE FROM memory_suggestions').run(); await db.prepare('DELETE FROM conversation_chunks').run(); }
 }
 
 // ---- Fila de revisão: memórias sugeridas pela IA ----
@@ -115,42 +129,42 @@ function cleanSuggestionFields(fields = {}) {
   };
 }
 
-export function listMemorySuggestions({ status = 'pending', limit = 100 } = {}) {
+export async function listMemorySuggestions({ status = 'pending', limit = 100 } = {}) {
   const rows = status
-    ? db.prepare('SELECT * FROM memory_suggestions WHERE status=? ORDER BY created_at DESC LIMIT ?').all(status, Number(limit) || 100)
-    : db.prepare('SELECT * FROM memory_suggestions ORDER BY created_at DESC LIMIT ?').all(Number(limit) || 100);
+    ? await db.prepare('SELECT * FROM memory_suggestions WHERE status=? ORDER BY created_at DESC LIMIT ?').all(status, Number(limit) || 100)
+    : await db.prepare('SELECT * FROM memory_suggestions ORDER BY created_at DESC LIMIT ?').all(Number(limit) || 100);
   return rows;
 }
 
-export function addMemorySuggestion(fields = {}) {
+export async function addMemorySuggestion(fields = {}) {
   const s = cleanSuggestionFields(fields);
   if (!s.content) return null;
   if (looksSensitive(s.content)) return null;
-  const existing = db.prepare(`SELECT * FROM memory_suggestions
+  const existing = await db.prepare(`SELECT * FROM memory_suggestions
     WHERE status='pending' AND scope=? AND lower(content)=lower(?) LIMIT 1`).get(s.scope, s.content);
   if (existing) return existing;
   const id = nanoid();
   const t = now();
-  db.prepare(`INSERT INTO memory_suggestions
+  await db.prepare(`INSERT INTO memory_suggestions
     (id, scope, content, type, source_type, source_id, importance, confidence, tags, status, created_at, updated_at)
     VALUES (?,?,?,?,?,?,?,?,?,'pending',?,?)`)
     .run(id, s.scope, s.content, s.type, s.source_type, s.source_id, s.importance, s.confidence, s.tags, t, t);
   return db.prepare('SELECT * FROM memory_suggestions WHERE id=?').get(id);
 }
 
-export function updateMemorySuggestion(id, fields = {}) {
-  const cur = db.prepare('SELECT * FROM memory_suggestions WHERE id=?').get(id);
+export async function updateMemorySuggestion(id, fields = {}) {
+  const cur = await db.prepare('SELECT * FROM memory_suggestions WHERE id=?').get(id);
   if (!cur || cur.status !== 'pending') return null;
   const s = cleanSuggestionFields({ ...cur, ...fields });
   if (!s.content) throw new Error('Conteúdo vazio.');
   if (looksSensitive(s.content)) throw new Error('Este conteúdo parece conter senha/chave — por segurança, não é salvo na memória.');
-  db.prepare(`UPDATE memory_suggestions SET content=?, type=?, scope=?, importance=?, confidence=?, tags=?, updated_at=? WHERE id=?`)
+  await db.prepare(`UPDATE memory_suggestions SET content=?, type=?, scope=?, importance=?, confidence=?, tags=?, updated_at=? WHERE id=?`)
     .run(s.content, s.type, s.scope, s.importance, s.confidence, s.tags, now(), id);
   return db.prepare('SELECT * FROM memory_suggestions WHERE id=?').get(id);
 }
 
 export async function approveMemorySuggestion(id, fields = {}) {
-  const cur = fields && Object.keys(fields).length ? updateMemorySuggestion(id, fields) : db.prepare('SELECT * FROM memory_suggestions WHERE id=?').get(id);
+  const cur = fields && Object.keys(fields).length ? await updateMemorySuggestion(id, fields) : await db.prepare('SELECT * FROM memory_suggestions WHERE id=?').get(id);
   if (!cur || cur.status !== 'pending') return null;
   const mem = await addMemory({
     content: cur.content,
@@ -163,21 +177,21 @@ export async function approveMemorySuggestion(id, fields = {}) {
     source_id: cur.source_id,
     pinned: 0
   });
-  db.prepare("UPDATE memory_suggestions SET status='approved', approved_memory_id=?, decided_at=?, updated_at=? WHERE id=?")
+  await db.prepare("UPDATE memory_suggestions SET status='approved', approved_memory_id=?, decided_at=?, updated_at=? WHERE id=?")
     .run(mem.id, now(), now(), id);
-  return { suggestion: db.prepare('SELECT * FROM memory_suggestions WHERE id=?').get(id), memory: mem };
+  return { suggestion: await db.prepare('SELECT * FROM memory_suggestions WHERE id=?').get(id), memory: mem };
 }
 
-export function rejectMemorySuggestion(id) {
-  const cur = db.prepare('SELECT * FROM memory_suggestions WHERE id=?').get(id);
+export async function rejectMemorySuggestion(id) {
+  const cur = await db.prepare('SELECT * FROM memory_suggestions WHERE id=?').get(id);
   if (!cur || cur.status !== 'pending') return null;
-  db.prepare("UPDATE memory_suggestions SET status='rejected', decided_at=?, updated_at=? WHERE id=?").run(now(), now(), id);
+  await db.prepare("UPDATE memory_suggestions SET status='rejected', decided_at=?, updated_at=? WHERE id=?").run(now(), now(), id);
   return db.prepare('SELECT * FROM memory_suggestions WHERE id=?').get(id);
 }
 
 // Lista com filtros (para a interface). query usa busca semântica + texto.
 export async function listMemories({ query = '', type = '', scope = '', limit = 300 } = {}) {
-  let rows = db.prepare('SELECT * FROM memory ORDER BY pinned DESC, updated_at DESC, created_at DESC').all();
+  let rows = await db.prepare('SELECT * FROM memory ORDER BY pinned DESC, updated_at DESC, created_at DESC').all();
   if (type) rows = rows.filter(r => r.type === type);
   if (scope) rows = rows.filter(r => r.scope === scope);
   if (query.trim()) {
@@ -200,7 +214,7 @@ function recencyBoost(iso) {
 export async function searchMemories(queryText, { scopes = ['global'], excludeTypes = [], limit = 12, minScore = 0.25 } = {}) {
   const qEmb = await embedOne(queryText, 'query');
   const ph = scopes.map(() => '?').join(',');
-  const rows = db.prepare(`SELECT * FROM memory WHERE scope IN (${ph})`).all(...scopes);
+  const rows = await db.prepare(`SELECT * FROM memory WHERE scope IN (${ph})`).all(...scopes);
   const scored = rows
     .filter(r => !excludeTypes.includes(r.type))
     .map(r => {
@@ -216,7 +230,7 @@ export async function searchMemories(queryText, { scopes = ['global'], excludeTy
 
 export async function searchChunks(queryText, { excludeConversationId = null, scopes = ['global'], limit = 10, minScore = 0.3 } = {}) {
   const qEmb = await embedOne(queryText, 'query');
-  const rows = db.prepare('SELECT * FROM conversation_chunks ORDER BY created_at DESC LIMIT 4000').all();
+  const rows = await db.prepare('SELECT * FROM conversation_chunks ORDER BY created_at DESC LIMIT 4000').all();
   const allowed = new Set(scopes);
   const scored = rows
     .filter(r => allowed.has(r.scope || 'global')) // isolamento por cliente
@@ -238,8 +252,8 @@ export async function searchChunks(queryText, { excludeConversationId = null, sc
 export async function findSimilar(content, threshold = 0.88, scope = null) {
   const qEmb = await embedOne(content, 'passage');
   const rows = scope
-    ? db.prepare('SELECT id, content, importance, embedding FROM memory WHERE scope=?').all(scope)
-    : db.prepare('SELECT id, content, importance, embedding FROM memory').all();
+    ? await db.prepare('SELECT id, content, importance, embedding FROM memory WHERE scope=?').all(scope)
+    : await db.prepare('SELECT id, content, importance, embedding FROM memory').all();
   let best = null;
   for (const r of rows) {
     const sim = qEmb && r.embedding ? cosine(qEmb, r.embedding) : keywordScore(content, r.content);
@@ -249,27 +263,27 @@ export async function findSimilar(content, threshold = 0.88, scope = null) {
 }
 
 // ---- Exportar / Reindexar ----
-export function exportAll() {
-  const memories = db.prepare('SELECT id, scope, type, content, source_type, source_id, importance, confidence, pinned, tags, created_at, updated_at FROM memory').all();
-  const suggestions = db.prepare('SELECT id, scope, type, content, source_type, source_id, importance, confidence, tags, status, created_at, updated_at, decided_at FROM memory_suggestions').all();
-  const conversations = db.prepare('SELECT id, title, summary_short, tags, created_at FROM conversations').all();
-  const chunks = db.prepare('SELECT COUNT(*) c FROM conversation_chunks').get().c;
+export async function exportAll() {
+  const memories = await db.prepare('SELECT id, scope, type, content, source_type, source_id, importance, confidence, pinned, tags, created_at, updated_at FROM memory').all();
+  const suggestions = await db.prepare('SELECT id, scope, type, content, source_type, source_id, importance, confidence, tags, status, created_at, updated_at, decided_at FROM memory_suggestions').all();
+  const conversations = await db.prepare('SELECT id, title, summary_short, tags, created_at FROM conversations').all();
+  const chunks = Number((await db.prepare('SELECT COUNT(*) c FROM conversation_chunks').get()).c);
   return { exported_at: now(), memories, suggestions, conversations, chunks_indexed: chunks, degraded_mode: embeddingsDegraded() };
 }
 
 export async function reindexAll() {
-  const mems = db.prepare('SELECT id, content FROM memory').all();
-  const chunks = db.prepare('SELECT id, content FROM conversation_chunks').all();
+  const mems = await db.prepare('SELECT id, content FROM memory').all();
+  const chunks = await db.prepare('SELECT id, content FROM conversation_chunks').all();
   let done = 0;
   for (let i = 0; i < mems.length; i += 16) {
     const batch = mems.slice(i, i + 16);
     const vecs = await embed(batch.map(m => m.content), 'passage');
-    batch.forEach((m, j) => { if (vecs[j]) { db.prepare('UPDATE memory SET embedding=? WHERE id=?').run(vecs[j], m.id); done++; } });
+    for (let j = 0; j < batch.length; j++) { if (vecs[j]) { await db.prepare('UPDATE memory SET embedding=? WHERE id=?').run(vecs[j], batch[j].id); done++; } }
   }
   for (let i = 0; i < chunks.length; i += 16) {
     const batch = chunks.slice(i, i + 16);
     const vecs = await embed(batch.map(m => m.content), 'passage');
-    batch.forEach((m, j) => { if (vecs[j]) { db.prepare('UPDATE conversation_chunks SET embedding=? WHERE id=?').run(vecs[j], m.id); done++; } });
+    for (let j = 0; j < batch.length; j++) { if (vecs[j]) { await db.prepare('UPDATE conversation_chunks SET embedding=? WHERE id=?').run(vecs[j], batch[j].id); done++; } }
   }
   return { reindexed: done, total: mems.length + chunks.length, degraded: embeddingsDegraded() };
 }

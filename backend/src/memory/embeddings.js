@@ -15,7 +15,7 @@ async function getPipe() {
   if (!pipePromise) {
     pipePromise = (async () => {
       const { pipeline, env: tenv } = await import('@xenova/transformers');
-      const dataDir = path.dirname(path.resolve(process.env.DB_PATH || './data/app.sqlite'));
+      const dataDir = path.resolve(process.env.DATA_DIR || './data');
       tenv.cacheDir = process.env.TRANSFORMERS_CACHE || path.join(dataDir, 'models');
       tenv.allowLocalModels = false;
       return await pipeline('feature-extraction', MODEL);

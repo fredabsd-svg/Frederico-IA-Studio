@@ -11,15 +11,31 @@ import { runAgent, runOrchestrator, setControl, isConversationActive, friendlyAp
 import { runTool } from './tools.js';
 import { classifyTaskResult } from './taskOutcome.js';
 import { normalizeScheduleDay, normalizeScheduleHour, resolveScheduleTimeZone, scheduleDateKey, scheduleDue } from './scheduling.js';
-import { listMemories, addMemory, updateMemory, deleteMemory, deleteAllMemories, exportAll, reindexAll, getSettings, setSettings, looksSensitive, listMemorySuggestions, updateMemorySuggestion, approveMemorySuggestion, rejectMemorySuggestion, maybeReindexOnModelChange } from './memory/memoryService.js';
+import { listMemories, addMemory, updateMemory, deleteMemory, deleteAllMemories, exportAll, reindexAll, getSettings, setSettings, looksSensitive, listMemorySuggestions, updateMemorySuggestion, approveMemorySuggestion, rejectMemorySuggestion, maybeReindexOnModelChange, loadSettings } from './memory/memoryService.js';
 import { startImport, importStatus } from './memory/indexer.js';
-import { workspaceFor, destroyConversation, insideBase, isConversationId, realInside, destroyAllSandboxes } from './sandbox.js';
+import { workspaceFor, destroyConversation, insideBase, isConversationId, realInside, destroyAllSandboxes, loadPcFolders } from './sandbox.js';
 import { authEnabled, makeToken, verifyToken, getCookie, passwordMatches, loginRateLimited } from './auth.js';
 import { registerModelCatalog } from './modelCapabilities.js';
+import { runMigrations } from './migrate.js';
 
 const app = express();
 const port = process.env.PORT || 3001;
 const scheduleTimeZone = resolveScheduleTimeZone(process.env.APP_TIMEZONE);
+
+// Com as rotas agora assíncronas (banco em Postgres), uma rejeição de Promise
+// num handler NÃO é encaminhada ao middleware de erro pelo Express 4 — sem isto,
+// um erro de query numa rota derrubaria o processo inteiro. Este shim embrulha
+// todo handler async para que qualquer rejeição vire um 500 amigável (via next).
+for (const method of ['get', 'post', 'put', 'delete', 'patch', 'all']) {
+  const original = app[method].bind(app);
+  app[method] = (routePath, ...handlers) => original(routePath, ...handlers.map(h =>
+    (typeof h === 'function' && h.length < 4)
+      ? (req, res, next) => Promise.resolve(h(req, res, next)).catch(next)
+      : h));
+}
+// Rede de segurança final: se ainda escapar uma rejeição não tratada, registra
+// e segue — nunca derruba o servidor por causa de uma requisição.
+process.on('unhandledRejection', (err) => console.error('[unhandledRejection]', err));
 app.use(cors({ origin: process.env.FRONTEND_URL || '*' }));
 app.use(express.json({ limit: '10mb' }));
 
@@ -49,15 +65,15 @@ app.use('/api/conversations/:id', (req, res, next) => {
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
 function safeParse(s, fallback) { try { return JSON.parse(s); } catch { return fallback; } }
-function loadAssistant(id) {
-  const a = id && db.prepare('SELECT * FROM assistants WHERE id=?').get(id);
+async function loadAssistant(id) {
+  const a = id && await db.prepare('SELECT * FROM assistants WHERE id=?').get(id);
   if (!a) return null;
   return { ...a, tools: safeParse(a.tools, []), personality: safeParse(a.personality, {}) };
 }
 
 // Cria os assistentes padrão na primeira execução
-function seedAssistants() {
-  if (db.prepare('SELECT COUNT(*) c FROM assistants').get().c > 0) return;
+async function seedAssistants() {
+  if (Number((await db.prepare('SELECT COUNT(*) c FROM assistants').get()).c) > 0) return;
   const defaultModel = process.env.DEEPSEEK_MODEL || 'deepseek/deepseek-chat';
   // `emoji` guarda o nome de um ícone Lucide (ver frontend/src/constants.js).
   const defaults = [
@@ -66,9 +82,8 @@ function seedAssistants() {
   ];
   const stmt = db.prepare('INSERT INTO assistants (id,name,emoji,model,system_prompt,tools,personality,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)');
   const t = now();
-  for (const d of defaults) stmt.run(nanoid(), d.name, d.emoji, defaultModel, d.prompt, JSON.stringify([]), JSON.stringify({ form: 50, det: 50, criat: 20 }), t, t);
+  for (const d of defaults) await stmt.run(nanoid(), d.name, d.emoji, defaultModel, d.prompt, JSON.stringify([]), JSON.stringify({ form: 50, det: 50, criat: 20 }), t, t);
 }
-seedAssistants();
 
 // Assistente "Documentos profissionais" — traz o guia de design de Word (Word
 // Design) traduzido para python-docx (que já roda no sandbox). Criado UMA vez,
@@ -95,24 +110,23 @@ REGISTRO POR TIPO: relatório/proposta = design forte (capa, KPIs, callouts, cor
 
 FLUXO OBRIGATÓRIO: depois de gerar o .docx, converta para PDF com "soffice --headless --convert-to pdf --outdir outputs outputs/arquivo.docx" para conferir que a capa ficou equilibrada e que nenhuma tabela vazou da margem; ajuste se necessário. Entregue o .docx (e o PDF, quando útil) em outputs/. Responda em português do Brasil.`;
 
-function seedDocProAssistant() {
+async function seedDocProAssistant() {
   try {
-    if (db.prepare("SELECT value FROM settings WHERE key='seeded_docpro'").get()) return;
-    const exists = db.prepare('SELECT id FROM assistants WHERE name=?').get('Documentos profissionais');
+    if (await db.prepare("SELECT value FROM settings WHERE key='seeded_docpro'").get()) return;
+    const exists = await db.prepare('SELECT id FROM assistants WHERE name=?').get('Documentos profissionais');
     if (!exists) {
       const defaultModel = process.env.DEEPSEEK_MODEL || 'deepseek/deepseek-chat';
       const t = now();
-      db.prepare('INSERT INTO assistants (id,name,emoji,model,system_prompt,tools,personality,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)')
+      await db.prepare('INSERT INTO assistants (id,name,emoji,model,system_prompt,tools,personality,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)')
         .run(nanoid(), 'Documentos profissionais', 'file-pen-line', defaultModel, DOCPRO_PROMPT, JSON.stringify([]), JSON.stringify({ form: 60, det: 60, criat: 30 }), t, t);
     }
-    db.prepare("INSERT INTO settings (key,value) VALUES ('seeded_docpro','1') ON CONFLICT(key) DO UPDATE SET value='1'").run();
+    await db.prepare("INSERT INTO settings (key,value) VALUES ('seeded_docpro','1') ON CONFLICT(key) DO UPDATE SET value='1'").run();
   } catch (e) { console.error('[seed docpro]', e.message); }
 }
-seedDocProAssistant();
 
 // Biblioteca inicial de templates de pedido (o usuário pode criar os seus)
-function seedTemplates() {
-  if (db.prepare('SELECT COUNT(*) c FROM templates').get().c > 0) return;
+async function seedTemplates() {
+  if (Number((await db.prepare('SELECT COUNT(*) c FROM templates').get()).c) > 0) return;
   const seeds = [
     { name: '📊 Planilha a partir de dados', content: 'Analise o arquivo enviado (CSV, Excel, texto ou PDF) e gere uma planilha Excel bem organizada: uma aba de dados limpos, uma aba de resumo com totais e indicadores, e gráficos quando fizer sentido. Formate profissionalmente (cabeçalhos congelados, números alinhados à direita) e explique o que fez.' },
     { name: '📄 Proposta comercial', content: 'Crie um documento Word com uma proposta comercial profissional contendo: capa com título e data, apresentação da empresa, escopo dos serviços, cronograma, investimento (tabela de valores), condições de pagamento, validade da proposta e espaço para assinaturas. Use linguagem formal e formatação elegante.' },
@@ -122,22 +136,19 @@ function seedTemplates() {
   ];
   const stmt = db.prepare('INSERT INTO templates (id,name,content,created_at) VALUES (?,?,?,?)');
   const t = now();
-  for (const s of seeds) stmt.run(nanoid(), s.name, s.content, t);
+  for (const s of seeds) await stmt.run(nanoid(), s.name, s.content, t);
 }
-seedTemplates();
 
-function ensureConversation(id, model) {
-  const existing = db.prepare('SELECT * FROM conversations WHERE id=?').get(id);
+async function ensureConversation(id, model) {
+  const existing = await db.prepare('SELECT * FROM conversations WHERE id=?').get(id);
   if (existing) return existing;
   const t = now();
-  db.prepare('INSERT INTO conversations (id,title,model,created_at,updated_at) VALUES (?,?,?,?,?)')
+  await db.prepare('INSERT INTO conversations (id,title,model,created_at,updated_at) VALUES (?,?,?,?,?)')
     .run(id, 'Nova conversa', model || process.env.DEEPSEEK_MODEL || 'deepseek-chat', t, t);
   workspaceFor(id);
 }
 
 app.get('/api/health', (_, res) => res.json({ ok: true, name: 'Frederico AI Studio', auth: authEnabled(), scheduleTimeZone }));
-// Verifica troca de modelo de embeddings e reindexa em segundo plano se preciso
-setTimeout(() => { try { maybeReindexOnModelChange(); } catch {} }, 3000);
 
 // Lista os modelos disponíveis no provedor configurado (ex.: catálogo do
 // OpenRouter). Marca quais suportam "tools" (necessário p/ gerar arquivos).
@@ -158,32 +169,32 @@ app.get('/api/models', async (_, res) => {
 });
 
 // ---- Assistentes (Assistant Studio) ----
-app.get('/api/assistants', (_, res) => {
-  res.json(db.prepare('SELECT * FROM assistants ORDER BY created_at ASC').all()
+app.get('/api/assistants', async (_, res) => {
+  res.json((await db.prepare('SELECT * FROM assistants ORDER BY created_at ASC').all())
     .map(a => ({ ...a, tools: safeParse(a.tools, []), personality: safeParse(a.personality, {}) })));
 });
 
-app.post('/api/assistants', (req, res) => {
+app.post('/api/assistants', async (req, res) => {
   const b = req.body || {};
   if (!b.name?.trim() || !b.system_prompt?.trim()) return res.status(400).json({ error: 'Nome e instruções são obrigatórios.' });
   const id = nanoid();
   const t = now();
-  db.prepare('INSERT INTO assistants (id,name,emoji,color,model,system_prompt,tools,personality,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
+  await db.prepare('INSERT INTO assistants (id,name,emoji,color,model,system_prompt,tools,personality,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
     .run(id, b.name.trim(), b.emoji || 'bot', b.color || null, b.model || process.env.DEEPSEEK_MODEL || 'deepseek/deepseek-chat', b.system_prompt, JSON.stringify(b.tools || []), JSON.stringify(b.personality || {}), t, t);
-  res.json(loadAssistant(id));
+  res.json(await loadAssistant(id));
 });
 
-app.put('/api/assistants/:id', (req, res) => {
+app.put('/api/assistants/:id', async (req, res) => {
   const b = req.body || {};
-  const existing = db.prepare('SELECT id FROM assistants WHERE id=?').get(req.params.id);
+  const existing = await db.prepare('SELECT id FROM assistants WHERE id=?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Assistente não encontrado' });
-  db.prepare('UPDATE assistants SET name=?, emoji=?, color=?, model=?, system_prompt=?, tools=?, personality=?, updated_at=? WHERE id=?')
+  await db.prepare('UPDATE assistants SET name=?, emoji=?, color=?, model=?, system_prompt=?, tools=?, personality=?, updated_at=? WHERE id=?')
     .run(b.name?.trim() || 'Assistente', b.emoji || 'bot', b.color || null, b.model || null, b.system_prompt || '', JSON.stringify(b.tools || []), JSON.stringify(b.personality || {}), now(), req.params.id);
-  res.json(loadAssistant(req.params.id));
+  res.json(await loadAssistant(req.params.id));
 });
 
-app.delete('/api/assistants/:id', (req, res) => {
-  db.prepare('DELETE FROM assistants WHERE id=?').run(req.params.id);
+app.delete('/api/assistants/:id', async (req, res) => {
+  await db.prepare('DELETE FROM assistants WHERE id=?').run(req.params.id);
   res.json({ ok: true });
 });
 
@@ -205,8 +216,8 @@ function isDangerousHostPath(raw) {
   if (posixSys.test(norm)) return true;
   return false;
 }
-app.get('/api/pc-folders', (_, res) => {
-  res.json(db.prepare('SELECT id, label, host_path, writable FROM pc_folders ORDER BY created_at ASC').all());
+app.get('/api/pc-folders', async (_, res) => {
+  res.json(await db.prepare('SELECT id, label, host_path, writable FROM pc_folders ORDER BY created_at ASC').all());
 });
 app.post('/api/pc-folders', async (req, res) => {
   const label = (req.body?.label || '').trim();
@@ -214,18 +225,18 @@ app.post('/api/pc-folders', async (req, res) => {
   if (!label || !hostPath) return res.status(400).json({ error: 'Nome e caminho da pasta são obrigatórios.' });
   if (isDangerousHostPath(hostPath)) return res.status(400).json({ error: 'Por segurança, não é permitido liberar a raiz do disco nem pastas do sistema (Windows, Arquivos de Programas, /etc, /var etc.). Escolha uma pasta específica de trabalho.' });
   const id = nanoid();
-  db.prepare('INSERT INTO pc_folders (id,label,host_path,writable,created_at) VALUES (?,?,?,?,?)')
+  await db.prepare('INSERT INTO pc_folders (id,label,host_path,writable,created_at) VALUES (?,?,?,?,?)')
     .run(id, label, hostPath, req.body?.writable ? 1 : 0, now());
   await destroyAllSandboxes(); // aplica o novo mount às conversas em andamento
   res.json({ id, label, host_path: hostPath, writable: req.body?.writable ? 1 : 0 });
 });
 app.put('/api/pc-folders/:id', async (req, res) => {
-  db.prepare('UPDATE pc_folders SET writable=? WHERE id=?').run(req.body?.writable ? 1 : 0, req.params.id);
+  await db.prepare('UPDATE pc_folders SET writable=? WHERE id=?').run(req.body?.writable ? 1 : 0, req.params.id);
   await destroyAllSandboxes();
   res.json({ ok: true });
 });
 app.delete('/api/pc-folders/:id', async (req, res) => {
-  db.prepare('DELETE FROM pc_folders WHERE id=?').run(req.params.id);
+  await db.prepare('DELETE FROM pc_folders WHERE id=?').run(req.params.id);
   await destroyAllSandboxes();
   res.json({ ok: true });
 });
@@ -233,7 +244,7 @@ app.delete('/api/pc-folders/:id', async (req, res) => {
 // ---- Caixa de entrada de documentos (por cliente) ----
 // Um lugar para acumular documentos de um cliente e, com 1 clique, abrir uma
 // conversa nova já com todos anexados para a IA processar.
-const inboxRoot = path.join(path.dirname(path.resolve(process.env.DB_PATH || './data/app.sqlite')), 'inbox');
+const inboxRoot = path.join(path.resolve(process.env.DATA_DIR || './data'), 'inbox');
 function inboxDir(client) {
   const key = String(client || 'geral').replace(/[^a-zA-Z0-9_-]/g, '_') || 'geral';
   const d = path.join(inboxRoot, key);
@@ -265,14 +276,14 @@ app.delete('/api/inbox/:client/:stored', (req, res) => {
   try { fs.rmSync(target, { force: true }); } catch {}
   res.json({ ok: true });
 });
-app.post('/api/inbox/:client/to-conversation', (req, res) => {
+app.post('/api/inbox/:client/to-conversation', async (req, res) => {
   const d = inboxDir(req.params.client);
   const files = fs.readdirSync(d);
   if (!files.length) return res.status(400).json({ error: 'A caixa de entrada está vazia.' });
   const convId = nanoid();
   const t = now();
   const clientId = req.params.client === 'geral' ? null : req.params.client;
-  db.prepare('INSERT INTO conversations (id,title,model,client_id,created_at,updated_at) VALUES (?,?,?,?,?,?)')
+  await db.prepare('INSERT INTO conversations (id,title,model,client_id,created_at,updated_at) VALUES (?,?,?,?,?,?)')
     .run(convId, `Documentos recebidos — ${t.slice(0, 10)}`, process.env.DEEPSEEK_MODEL || 'deepseek-chat', clientId, t, t);
   const ws = workspaceFor(convId);
   for (const n of files) {
@@ -282,7 +293,7 @@ app.post('/api/inbox/:client/to-conversation', (req, res) => {
       fs.copyFileSync(path.join(d, n), dest);
       try { fs.chownSync(dest, 1000, 1000); } catch {}
       const size = fs.statSync(dest).size;
-      db.prepare('INSERT INTO files (id,conversation_id,kind,name,path,size,created_at) VALUES (?,?,?,?,?,?,?)')
+      await db.prepare('INSERT INTO files (id,conversation_id,kind,name,path,size,created_at) VALUES (?,?,?,?,?,?,?)')
         .run(nanoid(), convId, 'upload', original, `uploads/${n}`, size, now());
       fs.rmSync(path.join(d, n), { force: true }); // move: some da caixa para não reprocessar
     } catch {}
@@ -291,46 +302,46 @@ app.post('/api/inbox/:client/to-conversation', (req, res) => {
 });
 
 // ---- Clientes / Projetos ----
-app.get('/api/clients', (_, res) => {
-  res.json(db.prepare('SELECT * FROM clients ORDER BY name ASC').all());
+app.get('/api/clients', async (_, res) => {
+  res.json(await db.prepare('SELECT * FROM clients ORDER BY name ASC').all());
 });
 
-app.post('/api/clients', (req, res) => {
+app.post('/api/clients', async (req, res) => {
   const name = (req.body?.name || '').trim();
   if (!name) return res.status(400).json({ error: 'Nome do cliente é obrigatório.' });
   const id = nanoid();
-  db.prepare('INSERT INTO clients (id,name,created_at) VALUES (?,?,?)').run(id, name, now());
+  await db.prepare('INSERT INTO clients (id,name,created_at) VALUES (?,?,?)').run(id, name, now());
   res.json({ id, name });
 });
 
-app.delete('/api/clients/:id', (req, res) => {
+app.delete('/api/clients/:id', async (req, res) => {
   // Não destrutivo p/ as conversas: elas voltam para "Geral". Mas o conteúdo
   // PRIVADO indexado do cliente (memórias e trechos) é REMOVIDO — nunca
   // promovido a 'global', senão vazaria para as outras conversas.
-  db.prepare('UPDATE conversations SET client_id=NULL WHERE client_id=?').run(req.params.id);
-  db.prepare('DELETE FROM conversation_chunks WHERE scope=?').run(`client:${req.params.id}`);
-  db.prepare("DELETE FROM memory WHERE scope=?").run(`client:${req.params.id}`);
-  db.prepare("DELETE FROM memory_suggestions WHERE scope=?").run(`client:${req.params.id}`);
-  db.prepare('DELETE FROM clients WHERE id=?').run(req.params.id);
+  await db.prepare('UPDATE conversations SET client_id=NULL WHERE client_id=?').run(req.params.id);
+  await db.prepare('DELETE FROM conversation_chunks WHERE scope=?').run(`client:${req.params.id}`);
+  await db.prepare("DELETE FROM memory WHERE scope=?").run(`client:${req.params.id}`);
+  await db.prepare("DELETE FROM memory_suggestions WHERE scope=?").run(`client:${req.params.id}`);
+  await db.prepare('DELETE FROM clients WHERE id=?').run(req.params.id);
   res.json({ ok: true });
 });
 
 // ---- Templates de pedido ----
-app.get('/api/templates', (_, res) => {
-  res.json(db.prepare('SELECT * FROM templates ORDER BY created_at ASC').all());
+app.get('/api/templates', async (_, res) => {
+  res.json(await db.prepare('SELECT * FROM templates ORDER BY created_at ASC').all());
 });
 
-app.post('/api/templates', (req, res) => {
+app.post('/api/templates', async (req, res) => {
   const name = (req.body?.name || '').trim();
   const content = (req.body?.content || '').trim();
   if (!name || !content) return res.status(400).json({ error: 'Nome e conteúdo são obrigatórios.' });
   const id = nanoid();
-  db.prepare('INSERT INTO templates (id,name,content,created_at) VALUES (?,?,?,?)').run(id, name, content, now());
+  await db.prepare('INSERT INTO templates (id,name,content,created_at) VALUES (?,?,?,?)').run(id, name, content, now());
   res.json({ id, name, content });
 });
 
-app.delete('/api/templates/:id', (req, res) => {
-  db.prepare('DELETE FROM templates WHERE id=?').run(req.params.id);
+app.delete('/api/templates/:id', async (req, res) => {
+  await db.prepare('DELETE FROM templates WHERE id=?').run(req.params.id);
   res.json({ ok: true });
 });
 
@@ -357,20 +368,20 @@ app.put('/api/memories/:id', async (req, res) => {
   } catch (err) { res.status(400).json({ error: err.message }); }
 });
 
-app.delete('/api/memories/:id', (req, res) => { deleteMemory(req.params.id); res.json({ ok: true }); });
+app.delete('/api/memories/:id', async (req, res) => { await deleteMemory(req.params.id); res.json({ ok: true }); });
 
-app.delete('/api/memories', (req, res) => {
-  deleteAllMemories({ scope: req.query.scope || null, source_type: req.query.source_type || null });
+app.delete('/api/memories', async (req, res) => {
+  await deleteAllMemories({ scope: req.query.scope || null, source_type: req.query.source_type || null });
   res.json({ ok: true });
 });
 
-app.get('/api/memory-suggestions', (req, res) => {
-  res.json(listMemorySuggestions({ status: req.query.status || 'pending', limit: req.query.limit || 100 }));
+app.get('/api/memory-suggestions', async (req, res) => {
+  res.json(await listMemorySuggestions({ status: req.query.status || 'pending', limit: req.query.limit || 100 }));
 });
 
-app.put('/api/memory-suggestions/:id', (req, res) => {
+app.put('/api/memory-suggestions/:id', async (req, res) => {
   try {
-    const s = updateMemorySuggestion(req.params.id, req.body || {});
+    const s = await updateMemorySuggestion(req.params.id, req.body || {});
     if (!s) return res.status(404).json({ error: 'Sugestão não encontrada' });
     res.json(s);
   } catch (err) { res.status(400).json({ error: err.message }); }
@@ -384,15 +395,15 @@ app.post('/api/memory-suggestions/:id/approve', async (req, res) => {
   } catch (err) { res.status(400).json({ error: err.message }); }
 });
 
-app.post('/api/memory-suggestions/:id/reject', (req, res) => {
-  const s = rejectMemorySuggestion(req.params.id);
+app.post('/api/memory-suggestions/:id/reject', async (req, res) => {
+  const s = await rejectMemorySuggestion(req.params.id);
   if (!s) return res.status(404).json({ error: 'Sugestão não encontrada' });
   res.json(s);
 });
 
-app.get('/api/memories/export', (_, res) => {
+app.get('/api/memories/export', async (_, res) => {
   res.setHeader('Content-Disposition', 'attachment; filename="memoria-frederico-ai.json"');
-  res.json(exportAll());
+  res.json(await exportAll());
 });
 
 app.post('/api/memories/reindex', async (_, res) => {
@@ -410,7 +421,7 @@ app.post('/api/memories/import', upload.single('file'), (req, res) => {
 app.get('/api/memories/import-status', (_, res) => res.json(importStatus));
 
 app.get('/api/memory-config', (_, res) => res.json(getSettings()));
-app.put('/api/memory-config', (req, res) => res.json(setSettings(req.body || {})));
+app.put('/api/memory-config', async (req, res) => res.json(await setSettings(req.body || {})));
 
 // Rotas legadas (compatibilidade com versões antigas da interface)
 app.get('/api/memory', async (req, res) => {
@@ -420,51 +431,58 @@ app.post('/api/memory', async (req, res) => {
   try { res.json(await addMemory({ content: req.body?.content, scope: req.body?.scope || 'global' })); }
   catch (err) { res.status(400).json({ error: err.message }); }
 });
-app.delete('/api/memory/:id', (req, res) => { deleteMemory(req.params.id); res.json({ ok: true }); });
+app.delete('/api/memory/:id', async (req, res) => { await deleteMemory(req.params.id); res.json({ ok: true }); });
 
 // ---- Analytics de uso (mensagens e tokens) ----
-app.get('/api/analytics', (_, res) => {
-  const totals = db.prepare('SELECT COUNT(*) messages, COALESCE(SUM(total_tokens),0) tokens, COALESCE(SUM(prompt_tokens),0) prompt_tokens, COALESCE(SUM(completion_tokens),0) completion_tokens FROM usage').get();
-  const byAssistant = db.prepare(`
+app.get('/api/analytics', async (_, res) => {
+  const totals = await db.prepare('SELECT COUNT(*) messages, COALESCE(SUM(total_tokens),0) tokens, COALESCE(SUM(prompt_tokens),0) prompt_tokens, COALESCE(SUM(completion_tokens),0) completion_tokens FROM usage').get();
+  totals.messages = Number(totals.messages);
+  totals.tokens = Number(totals.tokens);
+  totals.prompt_tokens = Number(totals.prompt_tokens);
+  totals.completion_tokens = Number(totals.completion_tokens);
+  const byAssistant = (await db.prepare(`
     SELECT COALESCE(a.name,'(sem assistente / equipe)') name, a.emoji,
            COUNT(*) messages, COALESCE(SUM(u.total_tokens),0) tokens
     FROM usage u LEFT JOIN assistants a ON a.id=u.assistant_id
-    GROUP BY u.assistant_id ORDER BY tokens DESC`).all();
-  const byModel = db.prepare('SELECT model, COUNT(*) messages, COALESCE(SUM(total_tokens),0) tokens FROM usage GROUP BY model ORDER BY tokens DESC').all();
-  const byConversation = db.prepare(`
+    GROUP BY u.assistant_id, a.name, a.emoji ORDER BY tokens DESC`).all())
+    .map(r => ({ ...r, messages: Number(r.messages), tokens: Number(r.tokens) }));
+  const byModel = (await db.prepare('SELECT model, COUNT(*) messages, COALESCE(SUM(total_tokens),0) tokens FROM usage GROUP BY model ORDER BY tokens DESC').all())
+    .map(r => ({ ...r, messages: Number(r.messages), tokens: Number(r.tokens) }));
+  const byConversation = (await db.prepare(`
     SELECT COALESCE(c.title,'(conversa apagada)') title, COUNT(*) messages, COALESCE(SUM(u.total_tokens),0) tokens
     FROM usage u LEFT JOIN conversations c ON c.id=u.conversation_id
-    GROUP BY u.conversation_id ORDER BY tokens DESC LIMIT 15`).all();
+    GROUP BY u.conversation_id, c.title ORDER BY tokens DESC LIMIT 15`).all())
+    .map(r => ({ ...r, messages: Number(r.messages), tokens: Number(r.tokens) }));
   res.json({ totals, byAssistant, byModel, byConversation });
 });
 
-app.get('/api/conversations', (req, res) => {
-  if (req.query.all === '1') return res.json(db.prepare('SELECT * FROM conversations ORDER BY updated_at DESC').all());
+app.get('/api/conversations', async (req, res) => {
+  if (req.query.all === '1') return res.json(await db.prepare('SELECT * FROM conversations ORDER BY updated_at DESC').all());
   const clientId = req.query.client || null;
   const rows = clientId
-    ? db.prepare('SELECT * FROM conversations WHERE client_id=? ORDER BY updated_at DESC').all(clientId)
-    : db.prepare('SELECT * FROM conversations WHERE client_id IS NULL ORDER BY updated_at DESC').all();
+    ? await db.prepare('SELECT * FROM conversations WHERE client_id=? ORDER BY updated_at DESC').all(clientId)
+    : await db.prepare('SELECT * FROM conversations WHERE client_id IS NULL ORDER BY updated_at DESC').all();
   res.json(rows);
 });
 
-app.post('/api/conversations', (req, res) => {
+app.post('/api/conversations', async (req, res) => {
   const id = nanoid();
   const t = now();
   const title = req.body?.title || 'Nova conversa';
   const model = req.body?.model || process.env.DEEPSEEK_MODEL || 'deepseek-chat';
   const clientId = req.body?.clientId || null;
-  db.prepare('INSERT INTO conversations (id,title,model,client_id,created_at,updated_at) VALUES (?,?,?,?,?,?)').run(id, title, model, clientId, t, t);
+  await db.prepare('INSERT INTO conversations (id,title,model,client_id,created_at,updated_at) VALUES (?,?,?,?,?,?)').run(id, title, model, clientId, t, t);
   workspaceFor(id);
   res.json({ id, title, model, client_id: clientId, created_at: t, updated_at: t });
 });
 
-app.get('/api/conversations/:id', (req, res) => {
-  ensureConversation(req.params.id);
-  const conversation = db.prepare('SELECT * FROM conversations WHERE id=?').get(req.params.id);
-  const messages = db.prepare('SELECT * FROM messages WHERE conversation_id=? ORDER BY created_at ASC, rowid ASC').all(req.params.id);
+app.get('/api/conversations/:id', async (req, res) => {
+  await ensureConversation(req.params.id);
+  const conversation = await db.prepare('SELECT * FROM conversations WHERE id=?').get(req.params.id);
+  const messages = await db.prepare('SELECT * FROM messages WHERE conversation_id=? ORDER BY created_at ASC, seq ASC').all(req.params.id);
   // Anexa a cada mensagem os arquivos que ela gerou
   const byMsg = {};
-  for (const f of db.prepare('SELECT id,name,path,size,message_id FROM files WHERE conversation_id=? AND message_id IS NOT NULL').all(req.params.id)) {
+  for (const f of await db.prepare('SELECT id,name,path,size,message_id FROM files WHERE conversation_id=? AND message_id IS NOT NULL').all(req.params.id)) {
     (byMsg[f.message_id] ||= []).push(f);
   }
   messages.forEach(m => {
@@ -479,21 +497,21 @@ app.get('/api/conversations/:id', (req, res) => {
 
 app.delete('/api/conversations/:id', async (req, res) => {
   const id = req.params.id;
-  const existing = db.prepare('SELECT id FROM conversations WHERE id=?').get(id);
+  const existing = await db.prepare('SELECT id FROM conversations WHERE id=?').get(id);
   if (!existing) return res.status(404).json({ error: 'Conversa não encontrada' });
   if (isConversationActive(id)) {
     return res.status(409).json({ error: 'Esta conversa ainda está concluindo uma resposta. Aguarde terminar ou interrompa o processamento antes de apagá-la.' });
   }
-  db.prepare('DELETE FROM conversations WHERE id=?').run(id); // cascade: messages + files
+  await db.prepare('DELETE FROM conversations WHERE id=?').run(id); // cascade: messages + files
   // Privacidade: remove o índice de memória e os fatos extraídos desta conversa
-  db.prepare('DELETE FROM conversation_chunks WHERE conversation_id=?').run(id);
-  db.prepare("DELETE FROM memory WHERE source_type='auto' AND source_id=?").run(id);
+  await db.prepare('DELETE FROM conversation_chunks WHERE conversation_id=?').run(id);
+  await db.prepare("DELETE FROM memory WHERE source_type='auto' AND source_id=?").run(id);
   await destroyConversation(id); // remove container e pasta do workspace
   res.json({ ok: true });
 });
 
-app.post('/api/conversations/:id/upload', upload.array('files'), (req, res) => {
-  ensureConversation(req.params.id);
+app.post('/api/conversations/:id/upload', upload.array('files'), async (req, res) => {
+  await ensureConversation(req.params.id);
   const ws = workspaceFor(req.params.id);
   const saved = [];
   for (const file of req.files || []) {
@@ -506,15 +524,15 @@ app.post('/api/conversations/:id/upload', upload.array('files'), (req, res) => {
     fs.writeFileSync(target, file.buffer);
     try { fs.chownSync(target, 1000, 1000); } catch {}
     const id = nanoid();
-    db.prepare('INSERT INTO files (id,conversation_id,kind,name,path,size,created_at) VALUES (?,?,?,?,?,?,?)')
+    await db.prepare('INSERT INTO files (id,conversation_id,kind,name,path,size,created_at) VALUES (?,?,?,?,?,?,?)')
       .run(id, req.params.id, 'upload', original, `uploads/${name}`, file.size, now());
     saved.push({ id, name: original, path: `uploads/${name}`, size: file.size });
   }
   res.json({ files: saved });
 });
 
-app.get('/api/conversations/:id/files', (req, res) => {
-  ensureConversation(req.params.id);
+app.get('/api/conversations/:id/files', async (req, res) => {
+  await ensureConversation(req.params.id);
   const ws = workspaceFor(req.params.id);
   const outputFiles = walk(ws.outputs).map(p => {
     if (!realInside(ws.base, p)) return null;
@@ -523,17 +541,17 @@ app.get('/api/conversations/:id/files', (req, res) => {
     try { size = fs.statSync(p).size; } catch { return null; } // arquivo removido no meio da varredura
     return { id: Buffer.from(rel).toString('base64url'), kind: 'output', name: path.basename(p), path: rel, size };
   }).filter(Boolean);
-  const uploaded = db.prepare('SELECT id,kind,name,path,size,created_at FROM files WHERE conversation_id=?').all(req.params.id);
+  const uploaded = await db.prepare('SELECT id,kind,name,path,size,created_at FROM files WHERE conversation_id=?').all(req.params.id);
   res.json([...uploaded, ...outputFiles]);
 });
 
-app.delete('/api/conversations/:id/files/*', (req, res) => {
+app.delete('/api/conversations/:id/files/*', async (req, res) => {
   const ws = workspaceFor(req.params.id);
   const rel = req.params[0];
   const target = path.resolve(ws.base, rel);
   if (!insideBase(ws.base, target) || !realInside(ws.base, target)) return res.status(400).json({ error: 'Caminho inválido' });
   try { fs.rmSync(target, { force: true }); } catch {}
-  db.prepare('DELETE FROM files WHERE conversation_id=? AND path=?').run(req.params.id, rel.replaceAll('\\', '/'));
+  await db.prepare('DELETE FROM files WHERE conversation_id=? AND path=?').run(req.params.id, rel.replaceAll('\\', '/'));
   res.json({ ok: true });
 });
 
@@ -552,85 +570,84 @@ async function processTasks() {
   taskWorkerBusy = true;
   try {
     while (true) {
-      const t = db.prepare("SELECT * FROM tasks WHERE status='queued' ORDER BY created_at ASC LIMIT 1").get();
+      const t = await db.prepare("SELECT * FROM tasks WHERE status='queued' ORDER BY created_at ASC LIMIT 1").get();
       if (!t) break;
-      db.prepare("UPDATE tasks SET status='running', started_at=?, progress_text='Iniciando...' WHERE id=?").run(now(), t.id);
-      const setProg = (txt) => { try { db.prepare('UPDATE tasks SET progress_text=? WHERE id=?').run(String(txt).slice(0, 200), t.id); } catch {} };
+      await db.prepare("UPDATE tasks SET status='running', started_at=?, progress_text='Iniciando...' WHERE id=?").run(now(), t.id);
+      const setProg = async (txt) => { try { await db.prepare('UPDATE tasks SET progress_text=? WHERE id=?').run(String(txt).slice(0, 200), t.id); } catch {} };
       try {
-        ensureConversation(t.conversation_id, t.model);
-        const assistant = loadAssistant(t.assistant_id);
+        await ensureConversation(t.conversation_id, t.model);
+        const assistant = await loadAssistant(t.assistant_id);
         const onEvent = (ev) => {
           if (ev.type === 'status') setProg(ev.content);
           else if (ev.type === 'tool_start') setProg(`Executando ${ev.name}...`);
         };
         const result = await runAgent({ conversationId: t.conversation_id, userText: t.prompt, model: t.model, assistant, webSearch: !!t.web_search, onEvent });
         if (result?.usage) {
-          db.prepare('INSERT INTO usage (id,conversation_id,assistant_id,model,kind,prompt_tokens,completion_tokens,total_tokens,created_at) VALUES (?,?,?,?,?,?,?,?,?)')
+          await db.prepare('INSERT INTO usage (id,conversation_id,assistant_id,model,kind,prompt_tokens,completion_tokens,total_tokens,created_at) VALUES (?,?,?,?,?,?,?,?,?)')
             .run(nanoid(), t.conversation_id, t.assistant_id, result.model, 'tarefa', result.usage.prompt_tokens, result.usage.completion_tokens, result.usage.total_tokens, now());
         }
         const outcome = classifyTaskResult(result);
-        db.prepare("UPDATE tasks SET status=?, finished_at=?, result_text=?, progress_text=?, error=? WHERE id=?")
+        await db.prepare("UPDATE tasks SET status=?, finished_at=?, result_text=?, progress_text=?, error=? WHERE id=?")
           .run(outcome.status, now(), String(result?.text || '').slice(0, 300), outcome.progress, outcome.error, t.id);
       } catch (err) {
         console.error('[tarefa]', err);
-        db.prepare("UPDATE tasks SET status='error', finished_at=?, error=? WHERE id=?").run(now(), friendlyApiError(err), t.id);
+        await db.prepare("UPDATE tasks SET status='error', finished_at=?, error=? WHERE id=?").run(now(), friendlyApiError(err), t.id);
       }
     }
   } finally { taskWorkerBusy = false; }
 }
 
-// Tarefas que estavam "rodando" quando o servidor caiu voltam para a fila
-db.prepare("UPDATE tasks SET status='queued', progress_text='Reenfileirada após reinício' WHERE status='running'").run();
-setTimeout(() => processTasks().catch(() => {}), 2000);
+// (o reenfileiramento de tarefas e o disparo do worker acontecem no boot, ao
+// final do arquivo, depois que as migrations garantem que as tabelas existem)
 
-app.post('/api/tasks', (req, res) => {
+app.post('/api/tasks', async (req, res) => {
   const message = (req.body?.message || '').trim();
   const convId = req.body?.conversationId;
   if (!message) return res.status(400).json({ error: 'Mensagem vazia.' });
   if (!convId) return res.status(400).json({ error: 'Conversa não informada.' });
   if (!isConversationId(convId)) return res.status(400).json({ error: 'Identificador de conversa inválido.' });
   if (isConversationActive(convId)) return res.status(409).json({ error: 'Esta conversa já está processando uma resposta. Aguarde terminar ou pare o processamento antes de criar uma tarefa nela.' });
-  ensureConversation(convId, req.body?.model);
+  await ensureConversation(convId, req.body?.model);
   const id = nanoid();
-  db.prepare('INSERT INTO tasks (id,conversation_id,assistant_id,model,web_search,prompt,status,created_at) VALUES (?,?,?,?,?,?,?,?)')
+  await db.prepare('INSERT INTO tasks (id,conversation_id,assistant_id,model,web_search,prompt,status,created_at) VALUES (?,?,?,?,?,?,?,?)')
     .run(id, convId, req.body?.assistantId || null, req.body?.model || null, req.body?.webSearch ? 1 : 0, message, 'queued', now());
   processTasks().catch(() => {});
   res.json({ id, status: 'queued' });
 });
 
-app.get('/api/tasks', (_, res) => {
-  res.json(db.prepare(`
+app.get('/api/tasks', async (_, res) => {
+  res.json(await db.prepare(`
     SELECT t.*, c.title conv_title FROM tasks t
     LEFT JOIN conversations c ON c.id=t.conversation_id
     ORDER BY t.created_at DESC LIMIT 20`).all());
 });
 
-app.post('/api/tasks/:id/cancel', (req, res) => {
-  const t = db.prepare('SELECT * FROM tasks WHERE id=?').get(req.params.id);
+app.post('/api/tasks/:id/cancel', async (req, res) => {
+  const t = await db.prepare('SELECT * FROM tasks WHERE id=?').get(req.params.id);
   if (!t) return res.status(404).json({ error: 'Tarefa não encontrada' });
-  if (t.status === 'queued') db.prepare("UPDATE tasks SET status='canceled', finished_at=? WHERE id=?").run(now(), t.id);
+  if (t.status === 'queued') await db.prepare("UPDATE tasks SET status='canceled', finished_at=? WHERE id=?").run(now(), t.id);
   else if (t.status === 'running') setControl(t.conversation_id, 'stop');
   res.json({ ok: true });
 });
 
 // ---- Rotinas agendadas (geram tarefas automaticamente na hora marcada) ----
-function runSchedule(s, d, markRun = true) {
+async function runSchedule(s, d, markRun = true) {
   const convId = nanoid();
   const t = now();
   const runDate = scheduleDateKey(d, scheduleTimeZone);
-  db.prepare('INSERT INTO conversations (id,title,model,client_id,created_at,updated_at) VALUES (?,?,?,?,?,?)')
+  await db.prepare('INSERT INTO conversations (id,title,model,client_id,created_at,updated_at) VALUES (?,?,?,?,?,?)')
     .run(convId, `Rotina: ${s.title} — ${runDate}`, s.model || process.env.DEEPSEEK_MODEL || 'deepseek-chat', s.client_id || null, t, t);
   workspaceFor(convId);
-  db.prepare('INSERT INTO tasks (id,conversation_id,assistant_id,model,web_search,prompt,status,created_at) VALUES (?,?,?,?,?,?,?,?)')
+  await db.prepare('INSERT INTO tasks (id,conversation_id,assistant_id,model,web_search,prompt,status,created_at) VALUES (?,?,?,?,?,?,?,?)')
     .run(nanoid(), convId, s.assistant_id || null, s.model || null, s.web_search ? 1 : 0, s.prompt, 'queued', t);
-  if (markRun) db.prepare('UPDATE schedules SET last_run=? WHERE id=?').run(scheduleDateKey(d, scheduleTimeZone), s.id);
+  if (markRun) await db.prepare('UPDATE schedules SET last_run=? WHERE id=?').run(scheduleDateKey(d, scheduleTimeZone), s.id);
 }
-function checkSchedules() {
+async function checkSchedules() {
   try {
     const d = new Date();
     let any = false;
-    for (const s of db.prepare('SELECT * FROM schedules WHERE enabled=1').all()) {
-      if (scheduleDue(s, d, scheduleTimeZone)) { runSchedule(s, d); any = true; }
+    for (const s of await db.prepare('SELECT * FROM schedules WHERE enabled=1').all()) {
+      if (scheduleDue(s, d, scheduleTimeZone)) { await runSchedule(s, d); any = true; }
     }
     if (any) processTasks().catch(() => {});
   } catch (e) { console.error('[rotinas]', e.message); }
@@ -638,27 +655,27 @@ function checkSchedules() {
 setInterval(checkSchedules, 60 * 1000).unref();
 setTimeout(checkSchedules, 5000);
 
-app.get('/api/schedules', (_, res) => res.json(db.prepare('SELECT * FROM schedules ORDER BY created_at DESC').all()));
-app.post('/api/schedules', (req, res) => {
+app.get('/api/schedules', async (_, res) => res.json(await db.prepare('SELECT * FROM schedules ORDER BY created_at DESC').all()));
+app.post('/api/schedules', async (req, res) => {
   const b = req.body || {};
   const title = (b.title || '').trim();
   const prompt = (b.prompt || '').trim();
   if (!title || !prompt) return res.status(400).json({ error: 'Dê um nome e uma instrução para a rotina.' });
   const cadence = ['daily', 'weekly', 'monthly'].includes(b.cadence) ? b.cadence : 'monthly';
   const id = nanoid();
-  db.prepare('INSERT INTO schedules (id,title,prompt,assistant_id,model,client_id,web_search,cadence,day,hour,enabled,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
+  await db.prepare('INSERT INTO schedules (id,title,prompt,assistant_id,model,client_id,web_search,cadence,day,hour,enabled,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
     .run(id, title, prompt, b.assistant_id || null, b.model || null, b.client_id || null, b.web_search ? 1 : 0, cadence, normalizeScheduleDay(cadence, b.day), normalizeScheduleHour(b.hour), 1, now());
-  res.json(db.prepare('SELECT * FROM schedules WHERE id=?').get(id));
+  res.json(await db.prepare('SELECT * FROM schedules WHERE id=?').get(id));
 });
-app.put('/api/schedules/:id', (req, res) => {
-  if (typeof req.body?.enabled !== 'undefined') db.prepare('UPDATE schedules SET enabled=? WHERE id=?').run(req.body.enabled ? 1 : 0, req.params.id);
+app.put('/api/schedules/:id', async (req, res) => {
+  if (typeof req.body?.enabled !== 'undefined') await db.prepare('UPDATE schedules SET enabled=? WHERE id=?').run(req.body.enabled ? 1 : 0, req.params.id);
   res.json({ ok: true });
 });
-app.delete('/api/schedules/:id', (req, res) => { db.prepare('DELETE FROM schedules WHERE id=?').run(req.params.id); res.json({ ok: true }); });
-app.post('/api/schedules/:id/run', (req, res) => {
-  const s = db.prepare('SELECT * FROM schedules WHERE id=?').get(req.params.id);
+app.delete('/api/schedules/:id', async (req, res) => { await db.prepare('DELETE FROM schedules WHERE id=?').run(req.params.id); res.json({ ok: true }); });
+app.post('/api/schedules/:id/run', async (req, res) => {
+  const s = await db.prepare('SELECT * FROM schedules WHERE id=?').get(req.params.id);
   if (!s) return res.status(404).json({ error: 'Rotina não encontrada' });
-  runSchedule(s, new Date(), false); // execução manual não bloqueia a agendada do dia
+  await runSchedule(s, new Date(), false); // execução manual não bloqueia a agendada do dia
   processTasks().catch(() => {});
   res.json({ ok: true });
 });
@@ -700,9 +717,9 @@ const PY_EXPORT = [
 app.post('/api/conversations/:id/export', async (req, res) => {
   try {
     const format = req.body?.format === 'docx' ? 'docx' : 'pdf';
-    const conv = db.prepare('SELECT * FROM conversations WHERE id=?').get(req.params.id);
+    const conv = await db.prepare('SELECT * FROM conversations WHERE id=?').get(req.params.id);
     if (!conv) return res.status(404).json({ error: 'Conversa não encontrada' });
-  const messages = db.prepare('SELECT role, content, created_at FROM messages WHERE conversation_id=? ORDER BY created_at ASC, rowid ASC').all(req.params.id);
+  const messages = await db.prepare('SELECT role, content, created_at FROM messages WHERE conversation_id=? ORDER BY created_at ASC, seq ASC').all(req.params.id);
     if (!messages.length) return res.status(400).json({ error: 'A conversa ainda não tem mensagens.' });
     const ws = workspaceFor(req.params.id);
     const jsonPath = path.join(ws.base, '.export.json');
@@ -720,59 +737,73 @@ app.post('/api/conversations/:id/export', async (req, res) => {
   }
 });
 
-// Backup completo (banco + workspaces) num .tar.gz para download
+// Backup completo (banco + workspaces) num .tar.gz para download.
+// O banco agora é PostgreSQL: geramos um dump com pg_dump e o empacotamos junto
+// com os workspaces. (Requer o cliente `pg_dump` no ambiente — incluído na
+// imagem do backend.)
 app.get('/api/backup', (req, res) => {
-  try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch {}
   const stamp = new Date().toISOString().slice(0, 10);
-  const dataDir = path.dirname(path.resolve(process.env.DB_PATH || './data/app.sqlite'));
   const wsRoot = path.resolve(process.env.WORKSPACE_ROOT || './workspaces');
-  res.setHeader('Content-Type', 'application/gzip');
-  res.setHeader('Content-Disposition', `attachment; filename="frederico-backup-${stamp}.tar.gz"`);
-  const args = ['-czf', '-', '-C', path.dirname(dataDir), path.basename(dataDir)];
-  if (fs.existsSync(wsRoot)) args.push('-C', path.dirname(wsRoot), path.basename(wsRoot));
-  const tar = spawn('tar', args);
-  let headersSent = false;
-  const sendHeaders = () => {
-    if (headersSent) return;
-    headersSent = true;
-    res.setHeader('Content-Type', 'application/gzip');
-    res.setHeader('Content-Disposition', `attachment; filename="frederico-backup-${stamp}.tar.gz"`);
-  };
-  tar.stderr.on('data', () => {}); // drena o stderr (senão o buffer enche e o tar trava)
-  tar.stdout.on('data', (chunk) => { sendHeaders(); if (!res.write(chunk)) tar.stdout.pause(); });
-  res.on('drain', () => tar.stdout.resume());
-  tar.stdout.on('end', () => { if (headersSent) res.end(); });
-  // Falha antes de qualquer byte (ex.: tar ausente): responde erro JSON em vez
-  // de um .tar.gz truncado que o usuário baixaria sem perceber.
-  tar.on('error', (err) => { console.error('[backup]', err); if (!headersSent) res.status(500).json({ error: 'Falha ao gerar o backup (tar indisponível?).' }); else res.end(); });
-  tar.on('close', (code) => { if (!headersSent && code !== 0) res.status(500).json({ error: 'Falha ao gerar o backup.' }); });
+  const dumpName = `frederico-db-${stamp}.sql`;
+  const dumpPath = path.join('/tmp', dumpName);
+  const dbUrl = process.env.DATABASE_URL || 'postgres://studio:studio@postgres:5432/studio';
+
+  // 1) Dump do PostgreSQL para um arquivo temporário.
+  const dump = spawn('pg_dump', ['--no-owner', '--no-privileges', '-f', dumpPath, dbUrl]);
+  dump.stderr.on('data', () => {});
+  dump.on('error', () => { if (!res.headersSent) res.status(500).json({ error: 'Backup do banco falhou (pg_dump indisponível?).' }); });
+  dump.on('close', (dumpCode) => {
+    if (dumpCode !== 0) { if (!res.headersSent) res.status(500).json({ error: 'Falha ao exportar o banco de dados.' }); return; }
+
+    // 2) Empacota o dump do banco + os workspaces num .tar.gz e transmite.
+    const args = ['-czf', '-', '-C', '/tmp', dumpName];
+    if (fs.existsSync(wsRoot)) args.push('-C', path.dirname(wsRoot), path.basename(wsRoot));
+    const tar = spawn('tar', args);
+    let headersSent = false;
+    const cleanup = () => { try { fs.rmSync(dumpPath, { force: true }); } catch {} };
+    const sendHeaders = () => {
+      if (headersSent) return;
+      headersSent = true;
+      res.setHeader('Content-Type', 'application/gzip');
+      res.setHeader('Content-Disposition', `attachment; filename="frederico-backup-${stamp}.tar.gz"`);
+    };
+    tar.stderr.on('data', () => {}); // drena o stderr (senão o buffer enche e o tar trava)
+    tar.stdout.on('data', (chunk) => { sendHeaders(); if (!res.write(chunk)) tar.stdout.pause(); });
+    res.on('drain', () => tar.stdout.resume());
+    tar.stdout.on('end', () => { if (headersSent) res.end(); cleanup(); });
+    // Falha antes de qualquer byte (ex.: tar ausente): responde erro JSON em vez
+    // de um .tar.gz truncado que o usuário baixaria sem perceber.
+    tar.on('error', (err) => { console.error('[backup]', err); cleanup(); if (!headersSent) res.status(500).json({ error: 'Falha ao gerar o backup (tar indisponível?).' }); else res.end(); });
+    tar.on('close', (code) => { if (!headersSent && code !== 0) { cleanup(); res.status(500).json({ error: 'Falha ao gerar o backup.' }); } });
+  });
 });
 
 // Edição de mensagem (estilo ChatGPT): remove a mensagem indicada e TUDO que
 // veio depois dela na conversa, incluindo os arquivos gerados por essas
 // mensagens — a conversa é regravada a partir dali.
-app.post('/api/conversations/:id/truncate', (req, res) => {
-  const msg = db.prepare('SELECT id, created_at, rowid FROM messages WHERE id=? AND conversation_id=?').get(req.body?.messageId, req.params.id);
+app.post('/api/conversations/:id/truncate', async (req, res) => {
+  const msg = await db.prepare('SELECT id, seq FROM messages WHERE id=? AND conversation_id=?').get(req.body?.messageId, req.params.id);
   if (!msg) return res.status(404).json({ error: 'Mensagem não encontrada' });
-  const fromMessage = '(created_at > ? OR (created_at = ? AND rowid >= ?))';
-  const doomed = db.prepare(`SELECT id FROM messages WHERE conversation_id=? AND ${fromMessage}`)
-    .all(req.params.id, msg.created_at, msg.created_at, msg.rowid).map(r => r.id);
+  // "Desta mensagem em diante" = mesma ordem de inserção ou posterior (seq).
+  const fromMessage = 'seq >= ?';
+  const doomed = (await db.prepare(`SELECT id FROM messages WHERE conversation_id=? AND ${fromMessage}`)
+    .all(req.params.id, msg.seq)).map(r => r.id);
   if (doomed.length) {
     const ws = workspaceFor(req.params.id);
     const ph = doomed.map(() => '?').join(',');
-    const orphanFiles = db.prepare(`SELECT path FROM files WHERE conversation_id=? AND message_id IN (${ph})`).all(req.params.id, ...doomed);
+    const orphanFiles = await db.prepare(`SELECT path FROM files WHERE conversation_id=? AND message_id IN (${ph})`).all(req.params.id, ...doomed);
     for (const f of orphanFiles) {
       const target = path.resolve(ws.base, f.path);
       if (insideBase(ws.base, target)) { try { fs.rmSync(target, { force: true }); } catch {} }
     }
-    db.prepare(`DELETE FROM files WHERE conversation_id=? AND message_id IN (${ph})`).run(req.params.id, ...doomed);
+    await db.prepare(`DELETE FROM files WHERE conversation_id=? AND message_id IN (${ph})`).run(req.params.id, ...doomed);
   }
-  db.prepare(`DELETE FROM messages WHERE conversation_id=? AND ${fromMessage}`)
-    .run(req.params.id, msg.created_at, msg.created_at, msg.rowid);
+  await db.prepare(`DELETE FROM messages WHERE conversation_id=? AND ${fromMessage}`)
+    .run(req.params.id, msg.seq);
   // Privacidade: limpa o índice e os resumos derivados das mensagens removidas
   // (os chunks serão reindexados conforme a conversa continuar)
-  db.prepare('DELETE FROM conversation_chunks WHERE conversation_id=?').run(req.params.id);
-  db.prepare('UPDATE conversations SET summary_short=NULL, summary_long=NULL WHERE id=?').run(req.params.id);
+  await db.prepare('DELETE FROM conversation_chunks WHERE conversation_id=?').run(req.params.id);
+  await db.prepare('UPDATE conversations SET summary_short=NULL, summary_long=NULL WHERE id=?').run(req.params.id);
   res.json({ ok: true, removed: doomed.length });
 });
 
@@ -791,7 +822,7 @@ app.post('/api/conversations/:id/chat', async (req, res) => {
   if (isConversationActive(req.params.id)) {
     return res.status(409).json({ error: 'Esta conversa já está processando uma resposta. Aguarde terminar ou pare o processamento antes de enviar outra mensagem.' });
   }
-  ensureConversation(req.params.id, req.body?.model);
+  await ensureConversation(req.params.id, req.body?.model);
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
@@ -812,16 +843,16 @@ app.post('/api/conversations/:id/chat', async (req, res) => {
   try {
     const text = String(req.body?.message || '').trim();
     // Título automático: usa o início da 1ª mensagem em vez de "Nova conversa"
-    const conv = db.prepare('SELECT title FROM conversations WHERE id=?').get(req.params.id);
+    const conv = await db.prepare('SELECT title FROM conversations WHERE id=?').get(req.params.id);
     if (conv && (!conv.title?.trim() || conv.title === 'Nova conversa')) {
       const autoTitle = text.trim().replace(/\s+/g, ' ').slice(0, 40);
-      if (autoTitle) db.prepare('UPDATE conversations SET title=? WHERE id=?').run(autoTitle, req.params.id);
+      if (autoTitle) await db.prepare('UPDATE conversations SET title=? WHERE id=?').run(autoTitle, req.params.id);
     }
     let result, kind = 'chat', usageAssistantId = req.body?.assistantId || null;
     if (req.body?.orchestrate) {
-      const assistants = (req.body?.orchestrateIds || []).map(loadAssistant).filter(Boolean);
+      const assistants = (await Promise.all((req.body?.orchestrateIds || []).map(loadAssistant))).filter(Boolean);
       kind = 'orquestrador'; usageAssistantId = null;
-      const executor = loadAssistant(req.body?.assistantId);
+      const executor = await loadAssistant(req.body?.assistantId);
       result = await runOrchestrator({
         conversationId: req.params.id,
         userText: text,
@@ -834,12 +865,12 @@ app.post('/api/conversations/:id/chat', async (req, res) => {
         onEvent: send
       });
     } else {
-      const assistant = loadAssistant(req.body?.assistantId);
+      const assistant = await loadAssistant(req.body?.assistantId);
       result = await runAgent({ conversationId: req.params.id, userText: text, model: req.body?.model, assistant, webSearch: !!req.body?.webSearch, effort: req.body?.effort, developer: req.body?.developer, onEvent: send });
     }
     // Registra o consumo de tokens para o painel de análises
     if (result?.usage) {
-      db.prepare('INSERT INTO usage (id,conversation_id,assistant_id,model,kind,prompt_tokens,completion_tokens,total_tokens,created_at) VALUES (?,?,?,?,?,?,?,?,?)')
+      await db.prepare('INSERT INTO usage (id,conversation_id,assistant_id,model,kind,prompt_tokens,completion_tokens,total_tokens,created_at) VALUES (?,?,?,?,?,?,?,?,?)')
         .run(nanoid(), req.params.id, usageAssistantId, result.model, kind, result.usage.prompt_tokens, result.usage.completion_tokens, result.usage.total_tokens, now());
     }
     send({ type: 'done' });
@@ -872,4 +903,20 @@ app.use((err, req, res, _next) => {
   res.status(status).json({ error: status === 400 ? 'Requisição inválida (JSON malformado).' : 'Erro interno do servidor.' });
 });
 
-app.listen(port, () => console.log(`Frederico AI Studio backend em http://localhost:${port}`));
+(async () => {
+  // 1) Migrations criam/atualizam o schema ANTES de qualquer query.
+  await runMigrations();
+  // 2) Aquece os caches em memória (settings e pastas do PC).
+  await loadSettings();
+  await loadPcFolders();
+  try { await maybeReindexOnModelChange(); } catch {}
+  // 3) Seeds idempotentes (dependem das tabelas já migradas).
+  await seedAssistants();
+  await seedDocProAssistant();
+  await seedTemplates();
+  // 4) Tarefas que estavam "rodando" quando o servidor caiu voltam para a fila.
+  try { await db.prepare("UPDATE tasks SET status='queued', progress_text='Reenfileirada após reinício' WHERE status='running'").run(); } catch {}
+  // 5) Sobe o servidor e dispara o worker de tarefas em segundo plano.
+  app.listen(port, () => console.log(`Frederico AI Studio backend em http://localhost:${port}`));
+  setTimeout(() => processTasks().catch(() => {}), 2000);
+})().catch((e) => { console.error('Falha no boot do backend:', e); process.exit(1); });

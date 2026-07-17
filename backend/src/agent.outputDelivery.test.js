@@ -3,7 +3,6 @@ import test from 'node:test';
 import fs from 'node:fs';
 import path from 'node:path';
 
-process.env.DB_PATH = ':memory:';
 process.env.WORKSPACE_ROOT = '/tmp/frederico-output-delivery-tests';
 const {
   materializeTextOutput,
@@ -15,6 +14,12 @@ const {
   persistAssistantReply
 } = await import('./agent.js');
 const { db, now } = await import('./db.js');
+
+// O banco agora é PostgreSQL. Os testes que tocam o banco só rodam quando há um
+// Postgres acessível (DATABASE_URL); sem ele, são pulados (não falham).
+let dbReady = true;
+try { await db.prepare('SELECT 1 AS ok').get(); } catch { dbReady = false; }
+if (dbReady) { const { runMigrations } = await import('./migrate.js'); await runMigrations(); }
 
 test('asks for repair when a response promises an output file that does not exist', () => {
   const before = new Map();
@@ -46,13 +51,13 @@ test('materializes a promised Markdown report as a real output file', () => {
   assert.equal(fs.readFileSync(target, 'utf8'), text);
 });
 
-test('persists a DOCX card with its assistant message before validation', () => {
+test('persists a DOCX card with its assistant message before validation', { skip: dbReady ? false : 'requer PostgreSQL (DATABASE_URL)' }, async () => {
   const conversationId = `output-card-${Date.now()}`;
   const stamp = now();
-  db.prepare('INSERT INTO conversations (id,title,model,created_at,updated_at) VALUES (?,?,?,?,?)')
+  await db.prepare('INSERT INTO conversations (id,title,model,created_at,updated_at) VALUES (?,?,?,?,?)')
     .run(conversationId, 'Teste', 'modelo-teste', stamp, stamp);
 
-  const result = persistAssistantReply(conversationId, 'Relatório pronto.', null, [{
+  const result = await persistAssistantReply(conversationId, 'Relatório pronto.', null, [{
     name: 'relatorio_ambiente_app.docx',
     path: 'outputs/relatorio_ambiente_app.docx',
     size: 2048
@@ -60,7 +65,7 @@ test('persists a DOCX card with its assistant message before validation', () => 
 
   assert.equal(result.cards.length, 1);
   assert.equal(result.cards[0].name, 'relatorio_ambiente_app.docx');
-  const stored = db.prepare('SELECT message_id,path FROM files WHERE id=?').get(result.cards[0].id);
+  const stored = await db.prepare('SELECT message_id,path FROM files WHERE id=?').get(result.cards[0].id);
   assert.equal(stored.message_id, result.msgId);
   assert.equal(stored.path, 'outputs/relatorio_ambiente_app.docx');
 });
