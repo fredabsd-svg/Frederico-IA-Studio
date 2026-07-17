@@ -41,6 +41,22 @@ const cpus = Number(process.env.SANDBOX_CPUS || 1);
 fs.mkdirSync(root, { recursive: true });
 const sessions = new Map(); // id -> { container, lastUsed, policyKey }
 
+const CONVERSATION_ID_RE = /^[A-Za-z0-9_-]{6,128}$/;
+
+export function isConversationId(value) {
+  return CONVERSATION_ID_RE.test(String(value || ''));
+}
+
+export function assertConversationId(value) {
+  const id = String(value || '');
+  if (!isConversationId(id)) {
+    const error = new Error('Identificador de conversa invalido.');
+    error.code = 'INVALID_CONVERSATION_ID';
+    throw error;
+  }
+  return id;
+}
+
 // Remove containers ociosos (sem exec há 30 min) para não acumular
 const IDLE_TTL_MS = Number(process.env.SANDBOX_IDLE_TTL_MS || 30 * 60 * 1000);
 setInterval(async () => {
@@ -54,7 +70,8 @@ setInterval(async () => {
 }, 60 * 1000).unref();
 
 export function workspaceFor(id) {
-  const base = path.join(root, id);
+  const conversationId = assertConversationId(id);
+  const base = path.join(root, conversationId);
   const uploads = path.join(base, 'uploads');
   const outputs = path.join(base, 'outputs');
   fs.mkdirSync(uploads, { recursive: true });
@@ -100,6 +117,7 @@ async function dropSession(conversationId) {
 }
 
 export async function getContainer(conversationId, options = {}) {
+  conversationId = assertConversationId(conversationId);
   const policy = sandboxPolicy(options);
   const entry = sessions.get(conversationId);
   if (entry?.policyKey === policy.key) { entry.lastUsed = Date.now(); return entry.container; }
@@ -165,6 +183,7 @@ function parseMemory(value) {
 const MAX_OUTPUT_BYTES = Number(process.env.SANDBOX_MAX_OUTPUT_BYTES || 8 * 1024 * 1024);
 
 export async function execInSandbox(conversationId, cmd, timeoutMs = Number(process.env.TOOL_TIMEOUT_MS || 45000), options = {}) {
+  conversationId = assertConversationId(conversationId);
   let container = await getContainer(conversationId, options);
   const makeExec = (c) => c.exec({ Cmd: ['bash', '-lc', cmd], AttachStdout: true, AttachStderr: true, WorkingDir: '/workspace', User: 'sandbox' });
   let exec;
@@ -193,7 +212,7 @@ export async function execInSandbox(conversationId, cmd, timeoutMs = Number(proc
     if (bytes > MAX_OUTPUT_BYTES && !tooBig) {
       tooBig = true;
       sessions.delete(conversationId);
-      try { container.kill(); } catch {}
+      void container.kill().catch(() => {});
     }
   };
   stdout.on('data', onData);
@@ -201,7 +220,7 @@ export async function execInSandbox(conversationId, cmd, timeoutMs = Number(proc
   const timer = setTimeout(() => {
     timedOut = true;
     sessions.delete(conversationId); // referência ficaria morta após o kill
-    try { container.kill(); } catch {}
+    void container.kill().catch(() => {});
   }, timeoutMs);
   return await new Promise((resolve) => {
     const finish = async () => {
@@ -223,6 +242,7 @@ export async function execInSandbox(conversationId, cmd, timeoutMs = Number(proc
 
 // Remove o sandbox e o diretório de workspace de uma conversa (usado ao apagar)
 export async function destroyConversation(conversationId) {
+  conversationId = assertConversationId(conversationId);
   const entry = sessions.get(conversationId);
   if (entry) {
     sessions.delete(conversationId);

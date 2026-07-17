@@ -1,10 +1,11 @@
 import fs from 'fs';
 import path from 'path';
-import { execInSandbox, workspaceFor, safeJoin } from './sandbox.js';
+import { nanoid } from 'nanoid';
+import { execInSandbox, workspaceFor, safeJoin, pcFolderMounts } from './sandbox.js';
 
 export const toolDefinitions = [
-  { type: 'function', function: { name: 'run_python', description: 'Executa Python 3.12 real na sandbox Linux isolada. Use para análises, planilhas, Word, PDF, gráficos, OCR e automações. Pacotes instalados incluem pandas, numpy, openpyxl, xlsxwriter, xlrd, pyxlsb, odfpy, python-docx, python-pptx, reportlab, weasyprint, PyMuPDF/fitz, pdfplumber, camelot, ocrmypdf, pytesseract, duckdb, polars, pyarrow, plotly, seaborn, num2words, xmltodict e jsonschema.', parameters: { type: 'object', properties: { code: { type: 'string' } }, required: ['code'] } } },
-  { type: 'function', function: { name: 'bash', description: 'Executa comando bash na sandbox. Programas DISPONÍVEIS: soffice/LibreOffice headless (converter .xls/.ods/.doc/.odt/.pptx e gerar PDF), ffmpeg, pdftotext, ocrmypdf, tesseract, jq, xmlstarlet, qpdf, imagemagick, zip/unzip, node e java. TEM internet: curl/wget funcionam e dá para "pip install --user" e "npm install" (apt install NÃO — sem root).', parameters: { type: 'object', properties: { command: { type: 'string' } }, required: ['command'] } } },
+  { type: 'function', function: { name: 'run_python', description: 'Executa Python 3.12 real na sandbox Linux isolada. Use para análises, planilhas, Word, PDF, gráficos, OCR, APIs e automações. Pacotes incluem pandas, numpy, openpyxl, python-docx, odfpy (importe odf), reportlab, weasyprint, PyMuPDF/fitz, pdfplumber, camelot, ocrmypdf, pytesseract, duckdb, polars, Flask/FastAPI/Uvicorn, pytest/black/ruff, SQLAlchemy, psycopg (v3), psycopg2 e clientes MySQL/Redis/MongoDB. Para ML em CPU: scikit-learn e onnxruntime para inferência; transformers, sentencepiece e safetensors para tokenização/configuração. Sem PyTorch/TensorFlow, use modelos ONNX com onnxruntime.', parameters: { type: 'object', properties: { code: { type: 'string' } }, required: ['code'] } } },
+  { type: 'function', function: { name: 'bash', description: 'Executa comando bash na sandbox. Disponíveis: LibreOffice, ffmpeg, PDF/OCR, ImageMagick, Inkscape/rsvg-convert, Chromium headless/Xvfb/Playwright, gcc/g++/make/cmake/ninja, go, rustc/cargo, javac, dotnet (C#) e kotlinc 2.3.21 (Kotlin JVM), sqlite3/psql/mysql/redis-cli, ssh/rsync/ansible/kubectl, gdb/valgrind/strace/lsof/htop/shellcheck e Node/npm/yarn/pnpm com tsc/vite/sass/postcss/tailwindcss/prettier/eslint. TEM internet: curl/wget e instalações pip/npm funcionam; apt não funciona por ser usuário sem root. Docker/Compose, GPU e Android/iOS nativos são intencionalmente indisponíveis para preservar o isolamento.', parameters: { type: 'object', properties: { command: { type: 'string' } }, required: ['command'] } } },
   { type: 'function', function: { name: 'write_file', description: 'Cria ou sobrescreve arquivo no workspace da sessão.', parameters: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path','content'] } } },
   { type: 'function', function: { name: 'read_file', description: 'Lê um arquivo de texto do workspace da sessão.', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } } },
   { type: 'function', function: { name: 'list_files', description: 'Lista arquivos enviados e gerados na sessão.', parameters: { type: 'object', properties: { folder: { type: 'string', enum: ['uploads','outputs','.'] } } } } },
@@ -64,7 +65,7 @@ async function webSearch(query) {
 // Bloqueia endereços internos/loopback/link-local para evitar SSRF (o backend
 // tem rede; o modelo pode ser induzido por conteúdo de uma página a buscar,
 // ex., http://169.254.169.254/ de metadados de nuvem).
-function isBlockedHost(hostname) {
+export function isBlockedHost(hostname) {
   const h = String(hostname || '').toLowerCase();
   if (!h || h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.local') || h.endsWith('.internal')) return true;
   const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
@@ -82,15 +83,43 @@ function isBlockedHost(hostname) {
 
 async function webFetch(url) {
   if (!/^https?:\/\//i.test(url)) throw new Error('URL inválida (use http/https).');
-  let host;
-  try { host = new URL(url).hostname; } catch { throw new Error('URL inválida.'); }
-  if (isBlockedHost(host)) throw new Error('Endereço bloqueado por segurança (rede interna/local não é acessível).');
-  const r = await fetchWithTimeout(url, 20000);
+  let target;
+  try { target = new URL(url); } catch { throw new Error('URL inválida.'); }
+  let r;
+  // Validate every redirect. A public URL must never be able to bounce the
+  // backend into a private or metadata address.
+  for (let redirects = 0; redirects <= 4; redirects++) {
+    if (isBlockedHost(target.hostname)) throw new Error('Endereço bloqueado por segurança (rede interna/local não é acessível).');
+    r = await fetchWithTimeout(target, 20000, { redirect: 'manual' });
+    if (![301, 302, 303, 307, 308].includes(r.status)) break;
+    const location = r.headers.get('location');
+    if (!location) break;
+    target = new URL(location, target);
+    if (redirects === 4) throw new Error('A página redirecionou vezes demais.');
+  }
   const type = r.headers.get('content-type') || '';
   if (!/text|html|json|xml/i.test(type)) return { url, note: `Conteúdo não textual (${type}). Baixe/processe de outra forma.` };
-  const body = await r.text();
+  const declaredLength = Number(r.headers.get('content-length') || 0);
+  const maxBytes = Math.max(64 * 1024, Number(process.env.WEB_FETCH_MAX_BYTES || 1_500_000));
+  if (declaredLength > maxBytes) throw new Error('A página é grande demais para abrir com segurança.');
+  const reader = r.body?.getReader();
+  const chunks = [];
+  let bytes = 0;
+  if (reader) {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > maxBytes) {
+        await reader.cancel().catch(() => {});
+        throw new Error('A página é grande demais para abrir com segurança.');
+      }
+      chunks.push(Buffer.from(value));
+    }
+  }
+  const body = reader ? Buffer.concat(chunks).toString('utf8') : await r.text();
   const text = /json/i.test(type) ? body : stripHtml(body);
-  return { url, status: r.status, content: text.slice(0, 8000) };
+  return { url: target.toString(), status: r.status, content: text.slice(0, 8000) };
 }
 
 // Geração/edição de IMAGENS com IA — roda no backend, usando o mesmo provedor
@@ -143,13 +172,68 @@ function guardCommand(command) {
   for (const bad of blocked) if (lower.includes(bad)) throw new Error(`Comando bloqueado: ${bad}`);
 }
 
+// O modelo enxerga /workspace e /mnt/user-data dentro da sandbox, enquanto
+// estas ferramentas leves rodam no backend. Aceita os dois enderecos virtuais
+// e os converte para a raiz real da conversa antes de acessar o arquivo.
+export function workspaceRelativePath(userPath) {
+  const raw = String(userPath || '').trim().replaceAll('\\', '/');
+  return raw.replace(/^\/?(?:workspace|mnt\/user-data)(?:\/|$)/i, '');
+}
+
+// Arquivos do PC so existem dentro da sandbox, em /mnt/pc/<pasta-liberada>.
+// Normalizar antes de comparar impede que ".." saia de uma pasta autorizada.
+export function resolveMountedPcPath(userPath, mounts = pcFolderMounts()) {
+  const raw = String(userPath || '').trim().replaceAll('\\', '/');
+  const normalized = path.posix.normalize(raw.startsWith('/') ? raw : `/${raw}`);
+  return mounts.some(mount => normalized === mount.target || normalized.startsWith(`${mount.target}/`))
+    ? normalized
+    : null;
+}
+
+function missingFileResult(ws, requestedPath) {
+  return {
+    error: 'Arquivo nao encontrado nesta conversa.',
+    code: 'ENOENT',
+    recoverable: true,
+    requestedPath,
+    availableFiles: walk(ws.base).map(file => path.relative(ws.base, file).replaceAll('\\', '/')).slice(0, 120),
+    hint: 'Use a lista de arquivos disponiveis ou list_files antes de tentar outro caminho.'
+  };
+}
+
+async function readMountedPcFile(conversationId, mountedPath, sandboxOptions) {
+  const encodedPath = Buffer.from(mountedPath, 'utf8').toString('base64');
+  const script = [
+    'import base64, json',
+    `target = base64.b64decode('${encodedPath}').decode('utf-8')`,
+    'try:',
+    "  with open(target, 'r', encoding='utf-8', errors='replace') as handle:",
+    '    content = handle.read(6000)',
+    "  print(json.dumps({'ok': True, 'path': target, 'content': content}, ensure_ascii=False))",
+    'except Exception as error:',
+    "  print(json.dumps({'error': str(error), 'code': getattr(error, 'errno', None), 'recoverable': True, 'requestedPath': target, 'hint': 'Confira o caminho dentro da pasta montada antes de tentar novamente.'}, ensure_ascii=False))"
+  ].join('\n');
+  const result = await execInSandbox(conversationId, `python - <<'PY'\n${script}\nPY`, undefined, sandboxOptions);
+  try {
+    return JSON.stringify(JSON.parse(result.output.trim()));
+  } catch {
+    return JSON.stringify({
+      error: 'Nao foi possivel ler o arquivo na pasta montada.',
+      code: result.exitCode || 'READ_FAILED',
+      recoverable: true,
+      requestedPath: mountedPath,
+      hint: 'Confira o caminho dentro da pasta montada antes de tentar novamente.'
+    });
+  }
+}
+
 export async function runTool(conversationId, name, args = {}, sandboxOptions = {}) {
   if (name === 'web_search') return JSON.stringify(await webSearch(args.query || ''));
   if (name === 'web_fetch') return JSON.stringify(await webFetch(args.url || ''));
   const ws = workspaceFor(conversationId);
   if (name === 'generate_image') return JSON.stringify(await generateImage(ws, args));
   if (name === 'run_python') {
-    const script = safeJoin(ws.base, `.tmp_${Date.now()}.py`);
+    const script = safeJoin(ws.base, `.tmp_${Date.now()}_${nanoid(8)}.py`);
     fs.writeFileSync(script, args.code || '', 'utf8');
     try { fs.chownSync(script, 1000, 1000); } catch {}
     try {
@@ -164,14 +248,18 @@ export async function runTool(conversationId, name, args = {}, sandboxOptions = 
     return JSON.stringify(await execInSandbox(conversationId, args.command, undefined, sandboxOptions));
   }
   if (name === 'write_file') {
-    const target = safeJoin(ws.base, args.path);
+    if (resolveMountedPcPath(args.path)) throw new Error('write_file grava apenas no workspace da conversa. Para editar uma pasta do PC autorizada, use bash ou run_python.');
+    const target = safeJoin(ws.base, workspaceRelativePath(args.path));
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, args.content || '', 'utf8');
     try { fs.chownSync(target, 1000, 1000); fs.chownSync(path.dirname(target), 1000, 1000); } catch {}
     return JSON.stringify({ ok: true, path: args.path, size: fs.statSync(target).size });
   }
   if (name === 'read_file') {
-    const target = safeJoin(ws.base, args.path);
+    const mountedPath = resolveMountedPcPath(args.path);
+    if (mountedPath) return readMountedPcFile(conversationId, mountedPath, sandboxOptions);
+    const target = safeJoin(ws.base, workspaceRelativePath(args.path));
+    if (!fs.existsSync(target) || !fs.statSync(target).isFile()) return JSON.stringify(missingFileResult(ws, args.path));
     const content = fs.readFileSync(target, 'utf8');
     return JSON.stringify({ path: args.path, content: content.slice(0, 30000) });
   }

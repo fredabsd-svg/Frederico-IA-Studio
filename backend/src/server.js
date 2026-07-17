@@ -7,15 +7,19 @@ import path from 'path';
 import { nanoid } from 'nanoid';
 import { db, now } from './db.js';
 import { spawn } from 'child_process';
-import { runAgent, runOrchestrator, setControl, friendlyApiError, AGENTS } from './agent.js';
+import { runAgent, runOrchestrator, setControl, isConversationActive, friendlyApiError, AGENTS } from './agent.js';
 import { runTool } from './tools.js';
+import { classifyTaskResult } from './taskOutcome.js';
+import { normalizeScheduleDay, normalizeScheduleHour, resolveScheduleTimeZone, scheduleDateKey, scheduleDue } from './scheduling.js';
 import { listMemories, addMemory, updateMemory, deleteMemory, deleteAllMemories, exportAll, reindexAll, getSettings, setSettings, looksSensitive, listMemorySuggestions, updateMemorySuggestion, approveMemorySuggestion, rejectMemorySuggestion, maybeReindexOnModelChange } from './memory/memoryService.js';
 import { startImport, importStatus } from './memory/indexer.js';
-import { workspaceFor, destroyConversation, insideBase, realInside, destroyAllSandboxes } from './sandbox.js';
+import { workspaceFor, destroyConversation, insideBase, isConversationId, realInside, destroyAllSandboxes } from './sandbox.js';
 import { authEnabled, makeToken, verifyToken, getCookie, passwordMatches, loginRateLimited } from './auth.js';
+import { registerModelCatalog } from './modelCapabilities.js';
 
 const app = express();
 const port = process.env.PORT || 3001;
+const scheduleTimeZone = resolveScheduleTimeZone(process.env.APP_TIMEZONE);
 app.use(cors({ origin: process.env.FRONTEND_URL || '*' }));
 app.use(express.json({ limit: '10mb' }));
 
@@ -37,6 +41,11 @@ app.use('/api', (req, res, next) => {
   res.status(401).json({ error: 'Não autenticado' });
 });
 
+app.use('/api/conversations/:id', (req, res, next) => {
+  if (!isConversationId(req.params.id)) return res.status(400).json({ error: 'Identificador de conversa inválido.' });
+  next();
+});
+
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
 function safeParse(s, fallback) { try { return JSON.parse(s); } catch { return fallback; } }
@@ -50,9 +59,10 @@ function loadAssistant(id) {
 function seedAssistants() {
   if (db.prepare('SELECT COUNT(*) c FROM assistants').get().c > 0) return;
   const defaultModel = process.env.DEEPSEEK_MODEL || 'deepseek/deepseek-chat';
+  // `emoji` guarda o nome de um ícone Lucide (ver frontend/src/constants.js).
   const defaults = [
-    { name: 'Assistente geral', emoji: '🤖', prompt: AGENTS.geral.prompt },
-    { name: 'Programação (Codex)', emoji: '💻', prompt: AGENTS.codigo.prompt }
+    { name: 'Assistente geral', emoji: 'bot', prompt: AGENTS.geral.prompt },
+    { name: 'Programação (Codex)', emoji: 'code-2', prompt: AGENTS.codigo.prompt }
   ];
   const stmt = db.prepare('INSERT INTO assistants (id,name,emoji,model,system_prompt,tools,personality,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)');
   const t = now();
@@ -93,7 +103,7 @@ function seedDocProAssistant() {
       const defaultModel = process.env.DEEPSEEK_MODEL || 'deepseek/deepseek-chat';
       const t = now();
       db.prepare('INSERT INTO assistants (id,name,emoji,model,system_prompt,tools,personality,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)')
-        .run(nanoid(), 'Documentos profissionais', '📄', defaultModel, DOCPRO_PROMPT, JSON.stringify([]), JSON.stringify({ form: 60, det: 60, criat: 30 }), t, t);
+        .run(nanoid(), 'Documentos profissionais', 'file-pen-line', defaultModel, DOCPRO_PROMPT, JSON.stringify([]), JSON.stringify({ form: 60, det: 60, criat: 30 }), t, t);
     }
     db.prepare("INSERT INTO settings (key,value) VALUES ('seeded_docpro','1') ON CONFLICT(key) DO UPDATE SET value='1'").run();
   } catch (e) { console.error('[seed docpro]', e.message); }
@@ -125,7 +135,7 @@ function ensureConversation(id, model) {
   workspaceFor(id);
 }
 
-app.get('/api/health', (_, res) => res.json({ ok: true, name: 'Frederico AI Studio', auth: authEnabled() }));
+app.get('/api/health', (_, res) => res.json({ ok: true, name: 'Frederico AI Studio', auth: authEnabled(), scheduleTimeZone }));
 // Verifica troca de modelo de embeddings e reindexa em segundo plano se preciso
 setTimeout(() => { try { maybeReindexOnModelChange(); } catch {} }, 3000);
 
@@ -138,24 +148,8 @@ app.get('/api/models', async (_, res) => {
     const base = (process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com').replace(/\/$/, '');
     const r = await fetch(`${base}/models`, { headers: { Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY || ''}` } });
     const data = await r.json();
-    const models = (data.data || []).map(m => {
-      const out = m.architecture?.output_modalities || [];
-      const inp = m.architecture?.input_modalities || [];
-      const pPrompt = Number(m.pricing?.prompt || 0);
-      const pCompletion = Number(m.pricing?.completion || 0);
-      return {
-        id: m.id,
-        name: m.name || m.id,
-        tools: Array.isArray(m.supported_parameters) ? m.supported_parameters.includes('tools') : null,
-        image: out.includes('image'),
-        video: out.includes('video'),
-        vision: inp.includes('image'),            // enxerga imagens enviadas
-        created: m.created || 0,                  // timestamp (segundos) do lançamento
-        context: m.context_length || m.top_provider?.context_length || 0,
-        price: pPrompt,                           // preço de entrada por token (para ordenar por mais barato)
-        free: String(m.id).endsWith(':free') || (pPrompt === 0 && pCompletion === 0)
-      };
-    }).sort((a, b) => a.name.localeCompare(b.name));
+    const models = registerModelCatalog(data.data || [])
+      .sort((a, b) => a.name.localeCompare(b.name));
     modelsCache = models; modelsCacheAt = Date.now();
     res.json({ models });
   } catch (err) {
@@ -174,8 +168,8 @@ app.post('/api/assistants', (req, res) => {
   if (!b.name?.trim() || !b.system_prompt?.trim()) return res.status(400).json({ error: 'Nome e instruções são obrigatórios.' });
   const id = nanoid();
   const t = now();
-  db.prepare('INSERT INTO assistants (id,name,emoji,model,system_prompt,tools,personality,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)')
-    .run(id, b.name.trim(), b.emoji || '🤖', b.model || process.env.DEEPSEEK_MODEL || 'deepseek/deepseek-chat', b.system_prompt, JSON.stringify(b.tools || []), JSON.stringify(b.personality || {}), t, t);
+  db.prepare('INSERT INTO assistants (id,name,emoji,color,model,system_prompt,tools,personality,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
+    .run(id, b.name.trim(), b.emoji || 'bot', b.color || null, b.model || process.env.DEEPSEEK_MODEL || 'deepseek/deepseek-chat', b.system_prompt, JSON.stringify(b.tools || []), JSON.stringify(b.personality || {}), t, t);
   res.json(loadAssistant(id));
 });
 
@@ -183,8 +177,8 @@ app.put('/api/assistants/:id', (req, res) => {
   const b = req.body || {};
   const existing = db.prepare('SELECT id FROM assistants WHERE id=?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Assistente não encontrado' });
-  db.prepare('UPDATE assistants SET name=?, emoji=?, model=?, system_prompt=?, tools=?, personality=?, updated_at=? WHERE id=?')
-    .run(b.name?.trim() || 'Assistente', b.emoji || '🤖', b.model || null, b.system_prompt || '', JSON.stringify(b.tools || []), JSON.stringify(b.personality || {}), now(), req.params.id);
+  db.prepare('UPDATE assistants SET name=?, emoji=?, color=?, model=?, system_prompt=?, tools=?, personality=?, updated_at=? WHERE id=?')
+    .run(b.name?.trim() || 'Assistente', b.emoji || 'bot', b.color || null, b.model || null, b.system_prompt || '', JSON.stringify(b.tools || []), JSON.stringify(b.personality || {}), now(), req.params.id);
   res.json(loadAssistant(req.params.id));
 });
 
@@ -260,7 +254,7 @@ app.post('/api/inbox/:client/upload', upload.array('files'), (req, res) => {
   for (const file of req.files || []) {
     const original = Buffer.from(file.originalname, 'latin1').toString('utf8');
     const safe = original.replace(/[^a-zA-Z0-9._ -]/g, '_');
-    fs.writeFileSync(path.join(d, `${Date.now()}_${count}_${safe}`), file.buffer);
+    fs.writeFileSync(path.join(d, `${Date.now()}_${count}_${nanoid(6)}_${safe}`), file.buffer);
     count++;
   }
   res.json({ ok: true, count });
@@ -282,7 +276,7 @@ app.post('/api/inbox/:client/to-conversation', (req, res) => {
     .run(convId, `Documentos recebidos — ${t.slice(0, 10)}`, process.env.DEEPSEEK_MODEL || 'deepseek-chat', clientId, t, t);
   const ws = workspaceFor(convId);
   for (const n of files) {
-    const original = n.replace(/^\d+_\d+_/, '');
+    const original = n.replace(/^\d+_\d+_(?:[A-Za-z0-9_-]+_)?/, '');
     const dest = path.join(ws.uploads, n);
     try {
       fs.copyFileSync(path.join(d, n), dest);
@@ -467,7 +461,7 @@ app.post('/api/conversations', (req, res) => {
 app.get('/api/conversations/:id', (req, res) => {
   ensureConversation(req.params.id);
   const conversation = db.prepare('SELECT * FROM conversations WHERE id=?').get(req.params.id);
-  const messages = db.prepare('SELECT * FROM messages WHERE conversation_id=? ORDER BY created_at ASC').all(req.params.id);
+  const messages = db.prepare('SELECT * FROM messages WHERE conversation_id=? ORDER BY created_at ASC, rowid ASC').all(req.params.id);
   // Anexa a cada mensagem os arquivos que ela gerou
   const byMsg = {};
   for (const f of db.prepare('SELECT id,name,path,size,message_id FROM files WHERE conversation_id=? AND message_id IS NOT NULL').all(req.params.id)) {
@@ -487,6 +481,9 @@ app.delete('/api/conversations/:id', async (req, res) => {
   const id = req.params.id;
   const existing = db.prepare('SELECT id FROM conversations WHERE id=?').get(id);
   if (!existing) return res.status(404).json({ error: 'Conversa não encontrada' });
+  if (isConversationActive(id)) {
+    return res.status(409).json({ error: 'Esta conversa ainda está concluindo uma resposta. Aguarde terminar ou interrompa o processamento antes de apagá-la.' });
+  }
   db.prepare('DELETE FROM conversations WHERE id=?').run(id); // cascade: messages + files
   // Privacidade: remove o índice de memória e os fatos extraídos desta conversa
   db.prepare('DELETE FROM conversation_chunks WHERE conversation_id=?').run(id);
@@ -504,7 +501,7 @@ app.post('/api/conversations/:id/upload', upload.array('files'), (req, res) => {
     // para não corromper acentos (ex.: "Razão.pdf" virava "RazÃ£o.pdf").
     const original = Buffer.from(file.originalname, 'latin1').toString('utf8');
     const safe = original.replace(/[^a-zA-Z0-9._ -]/g, '_');
-    const name = `${Date.now()}_${safe}`;
+    const name = `${Date.now()}_${nanoid(8)}_${safe}`;
     const target = path.join(ws.uploads, name);
     fs.writeFileSync(target, file.buffer);
     try { fs.chownSync(target, 1000, 1000); } catch {}
@@ -520,6 +517,7 @@ app.get('/api/conversations/:id/files', (req, res) => {
   ensureConversation(req.params.id);
   const ws = workspaceFor(req.params.id);
   const outputFiles = walk(ws.outputs).map(p => {
+    if (!realInside(ws.base, p)) return null;
     const rel = path.relative(ws.base, p).replaceAll('\\', '/');
     let size = 0;
     try { size = fs.statSync(p).size; } catch { return null; } // arquivo removido no meio da varredura
@@ -570,9 +568,9 @@ async function processTasks() {
           db.prepare('INSERT INTO usage (id,conversation_id,assistant_id,model,kind,prompt_tokens,completion_tokens,total_tokens,created_at) VALUES (?,?,?,?,?,?,?,?,?)')
             .run(nanoid(), t.conversation_id, t.assistant_id, result.model, 'tarefa', result.usage.prompt_tokens, result.usage.completion_tokens, result.usage.total_tokens, now());
         }
-        const finalStatus = result?.stopped ? 'canceled' : 'done';
-        db.prepare("UPDATE tasks SET status=?, finished_at=?, result_text=?, progress_text=? WHERE id=?")
-          .run(finalStatus, now(), String(result?.text || '').slice(0, 300), result?.stopped ? 'Cancelada' : 'Concluída', t.id);
+        const outcome = classifyTaskResult(result);
+        db.prepare("UPDATE tasks SET status=?, finished_at=?, result_text=?, progress_text=?, error=? WHERE id=?")
+          .run(outcome.status, now(), String(result?.text || '').slice(0, 300), outcome.progress, outcome.error, t.id);
       } catch (err) {
         console.error('[tarefa]', err);
         db.prepare("UPDATE tasks SET status='error', finished_at=?, error=? WHERE id=?").run(now(), friendlyApiError(err), t.id);
@@ -590,6 +588,8 @@ app.post('/api/tasks', (req, res) => {
   const convId = req.body?.conversationId;
   if (!message) return res.status(400).json({ error: 'Mensagem vazia.' });
   if (!convId) return res.status(400).json({ error: 'Conversa não informada.' });
+  if (!isConversationId(convId)) return res.status(400).json({ error: 'Identificador de conversa inválido.' });
+  if (isConversationActive(convId)) return res.status(409).json({ error: 'Esta conversa já está processando uma resposta. Aguarde terminar ou pare o processamento antes de criar uma tarefa nela.' });
   ensureConversation(convId, req.body?.model);
   const id = nanoid();
   db.prepare('INSERT INTO tasks (id,conversation_id,assistant_id,model,web_search,prompt,status,created_at) VALUES (?,?,?,?,?,?,?,?)')
@@ -614,35 +614,23 @@ app.post('/api/tasks/:id/cancel', (req, res) => {
 });
 
 // ---- Rotinas agendadas (geram tarefas automaticamente na hora marcada) ----
-function daysInMonth(y, m) { return new Date(y, m + 1, 0).getDate(); }
-function scheduleDue(s, d) {
-  if (!s.enabled) return false;
-  if (d.getHours() < Number(s.hour)) return false;       // ainda não deu a hora
-  if (s.last_run === d.toISOString().slice(0, 10)) return false; // já rodou hoje
-  if (s.cadence === 'daily') return true;
-  if (s.cadence === 'weekly') return d.getDay() === Number(s.day);
-  if (s.cadence === 'monthly') {
-    const target = Math.min(Number(s.day) || 1, daysInMonth(d.getFullYear(), d.getMonth())); // clampa (ex.: 31 em fev)
-    return d.getDate() === target;
-  }
-  return false;
-}
 function runSchedule(s, d, markRun = true) {
   const convId = nanoid();
   const t = now();
+  const runDate = scheduleDateKey(d, scheduleTimeZone);
   db.prepare('INSERT INTO conversations (id,title,model,client_id,created_at,updated_at) VALUES (?,?,?,?,?,?)')
-    .run(convId, `Rotina: ${s.title} — ${d.toISOString().slice(0, 10)}`, s.model || process.env.DEEPSEEK_MODEL || 'deepseek-chat', s.client_id || null, t, t);
+    .run(convId, `Rotina: ${s.title} — ${runDate}`, s.model || process.env.DEEPSEEK_MODEL || 'deepseek-chat', s.client_id || null, t, t);
   workspaceFor(convId);
   db.prepare('INSERT INTO tasks (id,conversation_id,assistant_id,model,web_search,prompt,status,created_at) VALUES (?,?,?,?,?,?,?,?)')
     .run(nanoid(), convId, s.assistant_id || null, s.model || null, s.web_search ? 1 : 0, s.prompt, 'queued', t);
-  if (markRun) db.prepare('UPDATE schedules SET last_run=? WHERE id=?').run(d.toISOString().slice(0, 10), s.id);
+  if (markRun) db.prepare('UPDATE schedules SET last_run=? WHERE id=?').run(scheduleDateKey(d, scheduleTimeZone), s.id);
 }
 function checkSchedules() {
   try {
     const d = new Date();
     let any = false;
     for (const s of db.prepare('SELECT * FROM schedules WHERE enabled=1').all()) {
-      if (scheduleDue(s, d)) { runSchedule(s, d); any = true; }
+      if (scheduleDue(s, d, scheduleTimeZone)) { runSchedule(s, d); any = true; }
     }
     if (any) processTasks().catch(() => {});
   } catch (e) { console.error('[rotinas]', e.message); }
@@ -659,7 +647,7 @@ app.post('/api/schedules', (req, res) => {
   const cadence = ['daily', 'weekly', 'monthly'].includes(b.cadence) ? b.cadence : 'monthly';
   const id = nanoid();
   db.prepare('INSERT INTO schedules (id,title,prompt,assistant_id,model,client_id,web_search,cadence,day,hour,enabled,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
-    .run(id, title, prompt, b.assistant_id || null, b.model || null, b.client_id || null, b.web_search ? 1 : 0, cadence, Number(b.day) || 1, Math.min(23, Math.max(0, Number(b.hour) || 8)), 1, now());
+    .run(id, title, prompt, b.assistant_id || null, b.model || null, b.client_id || null, b.web_search ? 1 : 0, cadence, normalizeScheduleDay(cadence, b.day), normalizeScheduleHour(b.hour), 1, now());
   res.json(db.prepare('SELECT * FROM schedules WHERE id=?').get(id));
 });
 app.put('/api/schedules/:id', (req, res) => {
@@ -714,7 +702,7 @@ app.post('/api/conversations/:id/export', async (req, res) => {
     const format = req.body?.format === 'docx' ? 'docx' : 'pdf';
     const conv = db.prepare('SELECT * FROM conversations WHERE id=?').get(req.params.id);
     if (!conv) return res.status(404).json({ error: 'Conversa não encontrada' });
-    const messages = db.prepare('SELECT role, content, created_at FROM messages WHERE conversation_id=? ORDER BY created_at ASC').all(req.params.id);
+  const messages = db.prepare('SELECT role, content, created_at FROM messages WHERE conversation_id=? ORDER BY created_at ASC, rowid ASC').all(req.params.id);
     if (!messages.length) return res.status(400).json({ error: 'A conversa ainda não tem mensagens.' });
     const ws = workspaceFor(req.params.id);
     const jsonPath = path.join(ws.base, '.export.json');
@@ -764,9 +752,11 @@ app.get('/api/backup', (req, res) => {
 // veio depois dela na conversa, incluindo os arquivos gerados por essas
 // mensagens — a conversa é regravada a partir dali.
 app.post('/api/conversations/:id/truncate', (req, res) => {
-  const msg = db.prepare('SELECT id, created_at FROM messages WHERE id=? AND conversation_id=?').get(req.body?.messageId, req.params.id);
+  const msg = db.prepare('SELECT id, created_at, rowid FROM messages WHERE id=? AND conversation_id=?').get(req.body?.messageId, req.params.id);
   if (!msg) return res.status(404).json({ error: 'Mensagem não encontrada' });
-  const doomed = db.prepare('SELECT id FROM messages WHERE conversation_id=? AND created_at>=?').all(req.params.id, msg.created_at).map(r => r.id);
+  const fromMessage = '(created_at > ? OR (created_at = ? AND rowid >= ?))';
+  const doomed = db.prepare(`SELECT id FROM messages WHERE conversation_id=? AND ${fromMessage}`)
+    .all(req.params.id, msg.created_at, msg.created_at, msg.rowid).map(r => r.id);
   if (doomed.length) {
     const ws = workspaceFor(req.params.id);
     const ph = doomed.map(() => '?').join(',');
@@ -777,7 +767,8 @@ app.post('/api/conversations/:id/truncate', (req, res) => {
     }
     db.prepare(`DELETE FROM files WHERE conversation_id=? AND message_id IN (${ph})`).run(req.params.id, ...doomed);
   }
-  db.prepare('DELETE FROM messages WHERE conversation_id=? AND created_at>=?').run(req.params.id, msg.created_at);
+  db.prepare(`DELETE FROM messages WHERE conversation_id=? AND ${fromMessage}`)
+    .run(req.params.id, msg.created_at, msg.created_at, msg.rowid);
   // Privacidade: limpa o índice e os resumos derivados das mensagens removidas
   // (os chunks serão reindexados conforme a conversa continuar)
   db.prepare('DELETE FROM conversation_chunks WHERE conversation_id=?').run(req.params.id);
@@ -794,6 +785,12 @@ app.post('/api/conversations/:id/control', (req, res) => {
 });
 
 app.post('/api/conversations/:id/chat', async (req, res) => {
+  const text = String(req.body?.message || '').trim();
+  if (!text) return res.status(400).json({ error: 'Mensagem vazia.' });
+  if (text.length > 100_000) return res.status(400).json({ error: 'A mensagem é grande demais. Envie em partes menores.' });
+  if (isConversationActive(req.params.id)) {
+    return res.status(409).json({ error: 'Esta conversa já está processando uma resposta. Aguarde terminar ou pare o processamento antes de enviar outra mensagem.' });
+  }
   ensureConversation(req.params.id, req.body?.model);
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -813,7 +810,7 @@ app.post('/api/conversations/:id/chat', async (req, res) => {
   // que interrompia toda resposta logo no primeiro token.
   res.on('close', () => { clearInterval(heartbeat); if (!res.writableEnded) setControl(req.params.id, 'stop'); });
   try {
-    const text = req.body?.message || '';
+    const text = String(req.body?.message || '').trim();
     // Título automático: usa o início da 1ª mensagem em vez de "Nova conversa"
     const conv = db.prepare('SELECT title FROM conversations WHERE id=?').get(req.params.id);
     if (conv && (!conv.title?.trim() || conv.title === 'Nova conversa')) {
@@ -824,10 +821,21 @@ app.post('/api/conversations/:id/chat', async (req, res) => {
     if (req.body?.orchestrate) {
       const assistants = (req.body?.orchestrateIds || []).map(loadAssistant).filter(Boolean);
       kind = 'orquestrador'; usageAssistantId = null;
-      result = await runOrchestrator({ conversationId: req.params.id, userText: text, model: req.body?.model, assistants, onEvent: send });
+      const executor = loadAssistant(req.body?.assistantId);
+      result = await runOrchestrator({
+        conversationId: req.params.id,
+        userText: text,
+        model: req.body?.model,
+        assistants,
+        executor,
+        webSearch: !!req.body?.webSearch,
+        effort: req.body?.effort,
+        developer: req.body?.developer,
+        onEvent: send
+      });
     } else {
       const assistant = loadAssistant(req.body?.assistantId);
-      result = await runAgent({ conversationId: req.params.id, userText: text, model: req.body?.model, assistant, webSearch: !!req.body?.webSearch, effort: req.body?.effort, onEvent: send });
+      result = await runAgent({ conversationId: req.params.id, userText: text, model: req.body?.model, assistant, webSearch: !!req.body?.webSearch, effort: req.body?.effort, developer: req.body?.developer, onEvent: send });
     }
     // Registra o consumo de tokens para o painel de análises
     if (result?.usage) {

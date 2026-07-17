@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Brain, Search, Pin, PinOff, Pencil, X, Download, Upload, RefreshCw, Trash2, Check } from 'lucide-react';
-import { API } from './constants.js';
+import { API, assistantOptionPrefix } from './constants.js';
 import { Drawer } from './components.jsx';
 
 const TYPES = [
@@ -183,7 +183,7 @@ export function MemoryPanel({ assistants, clients, clientId, showToast, onClose,
     if (scope === 'global') return '🌐 Global';
     if (scope?.startsWith('client:')) { const c = clients.find(x => `client:${x.id}` === scope); return `👤 ${c?.name || 'Cliente'}`; }
     const a = assistants.find(x => x.id === scope);
-    return a ? `${a.emoji || '🤖'} ${a.name}` : scope;
+    return a ? `${assistantOptionPrefix(a.emoji)}${a.name}` : scope;
   };
 
   return <Drawer title="Memória" icon={<Brain size={18}/>} onClose={onClose} className="memoryDrawer">
@@ -210,7 +210,7 @@ export function MemoryPanel({ assistants, clients, clientId, showToast, onClose,
           <option value="global">🌐 Global</option>
           <option value="office">Escritorio</option>
           {clientId && <option value={`client:${clientId}`}>👤 Cliente atual</option>}
-          {assistants.map(a => <option key={a.id} value={a.id}>{a.emoji || '🤖'} {a.name}</option>)}
+          {assistants.map(a => <option key={a.id} value={a.id}>{assistantOptionPrefix(a.emoji)}{a.name}</option>)}
         </select>
         <button className="primary" onClick={add}>Salvar</button>
       </div>
@@ -278,7 +278,7 @@ export function MemoryPanel({ assistants, clients, clientId, showToast, onClose,
       {!config && <div className="working"><span className="spin"/><span>Carregando configurações...</span></div>}
       {config && <>
         <label className="chk"><input type="checkbox" checked={!!config.economy_mode} onChange={e => saveConfig({ economy_mode: e.target.checked ? 1 : 0 })}/> 💸 <b>Economia de tokens</b> — reduz o contexto enviado e as chamadas extras (mais barato; recomendado)</label>
-        <div className="teamHint" style={{ padding: '0 2px 4px' }}>Ligado, o app envia bem menos "memória" e histórico em cada mensagem e resume as conversas com menos frequência. Desligue só se precisar que a IA lembre de muitos detalhes de conversas antigas.</div>
+        <div className="panelHint" style={{ padding: '0 2px 4px' }}>Ligado, o app envia bem menos "memória" e histórico em cada mensagem e resume as conversas com menos frequência. Desligue só se precisar que a IA lembre de muitos detalhes de conversas antigas.</div>
         <label className="chk"><input type="checkbox" checked={!!config.memory_enabled} onChange={e => saveConfig({ memory_enabled: e.target.checked ? 1 : 0 })}/> Memória ativada (o app consulta o passado antes de responder)</label>
         <label className="chk"><input type="checkbox" checked={!!config.auto_memory} onChange={e => saveConfig({ auto_memory: e.target.checked ? 1 : 0 })}/> Memória automática (aprender fatos das conversas)</label>
         <label className="chk"><input type="checkbox" checked={!!config.review_auto_memory} onChange={e => saveConfig({ review_auto_memory: e.target.checked ? 1 : 0 })}/> Revisar memórias aprendidas antes de salvar</label>
@@ -289,4 +289,4 @@ export function MemoryPanel({ assistants, clients, clientId, showToast, onClose,
       </>}
     </div>}
   </Drawer>;
-}
+}

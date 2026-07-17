@@ -1,6 +1,7 @@
 import { db } from '../db.js';
 import { getSettings, searchMemories, searchChunks, ECONOMY_CONTEXT_TOKENS } from './memoryService.js';
 import { estimateTokens } from './indexer.js';
+import { isLowSignalTurn } from './retrievalPolicy.js';
 
 // Context Builder 2.0
 // Monta um contexto seguro por modelo e tambem devolve metadados para a UI
@@ -51,7 +52,7 @@ function trimForTokens(text, maxTokens) {
 export function selectHistoryForContext({ conversationId, limit = 60, budgetTokens = 25000 } = {}) {
   const rowsDesc = db.prepare(`
     SELECT role, content, created_at FROM messages
-    WHERE conversation_id=? ORDER BY created_at DESC LIMIT ?
+    WHERE conversation_id=? ORDER BY created_at DESC, rowid DESC LIMIT ?
   `).all(conversationId, limit);
   const kept = [];
   let usedTokens = 0;
@@ -158,6 +159,7 @@ export async function buildContext({ conversationId, assistantId, clientScope, u
     blockCount: 0,
     truncated: false,
     omittedBlocks: 0,
+    retrievalSkipped: null,
     scopes: [],
     memories: [],
     chunks: [],
@@ -166,6 +168,13 @@ export async function buildContext({ conversationId, assistantId, clientScope, u
   };
 
   if (!settings.memory_enabled) return { blocks: [], meta: publicMeta(meta) };
+
+  // Saudações e confirmações curtas não carregam sinal semântico suficiente.
+  // O histórico da conversa atual é anexado separadamente pelo agente.
+  if (isLowSignalTurn(userText)) {
+    meta.retrievalSkipped = 'low_signal';
+    return { blocks: [], meta: publicMeta(meta) };
+  }
 
   const scopes = unique(['global', 'office', assistantId, clientScope]);
   meta.scopes = scopes.map(scope => ({ scope, label: scopeLabel(scope) }));

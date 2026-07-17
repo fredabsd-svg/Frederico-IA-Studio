@@ -51,7 +51,7 @@ export async function indexAfterReply(conversationId) {
   if (!s.memory_enabled) return;
   const conv = db.prepare('SELECT * FROM conversations WHERE id=?').get(conversationId);
   if (!conv) return;
-  const msgs = db.prepare('SELECT role, content, created_at FROM messages WHERE conversation_id=? ORDER BY created_at ASC').all(conversationId);
+  const msgs = db.prepare('SELECT role, content, created_at FROM messages WHERE conversation_id=? ORDER BY created_at ASC, rowid ASC').all(conversationId);
   if (msgs.length < 2) return;
 
   // 1) Chunk do último par pergunta/resposta (para busca semântica futura)

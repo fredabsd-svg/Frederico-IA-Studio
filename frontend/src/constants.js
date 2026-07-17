@@ -9,11 +9,11 @@ export const API = import.meta.env.VITE_API_URL || '';
 
 // Lista de reserva, usada só se a busca do catálogo do provedor falhar.
 export const FALLBACK_MODELS = [
-  { id: 'deepseek/deepseek-chat', name: 'DeepSeek Chat', tools: true },
-  { id: 'openai/gpt-4o-mini', name: 'GPT-4o mini', tools: true },
-  { id: 'openai/gpt-4o', name: 'GPT-4o', tools: true },
-  { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet', tools: true },
-  { id: 'google/gemini-flash-1.5', name: 'Gemini 1.5 Flash', tools: true }
+  { id: 'deepseek/deepseek-chat', name: 'DeepSeek Chat', tools: true, vision: false, image: false, video: false, reasoning: null, capabilities: { text: true, tools: true, vision: false, image: false, video: false, reasoning: null } },
+  { id: 'openai/gpt-4o-mini', name: 'GPT-4o mini', tools: true, vision: true, image: false, video: false, reasoning: null, capabilities: { text: true, tools: true, vision: true, image: false, video: false, reasoning: null } },
+  { id: 'openai/gpt-4o', name: 'GPT-4o', tools: true, vision: true, image: false, video: false, reasoning: null, capabilities: { text: true, tools: true, vision: true, image: false, video: false, reasoning: null } },
+  { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet', tools: true, vision: true, image: false, video: false, reasoning: null, capabilities: { text: true, tools: true, vision: true, image: false, video: false, reasoning: null } },
+  { id: 'google/gemini-flash-1.5', name: 'Gemini 1.5 Flash', tools: true, vision: true, image: false, video: false, reasoning: null, capabilities: { text: true, tools: true, vision: true, image: false, video: false, reasoning: null } }
 ];
 
 // Ferramentas que um assistente pode ter acesso
@@ -27,21 +27,35 @@ export const TOOL_INFO = [
   { name: 'generate_image', label: 'Gerar/editar imagens (IA)' }
 ];
 
-// Templates prontos de system prompt (assistentes de uso geral)
-export const TEMPLATES = [
-  { key: 'geral', label: 'Uso geral', emoji: '🤖', prompt: 'Você é um assistente pessoal versátil e prestativo. Responda em português do Brasil, de forma clara e útil. Quando o usuário pedir arquivos (Excel, Word, PDF, imagens), gere-os de verdade usando as ferramentas disponíveis.' },
-  { key: 'escrita', label: 'Escrita e conteúdo', emoji: '✍️', prompt: 'Você é um assistente de escrita e redação. Ajude a criar, revisar e melhorar textos: e-mails, artigos, resumos, roteiros e documentos. Responda em português do Brasil, com clareza e bom estilo, adaptando o tom ao objetivo do usuário.' },
-  { key: 'dados', label: 'Análise de dados', emoji: '📊', prompt: 'Você é um assistente de análise de dados. Leia planilhas e arquivos, faça cálculos e resumos, gere tabelas e gráficos e produza planilhas Excel reais quando pedido. Responda em português do Brasil e explique os resultados de forma simples.' },
-  { key: 'pesquisa', label: 'Pesquisa e resumo', emoji: '🔎', prompt: 'Você é um assistente de pesquisa. Busque informações (na internet quando disponível), compare fontes, resuma e organize o conteúdo de forma objetiva. Responda em português do Brasil e cite as fontes usadas.' },
-  { key: 'marketing', label: 'Marketing', emoji: '📣', prompt: 'Você é um assistente de marketing e conteúdo. Ajude a criar textos, campanhas, posts, e-mails e estratégias. Responda em português do Brasil, com tom persuasivo e criativo, adaptando a linguagem ao público-alvo.' },
-  { key: 'dev', label: 'Programação', emoji: '💻', prompt: 'Você é um engenheiro de software sênior com um sandbox Linux real. Escreva, execute e teste código (Python/shell) usando as ferramentas, verifique o resultado e corrija erros antes de responder. A sandbox NÃO tem internet: use a biblioteca padrão e os pacotes já instalados. Responda em português do Brasil, objetivo e técnico.' }
+// Ícones dos assistentes. O campo continua se chamando `emoji` no banco e na
+// API (ver backend/src/db.js) — o que mudou foi o CONTEÚDO: agora guarda o
+// nome de um ícone Lucide. Assistentes gravados antes disso ainda têm um
+// emoji de verdade ali, e continuam funcionando: quem renderiza decide pelo
+// isAssistantIcon() se desenha o ícone ou imprime o texto como está.
+// 'bot' é o primeiro porque é o padrão e precisa ser escolhível.
+export const ASSISTANT_ICONS = [
+  'bot', 'calculator', 'file-pen-line', 'code-2', 'telescope', 'scale',
+  'briefcase', 'bar-chart-3', 'receipt', 'landmark', 'megaphone', 'lightbulb',
+  'shield-check', 'graduation-cap', 'stethoscope', 'hammer', 'leaf'
 ];
 
-// Sugestões mostradas quando a conversa está vazia
-export const SUGGESTIONS = [
-  'Gere uma planilha xlsx de exemplo com dados organizados e um gráfico.',
-  'Crie um documento Word bem formatado a partir de um tema que eu escolher.',
-  'Analise o arquivo que enviei e faça um resumo com os pontos principais.'
+export const ASSISTANT_COLORS = ['#4f8cff', '#8b7cff', '#22c55e', '#f0a340', '#38bdf8'];
+
+export const isAssistantIcon = (v) => ASSISTANT_ICONS.includes(v);
+
+// <option> de <select> nativo não renderiza SVG. Nesses lugares mostramos o
+// emoji antigo como texto e, quando já for um nome de ícone, nada — o nome do
+// assistente basta.
+export const assistantOptionPrefix = (v) => (v && !isAssistantIcon(v)) ? `${v} ` : '';
+
+// Templates prontos de system prompt (assistentes de uso geral)
+export const TEMPLATES = [
+  { key: 'geral', label: 'Uso geral', emoji: 'bot', prompt: 'Você é um assistente pessoal versátil e prestativo. Responda em português do Brasil, de forma clara e útil. Quando o usuário pedir arquivos (Excel, Word, PDF, imagens), gere-os de verdade usando as ferramentas disponíveis.' },
+  { key: 'escrita', label: 'Escrita e conteúdo', emoji: 'file-pen-line', prompt: 'Você é um assistente de escrita e redação. Ajude a criar, revisar e melhorar textos: e-mails, artigos, resumos, roteiros e documentos. Responda em português do Brasil, com clareza e bom estilo, adaptando o tom ao objetivo do usuário.' },
+  { key: 'dados', label: 'Análise de dados', emoji: 'bar-chart-3', prompt: 'Você é um assistente de análise de dados. Leia planilhas e arquivos, faça cálculos e resumos, gere tabelas e gráficos e produza planilhas Excel reais quando pedido. Responda em português do Brasil e explique os resultados de forma simples.' },
+  { key: 'pesquisa', label: 'Pesquisa e resumo', emoji: 'telescope', prompt: 'Você é um assistente de pesquisa. Busque informações (na internet quando disponível), compare fontes, resuma e organize o conteúdo de forma objetiva. Responda em português do Brasil e cite as fontes usadas.' },
+  { key: 'marketing', label: 'Marketing', emoji: 'megaphone', prompt: 'Você é um assistente de marketing e conteúdo. Ajude a criar textos, campanhas, posts, e-mails e estratégias. Responda em português do Brasil, com tom persuasivo e criativo, adaptando a linguagem ao público-alvo.' },
+  { key: 'dev', label: 'Programação', emoji: 'code-2', prompt: 'Você é um engenheiro de software sênior com um sandbox Linux real. Escreva, execute e teste código (Python/shell) usando as ferramentas, verifique o resultado e corrija erros antes de responder. A sandbox NÃO tem internet: use a biblioteca padrão e os pacotes já instalados. Responda em português do Brasil, objetivo e técnico.' }
 ];
 
 // Cards de ação rápida da tela de boas-vindas (estilo ChatGPT/Claude/Jan.ai)
@@ -80,7 +94,17 @@ export const THEMES = [
   { id: 'indigo', label: 'Índigo', mode: 'dark', swatch: ['#0e0b1e', '#8b7cff', '#171233'] },
   { id: 'emerald', label: 'Esmeralda', mode: 'dark', swatch: ['#07120e', '#25c07d', '#0f1f18'] },
   { id: 'amber', label: 'Âmbar', mode: 'dark', swatch: ['#14100a', '#f0a340', '#1f1710'] },
-  { id: 'sepia', label: 'Sépia (papel)', mode: 'light', swatch: ['#f3ecdf', '#9a6a2f', '#fbf6ec'] }
+  { id: 'sepia', label: 'Sépia (papel)', mode: 'light', swatch: ['#f3ecdf', '#8a5d28', '#fbf6ec'] }
+];
+
+// Espaços de trabalho mudam a hierarquia e o arranjo da interface. Eles são
+// independentes da paleta, para a pessoa combinar o layout que prefere com a
+// cor que deixa a leitura mais confortável.
+export const WORKSPACES = [
+  { id: 'studio', label: 'Estúdio', description: 'Visão completa para usar todas as ferramentas.', hint: 'Completo' },
+  { id: 'essential', label: 'Essencial', description: 'Conversas e atalhos em uma interface mais compacta.', hint: 'Compacto' },
+  { id: 'focus', label: 'Foco', description: 'O chat ganha espaço; a navegação aparece quando você pedir.', hint: 'Sem distrações' },
+  { id: 'developer', label: 'Desenvolvedor', description: 'Projetos, arquivos e revisão ficam na frente.', hint: 'Técnico' }
 ];
 
 // Esforço da IA (raciocínio + nº de etapas). Escolhido no chat.
@@ -93,4 +117,4 @@ export const EFFORTS = [
   { id: 'max', label: 'Máx' }
 ];
 
-export const emptyForm = () => ({ id: null, name: '', emoji: '🤖', model: '', system_prompt: '', template: '', tools: TOOL_INFO.map(t => t.name), personality: { form: 50, det: 50, criat: 20 } });
+export const emptyForm = () => ({ id: null, name: '', emoji: 'bot', color: '', model: '', system_prompt: '', template: '', tools: TOOL_INFO.map(t => t.name), personality: { form: 50, det: 50, criat: 20 } });

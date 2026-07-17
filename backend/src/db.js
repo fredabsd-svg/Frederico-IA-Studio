@@ -148,6 +148,8 @@ CREATE TABLE IF NOT EXISTS schedules (
 try { db.exec('ALTER TABLE files ADD COLUMN message_id TEXT'); } catch {}
 try { db.exec('ALTER TABLE messages ADD COLUMN memory_meta TEXT'); } catch {}
 try { db.exec('ALTER TABLE conversations ADD COLUMN client_id TEXT'); } catch {}
+// Cor do assistente (nulo = cor padrão, escolhida pela ordem na lista)
+try { db.exec('ALTER TABLE assistants ADD COLUMN color TEXT'); } catch {}
 // Memória de longo prazo: novas colunas da tabela memory
 try { db.exec("ALTER TABLE memory ADD COLUMN type TEXT DEFAULT 'manual'"); } catch {}
 try { db.exec("ALTER TABLE memory ADD COLUMN source_type TEXT DEFAULT 'manual'"); } catch {}

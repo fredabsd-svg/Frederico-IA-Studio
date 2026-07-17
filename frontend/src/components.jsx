@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Search, ChevronDown, Check, Cpu, Star, SlidersHorizontal, X } from 'lucide-react';
+import { Search, ChevronDown, Check, Cpu, Star, SlidersHorizontal, X, Wrench, Eye, Image as ImageIcon, Brain, Video, MessageSquare } from 'lucide-react';
 
 // Ids (ou prefixos) dos modelos mais confiáveis para gerar planilhas/arquivos
 const BEST_FOR_FILES = [
@@ -39,10 +39,40 @@ const loadStoredIds = key => {
 const loadFavs = () => loadStoredIds(FAV_KEY);
 const loadRecent = () => loadStoredIds(RECENT_KEY);
 
+const capabilityOf = (model, key) => {
+  const declared = model?.capabilities;
+  if (declared && Object.prototype.hasOwnProperty.call(declared, key)) return declared[key];
+  return model?.[key];
+};
+
+function ModelCapabilitySummary({ model }) {
+  const text = capabilityOf(model, 'text');
+  const tools = capabilityOf(model, 'tools');
+  const entries = [];
+
+  if (text === false) entries.push({ key: 'text', label: 'Sem texto', Icon: MessageSquare, tone: 'no' });
+  else if (tools === false) entries.push({ key: 'text-only', label: 'Somente texto', Icon: MessageSquare, tone: 'no' });
+  else if (tools === true) entries.push({ key: 'tools', label: 'Ferramentas', Icon: Wrench, tone: 'yes' });
+  else entries.push({ key: 'text', label: 'Texto', Icon: MessageSquare, tone: 'neutral' });
+
+  if (capabilityOf(model, 'vision') === true) entries.push({ key: 'vision', label: 'Visão', Icon: Eye, tone: 'yes' });
+  if (capabilityOf(model, 'image') === true) entries.push({ key: 'image', label: 'Imagem', Icon: ImageIcon, tone: 'yes' });
+  if (capabilityOf(model, 'reasoning') === true) entries.push({ key: 'reasoning', label: 'Raciocínio', Icon: Brain, tone: 'yes' });
+  if (capabilityOf(model, 'video') === true) entries.push({ key: 'video', label: 'Vídeo', Icon: Video, tone: 'yes' });
+
+  return <span className="mpItemCaps" aria-label="Capacidades do modelo">
+    {entries.map(({ key, label, Icon, tone }) => <span key={key} className={`mpCap ${tone}`} title={label}><Icon size={12}/><span>{label}</span></span>)}
+  </span>;
+}
+
 
 // A escolha começa pelo trabalho que a pessoa quer fazer. O catálogo e os filtros
 // detalhados ficam disponíveis sem transformar a primeira tela numa taxonomia.
-export function ModelPicker({ models, value, onChange }) {
+//
+// `inline`: renderiza só o corpo do painel, sem botão nem popover próprio, para
+// que o ContextPicker possa embuti-lo como uma aba. Popover dentro de popover
+// confunde o foco e o clique-fora — por isso a separação.
+export function ModelPicker({ models, value, onChange, inline = false, onPicked }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
   const [view, setView] = useState('recommended');
@@ -67,8 +97,8 @@ export function ModelPicker({ models, value, onChange }) {
     };
   }, []);
   useEffect(() => {
-    if (open) setTimeout(() => searchRef.current?.focus(), 30);
-  }, [open]);
+    if (open && !inline) setTimeout(() => searchRef.current?.focus(), 30);
+  }, [open, inline]);
 
   const current = models.find(model => model.id === value);
   const query = q.trim().toLowerCase();
@@ -79,8 +109,8 @@ export function ModelPicker({ models, value, onChange }) {
   const isFav = id => favs.includes(id);
   const priceValue = model => isFree(model) ? 0 : model.price || Infinity;
   const purposes = [
-    { id: 'general', label: 'Trabalho geral', description: 'Conversa, análise e produção do dia a dia.', matches: model => (isRecommended(model) || model.id === value) && model.tools !== false && !model.image && !model.video },
-    { id: 'files', label: 'Documentos e planilhas', description: 'Modelos mais confiáveis para criar arquivos.', matches: model => model.tools !== false && isBest(model) },
+    { id: 'general', label: 'Trabalho geral', description: 'Conversa, análise e produção do dia a dia.', matches: model => (isRecommended(model) || model.id === value) && capabilityOf(model, 'tools') !== false && !model.image && !model.video },
+    { id: 'files', label: 'Documentos e planilhas', description: 'Modelos mais confiáveis para criar arquivos.', matches: model => capabilityOf(model, 'tools') !== false && isBest(model) },
     { id: 'economy', label: 'Economia', description: 'Opções grátis e de menor custo.', matches: model => isFree(model) || Boolean(model.price) },
     { id: 'vision', label: 'Analisar imagens', description: 'Modelos que leem imagens e documentos visuais.', matches: model => model.vision },
     { id: 'image', label: 'Criar imagens', description: 'Modelos com geração de imagens.', matches: model => model.image },
@@ -89,7 +119,7 @@ export function ModelPicker({ models, value, onChange }) {
   const advancedFilters = [
     { key: 'free', label: 'Apenas grátis' },
     { key: 'ctx', label: 'Contexto amplo' },
-    { key: 'tools', label: 'Gera arquivos' },
+    { key: 'tools', label: 'Ferramentas' },
     { key: 'vision', label: 'Lê imagens' },
     { key: 'image', label: 'Cria imagens' },
     { key: 'video', label: 'Cria vídeo' }
@@ -118,6 +148,7 @@ export function ModelPicker({ models, value, onChange }) {
     rememberModel(id);
     onChange(id);
     setOpen(false);
+    onPicked?.(id);
   }
 
   const famCounts = {};
@@ -129,7 +160,7 @@ export function ModelPicker({ models, value, onChange }) {
   const passFlags = model =>
     (!flags.includes('free') || isFree(model)) &&
     (!flags.includes('ctx') || (model.context || 0) >= BIG_CTX) &&
-    (!flags.includes('tools') || model.tools !== false) &&
+    (!flags.includes('tools') || capabilityOf(model, 'tools') !== false) &&
     (!flags.includes('vision') || model.vision) &&
     (!flags.includes('image') || model.image) &&
     (!flags.includes('video') || model.video);
@@ -178,6 +209,7 @@ export function ModelPicker({ models, value, onChange }) {
         <span className="mpItemName">{model.name}{model.id === value && <Check size={13} className="mpInlineCheck" aria-label="Modelo em uso"/>}</span>
         <span className="mpItemId">{model.id}</span>
         <span className="mpItemMeta">{[ctxLabel(model.context), priceLabel(model)].filter(Boolean).join(' · ')}</span>
+        <ModelCapabilitySummary model={model}/>
       </button>
       <button className={'mpStar ' + (isFav(model.id) ? 'on' : '')} onClick={event => toggleFav(model.id, event)} title={isFav(model.id) ? 'Remover dos favoritos' : 'Adicionar aos favoritos'} aria-label={isFav(model.id) ? 'Remover dos favoritos' : 'Adicionar aos favoritos'} aria-pressed={isFav(model.id)}><Star size={14} fill={isFav(model.id) ? 'currentColor' : 'none'}/></button>
     </div>
@@ -187,13 +219,7 @@ export function ModelPicker({ models, value, onChange }) {
     {items.length ? items.map(row) : <p className="mpEmpty">{empty}</p>}
   </section>;
 
-  return <div className="mpicker" ref={ref}>
-    <button className="mpBtn" onClick={() => setOpen(isOpen => !isOpen)} title="Escolher o modelo de IA" aria-expanded={open}>
-      <Cpu size={15} className="mpIco"/>
-      <span className="mpName">{current?.name || value}</span>
-      <ChevronDown size={14}/>
-    </button>
-    {open && <div className="mpPanel">
+  const panel = <div className={inline ? 'mpPanel mpPanelInline' : 'mpPanel'}>
       <div className="mpSearch">
         <Search size={14}/>
         <input ref={searchRef} value={q} onChange={event => setQ(event.target.value)} placeholder="Buscar modelo pelo nome" aria-label="Buscar modelo pelo nome"/>
@@ -245,7 +271,17 @@ export function ModelPicker({ models, value, onChange }) {
         {displayView === 'favorites' && section('Favoritos', favoriteModels, 'Adicione modelos aos favoritos para acessá-los rapidamente.')}
         {displayView === 'catalog' && section('Catálogo', catalogModels, 'Nenhum modelo atende aos filtros atuais.')}
       </div>
-    </div>}
+    </div>;
+
+  if (inline) return panel;
+
+  return <div className="mpicker" ref={ref}>
+    <button className="mpBtn" onClick={() => setOpen(isOpen => !isOpen)} title="Escolher o modelo de IA" aria-expanded={open}>
+      <Cpu size={15} className="mpIco"/>
+      <span className="mpName">{current?.name || value}</span>
+      <ChevronDown size={14}/>
+    </button>
+    {open && panel}
   </div>;
 }
 
@@ -258,10 +294,11 @@ export function ToolStep({ step }) {
   const hasDetail = !!(step.preview || step.result);
   return <div className="toolwrap">
     <button className={`toolstep ${step.status}`} onClick={() => hasDetail && setOpen(o => !o)} title={hasDetail ? 'Clique para ver o que foi executado' : undefined}>
-      <span className="ic">{step.status === 'running' ? <span className="spin sm"/> : '✓'}</span>
+      <span className="ic">{step.status === 'running' ? <span className="spin sm"/> : (step.status === 'error' ? <X size={13}/> : '✓')}</span>
       <code>{step.name}</code>
       <span className="sec">{secs}s</span>
       {step.status === 'running' && <span className="lbl">executando…</span>}
+      {step.status === 'error' && <span className="lbl">falhou</span>}
       {hasDetail && <ChevronDown size={12} className={`tchev ${open ? 'up' : ''}`}/>}
     </button>
     {open && <pre className="tooldetail">{step.preview ? `▶ Executado:\n${step.preview}` : ''}{step.preview && step.result ? '\n\n' : ''}{step.result ? `◀ Resultado:\n${step.result}` : ''}</pre>}

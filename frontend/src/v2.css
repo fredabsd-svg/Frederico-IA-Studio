@@ -1,0 +1,249 @@
+/* ============================================================
+   Frederico AI Studio — camada v2
+   Importado DEPOIS de styles.css em main.jsx, então vence empates
+   de especificidade por ordem de carga.
+
+   COMO ESTE ARQUIVO SE DIVIDE (e onde editar cada coisa):
+   1. Refino de tokens da paleta Escuro padrão (.t-dark) — as outras
+      seis paletas mantêm os tokens delas (definidos em styles.css).
+   2. Refino visual de classes que já existem no styles.css (raios,
+      sombras, hovers). A ESTRUTURA (layout, borda, tamanho) mora em
+      styles.css; aqui é só acabamento.
+   3. Componentes NOVOS do v2, que não existem no styles.css
+      (breadcrumb, rodapé da sidebar, chips do composer, seletor de
+      cliente, ícone/cor do assistente, cabeçalho das mensagens).
+
+   REGRA DAS 7 PALETAS: cores saem de var(--accent/--muted/--line/…)
+   ou color-mix sobre eles — nunca hex fixo — senão o tema Claro e o
+   Sépia herdam azul. Exceção: as cores decorativas de categoria dos
+   cards (verde/violeta/âmbar), que são um conjunto proposital.
+
+   PATCH QUE SOBROU: .brandRow .brand abaixo casa a especificidade de
+   uma regra homônima do styles.css que fixa font-size:var(--fs-xl).
+   É o único remendo de especificidade que restou; está documentado
+   no ponto de uso. (A antiga cascata do composer já foi consolidada
+   numa geração única no styles.css.)
+   ============================================================ */
+
+/* ---- Tokens refinados (so a paleta Escuro padrao) ---- */
+.t-dark{--line:#22304e;--bubble:#141c30;--bubble-user:#2e4f9e}
+
+/* ---- Base ---- */
+body{font-size:14px}
+button,select{border-radius:10px}
+
+/* ---- Sidebar ---- */
+.sidebar{padding:18px 16px 12px}
+/* .brandRow .brand{font-size:var(--fs-xl)} no styles.css tem especificidade
+   (0,2,0) e derrubava um `.brand{font-size:15px}` simples — o titulo ficava
+   em 20px e vazava por cima do botao de esconder. Precisa casar a
+   especificidade. 700 (nao 800) e o peso do prototipo. */
+.brandRow .brand{font-size:15px;font-weight:700;letter-spacing:-.01em;margin-bottom:0}
+.brandLead{flex:1;display:flex;align-items:center;gap:10px;min-width:0}
+/* .brand{flex:none} (styles.css) vinha de quando .brand era filho direto do
+   .brandRow: com shrink:0 ele nunca encolhe e invade o botao. Com o texto ja
+   cabendo, isto e so uma rede de seguranca contra sobreposicao. */
+.brandLead .brand{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Ladrilho "F" da marca. O prototipo fixava linear-gradient(#4f8cff,#7ea6ff);
+   aqui sai do --accent para acompanhar as 7 paletas. */
+.brandMark{flex:none;display:flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:9px;font-weight:800;font-size:15px;line-height:1;color:var(--on-accent);background:linear-gradient(135deg,var(--accent),color-mix(in srgb,var(--accent) 58%,#fff))}
+.new{border-radius:10px;font-weight:600;box-shadow:0 4px 14px color-mix(in srgb,var(--accent) 25%,transparent)}
+.new:hover{filter:brightness(1.1)}
+/* .sidebar tem gap:0, e o rotulo do cliente so tinha margem embaixo — depois
+   de "Nova conversa" subir para cima dele, os dois ficaram encostados. */
+.clientLabel{margin-top:14px}
+.convSearch{border-radius:10px}
+.convList .convOpen{border-radius:9px;font-size:13px;color:var(--muted)}
+.convList .convOpen:hover{background:color-mix(in srgb,var(--muted) 12%,transparent);border-color:transparent;color:var(--text)}
+.convItem.active .convOpen{background:color-mix(in srgb,var(--accent) 13%,transparent);border-color:transparent;box-shadow:inset 2px 0 0 var(--accent);color:var(--text);font-weight:600}
+.sideSectionTitle,.navGroupTitle{letter-spacing:.08em}
+.sideBottom .studio{border-radius:9px;font-size:13px}
+.sideBottom .studio:hover{background:color-mix(in srgb,var(--accent) 10%,transparent);color:var(--text)}
+.sideBottom .toolsBtn{color:var(--accent)}
+.sideBottom .toolsBtn:hover{background:color-mix(in srgb,var(--accent) 10%,transparent);color:var(--accent)}
+
+/* ---- Barra superior (efeito vidro) ----
+   position+z-index sao OBRIGATORIOS aqui: backdrop-filter cria um contexto
+   de empilhamento, entao sem eles o z-index:60 do .ctxPanel/.mpPanel passa a
+   valer so dentro da topbar e as mensagens pintam por cima dos dropdowns.
+   30 fica acima das mensagens e abaixo de .scrim(40)/modais(50)/drawer(80). */
+.topbar{position:relative;z-index:30;background:color-mix(in srgb,var(--side) 72%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+.titleblock strong{font-size:14px;letter-spacing:-.01em}
+.workspaceTopLabel{font-size:11px;font-weight:600;color:var(--muted);background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:4px 10px;display:inline-flex;align-items:center;gap:6px}
+.gear{border-radius:9px}
+
+/* ---- Mensagens ---- */
+.messages{gap:22px}
+.msg.user{border-radius:16px 16px 4px 16px;line-height:1.6}
+.msg.assistant{background:var(--bubble);border-radius:16px 16px 16px 4px;padding:18px 20px;line-height:1.65}
+.msgActions button{border-radius:7px}
+.toolstep{border-radius:8px}
+.memoryTrace{border-radius:9px;background:rgba(148,163,184,.06)}
+.filecard{border-radius:12px}
+.fcicon{border-radius:10px;background:rgba(34,197,94,.12);color:#22c55e}
+.fcdl{border-radius:8px}
+.atable th{background:var(--panel2)}
+
+/* ---- Composer: refino de foco e sombra ----
+   A estrutura (borda 1px, raio 16px, padding:0, textarea sem moldura) vive
+   toda em styles.css agora, numa geracao unica — os antigos remendos de
+   borda e de "caixa dentro da caixa" sairam junto com a geracao morta. */
+.composer{transition:border-color .15s,box-shadow .15s}
+.composer:focus-within{border-color:var(--accent)}
+/* O foco do composer e mostrado pela borda accent do .composer inteiro
+   (:focus-within acima). A textarea NAO precisa de anel proprio — mas ha uma
+   regra global `textarea:focus-visible{outline:2px solid var(--accent)}` que
+   desenha um retangulo azul interno. Especificidade (0,2,1) > (0,1,1) da
+   global, entao isto vence sem depender de ordem de arquivo. */
+.composer textarea:focus,.composer textarea:focus-visible{outline:none}
+.dark .composer{box-shadow:0 6px 24px rgba(0,0,0,.28)}
+.dark .composer:focus-within{box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 18%,transparent),0 10px 34px rgba(0,0,0,.4)}
+/* Nos temas claros o anel duro de 3px + a borda accent leem como DUAS bordas
+   (no escuro vira brilho). Aqui e so um brilho suave, sem faixa. */
+.light .composer:focus-within{box-shadow:0 2px 18px color-mix(in srgb,var(--accent) 22%,transparent)}
+.composer .sendBtn{border-radius:10px}
+.composer .sendBtn:hover{filter:brightness(1.1)}
+
+/* ---- Boas-vindas ---- */
+.welcome h2{font-size:24px;letter-spacing:-.02em;line-height:1.25}
+.quickCard{border-radius:14px}
+.quickCard:hover{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 6%,transparent)}
+.qcIcon{border-radius:10px;background:color-mix(in srgb,var(--accent) 12%,transparent);border-color:transparent}
+.qcIcon svg{color:var(--accent)}
+
+/* Cores por card de acao (1o azul, 2o verde, 3o violeta, 4o ambar) */
+.quickCards .quickCard:nth-child(2) .qcIcon{background:rgba(34,197,94,.14)}
+.quickCards .quickCard:nth-child(2) .qcIcon svg{color:#22c55e}
+.quickCards .quickCard:nth-child(3) .qcIcon{background:rgba(139,124,255,.14)}
+.quickCards .quickCard:nth-child(3) .qcIcon svg{color:#8b7cff}
+.quickCards .quickCard:nth-child(4) .qcIcon{background:rgba(240,163,64,.14)}
+.quickCards .quickCard:nth-child(4) .qcIcon svg{color:#f0a340}
+
+/* ---- Ferramentas ---- */
+.toolCard{border-radius:13px}
+.toolCard:hover{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 6%,transparent);transform:none}
+.tcIcon{border-radius:11px;border-color:transparent}
+.toolGrid .toolCard:nth-child(1) .tcIcon{background:color-mix(in srgb,var(--accent) 14%,transparent)}
+.toolGrid .toolCard:nth-child(1) .tcIcon svg{color:var(--accent)}
+.toolGrid .toolCard:nth-child(2) .tcIcon{background:rgba(34,197,94,.14)}
+.toolGrid .toolCard:nth-child(3) .tcIcon{background:rgba(240,163,64,.14)}
+.toolGrid .toolCard:nth-child(4) .tcIcon{background:rgba(56,189,248,.14)}
+.toolGrid .toolCard:nth-child(5) .tcIcon{background:rgba(139,124,255,.14)}
+
+/* ---- Modais e gavetas ---- */
+/* A regua de abas da Memoria e um item flex de um pai `column` e nao tinha
+   flex:none — com a aba Sugestoes cheia, o conteudo alto ESMAGAVA as abas de
+   37px para 3px e os botoes vazavam por cima do painel. */
+.memTabs{flex:none}
+.modal{border-radius:16px;box-shadow:0 24px 70px rgba(0,0,0,.55)}
+.modalHead h2{font-size:16px}
+.modalBody input,.modalBody textarea,.modalBody select{border-radius:9px}
+.chk{border-radius:9px}
+.mpPanel,.cmpMenuPanel,.mobileTopPanel,.exportPanel{border-radius:14px;box-shadow:0 18px 50px rgba(0,0,0,.5)}
+.mpItem,.cmpItem{border-radius:8px}
+.drawer{box-shadow:-18px 0 48px rgba(0,0,0,.4)}
+.taskItem,.routineItem,.pcItem,.memItem2,.assetOpen,.suggestItem{border-radius:12px}
+.themeCard,.workspaceCard{border-radius:12px}
+.tplItem{border-radius:12px}
+
+/* ============================================================
+   Componentes novos do v2 — nao existem no styles.css.
+   Cores saem dos tokens (--muted/--accent/--line) e nao de hex
+   fixos, para as 7 paletas continuarem valendo.
+   ============================================================ */
+
+/* ---- Breadcrumb: cliente > conversa ----
+   O @media de styles.css esconde .titleblock abaixo de 980px, entao
+   no celular o breadcrumb some junto com o titulo — comportamento
+   que ja existia. min-width:0 no strong e o que faz o ellipsis
+   funcionar dentro do flex. */
+.titleblock{display:flex;align-items:center;gap:6px}
+.crumbClient{flex:none;max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--muted)}
+.crumbSep{flex:none;color:var(--muted);opacity:.55}
+.titleblock strong{min-width:0}
+
+/* ---- Rodape da sidebar: status do servidor ----
+   .sidebar ja e flex column e .sideScroll e flex:1, entao flex:none
+   aqui ancora no rodape sem tocar no layout. O dot reflete o estado
+   real de `unprotected` (/api/health), nao um verde fixo. */
+.sideFoot{flex:none;display:flex;align-items:center;gap:7px;margin-top:4px;padding:11px 2px 2px;border-top:1px solid var(--line);font-size:10px;font-weight:600;color:var(--muted)}
+.sideFootDot{flex:none;width:6px;height:6px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 18%,transparent)}
+.sideFoot.warn{color:var(--warn)}
+.sideFoot.warn .sideFootDot{background:var(--warn);box-shadow:0 0 0 3px color-mix(in srgb,var(--warn) 18%,transparent)}
+
+/* ---- Seletor de cliente ---- */
+.clientPicker{position:relative;margin-bottom:10px}
+.clientBtn{display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:7px 9px;border-radius:10px;background:var(--panel2);border:1px solid var(--line);color:var(--text)}
+.clientBtn:hover,.clientBtn.on{border-color:color-mix(in srgb,var(--accent) 50%,var(--line))}
+.clientTile{display:inline-flex;align-items:center;justify-content:center;flex:none;width:24px;height:24px;border-radius:7px;font-size:10px;font-weight:700;letter-spacing:.02em;background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent)}
+.clientName{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
+.clientChev{flex:none;color:var(--muted)}
+.clientPanel{position:absolute;left:0;right:0;top:calc(100% + 5px);z-index:60;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 16px 44px rgba(0,0,0,.4);overflow:hidden}
+.clientOpts{max-height:250px;overflow-y:auto;padding:5px}
+.clientOpt{display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:6px 7px;border:none;background:transparent;border-radius:8px;color:var(--text)}
+.clientOpt:hover{background:var(--panel2)}
+.clientOpt.sel{background:color-mix(in srgb,var(--accent) 13%,transparent)}
+.clientFoot{display:flex;gap:5px;padding:5px;border-top:1px solid var(--line)}
+.clientFoot button{flex:1;display:flex;align-items:center;justify-content:center;gap:5px;font-size:11px;padding:6px 8px;border-radius:8px;border-color:transparent;background:transparent;color:var(--muted)}
+.clientFoot button:hover{background:var(--panel2);color:var(--accent)}
+.clientFoot .clientRemove:hover{color:var(--danger)}
+
+/* ---- Separador de data entre mensagens ---- */
+.dayDivider{display:flex;align-items:center;gap:12px;margin:2px 0;color:var(--muted);font-size:11px;font-weight:600}
+.dayDivider::before,.dayDivider::after{content:"";flex:1;height:1px;background:var(--line)}
+.dayDivider span{flex:none}
+
+/* ---- Cabecalho da mensagem do assistente ---- */
+.msgHead{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.msgHead b{font-size:12px;font-weight:600;color:var(--text)}
+.msgTime{font-size:11px;color:var(--muted);margin-left:auto}
+
+/* ---- Ladrilho e icone do assistente ---- */
+.asstTile{display:inline-flex;align-items:center;justify-content:center;flex:none;border-radius:8px}
+.glyphEmoji{display:inline-flex;align-items:center;justify-content:center;line-height:1}
+.asstCell{display:inline-flex;align-items:center;gap:7px}
+
+/* ---- Seletor de icone do assistente ----
+   .field e .fieldLabel JA EXISTEM no styles.css e o .modalBody ja separa os
+   filhos com gap:18px — nao redefinir nenhum dos dois aqui. Redefinir mudava
+   o espacamento dos campos que ja usavam essas classes (Ferramentas,
+   Personalidade). So .fieldHint e novo. */
+.fieldHint{margin:0;font-size:11px;line-height:1.45;color:var(--muted);background:color-mix(in srgb,var(--warn) 10%,transparent);border:1px solid color-mix(in srgb,var(--warn) 30%,transparent);border-radius:8px;padding:7px 9px}
+.iconPicker{display:flex;flex-wrap:wrap;gap:7px}
+.iconOpt{width:40px;height:40px;padding:0;display:flex;align-items:center;justify-content:center;border-radius:10px;background:var(--panel2);border:1px solid var(--line);color:var(--muted)}
+.iconOpt:hover{color:var(--text);border-color:color-mix(in srgb,var(--accent) 45%,var(--line))}
+.iconOpt.sel{background:color-mix(in srgb,var(--accent) 15%,transparent);border-color:var(--accent);color:var(--accent)}
+
+/* ---- Seletor de cor do assistente ---- */
+.colorPicker{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+.colorOpt{width:26px;height:26px;padding:0;flex:none;border-radius:50%;background:var(--swatch);border:2px solid transparent;box-shadow:0 0 0 1px var(--line)}
+.colorOpt:hover{box-shadow:0 0 0 2px color-mix(in srgb,var(--swatch) 55%,transparent)}
+.colorOpt.sel{border-color:var(--panel);box-shadow:0 0 0 2px var(--swatch)}
+.colorHint{font-size:11px;color:var(--muted);margin-left:4px}
+
+/* ---- Chips do composer ----
+   Mesmo alinhamento de .attachChips (styles.css:178) para a linha
+   bater com a largura do composer. Cor pelo --accent da paleta. */
+.composerChips{max-width:840px;margin:0 auto 8px;width:100%;display:flex;flex-wrap:wrap;align-items:center;gap:7px}
+.cmpChip{display:flex;align-items:center;gap:6px;flex:none;padding:5px 12px;border-radius:999px;font-size:11px;font-weight:600;background:var(--panel2);border:1px solid var(--line);color:var(--muted)}
+.cmpChip:hover:not(:disabled){border-color:color-mix(in srgb,var(--accent) 45%,var(--line));color:var(--text)}
+.cmpChip.on,.cmpChip.open{background:color-mix(in srgb,var(--accent) 10%,transparent);border-color:color-mix(in srgb,var(--accent) 40%,transparent);color:var(--accent)}
+.cmpChip:disabled{opacity:.45;cursor:not-allowed}
+
+/* Painel de esforco: ancorado no proprio chip e abrindo para CIMA, porque a
+   linha de chips fica no rodape da tela. */
+.cmpChipMenu{position:relative;display:flex}
+.effortPanel{position:absolute;left:0;bottom:calc(100% + 6px);z-index:60;width:max-content;min-width:210px;max-width:min(300px,80vw);display:flex;flex-direction:column;padding:6px;background:var(--panel);border:1px solid var(--line)}
+@media(max-width:640px){.effortPanel{left:auto;right:0}}
+
+/* ---- Legendas sob o composer ---- */
+.composerHints{max-width:840px;margin:8px auto 0;width:100%;display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:11px;color:var(--muted);opacity:.8}
+.composerHints span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media(max-width:640px){.composerHints span:last-child{display:none}}
+
+/* ---- Scrollbars ----
+   Derivada de --muted para acompanhar as 7 paletas: o navy fixo do
+   pacote original aparecia escuro no Claro e no Sepia. */
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--muted) 38%,transparent);border-radius:999px;border:3px solid transparent;background-clip:padding-box}
+::-webkit-scrollbar-thumb:hover{background:color-mix(in srgb,var(--muted) 60%,transparent);background-clip:padding-box}

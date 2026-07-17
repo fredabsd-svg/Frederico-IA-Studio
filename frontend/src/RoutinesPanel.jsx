@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { CalendarClock, X, Play, Power } from 'lucide-react';
-import { API } from './constants.js';
+import { API, assistantOptionPrefix } from './constants.js';
 import { Drawer } from './components.jsx';
 
 const WEEKDAYS = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
@@ -58,7 +58,7 @@ export function RoutinesPanel({ assistants = [], clients = [], showToast, onClos
       <label className="grow">Assistente
         <select value={form.assistant_id} onChange={e => set('assistant_id', e.target.value)}>
           <option value="">Padrão</option>
-          {assistants.map(a => <option key={a.id} value={a.id}>{a.emoji || '🤖'} {a.name}</option>)}
+          {assistants.map(a => <option key={a.id} value={a.id}>{assistantOptionPrefix(a.emoji)}{a.name}</option>)}
         </select>
       </label>
       <label className="grow">Cliente

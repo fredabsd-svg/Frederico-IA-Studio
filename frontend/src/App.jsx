@@ -2,21 +2,269 @@ import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Download, FileText, FileSpreadsheet, FilePenLine, Plus, Send, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench, CalendarClock, Inbox, Palette, Gauge, SlidersHorizontal, Paperclip, MoreHorizontal, FolderOpen } from 'lucide-react';
-import { API, FALLBACK_MODELS, TOOL_INFO, TEMPLATES, SUGGESTIONS, QUICK_ACTIONS, THEMES, EFFORTS, EFFORT_DESC, emptyForm } from './constants.js';
+import { Download, FileText, FileSpreadsheet, FilePenLine, Plus, ArrowUp, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench, CalendarClock, Inbox, Palette, Gauge, SlidersHorizontal, Paperclip, MoreHorizontal, FolderOpen, Code2, Cpu, ChevronDown, ChevronRight, ChevronsUpDown, Calculator, Telescope, Scale, Briefcase, Receipt, Landmark, Megaphone, Lightbulb, ShieldCheck, GraduationCap, Stethoscope, Hammer, Leaf } from 'lucide-react';
+import { API, FALLBACK_MODELS, TOOL_INFO, TEMPLATES, QUICK_ACTIONS, THEMES, WORKSPACES, EFFORTS, EFFORT_DESC, emptyForm, ASSISTANT_ICONS, ASSISTANT_COLORS, isAssistantIcon } from './constants.js';
 import { ToolStep, Slider, Modal, Drawer, ModelPicker, Collapsible, useAppDialog } from './components.jsx';
 import { MemoryPanel } from './MemoryPanel.jsx';
 import { PcFoldersPanel } from './PcFoldersPanel.jsx';
 import { ToolsPanel } from './ToolsPanel.jsx';
+import { DeveloperPanel } from './DeveloperPanel.jsx';
 import { RoutinesPanel } from './RoutinesPanel.jsx';
 import { InboxPanel } from './InboxPanel.jsx';
+import { takeSseEvents } from './sse.js';
 
 const QUICK_ACTION_ICON = {
   document: FileText,
   spreadsheet: FileSpreadsheet,
   writing: FilePenLine,
-  search: Search
+  search: Search,
+  plan: ListTodo,
+  build: Code2,
+  review: Check,
+  folder: FolderCog
 };
+
+const WORKSPACE_ICON = {
+  studio: Bot,
+  essential: SlidersHorizontal,
+  focus: Sparkles,
+  developer: Code2
+};
+
+// Mapa explícito em vez de Lucide[nome] sobre `import * as Lucide`: o import
+// estrela puxaria os ~1500 ícones da biblioteca para o bundle, porque mata o
+// tree-shaking. As chaves espelham ASSISTANT_ICONS em constants.js.
+const ASSISTANT_ICON = {
+  'bot': Bot,
+  'calculator': Calculator,
+  'file-pen-line': FilePenLine,
+  'code-2': Code2,
+  'telescope': Telescope,
+  'scale': Scale,
+  'briefcase': Briefcase,
+  'bar-chart-3': BarChart3,
+  'receipt': Receipt,
+  'landmark': Landmark,
+  'megaphone': Megaphone,
+  'lightbulb': Lightbulb,
+  'shield-check': ShieldCheck,
+  'graduation-cap': GraduationCap,
+  'stethoscope': Stethoscope,
+  'hammer': Hammer,
+  'leaf': Leaf
+};
+
+const assistantColor = (a, i = 0) => a?.color || ASSISTANT_COLORS[i % ASSISTANT_COLORS.length];
+
+// ---- Data e hora das mensagens ----
+const parseDate = (v) => { if (!v) return null; const d = new Date(v); return isNaN(d.getTime()) ? null : d; };
+const msgTime = (v) => parseDate(v)?.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) || '';
+const dayKey = (v) => parseDate(v)?.toDateString() || '';
+const conversationDownloadUrl = (conversationId, filePath) => {
+  const encodedId = encodeURIComponent(String(conversationId || ''));
+  const encodedPath = String(filePath || '').split('/').filter(Boolean).map(encodeURIComponent).join('/');
+  return `${API}/api/conversations/${encodedId}/download/${encodedPath}`;
+};
+function dayLabel(v) {
+  const d = parseDate(v);
+  if (!d) return '';
+  const today = new Date();
+  const yesterday = new Date(); yesterday.setDate(today.getDate() - 1);
+  if (d.toDateString() === today.toDateString()) return 'Hoje';
+  if (d.toDateString() === yesterday.toDateString()) return 'Ontem';
+  return d.toLocaleDateString('pt-BR', {
+    day: '2-digit', month: 'long',
+    ...(d.getFullYear() === today.getFullYear() ? {} : { year: 'numeric' })
+  });
+}
+
+// Desenha o ícone do assistente. Se o valor não for um nome de ícone conhecido,
+// é um emoji de um assistente criado antes da migração: imprime como texto.
+function AssistantGlyph({ value, size = 14 }) {
+  const Icon = ASSISTANT_ICON[value];
+  if (Icon) return <Icon size={size}/>;
+  return <span className="glyphEmoji" style={{ fontSize: size }}>{value || '🤖'}</span>;
+}
+
+// Ladrilho colorido do assistente (ContextPicker e cabeçalho das mensagens).
+function AssistantTile({ assistant, index = 0, size = 26, icon = 14 }) {
+  const color = assistantColor(assistant, index);
+  return <span className="asstTile" style={{
+    width: size, height: size, color,
+    background: `color-mix(in srgb, ${color} 16%, transparent)`
+  }}>
+    <AssistantGlyph value={assistant?.emoji} size={icon}/>
+  </span>;
+}
+
+// "Construtora Marília" -> "CM"
+const initials = (name) => (name || '').split(/\s+/).filter(Boolean).slice(0, 2)
+  .map(w => w[0]).join('').toUpperCase() || '?';
+
+// Substitui o <select> nativo de cliente. Mesmo padrão de abertura/fechamento
+// do ContextPicker (mousedown fora + Escape), para os dois se comportarem igual.
+function ClientPicker({ clients, clientId, onPick, onAdd, onRemove }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    function onDoc(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
+    function onKey(e) { if (e.key === 'Escape') setOpen(false); }
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey); };
+  }, []);
+
+  const active = clients.find(c => c.id === clientId);
+  return <div className="clientPicker" ref={ref}>
+    <button className={`clientBtn ${open ? 'on' : ''}`} onClick={() => setOpen(o => !o)}
+            aria-expanded={open} aria-haspopup="listbox" title="Cliente / Projeto ativo">
+      <span className="clientTile" aria-hidden="true">{active ? initials(active.name) : <FolderOpen size={13}/>}</span>
+      <span className="clientName">{active?.name || 'Geral (sem cliente)'}</span>
+      <ChevronsUpDown size={14} className="clientChev"/>
+    </button>
+    {open && <div className="clientPanel" role="listbox">
+      <div className="clientOpts">
+        <button role="option" aria-selected={!clientId} className={`clientOpt ${!clientId ? 'sel' : ''}`}
+                onClick={() => { onPick(''); setOpen(false); }}>
+          <span className="clientTile" aria-hidden="true"><FolderOpen size={13}/></span>
+          <span className="clientName">Geral (sem cliente)</span>
+          {!clientId && <Check size={14}/>}
+        </button>
+        {clients.map(c => (
+          <button key={c.id} role="option" aria-selected={c.id === clientId}
+                  className={`clientOpt ${c.id === clientId ? 'sel' : ''}`}
+                  onClick={() => { onPick(c.id); setOpen(false); }}>
+            <span className="clientTile" aria-hidden="true">{initials(c.name)}</span>
+            <span className="clientName">{c.name}</span>
+            {c.id === clientId && <Check size={14}/>}
+          </button>
+        ))}
+      </div>
+      <div className="clientFoot">
+        <button onClick={() => { onAdd(); setOpen(false); }}><Plus size={13}/> Novo cliente</button>
+        {clientId && <button className="clientRemove" onClick={() => { onRemove(); setOpen(false); }}><Trash2 size={13}/> Remover</button>}
+      </div>
+    </div>}
+  </div>;
+}
+
+const DEVELOPER_QUICK_ACTIONS = [
+  { icon: 'plan', label: 'Planejar uma mudança', desc: 'Entenda o projeto antes de editar', mode: 'plan' },
+  { icon: 'build', label: 'Construir com segurança', desc: 'Aplique alterações no projeto escolhido', mode: 'build' },
+  { icon: 'review', label: 'Revisar alterações', desc: 'Encontre riscos antes de concluir', mode: 'review' },
+  { icon: 'folder', label: 'Conectar um projeto', desc: 'Escolha as pastas liberadas no computador', action: 'folders' }
+];
+
+const modelCapability = (model, key) => {
+  const declared = model?.capabilities;
+  if (declared && Object.prototype.hasOwnProperty.call(declared, key)) return declared[key];
+  return model?.[key];
+};
+const modelHasTools = model => modelCapability(model, 'tools') !== false;
+const toolResultFailed = content => {
+  try {
+    const result = JSON.parse(content);
+    return Boolean(result?.error) || (typeof result?.exitCode === 'number' && result.exitCode !== 0);
+  } catch {
+    return false;
+  }
+};
+const modelCompatibilityLabel = (model) => {
+  if (modelCapability(model, 'text') === false) return 'sem chat em texto';
+  if (modelCapability(model, 'tools') === false) return 'somente texto';
+  if (modelCapability(model, 'tools') === true) return 'com ferramentas';
+  return 'texto';
+};
+
+// Controle único de contexto da barra superior.
+//
+// Antes: rótulo do espaço de trabalho + ModelPicker + botão Equipe + <select> de
+// assistente + engrenagem de editar — quatro controles lado a lado para a mesma
+// pergunta ("quem responde?"), sendo que ligar a Equipe desabilitava os vizinhos
+// sem explicar por quê.
+//
+// Agora: um botão, três abas. A aba É o modo — abrir "Equipe" liga a equipe,
+// abrir "Assistente" desliga. Nada é desabilitado, porque nada compete.
+function ContextPicker({ models, model, onModel, assistants, assistantId, onPickAssistant,
+                         currentAssistant, team, onTeam, teamIds, onToggleMember,
+                         effectiveTeam, onEditAssistant }) {
+  const [open, setOpen] = useState(false);
+  const [tab, setTab] = useState(team ? 'team' : 'assistant');
+  const ref = useRef(null);
+
+  useEffect(() => {
+    function onDoc(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
+    function onKey(e) { if (e.key === 'Escape') setOpen(false); }
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey); };
+  }, []);
+  useEffect(() => { setTab(t => (team && t === 'assistant') ? 'team' : (!team && t === 'team') ? 'assistant' : t); }, [team]);
+
+  const currentModel = models.find(m => m.id === model);
+  const who = team
+    ? `Equipe (${effectiveTeam.length})`
+    : (currentAssistant?.name || 'Assistente');
+
+  function goTab(id) {
+    setTab(id);
+    if (id === 'team') onTeam(true);
+    if (id === 'assistant') onTeam(false);
+  }
+
+  return <div className="ctxPicker" ref={ref}>
+    <button className={`ctxBtn ${open ? 'on' : ''}`} onClick={() => setOpen(o => !o)} aria-expanded={open}
+            title="Quem responde e com qual modelo de IA">
+      {team ? <Users size={15}/> : <AssistantGlyph value={currentAssistant?.emoji} size={15}/>}
+      <span className="ctxBtnText">
+        <b>{who}</b>
+        <small>{currentModel?.name || model}{currentModel && ` · ${modelCompatibilityLabel(currentModel)}`}</small>
+      </span>
+      <ChevronDown size={14}/>
+    </button>
+    {open && <div className="ctxPanel">
+      <div className="ctxTabs" role="tablist" aria-label="Contexto da conversa">
+        <button role="tab" aria-selected={tab === 'assistant'} className={tab === 'assistant' ? 'on' : ''} onClick={() => goTab('assistant')}><Bot size={14}/> Assistente</button>
+        <button role="tab" aria-selected={tab === 'team'} className={tab === 'team' ? 'on' : ''} onClick={() => goTab('team')}><Users size={14}/> Equipe</button>
+        <button role="tab" aria-selected={tab === 'model'} className={tab === 'model' ? 'on' : ''} onClick={() => setTab('model')}><Cpu size={14}/> Modelo</button>
+      </div>
+
+      {tab === 'assistant' && <div className="ctxBody" role="tabpanel">
+        <p className="ctxHint">Um assistente responde sozinho, com a memória e as ferramentas dele.</p>
+        <div className="ctxList">
+          {assistants.map((a, i) => (
+            <button key={a.id} className={`ctxItem ${!team && a.id === assistantId ? 'sel' : ''}`}
+                    onClick={() => { onPickAssistant(a.id); onTeam(false); }}>
+              <AssistantTile assistant={a} index={i}/>
+              <span className="ctxItemName">{a.name}</span>
+              {!team && a.id === assistantId && <Check size={14} className="ctxItemChk"/>}
+            </button>
+          ))}
+        </div>
+        <button className="ctxFoot" onClick={onEditAssistant}><Settings size={14}/> Editar este assistente</button>
+      </div>}
+
+      {tab === 'team' && <div className="ctxBody" role="tabpanel">
+        <p className="ctxHint">Vários assistentes respondem à <b>1ª mensagem</b> e um coordenador junta as perspectivas. Depois ele segue sozinho, para reduzir custo e tempo.</p>
+        <div className="ctxList">
+          {assistants.map((a, i) => {
+            const on = !teamIds || teamIds.includes(a.id);
+            return <label key={a.id} className={`ctxItem ctxCheck ${on ? 'sel' : ''}`}>
+              <input type="checkbox" checked={on} onChange={() => onToggleMember(a.id)}/>
+              <AssistantTile assistant={a} index={i}/>
+              <span className="ctxItemName">{a.name}</span>
+            </label>;
+          })}
+        </div>
+        {effectiveTeam.length === 0 && <p className="ctxWarn">Selecione ao menos um assistente.</p>}
+      </div>}
+
+      {tab === 'model' && <div className="ctxBody ctxBodyModel" role="tabpanel">
+        <ModelPicker models={models} value={model} onChange={onModel} inline/>
+      </div>}
+    </div>}
+  </div>;
+}
 
 function MemoryTrace({ memory, onOpenMemory }) {
   if (!memory?.enabled) return null;
@@ -26,6 +274,7 @@ function MemoryTrace({ memory, onOpenMemory }) {
   const summaries = stats.summariesUsed ?? memory.summaries ?? 0;
   const used = stats.contextTokens || memory.usedTokens || 0;
   const budget = stats.contextBudget || memory.budget || 0;
+  if (memory.retrievalSkipped === 'low_signal') return <div className="memoryTrace compact"><Brain size={13}/> Memória não foi consultada nesta saudação.</div>;
   const hasSignal = memories || chunks || summaries || memory.history?.clipped;
   if (!hasSignal) return <div className="memoryTrace compact"><Brain size={13}/> Memoria ativa: nada relevante foi adicionado nesta resposta.</div>;
   return <details className="memoryTrace">
@@ -61,12 +310,13 @@ export default function App() {
   const [memoryOpen, setMemoryOpen] = useState(false);
   const [pcOpen, setPcOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
+  const [developerOpen, setDeveloperOpen] = useState(false);
+  const [developerSession, setDeveloperSession] = useState(null);
+  const [developerStartMode, setDeveloperStartMode] = useState('plan');
   const [routinesOpen, setRoutinesOpen] = useState(false);
   const [inboxOpen, setInboxOpen] = useState(false);
   const [team, setTeam] = useState(false);
-  const [teamOpen, setTeamOpen] = useState(false);
   const [teamIds, setTeamIds] = useState(() => { try { return JSON.parse(localStorage.getItem('fred_team') || 'null'); } catch { return null; } });
-  const teamRef = useRef(null);
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
   const [analytics, setAnalytics] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -74,16 +324,19 @@ export default function App() {
   const [statusText, setStatusText] = useState('');
   const [nowTick, setNowTick] = useState(0);
   const [theme, setTheme] = useState(() => localStorage.getItem('fred_theme') || 'dark');
+  const [workspace, setWorkspace] = useState(() => {
+    const saved = localStorage.getItem('fred_workspace');
+    return WORKSPACES.some(item => item.id === saved) ? saved : 'studio';
+  });
   const [themeOpen, setThemeOpen] = useState(false);
   const [listening, setListening] = useState(false);
   const [webSearch, setWebSearch] = useState(false);
   const [effort, setEffort] = useState(() => { const s = localStorage.getItem('fred_effort'); return EFFORTS.some(e => e.id === s) ? s : 'medio'; });
   const [composerMenuOpen, setComposerMenuOpen] = useState(false);
-  const [menuView, setMenuView] = useState('main');
-  const cmpMenuRef = useRef(null);
+  const cmpChipsRef = useRef(null);
   const fileInputRef = useRef(null);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [sideHidden, setSideHidden] = useState(() => localStorage.getItem('fred_side_hidden') === '1');
+  const [sideHidden, setSideHidden] = useState(() => localStorage.getItem('fred_workspace') === 'focus' || localStorage.getItem('fred_side_hidden') === '1');
   const [convFilter, setConvFilter] = useState('');
   const [dragActive, setDragActive] = useState(false);
   const [uploadingFiles, setUploadingFiles] = useState(false);
@@ -111,6 +364,7 @@ export default function App() {
   const inputRef = useRef(null);
   const recognitionRef = useRef(null);
   const topActionsRef = useRef(null);
+  const sideScrollRef = useRef(null);
   const toastTimer = useRef(null);
   const copyTimer = useRef(null);
   const dragDepth = useRef(0);
@@ -118,9 +372,22 @@ export default function App() {
   const creatingConvRef = useRef(null);
   const { askConfirm, askPrompt, dialog: appDialog } = useAppDialog();
   useEffect(() => { busyRef.current = busy; }, [busy]);
+  function setChatBusy(next) {
+    busyRef.current = next;
+    setBusy(next);
+  }
+  function blockConversationChange() {
+    if (!busyRef.current) return false;
+    showToast('Há uma resposta em andamento. Aguarde terminar ou pare o processamento antes de trocar de conversa.');
+    return true;
+  }
   useEffect(() => { localStorage.setItem('fred_effort', effort); }, [effort]);
   useEffect(() => {
-    function onDoc(e) { if (cmpMenuRef.current && !cmpMenuRef.current.contains(e.target)) setComposerMenuOpen(false); }
+    // O painel de esforço vive dentro da linha de chips, então basta uma
+    // checagem: clicou fora dela, fecha.
+    function onDoc(e) {
+      if (!cmpChipsRef.current?.contains(e.target)) setComposerMenuOpen(false);
+    }
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
   }, []);
@@ -138,7 +405,16 @@ export default function App() {
     const t = THEMES.find(x => x.id === theme) || THEMES[0];
     document.body.className = `${t.mode} t-${t.id}`;
     localStorage.setItem('fred_theme', t.id);
-  }, [theme]);
+    localStorage.setItem('fred_workspace', workspace);
+  }, [theme, workspace]);
+  useEffect(() => {
+    const resetSidebarScroll = () => {
+      if (sideScrollRef.current) sideScrollRef.current.scrollTop = 0;
+    };
+    resetSidebarScroll();
+    const frame = window.requestAnimationFrame(resetSidebarScroll);
+    return () => window.cancelAnimationFrame(frame);
+  }, [workspace]);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
   // Enquanto processa, "bate um relógio" a cada segundo para os contadores vivos
   useEffect(() => {
@@ -147,11 +423,6 @@ export default function App() {
     return () => clearInterval(t);
   }, [busy]);
   // Fecha o painel da equipe ao clicar fora
-  useEffect(() => {
-    function onDoc(e) { if (teamRef.current && !teamRef.current.contains(e.target)) setTeamOpen(false); }
-    document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
-  }, []);
   useEffect(() => {
     function onDoc(e) { if (topActionsRef.current && !topActionsRef.current.contains(e.target)) setTopActionsOpen(false); }
     document.addEventListener('mousedown', onDoc);
@@ -204,16 +475,18 @@ export default function App() {
   async function sendAsTask() {
     const text = input.trim();
     if (!text) return;
+    if (busyRef.current) { showToast('Aguarde a resposta atual terminar antes de enviar uma tarefa em segundo plano.'); return; }
     let conv = current;
     if (!conv) { conv = await ensureConversation(); if (!conv) return; }
     if (listening) recognitionRef.current?.stop();
     setInput('');
     try {
       const res = await fetch(`${API}/api/tasks`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId: conv.id, message: text, model, assistantId, webSearch }) });
-      if (!res.ok) throw new Error();
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Não foi possível criar a tarefa.');
       showToast('⏳ Tarefa adicionada à fila — acompanhe no botão "Tarefas".', 'ok');
       await pollTasks();
-    } catch { showToast('Não foi possível criar a tarefa.'); }
+    } catch (err) { showToast(err.message || 'Não foi possível criar a tarefa.'); }
   }
 
   async function cancelTask(id) {
@@ -271,7 +544,7 @@ export default function App() {
       const res = await fetch(`${API}/api/conversations/${current.id}/export`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ format }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || '');
-      window.open(`${API}/api/conversations/${current.id}/download/${data.path}`, '_blank');
+      window.open(conversationDownloadUrl(current.id, data.path), '_blank');
     } catch (e) {
       showToast(`Não foi possível exportar: ${e.message || 'erro inesperado'}`);
     } finally {
@@ -323,10 +596,42 @@ export default function App() {
     setSideHidden(h => { localStorage.setItem('fred_side_hidden', h ? '0' : '1'); return !h; });
   }
 
+  function changeWorkspace(next) {
+    if (!WORKSPACES.some(item => item.id === next)) return;
+    setWorkspace(next);
+    setMenuOpen(false);
+    setTopActionsOpen(false);
+    if (next === 'focus') {
+      setSideHidden(true);
+      localStorage.setItem('fred_side_hidden', '1');
+    } else if (workspace === 'focus') {
+      setSideHidden(false);
+      localStorage.setItem('fred_side_hidden', '0');
+    }
+  }
+
+  function openDeveloper(mode = 'plan') {
+    setDeveloperStartMode(mode);
+    setDeveloperOpen(true);
+  }
+
+  function handleWelcomeAction(action) {
+    if (action.mode) {
+      openDeveloper(action.mode);
+      return;
+    }
+    if (action.action === 'folders') {
+      setPcOpen(true);
+      return;
+    }
+    setInput(action.prompt || '');
+    setTimeout(() => inputRef.current?.focus(), 60);
+  }
+
   // Abre um "app embutido": nova conversa com o pedido guiado já preenchido
   function pickTool(app) {
     setToolsOpen(false);
-    startNewChat();
+    if (!startNewChat()) return;
     setInput(app.prompt);
     if (app.needsFile) showToast('Agora anexe o(s) arquivo(s) no botão Anexar e clique em Enviar.', 'ok');
     setTimeout(() => inputRef.current?.focus(), 60);
@@ -334,13 +639,29 @@ export default function App() {
 
   // Tela de boas-vindas (conversa "em rascunho" — só vira registro ao 1º envio)
   function startNewChat() {
+    if (blockConversationChange()) return false;
     setCurrent(null);
     setMessages([]);
     setFiles([]);
     setInput('');
+    setDeveloperSession(null);
     setMenuOpen(false);
     setFilesDrawerOpen(false);
     setTopActionsOpen(false);
+    return true;
+  }
+
+  function startDeveloperTask({ mode, projectId, brief, rules }) {
+    const developerAssistant = assistants.find(assistant => /programa|codigo|codex|desenvolv/i.test(`${assistant.name || ''} ${assistant.system_prompt || ''}`)) || assistants[0];
+    if (!startNewChat()) return;
+    setTeam(false);
+    setWebSearch(false);
+    if (developerAssistant) pickAssistant(developerAssistant.id);
+    setDeveloperSession({ mode, projectId, rules, conversationId: null });
+    setInput(brief);
+    setDeveloperOpen(false);
+    setTimeout(() => inputRef.current?.focus(), 60);
+    showToast('Tarefa de desenvolvimento pronta para enviar.', 'ok');
   }
 
   // ---- Clientes / Projetos ----
@@ -348,6 +669,7 @@ export default function App() {
     try { const d = await (await fetch(`${API}/api/clients`)).json(); setClients(Array.isArray(d) ? d : []); } catch {}
   }
   async function switchClient(id) {
+    if (blockConversationChange()) return;
     localStorage.setItem('fred_client', id);
     setClientId(id);
     try {
@@ -406,7 +728,7 @@ export default function App() {
       const data = await res.json();
       if (data.models?.length) {
         setAllModels(data.models);
-        setModel(prev => data.models.some(m => m.id === prev) ? prev : (data.models.find(m => m.tools !== false)?.id || data.models[0].id));
+        setModel(prev => data.models.some(m => m.id === prev) ? prev : (data.models.find(modelHasTools)?.id || data.models[0].id));
       }
     } catch {}
   }
@@ -466,6 +788,8 @@ export default function App() {
   }
 
   async function openConversation(id) {
+    if (blockConversationChange()) return;
+    setDeveloperSession(null);
     setLoadingConv(true);
     setMenuOpen(false);
     try {
@@ -491,11 +815,15 @@ export default function App() {
     });
     if (!confirmed) return;
     try {
-      await fetch(`${API}/api/conversations/${id}`, { method: 'DELETE' });
+      const res = await fetch(`${API}/api/conversations/${id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Não foi possível apagar a conversa.');
+      }
       await fetchConversations();
       if (current?.id === id) startNewChat();
-    } catch {
-      showToast('Não foi possível apagar a conversa.');
+    } catch (err) {
+      showToast(err.message || 'Não foi possível apagar a conversa.');
     }
   }
 
@@ -626,13 +954,16 @@ export default function App() {
   // ---- Assistant Studio ----
   function openStudioNew() { setForm(emptyForm()); setStudioOpen(true); }
   function openStudioEdit(a) {
-    setForm({ id: a.id, name: a.name, emoji: a.emoji || '🤖', model: a.model || model, system_prompt: a.system_prompt || '', template: '', tools: a.tools?.length ? a.tools : TOOL_INFO.map(t => t.name), personality: { form: 50, det: 50, criat: 20, ...(a.personality || {}) } });
+    setForm({ id: a.id, name: a.name, emoji: a.emoji || 'bot', color: a.color || '', model: a.model || model, system_prompt: a.system_prompt || '', template: '', tools: a.tools?.length ? a.tools : TOOL_INFO.map(t => t.name), personality: { form: 50, det: 50, criat: 20, ...(a.personality || {}) } });
     setStudioOpen(true);
   }
   function applyTemplate(key) {
     const t = TEMPLATES.find(x => x.key === key);
     if (!t) { setForm(f => ({ ...f, template: '' })); return; }
-    setForm(f => ({ ...f, template: key, system_prompt: t.prompt, emoji: f.emoji === '🤖' ? t.emoji : f.emoji, name: f.name || t.label }));
+    // Só herda o ícone do template se a pessoa ainda não escolheu um: 'bot' é
+    // o padrão de emptyForm(), e '🤖' era o padrão antes da migração.
+    const untouched = f => f.emoji === 'bot' || f.emoji === '🤖';
+    setForm(f => ({ ...f, template: key, system_prompt: t.prompt, emoji: untouched(f) ? t.emoji : f.emoji, name: f.name || t.label }));
   }
   function toggleTool(name) {
     setForm(f => ({ ...f, tools: f.tools.includes(name) ? f.tools.filter(t => t !== name) : [...f.tools, name] }));
@@ -642,7 +973,7 @@ export default function App() {
   async function saveAssistant() {
     if (!form.name.trim() || !form.system_prompt.trim()) { showToast('Preencha o nome e as instruções do assistente.'); return; }
     try {
-      const payload = { name: form.name, emoji: form.emoji, model: form.model || model, system_prompt: form.system_prompt, tools: form.tools, personality: form.personality };
+      const payload = { name: form.name, emoji: form.emoji, color: form.color || null, model: form.model || model, system_prompt: form.system_prompt, tools: form.tools, personality: form.personality };
       const url = form.id ? `${API}/api/assistants/${form.id}` : `${API}/api/assistants`;
       const res = await fetch(url, { method: form.id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       if (!res.ok) throw new Error();
@@ -704,47 +1035,68 @@ export default function App() {
   async function sendMessage(textArg) {
     const isRetry = typeof textArg === 'string';
     const text = (isRetry ? textArg : input).trim();
-    if (!text || busy) return;
+    if (!text || busyRef.current) return;
     if (team && effectiveTeam.length === 0) { showToast('Selecione ao menos 1 assistente no painel da Equipe.'); return; }
     if (listening) recognitionRef.current?.stop();
+    setChatBusy(true);
     let conv = current;
-    if (!conv) { conv = await ensureConversation(); if (!conv) return; }
+    if (!conv) { conv = await ensureConversation(); if (!conv) { setChatBusy(false); return; } }
     if (!isRetry) setInput('');
-    setBusy(true);
+    const activeDeveloper = developerSession && (!developerSession.conversationId || developerSession.conversationId === conv.id) ? developerSession : null;
+    if (activeDeveloper && !activeDeveloper.conversationId) setDeveloperSession({ ...activeDeveloper, conversationId: conv.id });
     setPaused(false);
     setStatusText('Pensando...');
     const assistantMsgId = `local-${Date.now()}`;
-    setMessages(prev => [...prev, { role: 'user', content: text }, { id: assistantMsgId, role: 'assistant', content: '', blocks: [] }]);
+    // created_at aqui e' o horario local do envio; ao recarregar, o valor do
+    // servidor (server.js) substitui. Sem isto, a mensagem recem-enviada nao
+    // tem hora e o separador de data nao consegue agrupa-la.
+    const sentAt = new Date().toISOString();
+    setMessages(prev => [...prev, { role: 'user', content: text, created_at: sentAt }, { id: assistantMsgId, role: 'assistant', content: '', blocks: [], created_at: sentAt }]);
     const update = (fn) => setMessages(prev => prev.map(m => m.id === assistantMsgId ? fn(m) : m));
 
     const body = team
-      ? { message: text, model, orchestrate: true, orchestrateIds: effectiveTeam.map(a => a.id) }
-      : { message: text, model, assistantId, webSearch, effort };
+      ? {
+          message: text,
+          model,
+          assistantId,
+          webSearch,
+          effort,
+          orchestrate: true,
+          orchestrateIds: effectiveTeam.map(a => a.id),
+          ...(activeDeveloper ? { developer: { mode: activeDeveloper.mode, projectId: activeDeveloper.projectId, rules: activeDeveloper.rules } } : {})
+        }
+      : {
+          message: text,
+          model,
+          assistantId,
+          webSearch,
+          effort,
+          ...(activeDeveloper ? { developer: { mode: activeDeveloper.mode, projectId: activeDeveloper.projectId, rules: activeDeveloper.rules } } : {})
+        };
     try {
       const res = await fetch(`${API}/api/conversations/${conv.id}/chat`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
       });
-      if (res.status === 401) { setBusy(false); setStatusText(''); setNeedLogin(true); return; }
+      if (res.status === 401) { setChatBusy(false); setStatusText(''); setNeedLogin(true); return; }
       if (!res.ok) {
         let msg = `O servidor respondeu com erro (${res.status}).`;
         try { const j = await res.json(); if (j?.error) msg = j.error; } catch {}
         update(m => ({ ...m, failed: true, retryText: text, blocks: [...(m.blocks || []), { type: 'text', content: `\n\n**Erro:** ${msg}` }] }));
         showToast(msg);
-        setBusy(false); setPaused(false); setStatusText('');
+        setChatBusy(false); setPaused(false); setStatusText('');
         return;
       }
-      const reader = res.body.getReader();
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error('A resposta do servidor não pôde ser lida.');
       const decoder = new TextDecoder();
       let buffer = '';
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const parts = buffer.split('\n\n');
-        buffer = parts.pop();
-        for (const part of parts) {
-          if (!part.startsWith('data:')) continue;
-          const ev = JSON.parse(part.slice(5));
+        if (value) buffer += decoder.decode(value, { stream: true });
+        if (done) buffer += decoder.decode();
+        const parsed = takeSseEvents(buffer, { flush: done });
+        buffer = parsed.rest;
+        for (const ev of parsed.events) {
           if (ev.type === 'status') setStatusText(ev.content || '');
           if (ev.type === 'memory_context') update(m => ({ ...m, memory: ev.memory }));
           if (ev.type === 'delta') update(m => {
@@ -757,25 +1109,31 @@ export default function App() {
           if (ev.type === 'tool_start') { setStatusText(`Executando ${ev.name}...`); update(m => ({ ...m, blocks: [...(m.blocks || []), { type: 'tool', name: ev.name, preview: ev.preview, status: 'running', started: Date.now() }] })); }
           if (ev.type === 'tool_result') update(m => {
             const blocks = [...(m.blocks || [])];
-            for (let i = blocks.length - 1; i >= 0; i--) { if (blocks[i].type === 'tool' && blocks[i].status === 'running') { blocks[i] = { ...blocks[i], status: 'done', ended: Date.now(), result: ev.content }; break; } }
+            const status = toolResultFailed(ev.content) ? 'error' : 'done';
+            for (let i = blocks.length - 1; i >= 0; i--) { if (blocks[i].type === 'tool' && blocks[i].status === 'running') { blocks[i] = { ...blocks[i], status, ended: Date.now(), result: ev.content }; break; } }
             return { ...m, blocks };
           });
           if (ev.type === 'files') update(m => ({ ...m, files: [...(m.files || []), ...ev.files] }));
+          if (ev.type === 'file_checks') update(m => ({
+            ...m,
+            files: (m.files || []).map(file => ev.checks?.[file.path] ? { ...file, check: ev.checks[file.path] } : file)
+          }));
           if (ev.type === 'saved') setMessages(prev => {
             const arr = [...prev];
             const ai = arr.findIndex(m => m.id === assistantMsgId);
             if (ai > -1) { arr[ai] = { ...arr[ai], id: ev.assistantMessageId }; if (arr[ai - 1]?.role === 'user') arr[ai - 1] = { ...arr[ai - 1], id: ev.userMessageId }; }
             return arr;
           });
-          if (ev.type === 'error') update(m => ({ ...m, blocks: [...(m.blocks || []), { type: 'text', content: `\n\n**Erro:** ${ev.content}` }] }));
+          if (ev.type === 'error') update(m => ({ ...m, failed: true, retryText: text, blocks: [...(m.blocks || []), { type: 'text', content: `\n\n**Erro:** ${ev.content}` }] }));
         }
+        if (done) break;
       }
     } catch (err) {
       update(m => ({ ...m, failed: true, retryText: text, blocks: [...(m.blocks || []), { type: 'text', content: `\n\n**Conexão interrompida:** ${err.message}` }] }));
     }
     // Fecha qualquer ferramenta que tenha ficado "rodando"
     update(m => ({ ...m, blocks: (m.blocks || []).map(b => b.type === 'tool' && b.status === 'running' ? { ...b, status: 'done', ended: Date.now() } : b) }));
-    setBusy(false);
+    setChatBusy(false);
     setPaused(false);
     setStatusText('');
     await loadFiles(conv.id);
@@ -788,16 +1146,6 @@ export default function App() {
 
   const currentAssistant = assistants.find(a => a.id === assistantId);
   const uploads = files.filter(f => f.kind === 'upload');
-  const teamControls = <>
-    <label className="chk teamSwitch"><input type="checkbox" checked={team} onChange={e => setTeam(e.target.checked)}/> <b>Modo Equipe ativado</b></label>
-    <div className="teamHint">Quem participa da consulta:</div>
-    {assistants.map(a => (
-      <label key={a.id} className="chk teamMember">
-        <input type="checkbox" checked={!teamIds || teamIds.includes(a.id)} onChange={() => toggleTeamMember(a.id)}/> {a.emoji || '🤖'} {a.name}
-      </label>
-    ))}
-    <div className="teamHint">A equipe completa é consultada só na <b>1ª mensagem</b>. Depois, o coordenador continua sozinho para reduzir custo e tempo.</div>
-  </>;
 
   // Tela de login (produção com APP_PASSWORD definida)
   if (needLogin) {
@@ -823,29 +1171,36 @@ export default function App() {
     </div>;
   }
 
-  return <div className={`app ${sideHidden ? 'sideHidden' : ''}`}>
+  const activeWorkspace = WORKSPACES.find(item => item.id === workspace) || WORKSPACES[0];
+  const ActiveWorkspaceIcon = WORKSPACE_ICON[activeWorkspace.id] || Sparkles;
+  const activeClientName = clients.find(c => c.id === clientId)?.name || 'Geral';
+  const workspaceWelcome = {
+    studio: { title: 'Olá! Como posso ajudar você hoje?', description: 'Envie um arquivo, peça uma planilha, um documento, um código ou uma pesquisa.' },
+    essential: { title: 'Vamos resolver isso.', description: 'Use um atalho ou escreva o que você precisa fazer.' },
+    focus: { title: 'No que você quer se concentrar?', description: 'Uma conversa por vez, com o restante do app fora do caminho.' },
+    developer: { title: 'Qual é a próxima mudança?', description: 'Planeje, construa ou revise um projeto com contexto e permissões claras.' }
+  }[workspace] || { title: 'Olá! Como posso ajudar você hoje?', description: 'Envie um arquivo, peça uma planilha, um documento, um código ou uma pesquisa.' };
+  const welcomeActions = workspace === 'developer' ? DEVELOPER_QUICK_ACTIONS : QUICK_ACTIONS;
+
+  return <div className={`app workspace-${workspace} ${sideHidden ? 'sideHidden' : ''}`}>
     {menuOpen && <div className="scrim" onClick={() => setMenuOpen(false)}/>}
     <aside className={`sidebar ${menuOpen ? 'open' : ''}`} aria-label="Navegação do app">
       <div className="brandRow">
-        <div className="brand">Frederico <span>AI Studio</span></div>
+        <div className="brandLead">
+          <span className="brandMark" aria-hidden="true">F</span>
+          <div className="brand">Frederico <span>AI Studio</span></div>
+        </div>
         <button className="sideCollapse" onClick={toggleSide} title="Esconder a barra lateral" aria-label="Esconder a barra lateral"><PanelLeft size={17}/></button>
       </div>
-      <label className="clientLabel" htmlFor="active-client">Cliente ou projeto</label>
-      <div className="clientRow">
-        <select id="active-client" value={clientId} onChange={e => switchClient(e.target.value)} title="Cliente / Projeto ativo" aria-label="Cliente ou projeto ativo">
-          <option value="">🗂️ Geral (sem cliente)</option>
-          {clients.map(c => <option key={c.id} value={c.id}>👤 {c.name}</option>)}
-        </select>
-        <button onClick={addClient} title="Novo cliente/projeto" aria-label="Novo cliente"><Plus size={14}/></button>
-        {clientId && <button className="clientDel" onClick={removeClient} title="Remover cliente (conversas voltam para Geral)" aria-label="Remover cliente"><Trash2 size={14}/></button>}
-      </div>
       <button className="new" onClick={startNewChat}><Plus size={16}/> Nova conversa</button>
+      <div className="clientLabel">Cliente ou projeto</div>
+      <ClientPicker clients={clients} clientId={clientId} onPick={switchClient} onAdd={addClient} onRemove={removeClient}/>
       <div className="convSearch">
         <Search size={15}/>
         <input value={convFilter} onChange={e => setConvFilter(e.target.value)} placeholder="Buscar conversas..."/>
         {convFilter && <button className="convSearchX" onClick={() => setConvFilter('')} aria-label="Limpar busca"><X size={13}/></button>}
       </div>
-      <div className="sideScroll">
+      <div className="sideScroll" ref={sideScrollRef}>
       <div className="sideSectionTitle">Conversas</div>
       <div className="convList">
         {(() => {
@@ -867,18 +1222,22 @@ export default function App() {
         })()}
       </div>
       <nav className="sideBottom" aria-label="Recursos do app">
-        <div className="navGroup">
+        <div className="navGroup navGroupProduction">
           <div className="navGroupTitle">Produção</div>
           <button className="studio toolsBtn" onClick={() => setToolsOpen(true)} title="Fluxos prontos: documentos, planilhas, OCR e dashboards"><Wrench size={16}/> Ferramentas</button>
           <button className="studio" onClick={() => setInboxOpen(true)} title="Acumule documentos por cliente e abra tudo numa conversa"><Inbox size={16}/> Caixa de entrada</button>
           <button className="studio" onClick={openTemplates}><BookMarked size={16}/> Templates</button>
         </div>
-        <div className="navGroup">
+        <div className="navGroup navGroupDeveloper">
+          <div className="navGroupTitle">Desenvolvimento</div>
+          <button className="studio developerBtn" onClick={() => openDeveloper('plan')} title="Planejar, construir ou revisar um projeto"><Code2 size={16}/> Modo desenvolvedor</button>
+        </div>
+        <div className="navGroup navGroupAutomation">
           <div className="navGroupTitle">Automação</div>
           <button className="studio" onClick={() => { setTasksOpen(true); pollTasks(); }}><ListTodo size={16}/> Tarefas{tasksActive && <span className="badge">{tasks.filter(t => t.status === 'queued' || t.status === 'running').length}</span>}</button>
           <button className="studio" onClick={() => setRoutinesOpen(true)} title="Programe tarefas para rodarem sozinhas"><CalendarClock size={16}/> Rotinas</button>
         </div>
-        <div className="navGroup">
+        <div className="navGroup navGroupKnowledge">
           <div className="navGroupTitle">Conhecimento</div>
           <button className="studio" onClick={() => setMemoryOpen(true)}><Brain size={16}/> Memória</button>
           <button className="studio" onClick={() => setPcOpen(true)} title="Libere pastas do seu PC para o assistente procurar, ler e organizar arquivos"><FolderCog size={16}/> Pastas do PC</button>
@@ -888,9 +1247,16 @@ export default function App() {
           <button className="studio" onClick={openStudioNew}><Bot size={16}/> Assistentes</button>
           <button className="studio" onClick={openAnalytics}><BarChart3 size={16}/> Análises</button>
           <button className="studio" onClick={() => window.open(`${API}/api/backup`, '_blank')} title="Baixa um arquivo com o banco e todos os workspaces"><HardDriveDownload size={16}/> Backup</button>
-          <button className="studio" onClick={() => setThemeOpen(true)} title="Trocar o tema do aplicativo"><Palette size={16}/> Tema</button>
+          <button className="studio" onClick={() => setThemeOpen(true)} title="Trocar a paleta e o espaço de trabalho"><Palette size={16}/> Aparência</button>
         </div>
       </nav>
+      </div>
+      <div className={`sideFoot ${unprotected ? 'warn' : ''}`}
+        title={unprotected
+          ? 'Sem senha de acesso — use apenas na sua rede local'
+          : 'Acesso protegido por senha'}>
+        <span className="sideFootDot" aria-hidden="true"/>
+        <span>Servidor local · {unprotected ? 'sem senha' : 'protegido'}</span>
       </div>
     </aside>
 
@@ -907,18 +1273,22 @@ export default function App() {
         <div className="topLeft">
           <button className="hamburger" onClick={() => setMenuOpen(o => !o)} aria-label="Abrir menu"><Menu size={19}/></button>
           <button className="sideOpen" onClick={toggleSide} title="Mostrar a barra lateral" aria-label="Mostrar a barra lateral"><PanelLeft size={18}/></button>
-          <div className="titleblock"><strong>{current?.title || 'Nova conversa'}</strong><small>{team ? `🧑‍🤝‍🧑 Equipe (${assistants.length} assistentes)` : (currentAssistant ? `${currentAssistant.emoji || '🤖'} ${currentAssistant.name}` : 'Assistente')}</small></div>
-          <ModelPicker models={allModels} value={model} onChange={setModel}/>
+          <div className="titleblock">
+            <span className="crumbClient" title={`Cliente: ${activeClientName}`}>{activeClientName}</span>
+            <ChevronRight className="crumbSep" size={12} aria-hidden="true"/>
+            <strong>{current?.title || 'Nova conversa'}</strong>
+          </div>
+          <span className={`workspaceTopLabel workspaceTopLabel-${workspace}`} title={`Espaço de trabalho: ${activeWorkspace.label}`}>
+            <ActiveWorkspaceIcon size={14}/><span>{activeWorkspace.label}</span>
+          </span>
+          <ContextPicker
+            models={allModels} model={model} onModel={setModel}
+            assistants={assistants} assistantId={assistantId} onPickAssistant={pickAssistant}
+            currentAssistant={currentAssistant} team={team} onTeam={setTeam}
+            teamIds={teamIds} onToggleMember={toggleTeamMember} effectiveTeam={effectiveTeam}
+            onEditAssistant={() => currentAssistant ? openStudioEdit(currentAssistant) : openStudioNew()}/>
         </div>
         <div className="pickers desktopPickers">
-          <div className="mpicker" ref={teamRef}>
-            <button className={`teamBtn ${team ? 'on' : ''}`} onClick={() => setTeamOpen(o => !o)} title="Modo Equipe: escolha os assistentes e junte as perspectivas"><Users size={15}/> Equipe{team ? ` (${effectiveTeam.length})` : ''}</button>
-            {teamOpen && <div className="mpPanel teamPanel">{teamControls}</div>}
-          </div>
-          <select value={assistantId || ''} onChange={e => pickAssistant(e.target.value)} disabled={team} title="Assistente" aria-label="Assistente">
-            {assistants.map(a => <option key={a.id} value={a.id}>{a.emoji || '🤖'} {a.name}</option>)}
-          </select>
-          <button className="gear" onClick={() => currentAssistant ? openStudioEdit(currentAssistant) : openStudioNew()} title="Editar assistente" disabled={team}><Settings size={16}/></button>
           <button className="gear" onClick={openFilesDrawer} title="Arquivos da conversa" aria-label="Arquivos da conversa" disabled={!current?.id}><FolderOpen size={16}/></button>
           <div className="mpicker">
             <button className="gear" onClick={() => setExportOpen(o => !o)} title="Exportar conversa" disabled={exporting}>{exporting ? <span className="spin sm"/> : <FileDown size={16}/>}</button>
@@ -931,18 +1301,13 @@ export default function App() {
         <div className="mobileTopActions mpicker" ref={topActionsRef}>
           <button className="gear" onClick={() => setTopActionsOpen(o => !o)} title="Mais opções da conversa" aria-label="Mais opções da conversa"><MoreHorizontal size={19}/></button>
           {topActionsOpen && <div className="mobileTopPanel">
+            {/* Assistente / Equipe / Modelo saíram daqui: agora vivem no
+                ContextPicker, o mesmo controle no celular e no desktop. */}
             <div className="mobileTopSection">
-              <div className="mobileTopLabel">Modo de trabalho</div>
-              <div className="teamPanel mobileTeamPanel">{teamControls}</div>
-            </div>
-            <label className="mobileTopField">Assistente
-              <select value={assistantId || ''} onChange={e => pickAssistant(e.target.value)} disabled={team}>
-                {assistants.map(a => <option key={a.id} value={a.id}>{a.emoji || '🤖'} {a.name}</option>)}
-              </select>
-            </label>
-            <div className="mobileTopButtonGrid">
-              <button onClick={() => { setTopActionsOpen(false); currentAssistant ? openStudioEdit(currentAssistant) : openStudioNew(); }} disabled={team}><Settings size={15}/> Editar assistente</button>
-              <button onClick={() => { setTopActionsOpen(false); openFilesDrawer(); }} disabled={!current?.id}><FolderOpen size={15}/> Arquivos</button>
+              <div className="mobileTopLabel">Conversa</div>
+              <div className="mobileTopButtonGrid single">
+                <button onClick={() => { setTopActionsOpen(false); openFilesDrawer(); }} disabled={!current?.id}><FolderOpen size={15}/> Arquivos</button>
+              </div>
             </div>
             <div className="mobileTopSection">
               <div className="mobileTopLabel">Exportar conversa</div>
@@ -954,6 +1319,21 @@ export default function App() {
           </div>}
         </div>
       </header>
+      {workspace === 'developer' && <section className="workspaceBar developerWorkspaceBar" aria-label="Atalhos de desenvolvimento">
+        <div className="workspaceBarLead">
+          <Code2 size={17}/>
+          <div>
+            <strong>Área de projeto</strong>
+            <span>{developerSession ? 'Tarefa de desenvolvimento preparada para esta conversa.' : 'Planeje, construa ou revise sem perder o contexto do projeto.'}</span>
+          </div>
+        </div>
+        <div className="workspaceBarActions">
+          <button type="button" className="workspaceAction" onClick={() => openDeveloper('plan')}><ListTodo size={15}/> Planejar</button>
+          <button type="button" className="workspaceAction primary" onClick={() => openDeveloper('build')}><Code2 size={15}/> Construir</button>
+          <button type="button" className="workspaceAction" onClick={() => openDeveloper('review')}><Check size={15}/> Revisar</button>
+          <button type="button" className="workspaceIconAction" onClick={() => setPcOpen(true)} title="Gerenciar projetos e pastas" aria-label="Gerenciar projetos e pastas"><FolderCog size={16}/></button>
+        </div>
+      </section>}
       {unprotected && !authWarnHidden && <div className="authWarn">
         <span>🔓 <b>Sem senha de acesso.</b> Use apenas na sua rede local — não exponha na internet sem definir <code>APP_PASSWORD</code>.</span>
         <button onClick={() => { setAuthWarnHidden(true); localStorage.setItem('fred_authwarn_hidden', '1'); }} aria-label="Dispensar aviso"><X size={14}/></button>
@@ -961,20 +1341,33 @@ export default function App() {
       <section className={`messages ${!loadingConv && messages.length === 0 && !busy ? 'empty' : ''}`}>
         {loadingConv && <div className="working"><span className="spin"/><span>Carregando conversa...</span></div>}
         {!loadingConv && messages.length === 0 && !busy && <div className="welcome">
-          <h2>Olá! Como posso ajudar você hoje?</h2>
-          <p>Envie um arquivo, peça uma planilha, um documento, um código ou uma pesquisa.</p>
+          <h2>{workspaceWelcome.title}</h2>
+          <p>{workspaceWelcome.description}</p>
           <div className="quickCards">
-            {QUICK_ACTIONS.map((q, i) => {
+            {welcomeActions.map((q, i) => {
               const QuickActionIcon = QUICK_ACTION_ICON[q.icon] || Sparkles;
-              return <button key={i} className="quickCard" onClick={() => { setInput(q.prompt); inputRef.current?.focus(); }}>
+              return <button key={i} className="quickCard" onClick={() => handleWelcomeAction(q)}>
                 <span className="qcIcon" aria-hidden="true"><QuickActionIcon size={20}/></span>
                 <span className="qcText"><b>{q.label}</b><small>{q.desc}</small></span>
               </button>;
             })}
           </div>
         </div>}
-        {messages.map((m, idx) => (
-          <div key={m.id || idx} className={`msg ${m.role}`}>
+        {messages.map((m, idx) => {
+        const showDay = dayKey(m.created_at) && dayKey(m.created_at) !== dayKey(messages[idx - 1]?.created_at);
+        return <React.Fragment key={m.id || idx}>
+          {showDay && <div className="dayDivider" role="separator">
+            <span>{dayLabel(m.created_at)}{msgTime(m.created_at) && ` · ${msgTime(m.created_at)}`}</span>
+          </div>}
+          <div className={`msg ${m.role}`}>
+            {/* A tabela messages não guarda quem respondeu, então o cabeçalho
+                mostra o assistente selecionado agora. Numa conversa em que o
+                assistente foi trocado, as mensagens antigas exibem o atual. */}
+            {m.role === 'assistant' && <div className="msgHead">
+              <AssistantTile assistant={currentAssistant} index={Math.max(0, assistants.findIndex(a => a.id === assistantId))} size={22} icon={12}/>
+              <b>{currentAssistant?.name || 'Assistente'}</b>
+              {msgTime(m.created_at) && <span className="msgTime">{msgTime(m.created_at)}</span>}
+            </div>}
             <div className="msgActions">
               {m.role === 'user' && !busy && <button onClick={() => editMessage(m, idx)} title="Editar e regravar a conversa a partir daqui" aria-label="Editar mensagem"><Pencil size={13}/></button>}
               {m.role === 'user' && <button onClick={() => saveAsTemplate(m)} title="Salvar como template reutilizável" aria-label="Salvar como template"><BookmarkPlus size={13}/></button>}
@@ -991,7 +1384,7 @@ export default function App() {
             {m.role === 'assistant' && <MemoryTrace memory={m.memory} onOpenMemory={() => setMemoryOpen(true)}/>}
             {m.files?.length > 0 && <div className="filecards">
               {m.files.map(f => {
-                const url = `${API}/api/conversations/${current?.id}/download/${f.path}`;
+                const url = conversationDownloadUrl(current?.id, f.path);
                 const isImg = /\.(png|jpe?g|gif|webp)$/i.test(f.name);
                 return isImg
                   ? <a className="imgcard" key={f.id || f.path} href={url} target="_blank" rel="noreferrer" title={`${f.name} — clique para abrir`}>
@@ -1006,7 +1399,8 @@ export default function App() {
               })}
             </div>}
           </div>
-        ))}
+        </React.Fragment>;
+        })}
         {busy && <div className="working">
           {paused ? <span className="pausedDot"/> : <span className="spin"/>}
           <span>{paused ? 'Pausado' : (statusText || 'Processando...')}</span>
@@ -1020,6 +1414,10 @@ export default function App() {
         <div ref={endRef}/>
       </section>
       <footer className="composerWrap">
+        {developerSession && (!developerSession.conversationId || developerSession.conversationId === current?.id) && <div className="devSessionBar">
+          <Code2 size={15}/><span>Modo desenvolvedor</span><b>{{ plan: 'Planejar', build: 'Construir', review: 'Revisar' }[developerSession.mode] || 'Ativo'}</b>
+          <button onClick={() => setDeveloperSession(null)} title="Sair do modo desenvolvedor" aria-label="Sair do modo desenvolvedor"><X size={14}/></button>
+        </div>}
         {uploads.length > 0 && <div className="attachChips">
           {uploads.map(f => <span className="attachChip" key={f.id}>
             <FileText size={13}/><span className="chipname" title={f.name}>{f.name}</span>
@@ -1027,31 +1425,48 @@ export default function App() {
           </span>)}
         </div>}
         {uploadingFiles && <div className="attachStatus"><span className="spin sm"/><span>Anexando arquivo...</span></div>}
-        <div className="composer">
-          <button className="attachBtn" onClick={() => fileInputRef.current?.click()} title="Anexar arquivo" aria-label="Anexar arquivo"><Paperclip size={19}/></button>
-          <div className="cmpMenu" ref={cmpMenuRef}>
-            <button className={`cmpMenuBtn ${webSearch || listening ? 'active' : ''}`} onClick={() => { setComposerMenuOpen(o => !o); setMenuView('main'); }} title="Opções da mensagem" aria-label="Opções da mensagem"><SlidersHorizontal size={19}/></button>
-            {composerMenuOpen && <div className="cmpMenuPanel">
-              {menuView === 'main' ? <>
-                <button className="cmpItem" onClick={() => setWebSearch(w => !w)}><Globe size={16}/><span>Pesquisa na internet</span>{webSearch && <Check size={15} className="cmpChk"/>}</button>
-                <button className="cmpItem" onClick={() => setMenuView('effort')}><Gauge size={16}/><span>Esforço da IA</span><span className="cmpVal">{EFFORTS.find(e => e.id === effort)?.label} ›</span></button>
-                <button className={`cmpItem ${listening ? 'on' : ''}`} onClick={() => { toggleMic(); setComposerMenuOpen(false); }}><Mic size={16}/><span>{listening ? 'Parar ditado' : 'Ditar por voz'}</span></button>
-                <button className="cmpItem" disabled={!input.trim()} onClick={() => { sendAsTask(); setComposerMenuOpen(false); }}><Hourglass size={16}/><span>Executar em segundo plano</span></button>
-              </> : <>
-                <button className="cmpItem cmpBack" onClick={() => setMenuView('main')}><span>‹ Esforço da IA</span></button>
-                <div className="cmpDesc">{EFFORT_DESC}</div>
-                {EFFORTS.map(e => (
-                  <button key={e.id} className="cmpItem" onClick={() => { setEffort(e.id); setMenuView('main'); }}>
-                    <span className="effortLabel">{e.label}{e.badge && <span className="effortBadge">{e.badge}</span>}</span>
-                    {effort === e.id && <Check size={15} className="cmpChk"/>}
-                  </button>
-                ))}
-              </>}
+        <div className="composerChips" ref={cmpChipsRef}>
+          <button type="button" className={`cmpChip ${webSearch ? 'on' : ''}`} aria-pressed={webSearch}
+            onClick={() => setWebSearch(w => !w)}
+            title="Deixa a IA pesquisar na internet ao responder">
+            <Globe size={12}/><span>Pesquisa na internet{webSearch ? ' · ativa' : ''}</span>
+          </button>
+          <div className="cmpChipMenu">
+            <button type="button" className={`cmpChip ${composerMenuOpen ? 'open' : ''}`} aria-expanded={composerMenuOpen}
+              onClick={() => setComposerMenuOpen(o => !o)}
+              title={EFFORT_DESC}>
+              <Gauge size={12}/><span>Esforço: {EFFORTS.find(e => e.id === effort)?.label}</span>
+            </button>
+            {composerMenuOpen && <div className="cmpMenuPanel effortPanel">
+              <div className="cmpDesc">{EFFORT_DESC}</div>
+              {EFFORTS.map(e => (
+                <button key={e.id} className="cmpItem" onClick={() => { setEffort(e.id); setComposerMenuOpen(false); }}>
+                  <span className="effortLabel">{e.label}{e.badge && <span className="effortBadge">{e.badge}</span>}</span>
+                  {effort === e.id && <Check size={15} className="cmpChk"/>}
+                </button>
+              ))}
             </div>}
           </div>
+          <button type="button" className={`cmpChip ${listening ? 'on' : ''}`} aria-pressed={listening}
+            onClick={toggleMic}
+            title={listening ? 'Parar o ditado' : 'Ditar a mensagem por voz'}>
+            <Mic size={12}/><span>{listening ? 'Ouvindo...' : 'Ditar por voz'}</span>
+          </button>
+          <button type="button" className="cmpChip" disabled={!input.trim() || busy}
+            onClick={sendAsTask}
+            title="Envia a mensagem como tarefa e libera o chat enquanto ela roda">
+            <Hourglass size={12}/><span>Executar em segundo plano</span>
+          </button>
+        </div>
+        <div className="composer">
+          <button className="attachBtn" onClick={() => fileInputRef.current?.click()} title="Anexar arquivo" aria-label="Anexar arquivo"><Paperclip size={19}/></button>
           <input ref={fileInputRef} type="file" multiple onChange={uploadFiles} style={{ display: 'none' }}/>
           <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)} onInput={e => { e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 160) + 'px'; }} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }} placeholder={listening ? 'Ouvindo... fale agora' : (webSearch ? 'Pesquisa na internet ativada — pergunte algo atual...' : 'Peça para analisar arquivos, gerar Word, Excel, PDF...')} />
-          <button className="sendBtn" onClick={sendMessage} disabled={busy} aria-label="Enviar"><Send size={18}/></button>
+          <button className="sendBtn" onClick={sendMessage} disabled={busy} aria-label="Enviar"><ArrowUp size={18}/></button>
+        </div>
+        <div className="composerHints">
+          <span>Enter envia · Shift+Enter quebra linha</span>
+          <span>Arquivos gerados aparecem como cartões no chat</span>
         </div>
       </footer>
     </main>
@@ -1061,7 +1476,7 @@ export default function App() {
       {!files.length && <div className="drawerEmpty"><FolderOpen size={28}/><b>Nenhum arquivo nesta conversa</b><span>Anexe um documento ou peça para a IA gerar um arquivo.</span></div>}
       <div className="assetList">
         {files.map(f => {
-          const url = `${API}/api/conversations/${current?.id}/download/${f.path}`;
+          const url = conversationDownloadUrl(current?.id, f.path);
           return <div className="assetRow" key={f.id || f.path}>
             <a className="assetOpen" href={url} target="_blank" rel="noreferrer">
               <span className="assetIcon"><FileText size={18}/></span>
@@ -1081,21 +1496,50 @@ export default function App() {
         <label className="grow">Nome
           <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Ex.: Assistente de escrita"/>
         </label>
-        <label className="emojiField">Ícone
-          <input value={form.emoji} onChange={e => setForm(f => ({ ...f, emoji: e.target.value }))} maxLength={2}/>
-        </label>
+      </div>
+
+      <div className="field">
+        <span className="fieldLabel">Ícone do assistente</span>
+        {!isAssistantIcon(form.emoji) && <p className="fieldHint">
+          Este assistente usa o emoji <b>{form.emoji}</b>, de antes dos ícones. Escolher um ícone abaixo substitui o emoji.
+        </p>}
+        <div className="iconPicker">
+          {ASSISTANT_ICONS.map(name => {
+            const Icon = ASSISTANT_ICON[name];
+            const sel = form.emoji === name;
+            return <button key={name} type="button" aria-label={name} aria-pressed={sel}
+              className={`iconOpt ${sel ? 'sel' : ''}`}
+              style={sel ? { color: form.color || ASSISTANT_COLORS[0] } : undefined}
+              onClick={() => setForm(f => ({ ...f, emoji: name }))}><Icon size={17}/></button>;
+          })}
+        </div>
+      </div>
+
+      <div className="field">
+        <span className="fieldLabel">Cor</span>
+        <div className="colorPicker">
+          {ASSISTANT_COLORS.map(c => (
+            <button key={c} type="button" aria-label={`Cor ${c}`} aria-pressed={form.color === c}
+              className={`colorOpt ${form.color === c ? 'sel' : ''}`}
+              style={{ '--swatch': c }}
+              onClick={() => setForm(f => ({ ...f, color: f.color === c ? '' : c }))}/>
+          ))}
+          <span className="colorHint">{form.color ? 'Clique de novo para voltar ao padrão' : 'Padrão (pela ordem na lista)'}</span>
+        </div>
       </div>
 
       <label>Modelo de IA padrão
         <select value={form.model || model} onChange={e => setForm(f => ({ ...f, model: e.target.value }))}>
-          {allModels.filter(m => m.tools !== false).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+          {allModels.filter(modelHasTools).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
         </select>
       </label>
 
       <label>Começar de um template
         <select value={form.template || ''} onChange={e => applyTemplate(e.target.value)}>
           <option value="">— escolher um modelo pronto —</option>
-          {TEMPLATES.map(t => <option key={t.key} value={t.key}>{t.emoji} {t.label}</option>)}
+          {/* <option> não renderiza SVG — só o rótulo. O ícone do template
+              aparece na grade acima assim que ele é aplicado. */}
+          {TEMPLATES.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
         </select>
       </label>
 
@@ -1132,18 +1576,39 @@ export default function App() {
     {memoryOpen && <MemoryPanel assistants={assistants} clients={clients} clientId={clientId} showToast={showToast} askConfirm={askConfirm} askPrompt={askPrompt} onClose={() => setMemoryOpen(false)}/>}
     {pcOpen && <PcFoldersPanel showToast={showToast} askConfirm={askConfirm} onClose={() => setPcOpen(false)}/>}
     {toolsOpen && <ToolsPanel onPick={pickTool} onClose={() => setToolsOpen(false)}/>}
+    {developerOpen && <DeveloperPanel initialMode={developerStartMode} onStart={startDeveloperTask} onManageFolders={() => { setDeveloperOpen(false); setPcOpen(true); }} onClose={() => setDeveloperOpen(false)}/>}
     {routinesOpen && <RoutinesPanel assistants={assistants} clients={clients} showToast={showToast} askConfirm={askConfirm} onClose={() => setRoutinesOpen(false)}/>}
     {inboxOpen && <InboxPanel clients={clients} clientId={clientId} showToast={showToast} askConfirm={askConfirm} onOpenConversation={(id) => { fetchConversations(); openConversation(id); }} onClose={() => setInboxOpen(false)}/>}
-    {themeOpen && <Modal title="Tema do aplicativo" icon={<Palette size={18}/>} onClose={() => setThemeOpen(false)}>
-      <p className="muted" style={{ margin: 0 }}>Escolha a aparência do app. A sua escolha fica salva neste computador.</p>
-      <div className="themeGrid">
-        {THEMES.map(t => (
-          <button key={t.id} className={`themeCard ${theme === t.id ? 'sel' : ''}`} onClick={() => setTheme(t.id)}>
-            <span className="themeSwatch">{t.swatch.map((c, i) => <i key={i} style={{ background: c }}/>)}</span>
-            <span className="themeName">{t.label}{theme === t.id && <Check size={14}/>}</span>
-          </button>
-        ))}
-      </div>
+    {themeOpen && <Modal title="Aparência e espaço de trabalho" icon={<Palette size={18}/>} onClose={() => setThemeOpen(false)}>
+      <p className="muted appearanceIntro">Escolha como o app se organiza e, depois, a paleta que deixa a leitura mais confortável. As duas escolhas ficam salvas neste computador.</p>
+      <section className="appearanceSection" aria-labelledby="workspace-title">
+        <div className="appearanceSectionHead">
+          <div><strong id="workspace-title">Espaço de trabalho</strong><span>Altera a ordem, a densidade e os atalhos da interface.</span></div>
+        </div>
+        <div className="workspaceGrid">
+          {WORKSPACES.map(item => {
+            const Icon = WORKSPACE_ICON[item.id] || Sparkles;
+            return <button key={item.id} type="button" className={`workspaceCard ${workspace === item.id ? 'sel' : ''}`} aria-pressed={workspace === item.id} onClick={() => changeWorkspace(item.id)}>
+              <span className={`workspacePreview workspacePreview-${item.id}`} aria-hidden="true"><i/><i/><i/></span>
+              <span className="workspaceCardCopy"><b><Icon size={15}/>{item.label}{workspace === item.id && <Check size={14}/>}</b><small>{item.description}</small></span>
+              <span className="workspaceHint">{item.hint}</span>
+            </button>;
+          })}
+        </div>
+      </section>
+      <section className="appearanceSection paletteSection" aria-labelledby="palette-title">
+        <div className="appearanceSectionHead">
+          <div><strong id="palette-title">Paleta</strong><span>Altera apenas as cores do espaço de trabalho escolhido.</span></div>
+        </div>
+        <div className="themeGrid">
+          {THEMES.map(t => (
+            <button key={t.id} className={`themeCard ${theme === t.id ? 'sel' : ''}`} onClick={() => setTheme(t.id)}>
+              <span className="themeSwatch">{t.swatch.map((c, i) => <i key={i} style={{ background: c }}/>)}</span>
+              <span className="themeName">{t.label}{theme === t.id && <Check size={14}/>}</span>
+            </button>
+          ))}
+        </div>
+      </section>
     </Modal>}
 
     {analyticsOpen && <Drawer title="Análises de uso" icon={<BarChart3 size={18}/>} onClose={() => setAnalyticsOpen(false)} className="analyticsDrawer">
@@ -1157,7 +1622,7 @@ export default function App() {
         <div className="field">
           <span className="fieldLabel">Por assistente</span>
           <table className="atable"><thead><tr><th>Assistente</th><th>Msgs</th><th>Tokens</th></tr></thead>
-            <tbody>{(analytics.byAssistant || []).map((r, i) => <tr key={i}><td>{r.emoji ? `${r.emoji} ` : ''}{r.name}</td><td>{r.messages}</td><td>{(r.tokens || 0).toLocaleString('pt-BR')}</td></tr>)}
+            <tbody>{(analytics.byAssistant || []).map((r, i) => <tr key={i}><td><span className="asstCell"><AssistantGlyph value={r.emoji} size={13}/>{r.name}</span></td><td>{r.messages}</td><td>{(r.tokens || 0).toLocaleString('pt-BR')}</td></tr>)}
             {(!analytics.byAssistant || !analytics.byAssistant.length) && <tr><td colSpan={3} className="muted">Sem dados ainda.</td></tr>}</tbody>
           </table>
         </div>
