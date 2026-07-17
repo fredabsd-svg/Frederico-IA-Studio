@@ -199,7 +199,15 @@ const MAX_OUTPUT_BYTES = Number(process.env.SANDBOX_MAX_OUTPUT_BYTES || 8 * 1024
 
 export async function execInSandbox(conversationId, cmd, timeoutMs = Number(process.env.TOOL_TIMEOUT_MS || 45000), options = {}) {
   conversationId = assertConversationId(conversationId);
-  let container = await getContainer(conversationId, options);
+  const { signal, ...sandboxOptions } = options || {};
+  const canceledResult = () => ({ exitCode: 130, output: '[INTERROMPIDO: comando cancelado pelo usuario]' });
+  if (signal?.aborted) return canceledResult();
+  let container = await getContainer(conversationId, sandboxOptions);
+  if (signal?.aborted) {
+    sessions.delete(conversationId);
+    void container.kill().catch(() => {});
+    return canceledResult();
+  }
   const makeExec = (c) => c.exec({ Cmd: ['bash', '-lc', cmd], AttachStdout: true, AttachStderr: true, WorkingDir: '/workspace', User: 'sandbox' });
   let exec;
   try {
@@ -208,10 +216,31 @@ export async function execInSandbox(conversationId, cmd, timeoutMs = Number(proc
     // Container morreu (ex.: kill por timeout anterior + AutoRemove).
     // Remove a referência morta e recria uma vez.
     sessions.delete(conversationId);
-    container = await getContainer(conversationId, options);
+    container = await getContainer(conversationId, sandboxOptions);
     exec = await makeExec(container);
   }
-  const stream = await exec.start({ hijack: true, stdin: false });
+  let interrupted = false;
+  let finishExecution = null;
+  const interrupt = () => {
+    interrupted = true;
+    sessions.delete(conversationId);
+    void container.kill().catch(() => {});
+    void finishExecution?.();
+  };
+  if (signal?.aborted) interrupt();
+  else signal?.addEventListener('abort', interrupt, { once: true });
+  if (interrupted) {
+    signal?.removeEventListener('abort', interrupt);
+    return canceledResult();
+  }
+  let stream;
+  try {
+    stream = await exec.start({ hijack: true, stdin: false });
+  } catch (err) {
+    signal?.removeEventListener('abort', interrupt);
+    if (interrupted || signal?.aborted) return canceledResult();
+    throw err;
+  }
   let output = '';
   let bytes = 0;
   let timedOut = false, tooBig = false, settled = false;
@@ -242,12 +271,16 @@ export async function execInSandbox(conversationId, cmd, timeoutMs = Number(proc
       if (settled) return; // 'end', 'close' e 'error' podem disparar juntos
       settled = true;
       clearTimeout(timer);
+      signal?.removeEventListener('abort', interrupt);
       const info = await exec.inspect().catch(() => ({ ExitCode: -1 }));
       let clean = output.replace(/[\x00-\x08\x0E-\x1F]/g, '');
       if (timedOut) clean += `\n[TIMEOUT: comando excedeu ${timeoutMs / 1000}s — sandbox reiniciado]`;
       if (tooBig) clean += `\n[SAÍDA MUITO GRANDE: cortada e execução interrompida]`;
-      resolve({ exitCode: timedOut ? 124 : (tooBig ? 137 : info.ExitCode), output: clean.slice(-12000) });
+      if (interrupted) clean += '\n[INTERROMPIDO: comando cancelado pelo usuario]';
+      resolve({ exitCode: interrupted ? 130 : (timedOut ? 124 : (tooBig ? 137 : info.ExitCode)), output: clean.slice(-12000) });
     };
+    finishExecution = finish;
+    if (interrupted) { void finish(); return; }
     // 'error' evita crash do processo se o container for removido no meio do exec
     stream.on('end', finish);
     stream.on('close', finish);

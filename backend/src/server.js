@@ -808,8 +808,9 @@ app.post('/api/conversations/:id/truncate', async (req, res) => {
 app.post('/api/conversations/:id/control', (req, res) => {
   const action = req.body?.action;
   if (!['pause', 'resume', 'stop'].includes(action)) return res.status(400).json({ error: 'Ação inválida.' });
-  setControl(req.params.id, action);
-  res.json({ ok: true, action });
+  const control = setControl(req.params.id, action);
+  if (!control) return res.status(409).json({ error: 'Não há processamento ativo nesta conversa.' });
+  res.json({ ok: true, action, paused: control.paused, stopped: control.stopped });
 });
 
 app.post('/api/conversations/:id/chat', async (req, res) => {

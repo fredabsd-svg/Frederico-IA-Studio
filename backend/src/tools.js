@@ -21,10 +21,22 @@ export const webToolDefinitions = [
 ];
 
 async function fetchWithTimeout(url, ms = 15000, options = {}) {
+  const { signal: externalSignal, headers = {}, ...fetchOptions } = options;
   const ctl = new AbortController();
-  const t = setTimeout(() => ctl.abort(), ms);
-  try { return await fetch(url, { ...options, signal: ctl.signal, headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) FredericoAIStudio/1.0', ...(options.headers || {}) } }); }
-  finally { clearTimeout(t); }
+  const abortFromCaller = () => ctl.abort(externalSignal?.reason || 'aborted');
+  if (externalSignal?.aborted) abortFromCaller();
+  else externalSignal?.addEventListener('abort', abortFromCaller, { once: true });
+  const t = setTimeout(() => ctl.abort('timeout'), ms);
+  try {
+    return await fetch(url, {
+      ...fetchOptions,
+      signal: ctl.signal,
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) FredericoAIStudio/1.0', ...headers }
+    });
+  } finally {
+    clearTimeout(t);
+    externalSignal?.removeEventListener('abort', abortFromCaller);
+  }
 }
 
 function stripHtml(html) {
@@ -36,18 +48,18 @@ function stripHtml(html) {
     .replace(/\s+/g, ' ').trim();
 }
 
-async function webSearch(query) {
+async function webSearch(query, options = {}) {
   // Com chaves do Google configuradas, usa a API oficial (Custom Search).
   const gKey = process.env.GOOGLE_API_KEY, gCx = process.env.GOOGLE_CSE_ID;
   if (gKey && gCx) {
     const url = `https://www.googleapis.com/customsearch/v1?key=${encodeURIComponent(gKey)}&cx=${encodeURIComponent(gCx)}&num=6&q=${encodeURIComponent(query)}`;
-    const r = await fetchWithTimeout(url);
+    const r = await fetchWithTimeout(url, 15000, { signal: options.signal });
     if (!r.ok) throw new Error(`Google API: HTTP ${r.status}`);
     const data = await r.json();
     return { engine: 'google', results: (data.items || []).map(i => ({ title: i.title, url: i.link, snippet: i.snippet })) };
   }
   // Sem chaves: DuckDuckGo (não exige cadastro)
-  const r = await fetchWithTimeout(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`);
+  const r = await fetchWithTimeout(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, 15000, { signal: options.signal });
   if (!r.ok) throw new Error(`Busca: HTTP ${r.status}`);
   const html = await r.text();
   const results = [];
@@ -81,7 +93,7 @@ export function isBlockedHost(hostname) {
   return false;
 }
 
-async function webFetch(url) {
+export async function webFetch(url, options = {}) {
   if (!/^https?:\/\//i.test(url)) throw new Error('URL inválida (use http/https).');
   let target;
   try { target = new URL(url); } catch { throw new Error('URL inválida.'); }
@@ -90,15 +102,33 @@ async function webFetch(url) {
   // backend into a private or metadata address.
   for (let redirects = 0; redirects <= 4; redirects++) {
     if (isBlockedHost(target.hostname)) throw new Error('Endereço bloqueado por segurança (rede interna/local não é acessível).');
-    r = await fetchWithTimeout(target, 20000, { redirect: 'manual' });
+    r = await fetchWithTimeout(target, 20000, { redirect: 'manual', signal: options.signal });
     if (![301, 302, 303, 307, 308].includes(r.status)) break;
     const location = r.headers.get('location');
     if (!location) break;
     target = new URL(location, target);
     if (redirects === 4) throw new Error('A página redirecionou vezes demais.');
   }
+  if (!r) return { error: 'A página não respondeu à consulta.', code: 'WEB_FETCH_NO_RESPONSE', url: target.toString() };
+  if (!r.ok) {
+    const recoverable = [408, 425, 429, 500, 502, 503, 504].includes(r.status);
+    return {
+      error: `A página retornou HTTP ${r.status}.`,
+      code: 'WEB_FETCH_HTTP_ERROR',
+      status: r.status,
+      url: target.toString(),
+      recoverable
+    };
+  }
   const type = r.headers.get('content-type') || '';
-  if (!/text|html|json|xml/i.test(type)) return { url, note: `Conteúdo não textual (${type}). Baixe/processe de outra forma.` };
+  if (!/text|html|json|xml/i.test(type)) {
+    return {
+      error: `A página retornou conteúdo não textual (${type || 'tipo desconhecido'}).`,
+      code: 'WEB_FETCH_UNREADABLE_CONTENT',
+      status: r.status,
+      url: target.toString()
+    };
+  }
   const declaredLength = Number(r.headers.get('content-length') || 0);
   const maxBytes = Math.max(64 * 1024, Number(process.env.WEB_FETCH_MAX_BYTES || 1_500_000));
   if (declaredLength > maxBytes) throw new Error('A página é grande demais para abrir com segurança.');
@@ -119,6 +149,14 @@ async function webFetch(url) {
   }
   const body = reader ? Buffer.concat(chunks).toString('utf8') : await r.text();
   const text = /json/i.test(type) ? body : stripHtml(body);
+  if (!text.trim()) {
+    return {
+      error: 'A página não trouxe conteúdo textual utilizável.',
+      code: 'WEB_FETCH_EMPTY_CONTENT',
+      status: r.status,
+      url: target.toString()
+    };
+  }
   return { url: target.toString(), status: r.status, content: text.slice(0, 8000) };
 }
 
@@ -128,7 +166,7 @@ export const imageToolDefinitions = [
   { type: 'function', function: { name: 'generate_image', description: 'Gera uma IMAGEM nova com IA a partir de uma descrição, ou EDITA uma imagem existente (passe input_image com o caminho, ex.: uploads/foto.png). A imagem final é salva em outputs/ e exibida ao usuário automaticamente. Descreva o prompt em detalhes (estilo, cores, composição).', parameters: { type: 'object', properties: { prompt: { type: 'string', description: 'Descrição detalhada da imagem desejada ou da edição a fazer' }, input_image: { type: 'string', description: '(opcional) caminho de uma imagem do workspace para editar, ex.: uploads/logo.png' }, file_name: { type: 'string', description: '(opcional) nome do arquivo de saída, sem extensão' } }, required: ['prompt'] } } }
 ];
 
-async function generateImage(ws, args) {
+async function generateImage(ws, args, options = {}) {
   const model = process.env.IMAGE_MODEL || 'google/gemini-2.5-flash-image';
   const base = (process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com').replace(/\/$/, '');
   const content = [];
@@ -141,6 +179,7 @@ async function generateImage(ws, args) {
   content.push({ type: 'text', text: args.prompt || '' });
   const r = await fetchWithTimeout(`${base}/chat/completions`, 120000, {
     method: 'POST',
+    signal: options.signal,
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}` },
     body: JSON.stringify({ model, messages: [{ role: 'user', content }], modalities: ['image', 'text'] })
   });
@@ -201,7 +240,7 @@ function missingFileResult(ws, requestedPath) {
   };
 }
 
-async function readMountedPcFile(conversationId, mountedPath, sandboxOptions) {
+async function readMountedPcFile(conversationId, mountedPath, sandboxOptions, runtime = {}) {
   const encodedPath = Buffer.from(mountedPath, 'utf8').toString('base64');
   const script = [
     'import base64, json',
@@ -213,7 +252,7 @@ async function readMountedPcFile(conversationId, mountedPath, sandboxOptions) {
     'except Exception as error:',
     "  print(json.dumps({'error': str(error), 'code': getattr(error, 'errno', None), 'recoverable': True, 'requestedPath': target, 'hint': 'Confira o caminho dentro da pasta montada antes de tentar novamente.'}, ensure_ascii=False))"
   ].join('\n');
-  const result = await execInSandbox(conversationId, `python - <<'PY'\n${script}\nPY`, undefined, sandboxOptions);
+  const result = await execInSandbox(conversationId, `python - <<'PY'\n${script}\nPY`, undefined, { ...sandboxOptions, signal: runtime.signal });
   try {
     return JSON.stringify(JSON.parse(result.output.trim()));
   } catch {
@@ -227,17 +266,18 @@ async function readMountedPcFile(conversationId, mountedPath, sandboxOptions) {
   }
 }
 
-export async function runTool(conversationId, name, args = {}, sandboxOptions = {}) {
-  if (name === 'web_search') return JSON.stringify(await webSearch(args.query || ''));
-  if (name === 'web_fetch') return JSON.stringify(await webFetch(args.url || ''));
+export async function runTool(conversationId, name, args = {}, sandboxOptions = {}, runtime = {}) {
+  const signal = runtime?.signal;
+  if (name === 'web_search') return JSON.stringify(await webSearch(args.query || '', { signal }));
+  if (name === 'web_fetch') return JSON.stringify(await webFetch(args.url || '', { signal }));
   const ws = workspaceFor(conversationId);
-  if (name === 'generate_image') return JSON.stringify(await generateImage(ws, args));
+  if (name === 'generate_image') return JSON.stringify(await generateImage(ws, args, { signal }));
   if (name === 'run_python') {
     const script = safeJoin(ws.base, `.tmp_${Date.now()}_${nanoid(8)}.py`);
     fs.writeFileSync(script, args.code || '', 'utf8');
     try { fs.chownSync(script, 1000, 1000); } catch {}
     try {
-      const result = await execInSandbox(conversationId, `python ${path.basename(script)}`, undefined, sandboxOptions);
+      const result = await execInSandbox(conversationId, `python ${path.basename(script)}`, undefined, { ...sandboxOptions, signal });
       return JSON.stringify(result);
     } finally {
       try { fs.unlinkSync(script); } catch {}
@@ -245,7 +285,7 @@ export async function runTool(conversationId, name, args = {}, sandboxOptions = 
   }
   if (name === 'bash') {
     guardCommand(args.command || '');
-    return JSON.stringify(await execInSandbox(conversationId, args.command, undefined, sandboxOptions));
+    return JSON.stringify(await execInSandbox(conversationId, args.command, undefined, { ...sandboxOptions, signal }));
   }
   if (name === 'write_file') {
     if (resolveMountedPcPath(args.path)) throw new Error('write_file grava apenas no workspace da conversa. Para editar uma pasta do PC autorizada, use bash ou run_python.');
@@ -257,7 +297,7 @@ export async function runTool(conversationId, name, args = {}, sandboxOptions = 
   }
   if (name === 'read_file') {
     const mountedPath = resolveMountedPcPath(args.path);
-    if (mountedPath) return readMountedPcFile(conversationId, mountedPath, sandboxOptions);
+    if (mountedPath) return readMountedPcFile(conversationId, mountedPath, sandboxOptions, { signal });
     const target = safeJoin(ws.base, workspaceRelativePath(args.path));
     if (!fs.existsSync(target) || !fs.statSync(target).isFile()) return JSON.stringify(missingFileResult(ws, args.path));
     const content = fs.readFileSync(target, 'utf8');
@@ -272,7 +312,7 @@ export async function runTool(conversationId, name, args = {}, sandboxOptions = 
   if (name === 'zip_outputs') {
     const zip = (args.zip_name || 'outputs.zip').replace(/[^a-zA-Z0-9._-]/g, '_');
     return JSON.stringify(await execInSandbox(conversationId,
-      `cd /workspace && zip -r "outputs/${zip}" outputs -x "outputs/${zip}"`, undefined, sandboxOptions));
+      `cd /workspace && zip -r "outputs/${zip}" outputs -x "outputs/${zip}"`, undefined, { ...sandboxOptions, signal }));
   }
   throw new Error(`Ferramenta desconhecida: ${name}`);
 }

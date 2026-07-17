@@ -1,5 +1,43 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 0.0 ULTIMA ATUALIZACAO (2026-07-17) - controles de execucao e pesquisa web
+
+Leia primeiro o estado de transformacao SaaS na secao seguinte. Este complemento
+substitui qualquer anotacao antiga que diga que Pausar/Continuar/Parar ou a
+pesquisa web estao plenamente resolvidos.
+
+- **Pausar, continuar e parar agora controlam a execucao real:** a resposta em
+  streaming do provedor recebe cancelamento; ao continuar, o agente retoma sem
+  repetir o texto ja emitido. O endpoint de controle devolve erro quando nao ha
+  tarefa ativa, e a interface so confirma o estado apos a resposta do backend.
+- **Parar cancela tambem uma ferramenta em andamento:** chamadas web, geracao de
+  imagem e comandos da sandbox recebem sinal de cancelamento. A sandbox encerra
+  o comando e sera recriada automaticamente na proxima ferramenta. Pausar deixa
+  a ferramenta atual terminar para nao repetir uma acao com efeito colateral.
+- **Pesquisa web sem rajadas repetidas:** o PDF enviado pelo usuario demonstrou
+  centenas de `web_fetch` repetidos para as mesmas tres URLs dentro de UMA
+  resposta do modelo. O agente agora filtra a lista antes de executa-la, para na
+  primeira URL duplicada, limita uma etapa a 12 chamadas e a pesquisa inteira a
+  8 paginas. Em vez de continuar consultando, ele sintetiza apenas as evidencias
+  ja recebidas.
+- **Validacao realizada:** 42 testes passaram; 1 teste de persistencia de DOCX
+  foi pulado sem PostgreSQL de teste. O frontend compilou dentro do container e
+  backend (`/api/health`) e frontend (HTTP 200) foram verificados apos o deploy.
+
+### Regra obrigatoria de handoff e GitHub
+
+Para TODA modificacao futura de codigo, comportamento, configuracao ou
+documentacao relevante:
+
+1. Atualizar este `CONTINUIDADE.md` no mesmo conjunto de mudancas.
+2. Revisar o diff e validar o que foi alterado.
+3. Criar um commit descritivo em portugues, apenas com os arquivos da tarefa.
+4. Enviar o commit ao GitHub na mesma sessao (`git push`).
+
+Nao incluir automaticamente `frontend/dist/`, lockfiles alterados por ambiente,
+notas soltas ou arquivos de outra frente de trabalho. Eles so entram mediante
+revisao explicita.
+
 > Documento de handoff para continuar o desenvolvimento em uma nova sessão.
 > Última atualização: 2026-07-17. Leia isto ANTES de qualquer mudança.
 >
@@ -349,7 +387,8 @@ chat · Upload como chips · Tela responsiva (gaveta mobile) · Tema claro/escur
 
 ## 7. Regras de trabalho (processo)
 
-- Commits em português, descritivos; push SEMPRE para `claude/new-session-ohbtj0`.
+- Commits em português, descritivos; atualizar este arquivo e enviar o commit ao
+  GitHub na branch de trabalho atual, na mesma sessão.
 - Validar antes de commitar: `node --check` em todo backend + bundle do
   frontend com esbuild (`npx esbuild frontend/src/App.jsx --jsx=automatic
   --bundle --external:react ...`) + `py_compile` em scripts Python embutidos.
