@@ -1,55 +1,55 @@
-import crypto from 'crypto';
+// Autenticação multi-usuário com Better Auth: e-mail/senha + GitHub + Google.
+// Substitui a antiga proteção por senha única (APP_PASSWORD). Usa o MESMO
+// PostgreSQL do app (Pool próprio para as tabelas user/session/account/verification).
+//
+// Variáveis de ambiente (ver .env.example):
+//   BETTER_AUTH_SECRET   segredo (>=32 chars) — `openssl rand -hex 32`
+//   BETTER_AUTH_URL      origem pública do app (dev: http://localhost:5173)
+//   FRONTEND_URL         origem do frontend (mesma, em dev)
+//   GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET
+//   GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET
+//   DATABASE_URL         conexão Postgres (mesma do app)
+import { betterAuth } from 'better-auth';
+import { fromNodeHeaders } from 'better-auth/node';
+import pg from 'pg';
 
-// Autenticação simples por senha única (APP_PASSWORD no .env).
-// - Sem APP_PASSWORD definida: autenticação DESLIGADA (uso local).
-// - Com APP_PASSWORD: todas as rotas /api exigem o cookie de sessão.
-// O token é stateless (HMAC com validade), então sobrevive a reinícios.
+const { Pool } = pg;
 
-const PASSWORD = process.env.APP_PASSWORD || '';
-const SECRET = process.env.SESSION_SECRET
-  ? Buffer.from(process.env.SESSION_SECRET)
-  : crypto.createHash('sha256').update('frederico-ai:' + PASSWORD).digest();
+export const auth = betterAuth({
+  database: new Pool({
+    connectionString:
+      process.env.DATABASE_URL || 'postgres://studio:studio@localhost:5432/studio',
+  }),
+  secret: process.env.BETTER_AUTH_SECRET,
+  // Origem pública onde o app é acessado: o navegador fala com /api/auth aqui e
+  // o Vite repassa ao backend. É a base dos callbacks OAuth registrados no
+  // GitHub/Google. Em produção, troque por https://SEU_DOMINIO no .env.
+  baseURL: process.env.BETTER_AUTH_URL || 'http://localhost:5173',
+  emailAndPassword: { enabled: true },
+  socialProviders: {
+    github: {
+      clientId: process.env.GITHUB_CLIENT_ID,
+      clientSecret: process.env.GITHUB_CLIENT_SECRET,
+    },
+    google: {
+      clientId: process.env.GOOGLE_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+    },
+  },
+  trustedOrigins: [process.env.FRONTEND_URL, process.env.BETTER_AUTH_URL].filter(Boolean),
+});
 
-export const authEnabled = () => PASSWORD.length > 0;
-
-function sign(exp) {
-  return crypto.createHmac('sha256', SECRET).update(String(exp)).digest('hex');
-}
-
-export function makeToken(days = 30) {
-  const exp = Date.now() + days * 86400000;
-  return `${exp}.${sign(exp)}`;
-}
-
-export function verifyToken(token) {
-  const [exp, sig] = String(token || '').split('.');
-  if (!exp || !sig || Number(exp) < Date.now()) return false;
-  const good = sign(exp);
-  return sig.length === good.length && crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(good));
-}
-
-export function getCookie(req, name) {
-  for (const part of String(req.headers.cookie || '').split(';')) {
-    const i = part.indexOf('=');
-    if (i > -1 && part.slice(0, i).trim() === name) return decodeURIComponent(part.slice(i + 1));
+// Middleware: exige uma sessão válida. Aplicado a todas as rotas /api exceto
+// /api/health e /api/auth/*. Coloca o id do usuário logado em req.userId
+// (usado na Fase 3 para o isolamento de dados por usuário).
+export async function requireAuth(req, res, next) {
+  try {
+    const session = await auth.api.getSession({ headers: fromNodeHeaders(req.headers) });
+    if (!session) return res.status(401).json({ error: 'Não autenticado. Faça login para continuar.' });
+    req.userId = session.user.id;
+    req.user = session.user;
+    next();
+  } catch {
+    return res.status(401).json({ error: 'Não autenticado. Faça login para continuar.' });
   }
-  return null;
 }
-
-export function passwordMatches(attempt) {
-  const a = Buffer.from(String(attempt || ''));
-  const b = Buffer.from(PASSWORD);
-  if (a.length !== b.length) { crypto.timingSafeEqual(b, b); return false; }
-  return crypto.timingSafeEqual(a, b);
-}
-
-// Proteção básica contra força bruta no login: 10 tentativas / 15 min por IP
-const attempts = new Map();
-export function loginRateLimited(ip) {
-  const nowMs = Date.now();
-  const e = attempts.get(ip);
-  if (!e || nowMs > e.reset) { attempts.set(ip, { count: 1, reset: nowMs + 15 * 60 * 1000 }); return false; }
-  e.count++;
-  return e.count > 10;
-}
-setInterval(() => { const t = Date.now(); for (const [k, v] of attempts) if (t > v.reset) attempts.delete(k); }, 60_000).unref();

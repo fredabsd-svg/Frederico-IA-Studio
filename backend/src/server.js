@@ -14,7 +14,8 @@ import { normalizeScheduleDay, normalizeScheduleHour, resolveScheduleTimeZone, s
 import { listMemories, addMemory, updateMemory, deleteMemory, deleteAllMemories, exportAll, reindexAll, getSettings, setSettings, looksSensitive, listMemorySuggestions, updateMemorySuggestion, approveMemorySuggestion, rejectMemorySuggestion, maybeReindexOnModelChange, loadSettings } from './memory/memoryService.js';
 import { startImport, importStatus } from './memory/indexer.js';
 import { workspaceFor, destroyConversation, insideBase, isConversationId, realInside, destroyAllSandboxes, loadPcFolders } from './sandbox.js';
-import { authEnabled, makeToken, verifyToken, getCookie, passwordMatches, loginRateLimited } from './auth.js';
+import { auth, requireAuth } from './auth.js';
+import { toNodeHandler } from 'better-auth/node';
 import { registerModelCatalog } from './modelCapabilities.js';
 import { runMigrations } from './migrate.js';
 
@@ -37,24 +38,20 @@ for (const method of ['get', 'post', 'put', 'delete', 'patch', 'all']) {
 // e segue — nunca derruba o servidor por causa de uma requisição.
 process.on('unhandledRejection', (err) => console.error('[unhandledRejection]', err));
 app.use(cors({ origin: process.env.FRONTEND_URL || '*' }));
+// ---- Autenticação (Better Auth: e-mail/senha + GitHub + Google) ----
+// O handler de /api/auth/* precisa do corpo CRU da requisição, então é montado
+// ANTES do express.json (senão o body é consumido e o login trava — armadilha
+// clássica). Ele cuida de login, cadastro, OAuth, sessão e logout.
+app.all('/api/auth/*', toNodeHandler(auth));
+
 app.use(express.json({ limit: '10mb' }));
 
-// ---- Autenticação (ativa somente quando APP_PASSWORD está definida) ----
-app.post('/api/login', (req, res) => {
-  if (!authEnabled()) return res.json({ ok: true, auth: false });
-  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress || '?';
-  if (loginRateLimited(ip)) return res.status(429).json({ error: 'Muitas tentativas. Aguarde 15 minutos.' });
-  if (!passwordMatches(req.body?.password)) return res.status(401).json({ error: 'Senha incorreta.' });
-  const secure = req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : '';
-  res.setHeader('Set-Cookie', `fred_session=${makeToken()}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${30 * 86400}${secure}`);
-  res.json({ ok: true });
-});
-
+// Todas as rotas /api exigem login, exceto a checagem de saúde e o próprio fluxo
+// de autenticação. requireAuth coloca o id do usuário logado em req.userId
+// (base do isolamento por usuário da Fase 3).
 app.use('/api', (req, res, next) => {
-  if (!authEnabled()) return next();
-  if (req.path === '/login' || req.path === '/health') return next();
-  if (verifyToken(getCookie(req, 'fred_session'))) return next();
-  res.status(401).json({ error: 'Não autenticado' });
+  if (req.path === '/health' || req.path.startsWith('/auth')) return next();
+  return requireAuth(req, res, next);
 });
 
 app.use('/api/conversations/:id', (req, res, next) => {
@@ -148,7 +145,7 @@ async function ensureConversation(id, model) {
   workspaceFor(id);
 }
 
-app.get('/api/health', (_, res) => res.json({ ok: true, name: 'Frederico AI Studio', auth: authEnabled(), scheduleTimeZone }));
+app.get('/api/health', (_, res) => res.json({ ok: true, name: 'Frederico AI Studio', auth: true, scheduleTimeZone }));
 
 // Lista os modelos disponíveis no provedor configurado (ex.: catálogo do
 // OpenRouter). Marca quais suportam "tools" (necessário p/ gerar arquivos).
