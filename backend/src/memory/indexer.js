@@ -3,6 +3,7 @@ import { db, now } from '../db.js';
 import { nanoid } from 'nanoid';
 import { embed } from './embeddings.js';
 import { getSettings, addMemory, addMemorySuggestion, findSimilar, looksSensitive } from './memoryService.js';
+import { getUserProvider } from '../userProvider.js';
 
 // Indexa conversas (chunks + resumo) e extrai fatos importantes para a
 // memória de longo prazo. Roda em segundo plano, sem atrasar as respostas.
@@ -70,10 +71,14 @@ export async function indexAfterReply(userId, conversationId) {
   // local/grátis, continua sendo salvo sempre.
   if (!s.auto_memory) return;
   if (s.economy_mode && msgs.length % 4 !== 0) return;
+  // BYOK: a extração de fatos (LLM) usa a chave do próprio usuário; sem chave,
+  // pula a extração (o chunk local acima, grátis, já foi salvo).
+  const provider = await getUserProvider(userId);
+  if (!provider.client) return;
   try {
     const recent = msgs.slice(-6).map(m => `${m.role === 'user' ? 'Usuário' : 'Assistente'}: ${m.content.slice(0, 700)}`).join('\n');
     const input = `Resumo atual da conversa: ${conv.summary_short || '(nenhum)'}\nTotal de mensagens: ${msgs.length}\n\nTrecho recente:\n${recent}`;
-    const completion = await client().chat.completions.create({
+    const completion = await provider.client.chat.completions.create({
       model: EXTRACT_MODEL(),
       messages: [{ role: 'system', content: EXTRACT_PROMPT }, { role: 'user', content: input }],
       temperature: 0
@@ -182,6 +187,7 @@ export function startImport(userId, fileName, buffer, scope = 'global') {
 
 export async function importConversations(userId, fileName, buffer, scope = 'global') {
   const targetScope = normalizeImportScope(scope);
+  const provider = await getUserProvider(userId);          // BYOK p/ extração de fatos
   const text = buffer.toString('utf8');
   const convs = parseImport(fileName, text).slice(0, 200);
   importStatus.total = convs.length;
@@ -207,8 +213,9 @@ export async function importConversations(userId, fileName, buffer, scope = 'glo
       }
     }
     // colhe fatos do começo da conversa importada (perfil, preferências...)
+    if (!provider.client) continue;                        // sem chave: só os chunks (grátis)
     try {
-      const completion = await client().chat.completions.create({
+      const completion = await provider.client.chat.completions.create({
         model: EXTRACT_MODEL(),
         messages: [{ role: 'system', content: EXTRACT_PROMPT }, { role: 'user', content: `Conversa importada "${conv.title}":\n${body.slice(0, 5000)}` }],
         temperature: 0

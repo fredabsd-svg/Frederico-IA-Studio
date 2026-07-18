@@ -18,6 +18,8 @@ import { auth, requireAuth } from './auth.js';
 import { toNodeHandler } from 'better-auth/node';
 import { registerModelCatalog } from './modelCapabilities.js';
 import { runMigrations } from './migrate.js';
+import { encryptSecret, decryptSecret, maskSecret } from './crypto.js';
+import { getUserProvider } from './userProvider.js';
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -452,6 +454,44 @@ app.get('/api/memories/import-status', (_, res) => res.json(importStatus));
 
 app.get('/api/memory-config', (_, res) => res.json(getSettings()));
 app.put('/api/memory-config', async (req, res) => res.json(await setSettings(req.body || {})));
+
+// ---- BYOK: provedor de IA por usuário (chave própria, cifrada) ----
+// GET nunca devolve a chave inteira — só uma máscara e o estado.
+app.get('/api/provider', async (req, res) => {
+  const row = await db.prepare('SELECT api_key_enc, base_url, model FROM user_settings WHERE user_id=?').get(req.userId);
+  let keyMask = '';
+  if (row?.api_key_enc) { const dec = decryptSecret(row.api_key_enc); keyMask = dec ? maskSecret(dec) : ''; }
+  const prov = await getUserProvider(req.userId);
+  res.json({ hasKey: prov.hasKey, source: prov.source, keyMask, base_url: row?.base_url || '', model: row?.model || '' });
+});
+
+// PUT salva/atualiza. apiKey ausente = mantém a atual; apiKey '' = remove.
+app.put('/api/provider', async (req, res) => {
+  const b = req.body || {};
+  try {
+    const existing = await db.prepare('SELECT api_key_enc FROM user_settings WHERE user_id=?').get(req.userId);
+    let api_key_enc = existing?.api_key_enc || null;
+    if (b.apiKey !== undefined) api_key_enc = String(b.apiKey).trim() ? encryptSecret(String(b.apiKey).trim()) : null;
+    const base_url = (b.base_url || '').trim() || null;
+    const model = (b.model || '').trim() || null;
+    const t = now();
+    await db.prepare(`INSERT INTO user_settings (user_id, api_key_enc, base_url, model, created_at, updated_at)
+      VALUES (?,?,?,?,?,?)
+      ON CONFLICT (user_id) DO UPDATE SET api_key_enc=excluded.api_key_enc, base_url=excluded.base_url, model=excluded.model, updated_at=excluded.updated_at`)
+      .run(req.userId, api_key_enc, base_url, model, t, t);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Não foi possível salvar. Verifique se a ENCRYPTION_KEY está configurada no servidor.' });
+  }
+});
+
+// POST testa a chave com uma chamada leve (lista de modelos).
+app.post('/api/provider/test', async (req, res) => {
+  const prov = await getUserProvider(req.userId);
+  if (!prov.client) return res.status(400).json({ ok: false, error: 'Nenhuma chave configurada.' });
+  try { await prov.client.models.list(); res.json({ ok: true }); }
+  catch (e) { res.json({ ok: false, error: friendlyApiError(e) }); }
+});
 
 // Rotas legadas (compatibilidade com versões antigas da interface)
 app.get('/api/memory', async (req, res) => {

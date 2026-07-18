@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { getUserProvider } from './userProvider.js';
 import fs from 'fs';
 import path from 'path';
 import { toolDefinitions, webToolDefinitions, imageToolDefinitions, runTool } from './tools.js';
@@ -618,7 +619,7 @@ export function friendlyApiError(err) {
   const status = err?.status || err?.response?.status;
   const raw = String(err?.message || '');
   if (err?.code === 'CONVERSATION_BUSY') return 'Esta conversa já está processando uma resposta. Aguarde terminar ou pare o processamento antes de enviar outra mensagem.';
-  if (status === 401) return 'Chave da API inválida ou expirada. Confira a DEEPSEEK_API_KEY no arquivo .env.';
+  if (status === 401) return 'Chave da API inválida ou expirada. Confira sua chave em Configurações → Provedor de IA.';
   if (status === 402) return 'Sem créditos no provedor (OpenRouter/DeepSeek). Adicione créditos na sua conta e tente de novo.';
   if (status === 429) return 'Limite de uso atingido (erro 429). Modelos GRATUITOS têm cota pequena e fila compartilhada — aguarde alguns minutos ou, melhor, escolha um modelo pago (ex.: DeepSeek Chat, que custa centavos).';
   // O provedor também responde 404 quando o modelo EXISTE mas não aceita
@@ -728,7 +729,9 @@ async function gate(control, onEvent) {
 }
 
 export async function runAgent({ userId, conversationId, userText, model, assistant, webSearch, effort, developer, onEvent, saveUserMessage = true, existingUserMessageId = null, executionBriefing = null, forceExecution = false, control: inheritedControl = null }) {
-  const chosenModel = model || assistant?.model || process.env.DEEPSEEK_MODEL || 'deepseek-chat';
+  const provider = await getUserProvider(userId);          // BYOK: chave do usuário
+  const client = provider.client;                          // sombreia o cliente global
+  const chosenModel = model || assistant?.model || provider.model;
   const chosenPrompt = promptFor(assistant);
   const eff = effortCfg(effort);
   const developerContext = developerContextFor(developer);
@@ -758,6 +761,16 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   const userMsgId = saveUserMessage || !existingUserMessageId
     ? await saveMessage(userId, conversationId, 'user', userText)
     : existingUserMessageId;
+
+  // BYOK: sem chave de API configurada, orienta a cadastrar e encerra.
+  if (!provider.hasKey) {
+    const finalText = 'Nenhuma chave de API configurada. Vá em **Configurações → Provedor de IA** e cadastre a sua chave (OpenRouter/DeepSeek) para começar a conversar.';
+    onEvent({ type: 'status', content: 'Chave de API não configurada' });
+    onEvent({ type: 'delta', content: finalText });
+    const assistantMessageId = await saveMessage(userId, conversationId, 'assistant', finalText);
+    onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId });
+    return { text: finalText, usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }, model: chosenModel, stopped: false };
+  }
 
   if (modelPlan.blocked) {
     const finalText = modelCompatibilityMessage(modelPlan);
@@ -1169,11 +1182,20 @@ export async function runAgent({ userId, conversationId, userText, model, assist
 
 // Orquestrador: aciona vários assistentes e um coordenador une as respostas
 export async function runOrchestrator({ userId, conversationId, userText, model, assistants = [], executor = null, webSearch = false, effort, developer, onEvent }) {
+  const provider = await getUserProvider(userId);            // BYOK
+  const client = provider.client;                            // sombreia o cliente global
   const control = acquireConversationControl(conversationId);
   try {
   const userMsgId = await saveMessage(userId, conversationId, 'user', userText);
   const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
-  const coordModel = model || process.env.DEEPSEEK_MODEL || 'deepseek-chat';
+  const coordModel = model || provider.model;
+  if (!provider.hasKey) {
+    const finalText = 'Nenhuma chave de API configurada. Vá em **Configurações → Provedor de IA** e cadastre a sua chave para usar o Modo Equipe.';
+    onEvent({ type: 'delta', content: finalText });
+    const assistantMessageId = await saveMessage(userId, conversationId, 'assistant', finalText);
+    onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId });
+    return { text: finalText, usage, model: coordModel };
+  }
   const lowSignalTurn = isLowSignalTurn(userText);
   const requirement = detectToolRequirement({
     userText,
