@@ -1,5 +1,13 @@
 # PRODUÇÃO (VPS): docker compose -f docker-compose.prod.yml up -d --build
-# Requer no .env: DEEPSEEK_API_KEY, APP_PASSWORD e DOMAIN (ex.: app.seusite.com.br)
+# Requer no .env (veja VPS-DEPLOY.md):
+#   DOMAIN=seu.dominio.com.br
+#   BETTER_AUTH_URL=https://seu.dominio.com.br
+#   BETTER_AUTH_SECRET=<openssl rand -hex 32>
+#   ENCRYPTION_KEY=<openssl rand -hex 32>
+#   DEEPSEEK_API_KEY / DEEPSEEK_BASE_URL / DEEPSEEK_MODEL  (chave do servidor, opcional se BYOK)
+#   ALLOW_SHARED_KEY=false  (recomendado num site público: cada usuário usa a própria chave)
+#   GITHUB_/GOOGLE_ OAuth (opcional; e-mail+senha funciona sem eles)
+# O acesso agora é por LOGIN DE USUÁRIO (Better Auth) — não existe mais APP_PASSWORD.
 services:
   sandbox-image:
     build: ./sandbox
@@ -33,6 +41,9 @@ services:
       - HOST_WORKSPACE_ROOT=${PWD}/workspaces
       - DATA_DIR=/app/data
       - DATABASE_URL=postgres://studio:studio@postgres:5432/studio
+      # Origem pública do app: base dos cookies de sessão e dos callbacks OAuth.
+      # Se não estiver no .env, é derivada do DOMAIN (https://SEU_DOMINIO).
+      - BETTER_AUTH_URL=${BETTER_AUTH_URL:-https://${DOMAIN}}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./workspaces:/app/workspaces
