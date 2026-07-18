@@ -49,30 +49,119 @@ function stripHtml(html) {
     .replace(/\s+/g, ' ').trim();
 }
 
+// DuckDuckGo entrega os links reais embrulhados num redirecionador
+// (//duckduckgo.com/l/?uddg=<url-codificada>). Extrai a URL final e garante o
+// esquema https quando o href vem sem protocolo (//host/...).
+export function decodeDuckUrl(href) {
+  let url = String(href || '').trim();
+  const uddg = /[?&]uddg=([^&]+)/.exec(url);
+  if (uddg) { try { url = decodeURIComponent(uddg[1]); } catch {} }
+  if (url.startsWith('//')) url = `https:${url}`;
+  return url;
+}
+
+// Extrai âncoras <a> cuja classe contém `className`, SEM depender da ordem dos
+// atributos (o href pode vir antes ou depois da class no HTML real).
+function extractAnchors(html, className) {
+  const out = [];
+  const aRe = /<a\b([^>]*)>([\s\S]*?)<\/a>/gi;
+  const classRe = new RegExp(`class\\s*=\\s*['"][^'"]*\\b${className}\\b[^'"]*['"]`, 'i');
+  let m;
+  while ((m = aRe.exec(html))) {
+    if (!classRe.test(m[1])) continue;
+    const href = /href\s*=\s*['"]([^'"]+)['"]/i.exec(m[1])?.[1];
+    out.push({ href: href || '', inner: m[2] });
+  }
+  return out;
+}
+
+// Extrai o texto de células <td> cuja classe contém `className`.
+function extractTdText(html, className) {
+  const out = [];
+  const re = /<td\b([^>]*)>([\s\S]*?)<\/td>/gi;
+  const classRe = new RegExp(`class\\s*=\\s*['"][^'"]*\\b${className}\\b[^'"]*['"]`, 'i');
+  let m;
+  while ((m = re.exec(html))) if (classRe.test(m[1])) out.push(stripHtml(m[2]));
+  return out;
+}
+
+// Emparelha links e resumos pela ordem de aparição (índice preservado mesmo
+// quando um link é descartado) e devolve no máximo `limit` resultados válidos.
+function pairResults(links, snippets, limit) {
+  const results = [];
+  for (let i = 0; i < links.length && results.length < limit; i++) {
+    const url = decodeDuckUrl(links[i].href);
+    const title = stripHtml(links[i].inner);
+    if (title && /^https?:\/\//i.test(url)) results.push({ title, url, snippet: snippets[i] || '' });
+  }
+  return results;
+}
+
+// Parser do HTML "normal" do DuckDuckGo (html.duckduckgo.com): links em
+// result__a, resumos em result__snippet.
+export function parseDuckHtml(html, limit = 6) {
+  const links = extractAnchors(html, 'result__a');
+  const snippets = extractAnchors(html, 'result__snippet').map(a => stripHtml(a.inner));
+  return pairResults(links, snippets, limit);
+}
+
+// Parser da versão "lite" (lite.duckduckgo.com/lite) — layout de tabela, mais
+// estável de raspar: links em result-link, resumos em células result-snippet.
+export function parseDuckLite(html, limit = 6) {
+  const links = extractAnchors(html, 'result-link');
+  const snippets = extractTdText(html, 'result-snippet');
+  return pairResults(links, snippets, limit);
+}
+
+// POST form-encoded imita o formulário do site (mais confiável que GET nesses
+// endpoints) e fixa a região Brasil/Português (kl=br-pt) para resultados locais.
+function duckFetch(endpoint, query, signal) {
+  return fetchWithTimeout(endpoint, 15000, {
+    method: 'POST',
+    signal,
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: `q=${encodeURIComponent(query)}&kl=br-pt`
+  });
+}
+
 async function webSearch(query, options = {}) {
+  const q = String(query || '').trim();
+  if (!q) return { engine: 'nenhum', results: [], erro: 'Consulta de pesquisa vazia.' };
   // Com chaves do Google configuradas, usa a API oficial (Custom Search).
   const gKey = process.env.GOOGLE_API_KEY, gCx = process.env.GOOGLE_CSE_ID;
   if (gKey && gCx) {
-    const url = `https://www.googleapis.com/customsearch/v1?key=${encodeURIComponent(gKey)}&cx=${encodeURIComponent(gCx)}&num=6&q=${encodeURIComponent(query)}`;
-    const r = await fetchWithTimeout(url, 15000, { signal: options.signal });
-    if (!r.ok) throw new Error(`Google API: HTTP ${r.status}`);
-    const data = await r.json();
-    return { engine: 'google', results: (data.items || []).map(i => ({ title: i.title, url: i.link, snippet: i.snippet })) };
+    try {
+      const url = `https://www.googleapis.com/customsearch/v1?key=${encodeURIComponent(gKey)}&cx=${encodeURIComponent(gCx)}&num=6&q=${encodeURIComponent(q)}`;
+      const r = await fetchWithTimeout(url, 15000, { signal: options.signal });
+      if (r.ok) {
+        const data = await r.json();
+        const results = (data.items || []).map(i => ({ title: i.title, url: i.link, snippet: i.snippet }));
+        if (results.length) return { engine: 'google', results };
+      }
+    } catch { /* cai para a busca gratuita abaixo */ }
   }
-  // Sem chaves: DuckDuckGo (não exige cadastro)
-  const r = await fetchWithTimeout(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, 15000, { signal: options.signal });
-  if (!r.ok) throw new Error(`Busca: HTTP ${r.status}`);
-  const html = await r.text();
-  const results = [];
-  const re = /<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]*?(?:<a[^>]*class="result__snippet"[^>]*>([\s\S]*?)<\/a>)?/g;
-  let m;
-  while ((m = re.exec(html)) && results.length < 6) {
-    let url = m[1];
-    const uddg = /[?&]uddg=([^&]+)/.exec(url);
-    if (uddg) url = decodeURIComponent(uddg[1]);
-    results.push({ title: stripHtml(m[2]), url, snippet: stripHtml(m[3] || '') });
+  // Sem chaves (ou Google falhou): DuckDuckGo gratuito, com dois endpoints de
+  // reserva. Não exige cadastro.
+  const attempts = [
+    { engine: 'duckduckgo', url: 'https://html.duckduckgo.com/html/', parse: parseDuckHtml },
+    { engine: 'duckduckgo-lite', url: 'https://lite.duckduckgo.com/lite/', parse: parseDuckLite }
+  ];
+  const problemas = [];
+  for (const a of attempts) {
+    try {
+      const r = await duckFetch(a.url, q, options.signal);
+      if (!r.ok) { problemas.push(`${a.engine} HTTP ${r.status}`); continue; }
+      const results = a.parse(await r.text());
+      if (results.length) return { engine: a.engine, results };
+      problemas.push(`${a.engine}: 0 resultados`);
+    } catch (e) { problemas.push(`${a.engine}: ${e.message}`); }
   }
-  return { engine: 'duckduckgo', results };
+  return {
+    engine: 'nenhum',
+    results: [],
+    erro: 'A pesquisa gratuita não retornou resultados agora. Tente reformular os termos ou tente de novo em instantes.',
+    detalhes: problemas
+  };
 }
 
 // Bloqueia endereços internos/loopback/link-local para evitar SSRF (o backend
