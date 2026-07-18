@@ -4,6 +4,7 @@ import { nanoid } from 'nanoid';
 import { embed } from './embeddings.js';
 import { getSettings, addMemory, addMemorySuggestion, findSimilar, looksSensitive } from './memoryService.js';
 import { getUserProvider } from '../userProvider.js';
+import { sanitizeToolProtocolText } from '../toolProtocol.js';
 
 // Indexa conversas (chunks + resumo) e extrai fatos importantes para a
 // memória de longo prazo. Roda em segundo plano, sem atrasar as respostas.
@@ -52,7 +53,13 @@ export async function indexAfterReply(userId, conversationId) {
   if (!s.memory_enabled) return;
   const conv = await db.prepare('SELECT * FROM conversations WHERE id=? AND user_id=?').get(conversationId, userId);
   if (!conv) return;
-  const msgs = await db.prepare('SELECT role, content, created_at FROM messages WHERE conversation_id=? ORDER BY created_at ASC, seq ASC').all(conversationId);
+  const rawMsgs = await db.prepare('SELECT role, content, created_at FROM messages WHERE conversation_id=? ORDER BY created_at ASC, seq ASC').all(conversationId);
+  const msgs = rawMsgs.map(message => ({
+    ...message,
+    content: message.role === 'assistant'
+      ? sanitizeToolProtocolText(message.content)
+      : message.content
+  }));
   if (msgs.length < 2) return;
 
   // 1) Chunk do último par pergunta/resposta (para busca semântica futura)

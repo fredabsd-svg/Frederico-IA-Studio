@@ -61,6 +61,61 @@ sem chave → orienta ir em "Provedor de IA". Rotas `GET/PUT /api/provider` e
 
 Leia primeiro o estado de transformacao SaaS na secao seguinte.
 
+- **Acesso movel por Tailscale corrigido:** o print mostrava o Chrome do celular
+  em `localhost:5173`; nesse aparelho, localhost aponta para o proprio celular e
+  a conexao e recusada. O Tailscale Serve estava ativo e o defeito adicional era
+  `BETTER_AUTH_URL=http://localhost:5173`, que gerava callback OAuth para o PC.
+  A instalacao local agora usa a URL HTTPS do Serve como base canonica. O login
+  social envia um callback final absoluto para a mesma origem em que foi iniciado,
+  evitando voltar acidentalmente para localhost. README e `.env.example`
+  documentam a configuracao e os callbacks de GitHub/Google. Validacao: pagina
+  abriu pela URL HTTPS do Tailscale, callback do GitHub passou a usar o host
+  `.ts.net`, 7 testes de frontend passaram, build Vite concluiu e `/api/health`
+  respondeu normalmente.
+- **Correcao critica de chamadas de ferramentas e downloads:** o PDF
+  `Frederico AI Studio.pdf` mostrou o Nemotron devolvendo uma chamada
+  `run_python` inteira como texto (`<tool_call>...codigo...</tool_call>`). O
+  frontend exibiu esse protocolo como resposta, a ferramenta nunca foi
+  executada e nenhum DOCX foi criado. A causa nao era apenas visual: alguns
+  provedores/modelos emitem uma imitacao textual quando deveriam preencher
+  `delta.tool_calls`.
+- **Adaptador defensivo no streaming:** `backend/src/toolProtocol.js` agora
+  reconhece o formato textual XML/JSON, inclusive quando o marcador chega
+  dividido entre varios fragmentos. O protocolo e ocultado antes de chegar a
+  tela, nomes de ferramentas sao conferidos contra a lista realmente oferecida
+  e chamadas validas sao convertidas em chamadas estruturadas. Formatos
+  incompletos ou ferramentas desconhecidas nao sao executados; ha uma tentativa
+  forcada pelo protocolo nativo e depois uma falha curta com a acao Reenviar.
+- **Entrega de arquivo virou criterio de sucesso:** pedidos de DOCX, XLSX, PDF
+  ou outro arquivo ficam como execucao incompleta quando nenhum arquivo real
+  aparece em `/workspace/outputs`, mesmo que o modelo nao tenha escrito um
+  caminho. Arquivo existente gera cartao de download; resposta vazia com
+  arquivo recebe uma conclusao curta. O frontend recebe `execution_failed`,
+  marca a resposta e, ao usar Reenviar, remove do banco a tentativa quebrada,
+  seus arquivos e o contexto de memoria derivado antes de repetir o pedido.
+- **Prompts revisados:** todos os assistentes recebem um contrato central de
+  execucao e experiencia: ferramenta so pelo protocolo nativo, nada de codigo,
+  XML, argumentos ou promessas repetidas no chat, conclusao pelo resultado e
+  falha em linguagem comum. O inventario enorme do sandbox so entra em consultas
+  sobre ambiente ou no modo desenvolvedor. O assistente `Documentos
+  profissionais` ganhou prompt versionado `2026-07-17-v2`, orientado a entregar,
+  validar e anexar o arquivo; prompts personalizados pelo usuario sao
+  preservados.
+- **Memoria e historico protegidos:** respostas antigas com protocolo textual
+  sao saneadas ao carregar a conversa, montar contexto, indexar memoria e
+  exportar PDF/DOCX. Isso evita que o erro reapareca por contaminacao do
+  historico. As mensagens originais continuam no banco ate o usuario reenviar
+  ou editar, evitando apagar dados sem consentimento.
+- **OpenRouter:** chamadas com ferramentas exigem provedores que aceitem os
+  parametros solicitados (`require_parameters`). A ordenacao fixa por
+  `throughput`, que podia preferir um endpoint menos confiavel para ferramentas,
+  foi removida. `OPENROUTER_PROVIDER_SORT` continua disponivel como escolha
+  explicita.
+- **Validacao desta correcao:** 51 testes do backend e 4 testes do parser SSE
+  passaram nos containers reais (55 no total), alem do build Vite de producao.
+  O prompt v2 foi confirmado no PostgreSQL, `/api/health` ficou saudavel e o
+  frontend respondeu HTTP 200. O teste visual automatizado chegou a tela de
+  login; o fluxo autenticado nao foi executado com uma conta artificial.
 - **Controles de execucao e pesquisa web na main:** o PR #4 integrou o commit
   `d242c23`. Pausar, continuar e parar agora controlam a execucao real; parar
   tambem cancela ferramentas em andamento, e a pesquisa web filtra URLs

@@ -4,6 +4,7 @@
 import React, { useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { signIn, signUp, traduzErroAuth } from './authClient.js';
+import { callbackURLForOrigin } from './authUrls.js';
 
 export function LoginScreen() {
   const [mode, setMode] = useState('login'); // 'login' | 'signup'
@@ -39,7 +40,8 @@ export function LoginScreen() {
     setSocial(provider);
     try {
       // Redireciona para o GitHub/Google e volta para a raiz já logado.
-      await signIn.social({ provider, callbackURL: '/' });
+      const callbackURL = callbackURLForOrigin(window.location.origin);
+      await signIn.social({ provider, callbackURL });
     } catch {
       setSocial('');
       setError('Não foi possível iniciar o login social.');

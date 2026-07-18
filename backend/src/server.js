@@ -20,6 +20,7 @@ import { registerModelCatalog } from './modelCapabilities.js';
 import { runMigrations } from './migrate.js';
 import { encryptSecret, decryptSecret, maskSecret } from './crypto.js';
 import { getUserProvider } from './userProvider.js';
+import { sanitizeToolProtocolText } from './toolProtocol.js';
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -73,6 +74,10 @@ app.use('/api/conversations/:id', (req, res, next) => {
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 
 function safeParse(s, fallback) { try { return JSON.parse(s); } catch { return fallback; } }
+function looksLikeFailedAssistantReply(content) {
+  return /(?:arquivo[^.\n]{0,100}não foi (?:encontrado|gerado)|não há download disponível|não consegui (?:concluir|executar)|execução solicitada não foi concluída|nenhum resultado verificável foi produzido)/i
+    .test(String(content || ''));
+}
 async function loadAssistant(userId, id) {
   const a = id && await db.prepare('SELECT * FROM assistants WHERE id=? AND user_id=?').get(id, userId);
   if (!a) return null;
@@ -96,7 +101,7 @@ async function seedAssistants(userId) {
 // Assistente "Documentos profissionais" — traz o guia de design de Word (Word
 // Design) traduzido para python-docx (que já roda no sandbox). Criado UMA vez,
 // mesmo em bancos que já têm assistentes (guardado por uma flag em settings).
-const DOCPRO_PROMPT = `Você é um especialista em criar documentos Word (.docx) com diagramação PROFISSIONAL, prontos para enviar a clientes. Gere os documentos com a biblioteca python-docx (já instalada no sandbox), recorrendo ao XML (oxml) quando precisar de bordas de parágrafo, sombreamento de célula, cabeçalho/rodapé e numeração de página. Salve o arquivo final em outputs/.
+const DOCPRO_PROMPT_LEGACY = `Você é um especialista em criar documentos Word (.docx) com diagramação PROFISSIONAL, prontos para enviar a clientes. Gere os documentos com a biblioteca python-docx (já instalada no sandbox), recorrendo ao XML (oxml) quando precisar de bordas de parágrafo, sombreamento de célula, cabeçalho/rodapé e numeração de página. Salve o arquivo final em outputs/.
 
 SISTEMA DE DESIGN (padrão; adapte à marca do cliente quando houver):
 - Fonte: uma única família (Arial ou Calibri) em todo o documento.
@@ -118,16 +123,42 @@ REGISTRO POR TIPO: relatório/proposta = design forte (capa, KPIs, callouts, cor
 
 FLUXO OBRIGATÓRIO: depois de gerar o .docx, converta para PDF com "soffice --headless --convert-to pdf --outdir outputs outputs/arquivo.docx" para conferir que a capa ficou equilibrada e que nenhuma tabela vazou da margem; ajuste se necessário. Entregue o .docx (e o PDF, quando útil) em outputs/. Responda em português do Brasil.`;
 
+const DOCPRO_PROMPT = `Você é o especialista em documentos profissionais do Frederico AI Studio. Seu trabalho é ENTREGAR o documento pronto, não ensinar o usuário a programá-lo.
+
+FLUXO OBRIGATÓRIO
+1. Entenda o objetivo, o público e os dados disponíveis. Quando a pesquisa web estiver ativa e o pedido exigir dados atuais, pesquise, compare fontes e não invente informações ausentes.
+2. Gere o arquivo real com uma chamada nativa de run_python. Para Word, use python-docx e XML apenas quando necessário. Nunca mostre o código, os argumentos da ferramenta ou marcações como <tool_call> no chat.
+3. Salve todo arquivo final em /workspace/outputs com nome claro. Para DOCX, converta uma cópia para PDF com LibreOffice e use essa renderização para conferir páginas, margens, tabelas, cabeçalhos e rodapés.
+4. Corrija problemas encontrados e confirme que o arquivo abre. Só então conclua.
+5. Na resposta final, informe em poucas frases o que foi entregue e qualquer limitação importante. O app exibirá os cartões de download; não escreva caminhos internos nem links inventados.
+
+PADRÃO VISUAL
+- Use uma única família tipográfica legível, hierarquia nítida e margens de aproximadamente 2 cm.
+- Adapte a paleta à marca quando houver. Sem marca, use azul-marinho, azul de apoio, cinza-escuro no corpo, fundos suaves e bordas discretas.
+- Relatórios e propostas: capa equilibrada, títulos consistentes, sumário executivo quando útil, tabelas profissionais e destaques com moderação.
+- Contratos, atas e documentos registráveis: estilo sóbrio, numeração rígida, texto bem espaçado e ornamentação mínima.
+- Tabelas devem caber na largura útil, repetir o cabeçalho ao quebrar página, alinhar números à direita e evitar bordas verticais pesadas.
+- Cabeçalho e rodapé começam depois da capa; inclua Página X de Y quando o formato comportar.
+- Não use linhas em branco como técnica de espaçamento, não deixe títulos órfãos e não entregue conteúdo cortado ou tabela vazando da margem.
+
+Escreva em português do Brasil, com precisão e linguagem adequada ao público do documento.`;
+
+// Semeadura POR USUÁRIO (multi-tenant). Cria o assistente "Documentos
+// profissionais" deste usuário com o prompt atual; se ele já existe mas ainda
+// tem o prompt padrão ANTIGO (LEGACY), atualiza para o novo — sem tocar em
+// versões personalizadas pelo usuário. A antiga flag global
+// (settings.docpro_prompt_version) foi removida: o gating agora é por usuário.
 async function seedDocProAssistant(userId) {
   try {
-    // Checagem por usuário: existe o assistente "Documentos profissionais" DESTE
-    // usuário? (não usamos mais a flag global settings.seeded_docpro)
-    const exists = await db.prepare('SELECT id FROM assistants WHERE name=? AND user_id=?').get('Documentos profissionais', userId);
+    const exists = await db.prepare('SELECT id,system_prompt FROM assistants WHERE name=? AND user_id=?').get('Documentos profissionais', userId);
     if (!exists) {
       const defaultModel = process.env.DEEPSEEK_MODEL || 'deepseek/deepseek-chat';
       const t = now();
       await db.prepare('INSERT INTO assistants (id,user_id,name,emoji,model,system_prompt,tools,personality,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
         .run(nanoid(), userId, 'Documentos profissionais', 'file-pen-line', defaultModel, DOCPRO_PROMPT, JSON.stringify([]), JSON.stringify({ form: 60, det: 60, criat: 30 }), t, t);
+    } else if (!String(exists.system_prompt || '').trim() || exists.system_prompt === DOCPRO_PROMPT_LEGACY) {
+      await db.prepare('UPDATE assistants SET system_prompt=?, updated_at=? WHERE id=? AND user_id=?')
+        .run(DOCPRO_PROMPT, now(), exists.id, userId);
     }
   } catch (e) { console.error('[seed docpro]', e.message); }
 }
@@ -589,7 +620,15 @@ app.get('/api/conversations/:id', async (req, res) => {
   for (const f of await db.prepare('SELECT id,name,path,size,message_id FROM files WHERE conversation_id=? AND message_id IS NOT NULL').all(req.params.id)) {
     (byMsg[f.message_id] ||= []).push(f);
   }
-  messages.forEach(m => {
+  messages.forEach((m, index) => {
+    if (m.role === 'assistant') {
+      m.content = sanitizeToolProtocolText(m.content);
+      if (looksLikeFailedAssistantReply(m.content)) {
+        const previousUser = [...messages.slice(0, index)].reverse().find(item => item.role === 'user');
+        m.failed = true;
+        m.retryText = previousUser?.content || '';
+      }
+    }
     m.files = byMsg[m.id] || [];
     if (m.memory_meta) {
       try { m.memory = JSON.parse(m.memory_meta); } catch {}
@@ -832,7 +871,13 @@ app.post('/api/conversations/:id/export', async (req, res) => {
     const format = req.body?.format === 'docx' ? 'docx' : 'pdf';
     const conv = await db.prepare('SELECT * FROM conversations WHERE id=? AND user_id=?').get(req.params.id, req.userId);
     if (!conv) return res.status(404).json({ error: 'Não encontrado' });
-  const messages = await db.prepare('SELECT role, content, created_at FROM messages WHERE conversation_id=? ORDER BY created_at ASC, seq ASC').all(req.params.id);
+    const messages = (await db.prepare('SELECT role, content, created_at FROM messages WHERE conversation_id=? ORDER BY created_at ASC, seq ASC').all(req.params.id))
+      .map(message => ({
+        ...message,
+        content: message.role === 'assistant'
+          ? sanitizeToolProtocolText(message.content)
+          : message.content
+      }));
     if (!messages.length) return res.status(400).json({ error: 'A conversa ainda não tem mensagens.' });
     const ws = workspaceFor(req.params.id);
     const jsonPath = path.join(ws.base, '.export.json');
@@ -988,6 +1033,10 @@ app.post('/api/conversations/:id/chat', async (req, res) => {
     } else {
       const assistant = await loadAssistant(req.userId, req.body?.assistantId);
       result = await runAgent({ userId: req.userId, conversationId: req.params.id, userText: text, model: req.body?.model, assistant, webSearch: !!req.body?.webSearch, effort: req.body?.effort, developer: req.body?.developer, onEvent: send });
+    }
+    const chatOutcome = classifyTaskResult(result);
+    if (chatOutcome.status === 'error') {
+      send({ type: 'execution_failed', content: chatOutcome.error });
     }
     // Registra o consumo de tokens para o painel de análises
     if (result?.usage) {
