@@ -5,7 +5,7 @@
 import React, { useState } from 'react';
 import {
   Sparkles, Bot, FileSpreadsheet, FileText, Building2, Search, Brain,
-  ArrowRight, Check, ShieldCheck, KeyRound, Lock, Download
+  ArrowRight, Check, ShieldCheck, KeyRound, Lock, Download, Cpu, BadgeCheck
 } from 'lucide-react';
 import { LoginScreen } from './LoginScreen.jsx';
 
@@ -76,6 +76,33 @@ export default function Landing() {
               <span className="fi"><FileSpreadsheet size={18} /></span>
               <span><b>DRE_2025.xlsx</b><small>Excel · 24 KB</small></span>
               <span className="dl"><Download size={13} /> Baixar</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Modelo de verdade — transparência (o que mais importa para este projeto) */}
+      <section className="lpReal">
+        <div className="lpRealInner">
+          <span className="lpKicker"><BadgeCheck size={15} /> Transparência total</span>
+          <h2 className="lpSectionTitle">O modelo de verdade — sem maquiagem</h2>
+          <p className="lpSectionSub">
+            Por aí é comum receber uma versão limitada — ou até algo que nem é o modelo prometido.
+            Aqui não. Você usa a sua própria chave e escolhe o modelo; o Frederico AI Studio envia
+            o seu pedido <b>direto ao provedor</b>, com o modelo <b>exato</b> que você escolheu.
+          </p>
+          <div className="lpRealPoints">
+            <div className="lpRealPoint">
+              <span className="ic"><KeyRound size={20} /></span>
+              <div><b>Sua chave, sua conta</b><span>Você fala direto com o provedor de IA. Sem intermediário escondido no meio do caminho.</span></div>
+            </div>
+            <div className="lpRealPoint">
+              <span className="ic"><Cpu size={20} /></span>
+              <div><b>O modelo que você escolheu</b><span>É ele que responde — sem troca por baixo dos panos por um menor ou mais barato.</span></div>
+            </div>
+            <div className="lpRealPoint">
+              <span className="ic"><Check size={20} /></span>
+              <div><b>Sem cortes disfarçados</b><span>O app é uma ponte fina até o modelo, não uma camada que limita ou "maquia" a resposta.</span></div>
             </div>
           </div>
         </div>
