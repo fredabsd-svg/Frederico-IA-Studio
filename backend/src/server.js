@@ -175,6 +175,36 @@ async function ensureConversation(userId, id, model) {
   return db.prepare('SELECT * FROM conversations WHERE id=? AND user_id=?').get(id, userId);
 }
 
+// ---- Limite diário de mensagens por usuário (proteção numa SaaS) ----
+// RATE_MSGS_PER_DAY = 0 (padrão) → sem limite (bom para instância pessoal).
+// > 0 → cada usuário pode enviar no máximo N mensagens por dia. Registrado em
+// usage_daily (contador por usuário e por dia, no fuso do app).
+const RATE_MSGS_PER_DAY = Math.max(0, Number(process.env.RATE_MSGS_PER_DAY || 0));
+
+// Contabiliza uma mensagem do usuário no dia de hoje e devolve o total já usado.
+// Faz UPSERT atômico (INSERT ... ON CONFLICT ... RETURNING) para não perder
+// contagem em envios simultâneos.
+async function bumpDailyUsage(userId) {
+  const day = scheduleDateKey(new Date(), scheduleTimeZone);
+  const row = await db.prepare(
+    `INSERT INTO usage_daily (user_id, day, msgs) VALUES (?,?,1)
+     ON CONFLICT (user_id, day) DO UPDATE SET msgs = usage_daily.msgs + 1
+     RETURNING msgs`
+  ).get(userId, day);
+  return Number(row?.msgs || 0);
+}
+
+// Aplica o limite ANTES de rodar o agente. Se estourar, devolve a mensagem de
+// erro amigável (string); caso contrário devolve null (pode prosseguir).
+async function enforceDailyLimit(userId) {
+  if (!RATE_MSGS_PER_DAY) return null; // sem limite configurado
+  const used = await bumpDailyUsage(userId);
+  if (used > RATE_MSGS_PER_DAY) {
+    return `Você atingiu o limite de ${RATE_MSGS_PER_DAY} mensagens por dia deste plano. O contador zera amanhã. Se precisar de mais, fale com o administrador.`;
+  }
+  return null;
+}
+
 app.get('/api/health', (_, res) => res.json({ ok: true, name: 'Frederico AI Studio', auth: true, scheduleTimeZone }));
 
 // Lista os modelos disponíveis no provedor configurado (ex.: catálogo do
@@ -685,7 +715,11 @@ app.post('/api/tasks', async (req, res) => {
   if (!convId) return res.status(400).json({ error: 'Conversa não informada.' });
   if (!isConversationId(convId)) return res.status(400).json({ error: 'Identificador de conversa inválido.' });
   if (isConversationActive(convId)) return res.status(409).json({ error: 'Esta conversa já está processando uma resposta. Aguarde terminar ou pare o processamento antes de criar uma tarefa nela.' });
-  await ensureConversation(req.userId, convId, req.body?.model);
+  // Escopo por usuário: só cria a tarefa se a conversa for do próprio usuário
+  // (conversa de outro → 404, nunca "adotada").
+  if (!await ensureConversation(req.userId, convId, req.body?.model)) return res.status(404).json({ error: 'Não encontrado' });
+  const limitMsg = await enforceDailyLimit(req.userId);
+  if (limitMsg) return res.status(429).json({ error: limitMsg });
   const id = nanoid();
   await db.prepare('INSERT INTO tasks (id,user_id,conversation_id,assistant_id,model,web_search,prompt,status,created_at) VALUES (?,?,?,?,?,?,?,?,?)')
     .run(id, req.userId, convId, req.body?.assistantId || null, req.body?.model || null, req.body?.webSearch ? 1 : 0, message, 'queued', now());
@@ -907,6 +941,8 @@ app.post('/api/conversations/:id/chat', async (req, res) => {
     return res.status(409).json({ error: 'Esta conversa já está processando uma resposta. Aguarde terminar ou pare o processamento antes de enviar outra mensagem.' });
   }
   if (!await ensureConversation(req.userId, req.params.id, req.body?.model)) return res.status(404).json({ error: 'Não encontrado' });
+  const limitMsg = await enforceDailyLimit(req.userId);
+  if (limitMsg) return res.status(429).json({ error: limitMsg });
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');

@@ -222,7 +222,7 @@ export function materializeTextOutput(conversationId, text) {
 
 // Avisa o modelo sobre as pastas reais do PC liberadas pelo usuário
 function pcFoldersNote(sandboxOptions = {}) {
-  const mounts = pcFolderMounts();
+  const mounts = pcFolderMounts(sandboxOptions.userId);
   if (!mounts.length) return null;
   const onlyFolderId = sandboxOptions.readOnlyPc ? null : (sandboxOptions.writablePcFolderId ? String(sandboxOptions.writablePcFolderId) : null);
   const list = mounts.map(m => {
@@ -435,12 +435,12 @@ function toolsFor(assistant) {
   return all.filter(t => allowed.includes(t.function.name));
 }
 
-function developerContextFor(request) {
+function developerContextFor(request, userId) {
   if (!request || typeof request !== 'object') return null;
   const mode = ['plan', 'build', 'review'].includes(request.mode) ? request.mode : null;
   if (!mode) return null;
   const projectId = String(request.projectId || '');
-  const project = projectId ? pcFolderMounts().find(folder => folder.id === projectId) : null;
+  const project = projectId ? pcFolderMounts(userId).find(folder => folder.id === projectId) : null;
   const readOnlyProject = mode !== 'build' || !project?.writable;
   const projectNote = project
     ? `Projeto selecionado: "${project.label}" em ${project.target}. ${readOnlyProject ? 'Ele está montado somente para leitura nesta tarefa.' : 'Somente esta pasta do PC está autorizada para escrita nesta tarefa.'}`
@@ -734,9 +734,11 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   const chosenModel = model || assistant?.model || provider.model;
   const chosenPrompt = promptFor(assistant);
   const eff = effortCfg(effort);
-  const developerContext = developerContextFor(developer);
+  const developerContext = developerContextFor(developer, userId);
   const lowSignalTurn = isLowSignalTurn(userText);
-  const sandboxOptions = developerContext?.sandboxOptions || {};
+  // userId viaja junto: o sandbox monta só as pastas do PC DESTE usuário
+  // (isolamento multi-tenant) e aplica o limite de sandboxes por usuário.
+  const sandboxOptions = { ...(developerContext?.sandboxOptions || {}), userId };
   const webSearchActive = Boolean(webSearch && !lowSignalTurn);
   let requestedTools = toolsFor(assistant);
   if (developerContext?.readOnlyProject) requestedTools = requestedTools.filter(tool => !['write_file', 'zip_outputs', 'generate_image'].includes(tool.function.name));

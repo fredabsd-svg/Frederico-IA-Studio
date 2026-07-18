@@ -221,7 +221,7 @@ export function workspaceRelativePath(userPath) {
 
 // Arquivos do PC so existem dentro da sandbox, em /mnt/pc/<pasta-liberada>.
 // Normalizar antes de comparar impede que ".." saia de uma pasta autorizada.
-export function resolveMountedPcPath(userPath, mounts = pcFolderMounts()) {
+export function resolveMountedPcPath(userPath, mounts = []) {
   const raw = String(userPath || '').trim().replaceAll('\\', '/');
   const normalized = path.posix.normalize(raw.startsWith('/') ? raw : `/${raw}`);
   return mounts.some(mount => normalized === mount.target || normalized.startsWith(`${mount.target}/`))
@@ -271,6 +271,8 @@ export async function runTool(conversationId, name, args = {}, sandboxOptions = 
   if (name === 'web_search') return JSON.stringify(await webSearch(args.query || '', { signal }));
   if (name === 'web_fetch') return JSON.stringify(await webFetch(args.url || '', { signal }));
   const ws = workspaceFor(conversationId);
+  // Pastas do PC deste usuário (isolamento multi-tenant): sem userId, nenhuma.
+  const pcMounts = pcFolderMounts(sandboxOptions.userId);
   if (name === 'generate_image') return JSON.stringify(await generateImage(ws, args, { signal }));
   if (name === 'run_python') {
     const script = safeJoin(ws.base, `.tmp_${Date.now()}_${nanoid(8)}.py`);
@@ -288,7 +290,7 @@ export async function runTool(conversationId, name, args = {}, sandboxOptions = 
     return JSON.stringify(await execInSandbox(conversationId, args.command, undefined, { ...sandboxOptions, signal }));
   }
   if (name === 'write_file') {
-    if (resolveMountedPcPath(args.path)) throw new Error('write_file grava apenas no workspace da conversa. Para editar uma pasta do PC autorizada, use bash ou run_python.');
+    if (resolveMountedPcPath(args.path, pcMounts)) throw new Error('write_file grava apenas no workspace da conversa. Para editar uma pasta do PC autorizada, use bash ou run_python.');
     const target = safeJoin(ws.base, workspaceRelativePath(args.path));
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, args.content || '', 'utf8');
@@ -296,7 +298,7 @@ export async function runTool(conversationId, name, args = {}, sandboxOptions = 
     return JSON.stringify({ ok: true, path: args.path, size: fs.statSync(target).size });
   }
   if (name === 'read_file') {
-    const mountedPath = resolveMountedPcPath(args.path);
+    const mountedPath = resolveMountedPcPath(args.path, pcMounts);
     if (mountedPath) return readMountedPcFile(conversationId, mountedPath, sandboxOptions, { signal });
     const target = safeJoin(ws.base, workspaceRelativePath(args.path));
     if (!fs.existsSync(target) || !fs.statSync(target).isFile()) return JSON.stringify(missingFileResult(ws, args.path));

@@ -19,18 +19,39 @@ advisory lock (serializa migração entre processos). **Testado:** teste A-contr
 por HTTP (16/16: B recebe 404 em tudo de A; cada um vê o próprio; seed por
 usuário) + suíte 42/42.
 
-**FALTA na Fase 3 (próximas partes):**
-- **BYOK** (agent.js usar a chave do usuário de `user_settings`; rota de config;
-  tela no frontend). `ENCRYPTION_KEY` e `crypto.js` já prontos, ainda não usados.
-- **Limites de uso** (`usage_daily`/RATE_MSGS_PER_DAY; MAX_SANDBOXES_PER_USER).
-- **Workspaces por usuário** (`workspaces/<userId>/<conv>`) e chave do Map de
-  sandboxes `${userId}:${conversationId}`. HOJE o workspace é por convId; o
-  isolamento se sustenta porque a posse da conversa é verificada antes (convId é
-  PK único), mas o ideal do prompt é o caminho por usuário.
-- **⚠️ PC folders (`sandbox.js loadPcFolders`) ainda é cache GLOBAL** — monta as
-  pastas de TODOS os usuários. Vazamento potencial de mounts; corrigir junto com
-  workspaces (passar userId ao sandbox). Nicho (host paths só fazem sentido
-  single-user), mas resolver antes de multiusuário real.
+**Parte 2b (BYOK) — CONCLUÍDA E TESTADA** — commits `1747da7` (backend) e
+`86cf216` (frontend): cada usuário usa a PRÓPRIA chave de API. `userProvider.js`
+(`getUserProvider(userId)` → chave do usuário decriptada de `user_settings`, ou
+`SERVER_KEY` se `ALLOW_SHARED_KEY!==false`); `agent.js` usa `provider.client`;
+sem chave → orienta ir em "Provedor de IA". Rotas `GET/PUT /api/provider` e
+`POST /api/provider/test` (GET só devolve a chave mascarada). Tela
+`ProviderPanel.jsx` no frontend. Armazenamento criptografado verificado.
+
+**Parte 2c (limites + isolamento do sandbox) — CONCLUÍDA E TESTADA** (2026-07-18):
+- **⚠️ CORRIGIDO o vazamento das PASTAS DO PC:** `sandbox.js` deixou de usar um
+  cache GLOBAL. Agora `loadPcFolders()` agrupa por usuário (`pcFoldersByUser`) e
+  `pcFolderMounts(userId)` monta SÓ as pastas daquele usuário; sem `userId`,
+  nenhuma pasta (default seguro). O `userId` viaja em `sandboxOptions` de
+  `runAgent`→`runTool`→`execInSandbox`→`getContainer`→`createContainer`.
+  `tools.js` resolve caminhos `/mnt/pc/...` pelas pastas do usuário atual.
+  **Testado:** dois usuários A/B com pastas próprias — cada um só vê a sua, e sem
+  userId retorna zero.
+- **Limite diário de mensagens:** `RATE_MSGS_PER_DAY` (env; 0 = sem limite,
+  padrão). `usage_daily` conta por usuário/dia (UPSERT atômico
+  `ON CONFLICT ... RETURNING`, sem perda em concorrência — testado). Aplicado no
+  `POST /api/conversations/:id/chat` e no `POST /api/tasks` (429 ao estourar).
+- **Limite de sandboxes por usuário:** `MAX_SANDBOXES_PER_USER` (padrão 2). Ao
+  abrir o (N+1)-ésimo, o mais antigo do mesmo usuário é encerrado (LRU). O
+  `session` do sandbox agora guarda `userId`.
+- **Correção de isolamento:** `POST /api/tasks` passou a verificar a posse da
+  conversa (404 se for de outro usuário) — antes só criava sem checar o retorno.
+
+**FALTA na Fase 3 (itens menores, isolamento já se sustenta):**
+- **Workspaces por CAMINHO de usuário** (`workspaces/<userId>/<conv>`): hoje o
+  workspace é por convId. O isolamento se sustenta (convId é PK único, posse
+  verificada antes; as pastas do PC agora são por usuário), então é só
+  organização de diretórios — cosmético. Se for feito, precisa migrar os
+  workspaces existentes.
 - `maybeReindexOnModelChange` chama `reindexAll()` sem userId → hoje é no-op
   (reindex por troca de modelo virou por-usuário; decidir como disparar).
 - Migration 004 futura: tornar `user_id` NOT NULL depois de confirmado que todo
