@@ -493,6 +493,7 @@ function toolAvailabilityNote(tools, { includeInventory = false } = {}) {
   if (names.has('read_file')) lines.push('- read_file: ler arquivos de texto do workspace.');
   if (names.has('list_files')) lines.push('- list_files: listar uploads, outputs e arquivos da conversa.');
   if (names.has('zip_outputs')) lines.push('- zip_outputs: compactar /workspace/outputs em ZIP.');
+  if (names.has('consultar_cnpj')) lines.push('- consultar_cnpj: dados cadastrais oficiais de um CNPJ (razão social, situação, CNAE, endereço, sócios etc.). Use SEMPRE para consulta de empresa por CNPJ — funciona sem o botão de pesquisa; NÃO use web_search para CNPJ.');
   if (names.has('generate_image')) lines.push('- generate_image: gerar ou editar imagens com IA e salvar em outputs.');
   if (names.has('web_search')) lines.push('- web_search: pesquisar na internet pelo backend quando o globo estiver ativado.');
   if (names.has('web_fetch')) lines.push('- web_fetch: abrir uma página da internet encontrada na pesquisa.');

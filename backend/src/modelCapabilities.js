@@ -6,8 +6,8 @@ export const CAPABILITY_KEYS = Object.freeze(['text', 'tools', 'vision', 'image'
 
 const catalog = new Map();
 
-const TOOL_ACTION_RE = /\b(?:gere|crie|monte|produza|faca|construa|execute|rode|leia|analise|edite|salve|exporte|converta|extraia|compacte|baixe|pesquise|busque|abra|organize|transcreva|renderize|corrija|implemente|teste|verifique|instale|diagnostique|investigue)\b/i;
-const TOOL_TARGET_RE = /\b(?:arquivo|planilha|excel|xlsx|word|docx|pdf|documento|relatorio|apresentacao|imagem|foto|video|svg|zip|anexo|upload|pasta|projeto|repositorio|workspace|site|pagina|url|internet|app|aplicativo|codigo|bug|erro|teste|ambiente|servidor|backend|frontend)\b/i;
+const TOOL_ACTION_RE = /\b(?:gere|crie|monte|produza|faca|construa|execute|rode|leia|analise|edite|salve|exporte|converta|extraia|compacte|baixe|pesquise|busque|consulte|abra|organize|transcreva|renderize|corrija|implemente|teste|verifique|instale|diagnostique|investigue)\b/i;
+const TOOL_TARGET_RE = /\b(?:arquivo|planilha|excel|xlsx|word|docx|pdf|documento|relatorio|apresentacao|imagem|foto|video|svg|zip|anexo|upload|pasta|projeto|repositorio|workspace|site|pagina|url|internet|app|aplicativo|codigo|bug|erro|teste|ambiente|servidor|backend|frontend|cnpj|cnae|empresa)\b/i;
 const OUTPUT_ACTION_RE = /\b(?:gere|crie|monte|produza|faca|construa|salve|exporte|converta|entregue|baixe)\b/i;
 const OUTPUT_TARGET_RE = /\b(?:arquivo|planilha|excel|xlsx|word|docx|pdf|documento|relatorio|apresentacao|imagem|foto|video|svg|zip)\b/i;
 const DIRECT_DELIVERY_RE = /\b(?:quero|preciso|gostaria(?:\s+de)?|me\s+(?:entregue|de))\b[\s\S]{0,48}\b(?:arquivo|planilha|excel|xlsx|word|docx|pdf|documento|imagem|foto|video|zip)\b/i;
