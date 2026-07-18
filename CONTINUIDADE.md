@@ -1,6 +1,49 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
-## 0.-1 FASE 3 EM ANDAMENTO — Isolamento por usuário (2026-07-18)
+## ✅ SaaS COMPLETO E EM PRODUÇÃO (2026-07-18)
+
+As 5 fases da transformação em SaaS estão CONCLUÍDAS e o app está NO AR:
+
+- **Fase 1** — PostgreSQL (migração do SQLite).
+- **Fase 2** — Login por usuário (Better Auth: e-mail/senha + GitHub/Google).
+- **Fase 3** — Isolamento por usuário (multi-tenant) + BYOK + limites (pastas do
+  PC por usuário, `RATE_MSGS_PER_DAY`, `MAX_SANDBOXES_PER_USER`).
+- **Fase 4** — Página de apresentação (landing) antes do login, com a seção
+  "modelo de verdade" (acesso transparente ao modelo).
+- **Fase 5** — Produção na VPS com Docker + Caddy (HTTPS automático).
+
+**PRODUÇÃO AO VIVO:**
+- URL: **https://fredericostudio.com.br** (domínio no Registro.br; registro **A**
+  na raiz apontando para o IP da VPS).
+- Hospedagem: **Contabo** Cloud VPS (Ubuntu + Docker). Sobe via
+  `docker-compose.prod.yml`: serviços `postgres` + `backend` + `web` (Caddy);
+  o backend não é exposto (só pelo proxy).
+- Modo: **PÚBLICO com BYOK** (`ALLOW_SHARED_KEY=false`) — cada usuário cadastra
+  a própria chave em Configurações → Provedor de IA. Sem chave do servidor.
+- Segredos (`BETTER_AUTH_SECRET`, `ENCRYPTION_KEY`) vivem no `.env` **do servidor**
+  (nunca no repo). Login social (GitHub/Google) **não** configurado em produção —
+  só e-mail/senha (para ativar: preencher credenciais no `.env` + callback
+  `https://fredericostudio.com.br/api/auth/callback/{provider}`).
+
+**Operação (no servidor, pasta do projeto):**
+- Atualizar: `git pull && docker compose -f docker-compose.prod.yml up -d --build`.
+- Backup: `docker compose -f docker-compose.prod.yml exec -T postgres pg_dump -U studio studio > backup.sql` + `tar czf workspaces.tgz workspaces`. Guia: `VPS-DEPLOY.md`.
+
+**Melhorias recentes de qualidade (já na main):** ferramenta `consultar_cnpj`
+(#7), busca gratuita mais robusta com fallback DuckDuckGo (#8), e revisão do
+system prompt — pesquisa humanizada, persona com voz/público, deduplicação e
+tom mais humano em todas as camadas mantendo os guarda-corpos (#9–#11).
+
+**Pendências/ideias futuras:**
+- Se for divulgar amplamente (indexado), adicionar **confirmação de e-mail** e/ou
+  **aprovação de conta** — hoje qualquer um se cadastra (recomendado divulgar
+  "por link"). O sandbox executa código com internet: manter a VPS dedicada.
+- Migration 004: `user_id` NOT NULL após confirmar todos os inserts com dono.
+- `www.fredericostudio.com.br` (registro A do `www` + host no Caddyfile), se quiser.
+
+---
+
+## 0.-1 FASE 3 — CONCLUÍDA — Isolamento por usuário (2026-07-18)
 
 **Parte 1 (fundação)** — commit `8022cec`: migration 003 adiciona `user_id`
 (NULLABLE) às 11 tabelas de topo + índices; cria `user_settings` (BYOK) e
