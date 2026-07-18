@@ -1,0 +1,164 @@
+/* Página de apresentação (landing) — mostrada a quem ainda não entrou.
+   Reaproveita as variáveis dos temas (claro/escuro), então segue a mesma
+   identidade do app. Sem cores/tamanhos hardcoded fora dos tokens. */
+
+.lp { min-height: 100vh; background: var(--bg); color: var(--text); }
+.lp a { color: inherit; text-decoration: none; }
+
+/* ---- Cabeçalho ---- */
+.lpHeader {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px;
+  padding: 14px clamp(16px, 5vw, 48px);
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line);
+}
+.lpBrand { font-weight: 800; font-size: var(--fs-xl); letter-spacing: -.01em; }
+.lpBrand span { color: var(--accent); }
+.lpNavBtn {
+  border: 1px solid var(--line); background: var(--panel2); color: var(--text);
+  border-radius: var(--r-md); padding: 9px 18px; font-weight: 600; cursor: pointer;
+  font-size: var(--fs-md);
+}
+.lpNavBtn:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ---- Botões (compartilhados) ---- */
+.lpBtn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  border-radius: var(--r-md); padding: 13px 22px; font-weight: 700; cursor: pointer;
+  font-size: var(--fs-lg); border: 1px solid transparent; min-height: 48px;
+  transition: transform .06s ease, filter .15s ease;
+}
+.lpBtn:active { transform: translateY(1px); }
+.lpBtnPrimary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.lpBtnPrimary:hover { filter: brightness(1.08); }
+.lpBtnGhost { background: transparent; color: var(--text); border-color: var(--line); }
+.lpBtnGhost:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ---- Seções ---- */
+.lpSection { max-width: 1120px; margin: 0 auto; padding: clamp(48px, 8vw, 96px) clamp(16px, 5vw, 48px); }
+.lpKicker {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: var(--fs-sm); font-weight: 700; color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: var(--r-full); padding: 6px 13px; margin-bottom: 20px;
+}
+.lpSectionTitle { font-size: clamp(24px, 4vw, 34px); font-weight: 800; letter-spacing: -.02em; margin: 0 0 10px; }
+.lpSectionSub { color: var(--muted); font-size: var(--fs-lg); max-width: 620px; margin: 0 auto; line-height: 1.55; }
+.lpCenter { text-align: center; }
+.lpCenter .lpSectionSub { margin-inline: auto; }
+
+/* ---- Hero ---- */
+.lpHero {
+  position: relative; overflow: hidden;
+  display: grid; grid-template-columns: 1.05fr .95fr; gap: clamp(32px, 5vw, 64px);
+  align-items: center;
+  max-width: 1120px; margin: 0 auto; padding: clamp(40px, 7vw, 88px) clamp(16px, 5vw, 48px);
+}
+.lpHero::before {
+  content: ""; position: absolute; inset: 0; z-index: 0; pointer-events: none;
+  background:
+    radial-gradient(60% 55% at 78% 8%, color-mix(in srgb, var(--accent) 22%, transparent), transparent 70%),
+    radial-gradient(45% 45% at 5% 100%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 70%);
+}
+.lpHeroText { position: relative; z-index: 1; }
+.lpH1 { font-size: clamp(30px, 5.4vw, 54px); line-height: 1.08; font-weight: 800; letter-spacing: -.025em; margin: 0 0 18px; }
+.lpH1 span { color: var(--accent); }
+.lpLead { font-size: clamp(16px, 2.2vw, 20px); color: var(--muted); line-height: 1.6; margin: 0 0 28px; max-width: 560px; }
+.lpCtas { display: flex; flex-wrap: wrap; gap: 12px; }
+.lpReassure { margin: 16px 0 0; font-size: var(--fs-sm); color: var(--muted); display: flex; align-items: center; gap: 7px; }
+
+/* Mockup de conversa no hero (mostra o produto sem imagem externa) */
+.lpMock {
+  position: relative; z-index: 1;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg);
+  box-shadow: 0 24px 70px rgba(0,0,0,.28); padding: 16px; display: flex; flex-direction: column; gap: 12px;
+}
+.lpMockBar { display: flex; gap: 6px; padding-bottom: 4px; }
+.lpMockBar i { width: 11px; height: 11px; border-radius: 50%; background: var(--line); }
+.lpBubble { max-width: 88%; line-height: 1.5; font-size: var(--fs-md); padding: 11px 15px; }
+.lpBubbleUser { align-self: flex-end; background: var(--bubble-user); color: #eef3ff; border-radius: var(--r-lg) var(--r-lg) 4px var(--r-lg); }
+.lpBubbleBot { align-self: flex-start; background: var(--bubble); border: 1px solid var(--line); border-radius: var(--r-lg) var(--r-lg) var(--r-lg) 4px; }
+.lpMockFile {
+  display: flex; align-items: center; gap: 11px; margin-top: 9px;
+  border: 1px solid var(--line); background: var(--panel2); border-radius: var(--r-md); padding: 9px 11px;
+}
+.lpMockFile .fi { flex: none; width: 34px; height: 34px; border-radius: var(--r-sm); background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); display: flex; align-items: center; justify-content: center; }
+.lpMockFile b { font-size: var(--fs-sm); font-weight: 600; }
+.lpMockFile small { display: block; color: var(--muted); font-size: var(--fs-2xs); }
+.lpMockFile .dl { margin-left: auto; font-size: var(--fs-xs); font-weight: 700; color: var(--on-accent); background: var(--accent); border-radius: var(--r-sm); padding: 6px 11px; }
+
+/* ---- Grade de recursos ---- */
+.lpFeatures { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 44px; }
+.lpCard {
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg);
+  padding: 22px; display: flex; flex-direction: column; gap: 10px;
+  transition: transform .12s ease, border-color .12s ease;
+}
+.lpCard:hover { transform: translateY(-3px); border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); }
+.lpCardIcon {
+  width: 44px; height: 44px; border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent);
+  display: flex; align-items: center; justify-content: center;
+}
+.lpCard h3 { margin: 2px 0 0; font-size: var(--fs-lg); font-weight: 700; }
+.lpCard p { margin: 0; color: var(--muted); font-size: var(--fs-md); line-height: 1.5; }
+
+/* ---- Como funciona ---- */
+.lpSteps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 44px; }
+.lpStep { display: flex; flex-direction: column; gap: 8px; text-align: left; }
+.lpStepNum {
+  width: 38px; height: 38px; border-radius: var(--r-full); font-weight: 800;
+  background: var(--accent); color: var(--on-accent); display: flex; align-items: center; justify-content: center;
+}
+.lpStep h3 { margin: 4px 0 0; font-size: var(--fs-lg); font-weight: 700; }
+.lpStep p { margin: 0; color: var(--muted); font-size: var(--fs-md); line-height: 1.5; }
+
+/* ---- Faixa de confiança/segurança ---- */
+.lpTrust {
+  background: var(--panel2); border-block: 1px solid var(--line);
+}
+.lpTrustGrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; max-width: 1120px; margin: 0 auto; padding: clamp(36px, 6vw, 60px) clamp(16px, 5vw, 48px); }
+.lpTrustItem { display: flex; gap: 13px; align-items: flex-start; }
+.lpTrustItem .ic { flex: none; color: var(--accent); margin-top: 2px; }
+.lpTrustItem b { display: block; font-size: var(--fs-md); }
+.lpTrustItem span { color: var(--muted); font-size: var(--fs-sm); line-height: 1.5; }
+
+/* ---- CTA final ---- */
+.lpFinal { text-align: center; }
+.lpFinal .lpCtas { justify-content: center; margin-top: 22px; }
+
+/* ---- Rodapé ---- */
+.lpFooter {
+  border-top: 1px solid var(--line);
+  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;
+  padding: 22px clamp(16px, 5vw, 48px); max-width: 1120px; margin: 0 auto;
+  color: var(--muted); font-size: var(--fs-sm);
+}
+.lpFooter .lpBrand { font-size: var(--fs-lg); }
+.lpFootLink { color: var(--accent); font-weight: 600; cursor: pointer; background: none; border: none; padding: 0; font: inherit; }
+
+/* ---- Tela de login sobre a landing (com voltar) ---- */
+.lpBack {
+  display: inline-flex; align-items: center; gap: 6px; align-self: flex-start;
+  background: none; border: none; color: var(--muted); cursor: pointer; font: inherit;
+  font-size: var(--fs-sm); padding: 0; margin-bottom: 2px;
+}
+.lpBack:hover { color: var(--accent); }
+
+/* ---- Responsivo ---- */
+@media (max-width: 860px) {
+  .lpHero { grid-template-columns: 1fr; }
+  .lpMock { order: -1; }
+  .lpFeatures, .lpSteps, .lpTrustGrid { grid-template-columns: 1fr; }
+}
+@media (max-width: 560px) {
+  .lpCtas { flex-direction: column; }
+  .lpCtas .lpBtn { width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lpCard, .lpBtn { transition: none; }
+}
