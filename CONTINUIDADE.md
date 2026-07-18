@@ -33,6 +33,22 @@ As 5 fases da transformação em SaaS estão CONCLUÍDAS e o app está NO AR:
 (#7), busca gratuita mais robusta com fallback DuckDuckGo (#8), e revisão do
 system prompt — pesquisa humanizada, persona com voz/público, deduplicação e
 tom mais humano em todas as camadas mantendo os guarda-corpos (#9–#11).
+- **Deploy/operação** (#14, #17): `docker-compose.prod.yml` e `VPS-DEPLOY.md`
+  atualizados para login multiusuário + Postgres; `atualizar.sh` (na VPS:
+  `git pull` + rebuild + limpeza + status), preservando dados.
+- **Câmera no chat** (#18): `CameraCapture.jsx` — foto pela webcam (getUserMedia)
+  no desktop e câmera traseira no celular, com "enviar da galeria" de reserva e
+  compressão canvas→JPEG. A foto entra pelo mesmo pipeline de anexo
+  (`uploadSelectedFiles`); `sendMessage` usa pedido padrão quando só há anexo.
+  `uploadsNote` (agent.js) instrui OCR automático de imagem + tratar foto
+  borrada com gentileza.
+- **Visão multimodal real** (#19): em `agent.js`, quando o modelo TEM visão
+  (`capabilities.vision`), as imagens dos uploads vão como `image_url` (base64,
+  máx. 4 / 8 MB) na última mensagem do usuário; modelos sem visão seguem no OCR.
+  Fallback: `isUnsupportedVisionError` → remove imagens e refaz (OCR).
+  `modelCapabilities.js`: detecção de ferramentas aceita tools/tool_choice/
+  functions; `FALLBACK_MODELS` atualizada. As capacidades por modelo continuam
+  detectadas automaticamente do OpenRouter (não há lista manual).
 
 **Pendências/ideias futuras:**
 - Se for divulgar amplamente (indexado), adicionar **confirmação de e-mail** e/ou
