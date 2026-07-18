@@ -17,4 +17,4 @@ export function isLowSignalTurn(text) {
   return normalized.length > 0 && normalized.length <= 80 && LOW_SIGNAL_TURN_RE.test(normalized);
 }
 
-export const LOW_SIGNAL_TURN_NOTE = `A mensagem atual e apenas uma saudacao ou confirmacao breve. Responda de forma natural e curta. Nao use ferramentas, nao inicie analises, nao examine o workspace e nao recupere ou mencione conversas anteriores, arquivos ou memorias sem um pedido explicito do usuario.`;
+export const LOW_SIGNAL_TURN_NOTE = `A mensagem atual é só uma saudação ou uma confirmação rápida. Responda de forma natural e curta, no clima da conversa. Não use ferramentas, não comece análises, não vasculhe o workspace e não traga de volta conversas anteriores, arquivos ou memórias sem a pessoa pedir.`;
