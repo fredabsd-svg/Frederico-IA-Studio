@@ -4,6 +4,17 @@
 
 Leia primeiro o estado de transformacao SaaS na secao seguinte.
 
+- **Acesso movel por Tailscale corrigido:** o print mostrava o Chrome do celular
+  em `localhost:5173`; nesse aparelho, localhost aponta para o proprio celular e
+  a conexao e recusada. O Tailscale Serve estava ativo e o defeito adicional era
+  `BETTER_AUTH_URL=http://localhost:5173`, que gerava callback OAuth para o PC.
+  A instalacao local agora usa a URL HTTPS do Serve como base canonica. O login
+  social envia um callback final absoluto para a mesma origem em que foi iniciado,
+  evitando voltar acidentalmente para localhost. README e `.env.example`
+  documentam a configuracao e os callbacks de GitHub/Google. Validacao: pagina
+  abriu pela URL HTTPS do Tailscale, callback do GitHub passou a usar o host
+  `.ts.net`, 7 testes de frontend passaram, build Vite concluiu e `/api/health`
+  respondeu normalmente.
 - **Correcao critica de chamadas de ferramentas e downloads:** o PDF
   `Frederico AI Studio.pdf` mostrou o Nemotron devolvendo uma chamada
   `run_python` inteira como texto (`<tool_call>...codigo...</tool_call>`). O

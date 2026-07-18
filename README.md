@@ -112,6 +112,31 @@ docker compose up --build
 
 No Windows, o `iniciar.bat` prepara e inicia tudo. Abra [http://localhost:5173](http://localhost:5173).
 
+### Acesso pelo celular via Tailscale
+
+No celular, nunca abra `localhost:5173`: `localhost` aponta para o próprio
+celular. Com o app e o Tailscale ligados no computador, publique a porta do
+frontend e consulte o endereço HTTPS:
+
+```powershell
+tailscale serve --bg 5173
+tailscale serve status
+```
+
+Use no celular a URL `https://...ts.net` exibida pelo segundo comando. Coloque
+essa mesma origem em `BETTER_AUTH_URL` no `.env` e recrie o backend. Mantenha
+`FRONTEND_URL=http://localhost:5173` para o acesso local continuar autorizado.
+
+Para login social, registre também no provedor:
+
+```text
+https://SEU_HOST.ts.net/api/auth/callback/github
+https://SEU_HOST.ts.net/api/auth/callback/google
+```
+
+O computador e o celular precisam aparecer conectados na mesma rede Tailscale.
+O endereço HTTPS do Serve é privado para essa rede.
+
 ### 3️⃣ Atualizar uma instalação existente
 
 ```powershell
@@ -153,7 +178,7 @@ Consulte o [.env.example](.env.example) para todas as opções.
 
 ```powershell
 docker compose exec -T backend node --test src/agent.control.test.js src/agent.outputDelivery.test.js src/toolProtocol.test.js src/taskOutcome.test.js
-docker compose exec -T frontend node --test src/sse.test.js
+docker compose exec -T frontend node --test src/authUrls.test.js src/sse.test.js
 docker compose exec -T frontend npm run build
 ```
 
