@@ -523,21 +523,21 @@ O Frederico AI Studio tem sandbox com Python 3.12, bash, LibreOffice/soffice, ff
 No Modo Equipe, os especialistas individuais desta etapa NÃO executam ferramentas diretamente; eles analisam e orientam. Se a resposta final exigir arquivo, cálculo, conversão ou validação, indique claramente que isso deve ser executado pelas ferramentas do assistente principal.`;
 
 // Memória: global (todos) + do assistente atual + do cliente da conversa
-async function clientScopeFor(conversationId) {
+async function clientScopeFor(userId, conversationId) {
   try {
-    const conv = await db.prepare('SELECT client_id FROM conversations WHERE id=?').get(conversationId);
+    const conv = await db.prepare('SELECT client_id FROM conversations WHERE id=? AND user_id=?').get(conversationId, userId);
     return conv?.client_id ? `client:${conv.client_id}` : null;
   } catch { return null; }
 }
 
-async function memoryNote(assistantId, clientScope) {
+async function memoryNote(userId, assistantId, clientScope) {
   const scopes = ['global'];
   if (assistantId) scopes.push(assistantId);
   if (clientScope) scopes.push(clientScope);
   let rows = [];
   try {
     const ph = scopes.map(() => '?').join(',');
-    rows = await db.prepare(`SELECT scope, content FROM memory WHERE scope IN (${ph}) ORDER BY created_at ASC`).all(...scopes);
+    rows = await db.prepare(`SELECT scope, content FROM memory WHERE scope IN (${ph}) AND user_id=? ORDER BY created_at ASC`).all(...scopes, userId);
   } catch {}
   if (!rows.length) return null;
   const global = rows.filter(r => r.scope === 'global').map(r => `- ${r.content}`);
@@ -727,7 +727,7 @@ async function gate(control, onEvent) {
   return false;
 }
 
-export async function runAgent({ conversationId, userText, model, assistant, webSearch, effort, developer, onEvent, saveUserMessage = true, existingUserMessageId = null, executionBriefing = null, forceExecution = false, control: inheritedControl = null }) {
+export async function runAgent({ userId, conversationId, userText, model, assistant, webSearch, effort, developer, onEvent, saveUserMessage = true, existingUserMessageId = null, executionBriefing = null, forceExecution = false, control: inheritedControl = null }) {
   const chosenModel = model || assistant?.model || process.env.DEEPSEEK_MODEL || 'deepseek-chat';
   const chosenPrompt = promptFor(assistant);
   const eff = effortCfg(effort);
@@ -756,7 +756,7 @@ export async function runAgent({ conversationId, userText, model, assistant, web
   const ownsControl = !inheritedControl;
   try {
   const userMsgId = saveUserMessage || !existingUserMessageId
-    ? await saveMessage(conversationId, 'user', userText)
+    ? await saveMessage(userId, conversationId, 'user', userText)
     : existingUserMessageId;
 
   if (modelPlan.blocked) {
@@ -766,9 +766,9 @@ export async function runAgent({ conversationId, userText, model, assistant, web
       : 'Este modelo nao responde em texto.';
     onEvent({ type: 'status', content: status });
     onEvent({ type: 'delta', content: finalText });
-    const assistantMessageId = await saveMessage(conversationId, 'assistant', finalText);
+    const assistantMessageId = await saveMessage(userId, conversationId, 'assistant', finalText);
     onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId });
-    indexAfterReply(conversationId).catch(() => {});
+    indexAfterReply(userId, conversationId).catch(() => {});
     return {
       text: finalText,
       usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
@@ -802,13 +802,13 @@ export async function runAgent({ conversationId, userText, model, assistant, web
   let memoryMeta = null;
   // Memória de longo prazo: perfil, notas, resumos e recuperação semântica
   try {
-    const contextPlan = await buildContext({ conversationId, assistantId: assistant?.id, clientScope: await clientScopeFor(conversationId), userText, historyLimit, model: chosenModel });
+    const contextPlan = await buildContext({ userId, conversationId, assistantId: assistant?.id, clientScope: await clientScopeFor(userId, conversationId), userText, historyLimit, model: chosenModel });
     const ctxBlocks = contextPlan.blocks || [];
     memoryMeta = contextPlan.meta || null;
     for (const b of ctxBlocks) messages.push({ role: 'system', content: b });
   } catch (err) {
     console.error('[memória] contexto indisponível nesta resposta:', err.message);
-    const memory = await memoryNote(assistant?.id, await clientScopeFor(conversationId));
+    const memory = await memoryNote(userId, assistant?.id, await clientScopeFor(userId, conversationId));
     if (memory) messages.push({ role: 'system', content: memory });
   }
   const note = uploadsNote(conversationId);
@@ -1146,7 +1146,7 @@ export async function runAgent({ conversationId, userText, model, assistant, web
   }
   // Primeiro registra a resposta e os arquivos juntos. Assim o card sempre
   // aponta para uma mensagem que sobreviverá ao recarregamento da conversa.
-  const { msgId, cards } = await persistAssistantReply(conversationId, finalText, memoryMeta, newFiles);
+  const { msgId, cards } = await persistAssistantReply(userId, conversationId, finalText, memoryMeta, newFiles);
   // O download é a entrega principal. Não o faça esperar a inspeção de DOCX,
   // XLSX ou PDF, que pode levar alguns segundos em arquivos maiores.
   if (cards.length) onEvent({ type: 'files', files: cards });
@@ -1157,7 +1157,7 @@ export async function runAgent({ conversationId, userText, model, assistant, web
     if (Object.keys(checks).length) onEvent({ type: 'file_checks', checks });
   }
   // Memória: indexa a troca e extrai fatos em segundo plano (não bloqueia)
-  if (!stopped) indexAfterReply(conversationId).catch(() => {});
+  if (!stopped) indexAfterReply(userId, conversationId).catch(() => {});
   return { text: finalText, usage, model: chosenModel, stopped, providerFailure, incomplete, failureMessage };
   } finally {
     // Mantém a conversa marcada como ativa até o card de download ter sido
@@ -1168,10 +1168,10 @@ export async function runAgent({ conversationId, userText, model, assistant, web
 }
 
 // Orquestrador: aciona vários assistentes e um coordenador une as respostas
-export async function runOrchestrator({ conversationId, userText, model, assistants = [], executor = null, webSearch = false, effort, developer, onEvent }) {
+export async function runOrchestrator({ userId, conversationId, userText, model, assistants = [], executor = null, webSearch = false, effort, developer, onEvent }) {
   const control = acquireConversationControl(conversationId);
   try {
-  const userMsgId = await saveMessage(conversationId, 'user', userText);
+  const userMsgId = await saveMessage(userId, conversationId, 'user', userText);
   const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
   const coordModel = model || process.env.DEEPSEEK_MODEL || 'deepseek-chat';
   const lowSignalTurn = isLowSignalTurn(userText);
@@ -1184,12 +1184,12 @@ export async function runOrchestrator({ conversationId, userText, model, assista
   let memory = null;
   let memoryMeta = null;
   try {
-    const contextPlan = await buildContext({ conversationId, assistantId: null, clientScope: await clientScopeFor(conversationId), userText, model: coordModel });
+    const contextPlan = await buildContext({ userId, conversationId, assistantId: null, clientScope: await clientScopeFor(userId, conversationId), userText, model: coordModel });
     memory = (contextPlan.blocks || []).join('\n\n') || null;
     memoryMeta = contextPlan.meta || null;
     if (memoryMeta) onEvent({ type: 'memory_context', memory: memoryMeta });
   }
-  catch { memory = await memoryNote(null, await clientScopeFor(conversationId)); }
+  catch { memory = await memoryNote(userId, null, await clientScopeFor(userId, conversationId)); }
   // Histórico da conversa (a mensagem atual do usuário já foi salva — exclui ela)
   const histRows = (await db.prepare(`
     SELECT role, content FROM (
@@ -1277,6 +1277,7 @@ export async function runOrchestrator({ conversationId, userText, model, assista
       : 'Nenhum parecer adicional foi produzido. Execute o pedido original integralmente.';
     onEvent({ type: 'status', content: perspectives.length ? 'Equipe concluiu a análise. Executando a tarefa...' : 'Executando a tarefa solicitada...' });
     const result = await runAgent({
+      userId,
       conversationId,
       userText,
       model,
@@ -1353,7 +1354,7 @@ export async function runOrchestrator({ conversationId, userText, model, assista
       onEvent({ type: 'status', content: 'Interrompido pelo usuário' });
       finalText = perspectives.length ? perspectives.map(p => `### ${p.emoji || ''} ${p.name}\n${p.text}`).join('\n\n') : '_Processamento interrompido pelo usuário._';
       onEvent({ type: 'delta', content: finalText });
-      const stoppedMsgId = await saveMessage(conversationId, 'assistant', finalText, { memoryMeta });
+      const stoppedMsgId = await saveMessage(userId, conversationId, 'assistant', finalText, { memoryMeta });
       onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId: stoppedMsgId });
       releaseConversationControl(conversationId, control);
       return { text: finalText, usage, model: coordModel, stopped: true };
@@ -1386,9 +1387,9 @@ export async function runOrchestrator({ conversationId, userText, model, assista
       finalText = 'Concluído.';
       onEvent({ type: 'delta', content: finalText });
     }
-    const doneMsgId = await saveMessage(conversationId, 'assistant', finalText, { memoryMeta });
+    const doneMsgId = await saveMessage(userId, conversationId, 'assistant', finalText, { memoryMeta });
     onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId: doneMsgId });
-    indexAfterReply(conversationId).catch(() => {});
+    indexAfterReply(userId, conversationId).catch(() => {});
     return { text: finalText, usage, model: coordModel, stopped };
   } finally {
     releaseConversationControl(conversationId, control);
@@ -1398,18 +1399,18 @@ export async function runOrchestrator({ conversationId, userText, model, assista
   }
 }
 
-export async function saveMessage(conversationId, role, content, extra = {}) {
+export async function saveMessage(userId, conversationId, role, content, extra = {}) {
   const id = nanoid();
   const memoryMeta = extra.memoryMeta ? JSON.stringify(extra.memoryMeta).slice(0, 20000) : null;
   await db.prepare('INSERT INTO messages (id, conversation_id, role, content, memory_meta, created_at) VALUES (?,?,?,?,?,?)')
     .run(id, conversationId, role, content, memoryMeta, now());
-  await db.prepare('UPDATE conversations SET updated_at=? WHERE id=?').run(now(), conversationId);
+  await db.prepare('UPDATE conversations SET updated_at=? WHERE id=? AND user_id=?').run(now(), conversationId, userId);
   return id;
 }
 
-export async function persistAssistantReply(conversationId, content, memoryMeta, files = []) {
+export async function persistAssistantReply(userId, conversationId, content, memoryMeta, files = []) {
   const persist = db.transaction(async (replyFiles) => {
-    const msgId = await saveMessage(conversationId, 'assistant', content, { memoryMeta });
+    const msgId = await saveMessage(userId, conversationId, 'assistant', content, { memoryMeta });
     const stmt = db.prepare('INSERT INTO files (id,conversation_id,message_id,kind,name,path,size,created_at) VALUES (?,?,?,?,?,?,?,?)');
     const cards = [];
     for (const file of replyFiles) {

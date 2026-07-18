@@ -1,5 +1,41 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 0.-1 FASE 3 EM ANDAMENTO — Isolamento por usuário (2026-07-18)
+
+**Parte 1 (fundação)** — commit `8022cec`: migration 003 adiciona `user_id`
+(NULLABLE) às 11 tabelas de topo + índices; cria `user_settings` (BYOK) e
+`usage_daily`; `crypto.js` (AES-256-GCM: encryptSecret/decryptSecret/maskSecret).
+
+**Parte 2a (isolamento central) — CONCLUÍDA E TESTADA:** cada usuário só vê/mexe
+nos PRÓPRIOS dados. Feita com 2 subagentes sob contrato: `server.js` (todas as
+rotas escopadas por `req.userId`; posse verificada em `WHERE id=? AND user_id=?`
+→ 404; seeds de assistentes/templates/docpro agora POR USUÁRIO via
+`ensureUserSeeded` + middleware; `ensureConversation` retorna null p/ id de outro
+dono → 404) e `agent.js`/memória (assinaturas com `userId` primeiro:
+`saveMessage(userId,...)`, `persistAssistantReply(userId,...)`,
+`runAgent/runOrchestrator({userId,...})`, memoryService `fn(userId,...)`; queries
+de memory/chunks escopadas por `user_id` ALÉM do `scope`). `migrate.js` ganhou
+advisory lock (serializa migração entre processos). **Testado:** teste A-contra-B
+por HTTP (16/16: B recebe 404 em tudo de A; cada um vê o próprio; seed por
+usuário) + suíte 42/42.
+
+**FALTA na Fase 3 (próximas partes):**
+- **BYOK** (agent.js usar a chave do usuário de `user_settings`; rota de config;
+  tela no frontend). `ENCRYPTION_KEY` e `crypto.js` já prontos, ainda não usados.
+- **Limites de uso** (`usage_daily`/RATE_MSGS_PER_DAY; MAX_SANDBOXES_PER_USER).
+- **Workspaces por usuário** (`workspaces/<userId>/<conv>`) e chave do Map de
+  sandboxes `${userId}:${conversationId}`. HOJE o workspace é por convId; o
+  isolamento se sustenta porque a posse da conversa é verificada antes (convId é
+  PK único), mas o ideal do prompt é o caminho por usuário.
+- **⚠️ PC folders (`sandbox.js loadPcFolders`) ainda é cache GLOBAL** — monta as
+  pastas de TODOS os usuários. Vazamento potencial de mounts; corrigir junto com
+  workspaces (passar userId ao sandbox). Nicho (host paths só fazem sentido
+  single-user), mas resolver antes de multiusuário real.
+- `maybeReindexOnModelChange` chama `reindexAll()` sem userId → hoje é no-op
+  (reindex por troca de modelo virou por-usuário; decidir como disparar).
+- Migration 004 futura: tornar `user_id` NOT NULL depois de confirmado que todo
+  INSERT passa o dono. Preferências de memória seguem GLOBAIS (aceitável por ora).
+
 ## 0.0 ATUALIZACOES MAIS RECENTES (2026-07-17)
 
 Leia primeiro o estado de transformacao SaaS na secao seguinte.

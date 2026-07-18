@@ -144,7 +144,7 @@ function publicMeta(meta) {
   return clean;
 }
 
-export async function buildContext({ conversationId, assistantId, clientScope, userText, historyLimit = 60, model = null }) {
+export async function buildContext({ userId, conversationId, assistantId, clientScope, userText, historyLimit = 60, model = null }) {
   const settings = getSettings();
   const capInfo = modelContextCap(model);
   const budget = contextBudgetForModel(model, settings);
@@ -183,8 +183,8 @@ export async function buildContext({ conversationId, assistantId, clientScope, u
 
   // 1) Perfil, preferencias e fixadas: prioridade maxima.
   const profile = await db.prepare(
-    `SELECT * FROM memory WHERE scope IN (${ph}) AND (type IN ('perfil','preferencia') OR pinned=1)
-     ORDER BY pinned DESC, importance DESC, updated_at DESC LIMIT 14`).all(...scopes);
+    `SELECT * FROM memory WHERE scope IN (${ph}) AND user_id=? AND (type IN ('perfil','preferencia') OR pinned=1)
+     ORDER BY pinned DESC, importance DESC, updated_at DESC LIMIT 14`).all(...scopes, userId);
   if (profile.length) {
     blocks.push({
       priority: 1,
@@ -196,7 +196,7 @@ export async function buildContext({ conversationId, assistantId, clientScope, u
   // 2) Notas manuais dos escopos aplicaveis.
   const profileIds = new Set(profile.map(p => p.id));
   const manual = (await db.prepare(
-    `SELECT * FROM memory WHERE scope IN (${ph}) AND type='manual' ORDER BY updated_at DESC LIMIT 15`).all(...scopes))
+    `SELECT * FROM memory WHERE scope IN (${ph}) AND user_id=? AND type='manual' ORDER BY updated_at DESC LIMIT 15`).all(...scopes, userId))
     .filter(m => !profileIds.has(m.id));
   if (manual.length) {
     blocks.push({
@@ -207,7 +207,7 @@ export async function buildContext({ conversationId, assistantId, clientScope, u
   }
 
   // 3) Resumo da conversa atual quando o inicio saiu da janela.
-  const conv = await db.prepare('SELECT summary_long, summary_short FROM conversations WHERE id=?').get(conversationId);
+  const conv = await db.prepare('SELECT summary_long, summary_short FROM conversations WHERE id=? AND user_id=?').get(conversationId, userId);
   const msgCount = Number((await db.prepare('SELECT COUNT(*) c FROM messages WHERE conversation_id=?').get(conversationId))?.c || 0);
   if (msgCount > historyLimit && (conv?.summary_long || conv?.summary_short)) {
     blocks.push({
@@ -221,7 +221,7 @@ export async function buildContext({ conversationId, assistantId, clientScope, u
   const seen = new Set([...profileIds, ...manual.map(m => m.id)]);
   try {
     const limit = Math.max(0, Math.min(Number(settings.max_memories) || 0, budget < 20000 ? 6 : 16));
-    const rel = limit ? (await searchMemories(userText, { scopes, limit })).filter(m => !seen.has(m.id)) : [];
+    const rel = limit ? (await searchMemories(userId, userText, { scopes, limit })).filter(m => !seen.has(m.id)) : [];
     if (rel.length) {
       blocks.push({
         priority: 4,
@@ -235,7 +235,7 @@ export async function buildContext({ conversationId, assistantId, clientScope, u
   try {
     const chunkScopes = clientScope ? unique(['office', clientScope]) : unique(['global', 'office']);
     const limit = Math.max(0, Math.min(Number(settings.max_chunks) || 0, budget < 20000 ? 3 : 12));
-    const chunks = limit ? await searchChunks(userText, { excludeConversationId: conversationId, scopes: chunkScopes, limit }) : [];
+    const chunks = limit ? await searchChunks(userId, userText, { excludeConversationId: conversationId, scopes: chunkScopes, limit }) : [];
     if (chunks.length) {
       const txt = chunks.map(c => `--- ${c.source_title || 'Conversa anterior'} (${(c.created_at || '').slice(0, 10)}) ---\n${c.content}`).join('\n');
       blocks.push({
