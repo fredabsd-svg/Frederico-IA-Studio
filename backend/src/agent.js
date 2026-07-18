@@ -191,7 +191,7 @@ export function planToolCallBatch(calls, seenWebFetches = new Set(), maxCalls = 
 }
 
 function webResearchFinalizationNote(reason) {
-  return `A pesquisa web foi interrompida porque ${reason}. Responda agora usando SOMENTE as evidências já recebidas nesta conversa. Não chame ferramentas, não prometa uma nova consulta, não diga para o usuário aguardar e não invente dados. Se não houver informação verificável suficiente, explique objetivamente quais fontes falharam ou não trouxeram resultados e indique como o usuário pode fornecer um CNPJ, link ou documento para uma busca mais precisa.`;
+  return `A pesquisa foi encerrada (${reason}). Responda agora com o que já apareceu nesta conversa, sem novas buscas. Se deu para concluir, entregue a resposta citando as fontes e diga com franqueza o seu nível de confiança. Se as fontes não bastaram, explique em linguagem simples o que você procurou e o que não encontrou, e ofereça um próximo passo prático — refinar os termos, ou o usuário enviar um CNPJ, link ou documento. Não invente dados nem prometa "pesquiso de novo depois".`;
 }
 
 export function textOutputPathFromClaim(text) {
@@ -836,12 +836,22 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   if (environmentNote) messages.push({ role: 'system', content: environmentNote });
   if (developerContext) messages.push({ role: 'system', content: developerContext.note });
   if (eff.nudge) messages.push({ role: 'system', content: eff.nudge });
-  if (webSearchActive) messages.push({ role: 'system', content: `VOCÊ TEM ACESSO À INTERNET NESTA CONVERSA — o usuário ativou a pesquisa web.
-- Para buscar: ferramenta web_search. Para ler uma página: web_fetch.
-- NUNCA diga que "não tem acesso à internet": você tem, através dessas duas ferramentas. Use-as para informações atuais/externas (legislação, notícias, tabelas, cotações, prazos) e cite as fontes (links).
-- Abra cada URL no máximo uma vez nesta tarefa. Se uma fonte retornar erro, HTTP inválido ou conteúdo vazio, não repita a mesma consulta: tente outra fonte ou conclua explicando o limite encontrado.
-- Depois de pesquisar fontes suficientes, pare de anunciar próximos passos e entregue uma síntese honesta do que foi ou não verificado.
-- O SANDBOX Python também tem internet direta: dá para usar requests/urllib e instalar com "pip install --user". Use web_search/web_fetch quando quiser resultados de busca prontos com fontes; use a rede do sandbox quando precisar baixar dados ou consumir uma API diretamente no código.` });
+  if (webSearchActive) messages.push({ role: 'system', content: `PESQUISA NA INTERNET — o usuário ativou a busca. Você tem acesso real à web, pelas ferramentas web_search (procurar) e web_fetch (abrir uma página). Nunca diga que "não tem acesso à internet".
+
+Pense antes de buscar: eu já sei isso com confiança e é algo que não muda com o tempo? Então responda direto — não pesquise por pesquisar. Busque quando a resposta depender de algo atual, externo ou verificável (legislação, prazos, tabelas, cotações, notícias, dados de uma empresa/produto) ou quando tiver dúvida.
+
+Ao pesquisar, aja como uma pessoa atenta faria:
+- Diga em UMA linha curta e no seu tom o que vai olhar — ex.: "Deixa eu conferir isso numa fonte atual." Varie as palavras; não repita a mesma frase nem narre cada consulta.
+- Monte buscas específicas (termos exatos, ano, órgão, cidade). Se a primeira vier fraca, refine em vez de repetir. Abra cada página no máximo uma vez.
+- Leia de verdade as páginas relevantes com web_fetch antes de afirmar algo; não confie apenas no resuminho da busca.
+
+Ao trazer o que encontrou:
+- Sintetize com suas palavras e mostre como chegou à conclusão. NÃO cole uma lista de links soltos.
+- Se as fontes divergirem, diga isso e aponte qual é mais confiável (site oficial > blog) e por quê.
+- Cite a fonte no meio do texto (nome + link) para o usuário conferir; prefira fontes oficiais e recentes e avise quando algo estiver incerto ou desatualizado.
+- Varie a forma de apresentar: evite começar sempre com "De acordo com a pesquisa…".
+
+O sandbox Python também tem internet: use requests/urllib ou uma API quando precisar de dados estruturados (para CNPJ, use a ferramenta consultar_cnpj). Use web_search/web_fetch para procurar e ler páginas.` });
   let memoryMeta = null;
   // Memória de longo prazo: perfil, notas, resumos e recuperação semântica
   try {
@@ -1107,7 +1117,7 @@ export async function runAgent({ userId, conversationId, userText, model, assist
         tools = [];
         messages[1] = { role: 'system', content: toolAvailabilityNote(tools) };
         messages.push({ role: 'system', content: webResearchFinalizationNote(webResearchStop) });
-        onEvent({ type: 'status', content: 'Concluindo a pesquisa com as fontes já verificadas...' });
+        onEvent({ type: 'status', content: 'Reunindo o que encontrei e cruzando as fontes...' });
         step -= 1;
         continue;
       }
