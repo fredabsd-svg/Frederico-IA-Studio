@@ -1,28 +1,21 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
-## 0.0 ULTIMA ATUALIZACAO (2026-07-17) - controles de execucao e pesquisa web
+## 0.0 ATUALIZACOES MAIS RECENTES (2026-07-17)
 
-Leia primeiro o estado de transformacao SaaS na secao seguinte. Este complemento
-substitui qualquer anotacao antiga que diga que Pausar/Continuar/Parar ou a
-pesquisa web estao plenamente resolvidos.
+Leia primeiro o estado de transformacao SaaS na secao seguinte.
 
-- **Pausar, continuar e parar agora controlam a execucao real:** a resposta em
-  streaming do provedor recebe cancelamento; ao continuar, o agente retoma sem
-  repetir o texto ja emitido. O endpoint de controle devolve erro quando nao ha
-  tarefa ativa, e a interface so confirma o estado apos a resposta do backend.
-- **Parar cancela tambem uma ferramenta em andamento:** chamadas web, geracao de
-  imagem e comandos da sandbox recebem sinal de cancelamento. A sandbox encerra
-  o comando e sera recriada automaticamente na proxima ferramenta. Pausar deixa
-  a ferramenta atual terminar para nao repetir uma acao com efeito colateral.
-- **Pesquisa web sem rajadas repetidas:** o PDF enviado pelo usuario demonstrou
-  centenas de `web_fetch` repetidos para as mesmas tres URLs dentro de UMA
-  resposta do modelo. O agente agora filtra a lista antes de executa-la, para na
-  primeira URL duplicada, limita uma etapa a 12 chamadas e a pesquisa inteira a
-  8 paginas. Em vez de continuar consultando, ele sintetiza apenas as evidencias
-  ja recebidas.
-- **Validacao realizada:** 42 testes passaram; 1 teste de persistencia de DOCX
-  foi pulado sem PostgreSQL de teste. O frontend compilou dentro do container e
-  backend (`/api/health`) e frontend (HTTP 200) foram verificados apos o deploy.
+- **Controles de execucao e pesquisa web na main:** o PR #4 integrou o commit
+  `d242c23`. Pausar, continuar e parar agora controlam a execucao real; parar
+  tambem cancela ferramentas em andamento, e a pesquisa web filtra URLs
+  repetidas e tem limites por etapa e por tarefa para evitar loops.
+- **README atualizado na main:** a pagina principal agora descreve PostgreSQL,
+  Better Auth, sandbox com rede habilitada, configuracao atual, seguranca e o
+  limite conhecido de multi-tenancy. Foram removidas as afirmacoes antigas sobre
+  SQLite, ausencia de login e sandbox sem rede.
+- **Validacao das correcoes de execucao:** 42 testes passaram; 1 teste de
+  persistencia de DOCX foi pulado sem PostgreSQL de teste. O frontend compilou
+  dentro do container e backend (`/api/health`) e frontend (HTTP 200) foram
+  verificados apos o deploy.
 
 ### Regra obrigatoria de handoff e GitHub
 

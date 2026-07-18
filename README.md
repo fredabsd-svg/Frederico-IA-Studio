@@ -1,188 +1,191 @@
 # Frederico AI Studio
 
-Plataforma de chat com IA para escritórios e profissionais: converse com assistentes
-especializados que **executam código de verdade** em um sandbox Linux isolado e
-**geram arquivos reais** — Excel, Word, PDF, CSV, ZIP — prontos para baixar no chat.
+Aplicacao web em portugues para conversar com modelos de IA, analisar arquivos,
+executar tarefas em um sandbox Docker e entregar arquivos reais no chat.
 
-Conecta-se a qualquer provedor compatível com a API OpenAI (OpenRouter, DeepSeek,
-vLLM/Ollama local), com interface 100% em português do Brasil.
+O Frederico AI Studio funciona com provedores compativeis com a API OpenAI,
+como OpenRouter, DeepSeek e endpoints privados compativeis. Ele combina chat,
+ferramentas, memoria, pesquisa na web, modo equipe e um ambiente de execucao para
+documentos, planilhas, PDFs, codigo e automacoes.
+
+## Estado atual
+
+- Banco de dados em PostgreSQL.
+- Login com Better Auth: e-mail/senha, GitHub e Google quando configurados.
+- Frontend em React + Vite e backend em Node.js + Express.
+- Um sandbox Docker por conversa para Python, Bash e geracao de arquivos.
+- Fase atual de produto: autenticacao concluida; isolamento completo de dados por
+  usuario e chaves de API por usuario ainda sao a proxima fase.
+
+Leia [CONTINUIDADE.md](CONTINUIDADE.md) antes de iniciar uma nova frente de
+trabalho. Ele registra a arquitetura, decisoes, riscos e proximos passos.
 
 ## Principais recursos
 
-| Recurso | Descrição |
-|---|---|
-| 🤖 **Assistant Studio** | Crie assistentes sem programar: nome, modelo, instruções (com templates de Contábil, Jurídico, RH, Marketing, Dev), ferramentas permitidas e sliders de personalidade |
-| 📎 **Geração real de arquivos** | Excel (openpyxl/xlsxwriter), Word (python-docx), PDF (reportlab/weasyprint), gráficos (matplotlib), OCR (tesseract) — os arquivos aparecem como cartões no chat |
-| 🧠 **Memória de longo prazo** | O app aprende sozinho quem você é: extrai fatos das conversas, indexa tudo com embeddings locais e recupera por significado antes de cada resposta (Context Builder). Pergunte "quem sou eu?" e ele responde com base no histórico. Importa conversas antigas (Claude/ChatGPT/txt/md) |
-| 🧑‍🤝‍🧑 **Modo Equipe** | Uma pergunta aciona todos os assistentes; um coordenador une as perspectivas numa resposta só |
-| 🌐 **Pesquisa na internet** | Botão de globo liga a busca (Google via API oficial, ou DuckDuckGo sem cadastro) com citação de fontes |
-| 🎤 **Ditado por voz** | Fale em vez de digitar (Chrome/Edge, pt-BR) |
-| ⏯️ **Controles de execução** | Pausar, continuar e parar o processamento; streaming token a token; rastro vivo das ferramentas |
-| 📊 **Análises** | Mensagens e tokens consumidos por assistente e por modelo |
-| 🔒 **Sandbox isolado** | 1 container Docker por conversa: sem rede, sem privilégios, com limites de CPU/memória/processos |
+- Assistentes personalizados com instrucoes, modelos, ferramentas e personalidade.
+- Arquivos reais no chat: Excel, Word, PDF, CSV, ZIP, imagens, graficos e OCR.
+- Memoria de longo prazo com recuperacao semantica e painel de revisao.
+- Modo Equipe para combinar perspectivas de varios assistentes.
+- Modo Desenvolvedor para trabalhar sobre uma pasta de projeto autorizada.
+- Pesquisa na internet via Google Custom Search ou DuckDuckGo.
+- Ditado por voz, tarefas em segundo plano, historico por cliente e analises de uso.
+- Temas visuais e interface responsiva para computador e celular.
+
+## Execucao de tarefas
+
+O chat transmite a resposta ao vivo e mostra as ferramentas utilizadas. O app
+inclui controles para pausar, continuar e parar uma tarefa, alem de limites de
+tempo para comandos no sandbox e de etapas para o agente.
+
+As tarefas podem ler arquivos enviados, criar documentos, gerar planilhas,
+executar Python e Bash no sandbox ou consultar a web quando a pesquisa for
+ativada pelo usuario.
 
 ## Arquitetura
 
-```
-┌─────────────┐  SSE/REST   ┌──────────────┐  API OpenAI-compat.  ┌────────────┐
-│  Frontend    │ ──────────► │   Backend     │ ───────────────────► │ OpenRouter │
-│ React + Vite │             │ Node/Express  │                      │ /DeepSeek/ │
-│  (porta 5173)│             │  (porta 3001) │                      │ vLLM local │
-└─────────────┘             └──────┬───────┘                      └────────────┘
-                             SQLite │ dockerode
-                            ┌──────▼───────┐
-                            │   Sandbox     │  1 container por conversa
-                            │ python:3.12   │  sem rede · uid 1000 · limites
-                            └──────────────┘
-```
+~~~text
+Navegador
+    |
+    v
+React + Vite (porta 5173)
+    |
+    v
+Express + SSE (porta 3001) ---- API compativel com OpenAI
+    |             |
+    |             +---- PostgreSQL
+    |
+    +---- Docker sandbox por conversa ---- arquivos em workspaces/
+~~~
 
-```
-frederico-ai-studio/
-├── docker-compose.yml        # sobe tudo (sandbox-image + backend + frontend)
-├── Dockerfile                # backend (node:20-slim)
-├── sandbox/Dockerfile        # imagem do sandbox (python:3.12-slim + libs)
-├── iniciar.bat / parar.bat   # atalhos Windows (duplo clique)
-├── .env.example              # modelo de configuração
-├── backend/src/
-│   ├── server.js             # rotas HTTP + SSE
-│   ├── agent.js              # loop agêntico, orquestrador, memória, controles
-│   ├── tools.js              # ferramentas (sandbox + pesquisa web)
-│   ├── sandbox.js            # ciclo de vida dos containers (dockerode)
-│   └── db.js                 # SQLite (better-sqlite3, WAL)
-└── frontend/src/
-    ├── App.jsx               # aplicação
-    ├── components.jsx        # componentes reutilizáveis
-    ├── constants.js          # configuração e dados estáticos
-    └── styles.css            # tema claro/escuro
-```
+O frontend usa a mesma origem e o Vite repassa /api para o backend. Isso faz o
+chat e o streaming SSE funcionarem tambem atras de Tailscale ou de um proxy HTTPS.
 
-## Como rodar
+## Comecar
 
-### Pré-requisitos
+### Pre-requisitos
 
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) instalado e rodando
-- Uma chave de API: [OpenRouter](https://openrouter.ai) (recomendado — acesso a vários modelos) ou [DeepSeek](https://platform.deepseek.com)
+- Docker Desktop em execucao.
+- Uma chave de API de um provedor compativel com OpenAI.
+- Segredos do Better Auth para o login local.
 
-### 1. Configurar o `.env`
+### 1. Configurar o ambiente
 
-```bash
-cp .env.example .env
-```
+No PowerShell, crie seu arquivo local de configuracao:
 
-Edite o `.env`. Com **OpenRouter**:
+~~~powershell
+Copy-Item .env.example .env
+~~~
 
-```env
-DEEPSEEK_API_KEY=sk-or-sua_chave
+Preencha ao menos estes valores no arquivo .env:
+
+~~~env
+DEEPSEEK_API_KEY=sua_chave
 DEEPSEEK_BASE_URL=https://openrouter.ai/api/v1
 DEEPSEEK_MODEL=deepseek/deepseek-chat
-```
 
-Com **DeepSeek direto**: mantenha `DEEPSEEK_BASE_URL=https://api.deepseek.com` e `DEEPSEEK_MODEL=deepseek-chat`.
+BETTER_AUTH_URL=http://localhost:5173
+BETTER_AUTH_SECRET=gere_um_valor_com_openssl_rand_hex_32
+ENCRYPTION_KEY=gere_outro_valor_com_openssl_rand_hex_32
+~~~
+
+Para usar DeepSeek diretamente, altere a URL para
+https://api.deepseek.com e use o modelo correspondente. GitHub e Google sao
+opcionais: deixe as credenciais OAuth vazias para usar apenas e-mail/senha.
 
 ### 2. Subir o aplicativo
 
-**Windows (mais fácil):** duplo clique em **`iniciar.bat`** — ele limpa execuções
-anteriores, constrói o que for preciso e abre o navegador sozinho. Para desligar,
-**`parar.bat`**.
+No Windows, abra iniciar.bat. Ele prepara e inicia os servicos.
 
-**Linha de comando (qualquer sistema):**
+Ou use o terminal:
 
-```bash
-docker build -t frederico-ai-sandbox:latest ./sandbox   # 1ª vez
+~~~powershell
 docker compose up --build
-```
+~~~
 
-Acesse **http://localhost:5173** (backend em `http://localhost:3001/api/health`).
+Abra [http://localhost:5173](http://localhost:5173). O primeiro acesso apresenta
+a tela de cadastro ou login.
 
-### Acessar de qualquer lugar
+### 3. Atualizar uma instalacao existente
 
-Dois guias prontos, ambos usando o `docker-compose.prod.yml` (frontend
-compilado + proxy + login obrigatório):
-
-- **[NOTEBOOK-SERVIDOR.md](NOTEBOOK-SERVIDOR.md)** — rodar num notebook com
-  Linux ligado 24/7 e acessar via **Tailscale** (grátis) ou Cloudflare Tunnel.
-- **[VPS-DEPLOY.md](VPS-DEPLOY.md)** — publicar numa VPS com domínio próprio e
-  HTTPS automático.
-
-### 3. Atualizar para uma versão nova
-
-```bash
+~~~powershell
 git pull
-docker compose up --build
-```
+docker compose up --build -d
+~~~
 
-As conversas, assistentes e memórias ficam preservadas em `./data` (SQLite) e `./workspaces`.
+Depois, recarregue a pagina no navegador. Alteracoes de backend exigem rebuild;
+em Windows, alteracoes de frontend podem exigir reiniciar o servico frontend.
 
-## Configurações opcionais (`.env`)
+## Estrutura do projeto
 
-| Variável | Padrão | Descrição |
-|---|---|---|
-| `TOOL_TIMEOUT_MS` | `45000` | Tempo máximo de cada comando no sandbox |
-| `AGENT_MAX_STEPS` | `30` | Máximo de etapas (ferramentas) por resposta |
-| `AGENT_HISTORY_LIMIT` | `60` | Mensagens recentes enviadas ao modelo |
-| `SANDBOX_MEMORY` / `SANDBOX_CPUS` | `1024m` / `1` | Limites do sandbox |
-| `GOOGLE_API_KEY` + `GOOGLE_CSE_ID` | — | Pesquisa via Google (sem elas, usa DuckDuckGo) |
-| `EMBEDDING_MODEL` | `Xenova/multilingual-e5-small` | Modelo local de embeddings da memória (baixado 1x, ~112 MB) |
-| `EXTRACT_MODEL` | modelo principal | Modelo barato usado para resumir/extrair fatos das conversas |
+~~~text
+Frederico-IA-Studio/
+|-- docker-compose.yml       # PostgreSQL, backend, frontend e imagem sandbox
+|-- Dockerfile               # backend Node 20
+|-- sandbox/Dockerfile       # Python, ferramentas de documentos e utilitarios
+|-- migrations/              # schema PostgreSQL e Better Auth
+|-- backend/src/
+|   |-- server.js            # API HTTP, SSE, tarefas e rotas autenticadas
+|   |-- agent.js             # loop agente, equipe, memoria e controles
+|   |-- tools.js             # arquivos, sandbox, pesquisa web e imagens
+|   |-- sandbox.js           # ciclo de vida dos containers Docker
+|   |-- auth.js              # Better Auth
+|   '-- memory/              # memoria e indexacao semantica
+|-- frontend/src/
+|   |-- App.jsx              # aplicacao principal
+|   |-- AuthGate.jsx         # protecao de sessao
+|   |-- LoginScreen.jsx      # cadastro e login
+|   '-- components.jsx       # componentes reutilizaveis
+'-- CONTINUIDADE.md          # handoff obrigatorio entre sessoes
+~~~
 
-### 🧠 Como funciona a memória de longo prazo
+## Variaveis importantes
 
-Após cada resposta, um processo em segundo plano indexa a troca (embeddings
-locais — nada sai da sua máquina) e um modelo barato extrai fatos úteis
-(perfil, preferências, projetos, decisões), com filtro de dados sensíveis.
-Antes de cada resposta, o **Context Builder** monta o contexto: perfil +
-notas + resumo da conversa + memórias e trechos de conversas antigas
-recuperados por busca semântica, respeitando o orçamento de tokens
-(configurável no painel Memória — suba o alvo para modelos de 1M de contexto).
-No painel **Memória** você vê/edita/fixa/apaga tudo o que o app sabe,
-importa históricos (Claude, ChatGPT, .txt/.md) e exporta um backup em JSON.
+| Variavel | Padrao | Finalidade |
+|---|---:|---|
+| DEEPSEEK_API_KEY | - | Chave do provedor de IA |
+| DEEPSEEK_BASE_URL | DeepSeek | Base compativel com OpenAI |
+| DEEPSEEK_MODEL | deepseek-chat | Modelo principal |
+| BETTER_AUTH_URL | http://localhost:5173 | Origem publica do app e callbacks OAuth |
+| BETTER_AUTH_SECRET | - | Segredo de sessao do Better Auth |
+| ENCRYPTION_KEY | - | Reservada para chaves por usuario na proxima fase |
+| TOOL_TIMEOUT_MS | 45000 | Tempo maximo de um comando de sandbox |
+| AGENT_MAX_STEPS | configurado pelo esforco | Limite de etapas da tarefa |
+| SANDBOX_MEMORY / SANDBOX_CPUS | 2048m / 1 | Recursos do sandbox |
 
-## ⚠️ Avisos de segurança (leia antes de usar)
+Consulte o arquivo [.env.example](.env.example) para todas as opcoes.
 
-- **O socket do Docker (`/var/run/docker.sock`) é montado no backend.** Isso
-  equivale a acesso **root no host**: quem controla o backend controla a
-  máquina inteira. Trate o backend como um serviço privilegiado.
-- **Não há autenticação.** Qualquer pessoa que alcance as portas `5173`/`3001`
-  tem acesso total às conversas, uploads e à sandbox. **Use apenas em rede
-  local/confiável** ou atrás de um proxy autenticado. Nunca exponha estas
-  portas diretamente à internet.
-- A sandbox reduz o risco (`NetworkDisabled`, `CapDrop: ALL`,
-  `no-new-privileges`, limites de memória/CPU/PIDs), mas **não** substitui as
-  precauções acima.
-- Com a **pesquisa na internet ligada**, o conteúdo das páginas visitadas entra
-  na conversa e é enviado ao provedor de IA. Mantenha desligada para assuntos
-  sensíveis.
+## Seguranca e limites atuais
 
-## 🇧🇷 LGPD e residência de dados
+- O backend recebe o socket Docker para criar sandboxes. Isso e uma permissao
+  privilegiada e o backend nao deve ser exposto sem protecao adequada.
+- A sandbox roda sem privilegios, com limites de CPU, memoria e processos, mas a
+  rede esta habilitada intencionalmente para pesquisas e automacoes. Codigo e
+  arquivos montados devem ser tratados como dados sensiveis.
+- Conteudo enviado ao modelo, inclusive texto extraido de arquivos e paginas web,
+  pode ser transmitido ao provedor configurado. Avalie LGPD, sigilo e residencia
+  de dados antes de enviar informacoes sensiveis.
+- O login ja existe, mas o isolamento completo entre varios usuarios ainda esta em
+  desenvolvimento. Nao trate a instalacao atual como um SaaS multi-tenant pronto
+  para terceiros ate a conclusao da Fase 3 descrita no CONTINUIDADE.md.
 
-A API da **DeepSeek** é hospedada na **China**; o OpenRouter, nos **EUA**. Todo
-texto enviado no chat (incluindo o conteúdo de arquivos que o modelo leia) é
-transmitido para servidores fora do Brasil. **Para dados sensíveis ou sujeitos
-à LGPD, não use endpoints públicos.**
+## Validacao local
 
-Nesses casos, aponte `DEEPSEEK_BASE_URL` para um endpoint **local** compatível
-com a API OpenAI — por exemplo **vLLM** ou **Ollama** — mantendo os dados na
-sua infraestrutura:
+Os testes mais relevantes podem ser executados assim:
 
-```env
-DEEPSEEK_BASE_URL=http://localhost:11434/v1
-DEEPSEEK_MODEL=seu-modelo-local
-DEEPSEEK_API_KEY=chave-qualquer
-```
+~~~powershell
+node --test backend/src/agent.control.test.js backend/src/tools.pathResolution.test.js frontend/src/sse.test.js
+docker compose exec -T frontend npm run build
+~~~
 
-## Solução de problemas
+## Documentacao complementar
 
-| Sintoma | Causa provável / solução |
-|---|---|
-| "Não foi possível conectar ao servidor" | Docker Desktop fechado ou app desligado → abra o Docker e rode `iniciar.bat` |
-| `port is already allocated` | Sobrou uma execução anterior → `parar.bat` (ou `docker compose down`) e suba de novo |
-| Erro de chave / "Insufficient balance" | Confira a chave no `.env` e o crédito no provedor |
-| Arquivo não gera / trava nos 45s | Tarefa pesada → peça em partes (extrair dados → depois gerar o arquivo) ou aumente `TOOL_TIMEOUT_MS` |
-| Ditado por voz não funciona | Use Chrome/Edge e permita o microfone |
+- [CONTINUIDADE.md](CONTINUIDADE.md): estado atual, decisoes e handoff.
+- [NOTEBOOK-SERVIDOR.md](NOTEBOOK-SERVIDOR.md): acesso remoto com notebook e Tailscale.
+- [VPS-DEPLOY.md](VPS-DEPLOY.md): publicacao em VPS com HTTPS.
 
-## Pontos para produção
+## Processo de contribuicao
 
-Antes de usar com clientes reais: autenticação de usuários; HTTPS/proxy reverso;
-PostgreSQL para múltiplos usuários; fila para tarefas longas; retenção/expurgo de
-dados; antivírus nos uploads; isolamento mais forte (gVisor/Firecracker); RBAC e
-logs de auditoria.
+Toda mudanca relevante precisa atualizar CONTINUIDADE.md, passar por validacao,
+receber um commit descritivo em portugues e ser enviada ao GitHub na mesma sessao.
+Nao inclua arquivos gerados, lockfiles alterados apenas pelo ambiente ou notas de
+outras frentes sem revisao explicita.
