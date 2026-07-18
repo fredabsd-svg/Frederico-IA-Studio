@@ -322,6 +322,7 @@ export default function App({ user } = {}) {
   const [analytics, setAnalytics] = useState(null);
   const [busy, setBusy] = useState(false);
   const [paused, setPaused] = useState(false);
+  const [controlPending, setControlPending] = useState(false);
   const [statusText, setStatusText] = useState('');
   const [nowTick, setNowTick] = useState(0);
   const [theme, setTheme] = useState(() => localStorage.getItem('fred_theme') || 'dark');
@@ -1018,11 +1019,28 @@ export default function App({ user } = {}) {
 
   // ---- Controle: pausar / continuar / parar ----
   async function control(action) {
-    if (!current) return;
-    if (action === 'pause') setPaused(true);
-    if (action === 'resume') setPaused(false);
-    if (action === 'stop') setPaused(false);
-    try { await fetch(`${API}/api/conversations/${current.id}/control`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action }) }); } catch {}
+    if (!current || !busyRef.current || controlPending) return;
+    const conversationId = current.id;
+    setControlPending(true);
+    if (action === 'pause') setStatusText('Pausando...');
+    if (action === 'resume') setStatusText('Retomando...');
+    if (action === 'stop') setStatusText('Interrompendo...');
+    try {
+      const response = await fetch(`${API}/api/conversations/${conversationId}/control`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action })
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result?.error || 'Não foi possível controlar o processamento.');
+      if (action === 'pause') setPaused(Boolean(result.paused));
+      if (action === 'resume' || action === 'stop') setPaused(false);
+    } catch (err) {
+      setStatusText('');
+      showToast(err?.message || 'Não foi possível controlar o processamento.');
+    } finally {
+      setControlPending(false);
+    }
   }
 
   // Reenvia uma mensagem que falhou: remove o balão de erro (e o balão do
@@ -1405,9 +1423,9 @@ export default function App({ user } = {}) {
           <span>{paused ? 'Pausado' : (statusText || 'Processando...')}</span>
           <div className="workctl">
             {!paused
-              ? <button onClick={() => control('pause')} title="Pausar após a etapa atual"><Pause size={14}/> Pausar</button>
-              : <button onClick={() => control('resume')} title="Continuar"><Play size={14}/> Continuar</button>}
-            <button className="stopBtn" onClick={() => control('stop')} title="Parar o processamento"><Square size={13}/> Parar</button>
+              ? <button onClick={() => control('pause')} title="Pausar a resposta" disabled={controlPending}><Pause size={14}/> Pausar</button>
+              : <button onClick={() => control('resume')} title="Continuar" disabled={controlPending}><Play size={14}/> Continuar</button>}
+            <button className="stopBtn" onClick={() => control('stop')} title="Parar o processamento" disabled={controlPending}><Square size={13}/> Parar</button>
           </div>
         </div>}
         <div ref={endRef}/>

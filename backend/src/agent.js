@@ -108,6 +108,88 @@ export function shouldContinueAfterTruncation(finishReason, attempts = 0) {
   return String(finishReason || '').toLowerCase() === 'length' && attempts < 2;
 }
 
+const WEB_RESEARCH_FAILURE_LIMIT = Math.max(1, Number(process.env.WEB_RESEARCH_FAILURE_LIMIT || 3));
+const WEB_RESEARCH_FETCH_LIMIT = Math.max(1, Number(process.env.WEB_RESEARCH_FETCH_LIMIT || 8));
+const TOOL_CALLS_PER_STEP_LIMIT = Math.max(1, Number(process.env.TOOL_CALLS_PER_STEP_LIMIT || 12));
+
+export function normalizeWebFetchUrl(value) {
+  try {
+    const url = new URL(String(value || '').trim());
+    url.hash = '';
+    url.hostname = url.hostname.toLowerCase();
+    if ((url.protocol === 'https:' && url.port === '443') || (url.protocol === 'http:' && url.port === '80')) url.port = '';
+    return url.toString();
+  } catch {
+    return String(value || '').trim();
+  }
+}
+
+export function classifyToolOutcome(name, result) {
+  let payload = null;
+  try { payload = JSON.parse(result); } catch { return { failed: false, recoverable: false, detail: '', webUnavailable: false }; }
+  if (!payload || typeof payload !== 'object') return { failed: false, recoverable: false, detail: '', webUnavailable: false };
+
+  const status = Number(payload.status);
+  const httpFailure = Number.isInteger(status) && (status < 200 || status >= 300);
+  const hasError = Boolean(payload.error) || (typeof payload.exitCode === 'number' && payload.exitCode !== 0);
+  const unreadableFetch = name === 'web_fetch' && (!String(payload.content || '').trim() || Boolean(payload.note));
+  const failed = hasError || (name === 'web_fetch' && (httpFailure || unreadableFetch));
+  const emptySearch = name === 'web_search' && Array.isArray(payload.results) && payload.results.length === 0;
+  const detail = String(payload.error || payload.output || (httpFailure ? `HTTP ${status}` : '') || '').slice(-300);
+
+  return {
+    failed,
+    recoverable: failed && Boolean(payload.recoverable),
+    detail,
+    webUnavailable: (name === 'web_fetch' && failed) || emptySearch
+  };
+}
+
+export function webResearchStopReason({ repeatedFetch = false, unavailableSources = 0, fetchAttempts = 0, failureLimit = WEB_RESEARCH_FAILURE_LIMIT, fetchLimit = WEB_RESEARCH_FETCH_LIMIT } = {}) {
+  if (repeatedFetch) return 'a mesma fonte já foi consultada nesta tarefa';
+  if (unavailableSources >= failureLimit) return `${unavailableSources} fontes não retornaram conteúdo utilizável`;
+  if (fetchAttempts >= fetchLimit) return `o limite de ${fetchLimit} páginas consultadas foi alcançado`;
+  return null;
+}
+
+export function planToolCallBatch(calls, seenWebFetches = new Set(), maxCalls = TOOL_CALLS_PER_STEP_LIMIT, maxWebFetches = Infinity) {
+  const planned = [];
+  const urlsInBatch = new Set(seenWebFetches);
+  let webStopReason = '';
+  let truncated = false;
+  let plannedWebFetches = 0;
+
+  for (const call of calls || []) {
+    if (planned.length >= maxCalls) {
+      truncated = true;
+      break;
+    }
+    const name = call?.function?.name;
+    let rawUrl = '';
+    if (name === 'web_fetch') {
+      try { rawUrl = JSON.parse(call?.function?.arguments || '{}').url || ''; } catch {}
+    }
+    const url = name === 'web_fetch' ? normalizeWebFetchUrl(rawUrl) : '';
+    if (name === 'web_fetch' && url && urlsInBatch.has(url)) {
+      webStopReason = webResearchStopReason({ repeatedFetch: true });
+      break;
+    }
+    if (name === 'web_fetch' && url && plannedWebFetches >= maxWebFetches) {
+      webStopReason = webResearchStopReason({ fetchAttempts: WEB_RESEARCH_FETCH_LIMIT });
+      break;
+    }
+    if (name === 'web_fetch' && url) urlsInBatch.add(url);
+    if (name === 'web_fetch' && url) plannedWebFetches += 1;
+    planned.push(call);
+  }
+
+  return { calls: planned, webStopReason, truncated };
+}
+
+function webResearchFinalizationNote(reason) {
+  return `A pesquisa web foi interrompida porque ${reason}. Responda agora usando SOMENTE as evidências já recebidas nesta conversa. Não chame ferramentas, não prometa uma nova consulta, não diga para o usuário aguardar e não invente dados. Se não houver informação verificável suficiente, explique objetivamente quais fontes falharam ou não trouxeram resultados e indique como o usuário pode fornecer um CNPJ, link ou documento para uma busca mais precisa.`;
+}
+
 export function textOutputPathFromClaim(text) {
   const match = /(?:sandbox:)?(?:\/workspace\/|\/mnt\/user-data\/)?outputs\/([^\s"'<>\]\)]+?\.(?:md|markdown|txt))(?:[.,;:!?]+)?/i.exec(String(text || ''));
   if (!match) return null;
@@ -187,6 +269,7 @@ const client = new OpenAI({
 
 const STREAM_RECOVERY_LIMIT = Math.max(0, Number(process.env.MODEL_STREAM_RECOVERY_LIMIT || 2));
 const STREAM_RESUME_NOTE = 'A resposta anterior do provedor foi interrompida temporariamente. Continue exatamente do ponto em que parou, sem repetir texto nem desfazer as ferramentas ja executadas. Conclua a tarefa.';
+const STREAM_PAUSE_RESUME_NOTE = 'A resposta anterior foi pausada pelo usuário. Continue exatamente do ponto em que parou, sem repetir texto e sem desfazer ferramentas já executadas.';
 const PROVIDER_TIMEOUT_NOTICE = '\n\n_Nota: o provedor do modelo ficou indisponivel enquanto esta etapa era gerada. O aplicativo tentou retomar automaticamente, mas nao recebeu uma resposta completa. Reenvie esta mesma tarefa para continuar a partir do trabalho ja salvo._';
 
 export function isRetryableStreamError(error) {
@@ -551,7 +634,7 @@ export function friendlyApiError(err) {
 }
 
 // ---- Controle de execução (pausar / continuar / parar) ----
-const controls = new Map(); // conversationId -> { paused, stopped }
+const controls = new Map(); // conversationId -> { paused, stopped, activeRequest, activeTool }
 
 export class ConversationBusyError extends Error {
   constructor() {
@@ -563,7 +646,7 @@ export class ConversationBusyError extends Error {
 
 export function acquireConversationControl(conversationId) {
   if (controls.has(conversationId)) throw new ConversationBusyError();
-  const control = { paused: false, stopped: false };
+  const control = { paused: false, stopped: false, activeRequest: null, activeTool: null };
   controls.set(conversationId, control);
   return control;
 }
@@ -571,14 +654,61 @@ export function acquireConversationControl(conversationId) {
 export function releaseConversationControl(conversationId, control) {
   if (controls.get(conversationId) === control) controls.delete(conversationId);
 }
+
+export function beginProviderRequest(control) {
+  const request = new AbortController();
+  control.activeRequest = request;
+  return request;
+}
+
+export function releaseProviderRequest(control, request) {
+  if (control?.activeRequest === request) control.activeRequest = null;
+}
+
+export function beginToolRequest(control) {
+  const request = new AbortController();
+  control.activeTool = request;
+  return request;
+}
+
+export function releaseToolRequest(control, request) {
+  if (control?.activeTool === request) control.activeTool = null;
+}
+
+export function controlInterruptReason(control, request) {
+  if (control?.stopped) return 'stop';
+  if (!request?.signal?.aborted) return null;
+  const reason = request.signal.reason;
+  if (reason === 'pause' || reason === 'stop') return reason;
+  return control?.paused ? 'pause' : 'abort';
+}
+
+function abortActiveProviderRequest(control, reason) {
+  const request = control?.activeRequest;
+  if (request && !request.signal.aborted) request.abort(reason);
+}
+
+function abortActiveToolRequest(control, reason) {
+  const request = control?.activeTool;
+  if (request && !request.signal.aborted) request.abort(reason);
+}
+
 export function setControl(conversationId, action) {
   // Só atua sobre uma execução ATIVA; nunca cria entradas (evita vazamento
   // quando o evento chega depois que a execução terminou).
   const c = controls.get(conversationId);
   if (!c) return null;
-  if (action === 'pause') c.paused = true;
-  else if (action === 'resume') c.paused = false;
-  else if (action === 'stop') { c.stopped = true; c.paused = false; }
+  if (action === 'pause' && !c.stopped) {
+    c.paused = true;
+    abortActiveProviderRequest(c, 'pause');
+  }
+  else if (action === 'resume' && !c.stopped) c.paused = false;
+  else if (action === 'stop') {
+    c.stopped = true;
+    c.paused = false;
+    abortActiveProviderRequest(c, 'stop');
+    abortActiveToolRequest(c, 'stop');
+  }
   return c;
 }
 export function isConversationActive(conversationId) {
@@ -666,6 +796,8 @@ export async function runAgent({ conversationId, userText, model, assistant, web
   if (webSearchActive) messages.push({ role: 'system', content: `VOCÊ TEM ACESSO À INTERNET NESTA CONVERSA — o usuário ativou a pesquisa web.
 - Para buscar: ferramenta web_search. Para ler uma página: web_fetch.
 - NUNCA diga que "não tem acesso à internet": você tem, através dessas duas ferramentas. Use-as para informações atuais/externas (legislação, notícias, tabelas, cotações, prazos) e cite as fontes (links).
+- Abra cada URL no máximo uma vez nesta tarefa. Se uma fonte retornar erro, HTTP inválido ou conteúdo vazio, não repita a mesma consulta: tente outra fonte ou conclua explicando o limite encontrado.
+- Depois de pesquisar fontes suficientes, pare de anunciar próximos passos e entregue uma síntese honesta do que foi ou não verificado.
 - O SANDBOX Python também tem internet direta: dá para usar requests/urllib e instalar com "pip install --user". Use web_search/web_fetch quando quiser resultados de busca prontos com fontes; use a rede do sandbox quando precisar baixar dados ou consumir uma API diretamente no código.` });
   let memoryMeta = null;
   // Memória de longo prazo: perfil, notas, resumos e recuperação semântica
@@ -713,6 +845,11 @@ export async function runAgent({ conversationId, userText, model, assistant, web
   let providerFailure = false;
   let incomplete = false;
   let failureMessage = '';
+  const seenWebFetches = new Set();
+  let unavailableWebSources = 0;
+  let webFetchAttempts = 0;
+  let webResearchStop = '';
+  let webResearchConclusionAttempted = false;
   for (let step = 0; step < maxSteps; step++) {
     if (await gate(control, onEvent)) { stopped = true; break; }
     onEvent({ type: 'status', content: step === 0 ? 'Pensando...' : 'Continuando...' });
@@ -721,7 +858,9 @@ export async function runAgent({ conversationId, userText, model, assistant, web
     const toolCalls = [];
     let finishReason = null;
     let stream;
+    let activeRequest;
     try {
+      activeRequest = beginProviderRequest(control);
       stream = await client.chat.completions.create({
         model: chosenModel,
         messages,
@@ -731,8 +870,19 @@ export async function runAgent({ conversationId, userText, model, assistant, web
         ...openRouterRouting(),
         stream: true,
         stream_options: { include_usage: true }
-      });
+      }, { signal: activeRequest.signal });
     } catch (err) {
+      const interrupted = controlInterruptReason(control, activeRequest);
+      releaseProviderRequest(control, activeRequest);
+      if (interrupted === 'stop') {
+        stopped = true;
+        break;
+      }
+      if (interrupted === 'pause') {
+        onEvent({ type: 'status', content: 'Pausado' });
+        step -= 1;
+        continue;
+      }
       if (!isUnsupportedToolError(err) || !tools.length || toolFallbackApplied) {
         if (isRetryableStreamError(err) && streamRecoveryAttempts < STREAM_RECOVERY_LIMIT) {
           streamRecoveryAttempts += 1;
@@ -768,8 +918,10 @@ export async function runAgent({ conversationId, userText, model, assistant, web
       continue;
     }
     let reasoningNotified = false;
+    let pausedDuringStream = false;
     try {
     for await (const chunk of stream) {
+      if (await gate(control, onEvent)) { stopped = true; break; }
       if (chunk.usage) addUsage(usage, chunk.usage);
       const choice = chunk.choices?.[0];
       if (choice?.finish_reason) finishReason = choice.finish_reason;
@@ -794,31 +946,61 @@ export async function runAgent({ conversationId, userText, model, assistant, web
       if (control.stopped) { stopped = true; break; }
     }
     } catch (err) {
-      if (!isRetryableStreamError(err)) throw err;
-      if (streamRecoveryAttempts < STREAM_RECOVERY_LIMIT) {
-        streamRecoveryAttempts += 1;
-        if (content || toolCalls.filter(Boolean).length) {
-          messages.push({ role: 'assistant', content: content ?? '' });
-          messages.push({ role: 'system', content: STREAM_RESUME_NOTE });
+      const interrupted = controlInterruptReason(control, activeRequest);
+      if (interrupted === 'stop') {
+        stopped = true;
+      } else if (interrupted === 'pause') {
+        pausedDuringStream = true;
+      } else {
+        if (!isRetryableStreamError(err)) throw err;
+        if (streamRecoveryAttempts < STREAM_RECOVERY_LIMIT) {
+          streamRecoveryAttempts += 1;
+          if (content || toolCalls.filter(Boolean).length) {
+            messages.push({ role: 'assistant', content: content ?? '' });
+            messages.push({ role: 'system', content: STREAM_RESUME_NOTE });
+          }
+          onEvent({ type: 'status', content: `A resposta do provedor foi interrompida. Retomando (${streamRecoveryAttempts}/${STREAM_RECOVERY_LIMIT})...` });
+          await retryDelay(streamRecoveryAttempts);
+          step -= 1;
+          continue;
         }
-        onEvent({ type: 'status', content: `A resposta do provedor foi interrompida. Retomando (${streamRecoveryAttempts}/${STREAM_RECOVERY_LIMIT})...` });
-        await retryDelay(streamRecoveryAttempts);
+        finalText += PROVIDER_TIMEOUT_NOTICE;
+        providerFailure = true;
+        failureMessage = 'O provedor do modelo interrompeu a resposta antes de concluir a tarefa.';
+        onEvent({ type: 'delta', content: PROVIDER_TIMEOUT_NOTICE });
+        completedNaturally = true;
+        break;
+      }
+    } finally {
+      releaseProviderRequest(control, activeRequest);
+    }
+    streamRecoveryAttempts = 0;
+    if (stopped) break;
+    if (pausedDuringStream) {
+      if (content) {
+        messages.push({ role: 'assistant', content });
+        messages.push({ role: 'system', content: STREAM_PAUSE_RESUME_NOTE });
+      }
+      onEvent({ type: 'status', content: 'Pausado' });
+      step -= 1;
+      continue;
+    }
+    const remainingWebFetches = Math.max(0, WEB_RESEARCH_FETCH_LIMIT - webFetchAttempts);
+    const toolBatch = planToolCallBatch(toolCalls.filter(Boolean), seenWebFetches, TOOL_CALLS_PER_STEP_LIMIT, remainingWebFetches);
+    const stepToolCalls = toolBatch.calls;
+    if (toolBatch.webStopReason && !webResearchStop) webResearchStop = toolBatch.webStopReason;
+    // Reenvia só o que a API espera (evita campos extras como reasoning_content)
+    messages.push({ role: 'assistant', content: content ?? '', ...(stepToolCalls.length ? { tool_calls: stepToolCalls } : {}) });
+    if (!stepToolCalls.length) {
+      if (webResearchStop && !webResearchConclusionAttempted) {
+        webResearchConclusionAttempted = true;
+        tools = [];
+        messages[1] = { role: 'system', content: toolAvailabilityNote(tools) };
+        messages.push({ role: 'system', content: webResearchFinalizationNote(webResearchStop) });
+        onEvent({ type: 'status', content: 'Concluindo a pesquisa com as fontes já verificadas...' });
         step -= 1;
         continue;
       }
-      finalText += PROVIDER_TIMEOUT_NOTICE;
-      providerFailure = true;
-      failureMessage = 'O provedor do modelo interrompeu a resposta antes de concluir a tarefa.';
-      onEvent({ type: 'delta', content: PROVIDER_TIMEOUT_NOTICE });
-      completedNaturally = true;
-      break;
-    }
-    streamRecoveryAttempts = 0;
-    const stepToolCalls = toolCalls.filter(Boolean);
-    // Reenvia só o que a API espera (evita campos extras como reasoning_content)
-    messages.push({ role: 'assistant', content: content ?? '', ...(stepToolCalls.length ? { tool_calls: stepToolCalls } : {}) });
-    if (stopped) break;
-    if (!stepToolCalls.length) {
       const outputsSoFar = listOutputs(conversationId);
       if (shouldContinueAfterTruncation(finishReason, truncationContinuationAttempts)) {
         truncationContinuationAttempts += 1;
@@ -864,23 +1046,57 @@ export async function runAgent({ conversationId, userText, model, assistant, web
       const preview = String(args.code || args.command || args.prompt || args.path || args.query || args.url || '').slice(0, 400);
       onEvent({ type: 'tool_start', name, preview });
       let result;
-      try { result = await runTool(conversationId, name, args, sandboxOptions); }
-      catch (err) { result = JSON.stringify({ error: err.message }); }
+      const isWebTool = name === 'web_search' || name === 'web_fetch';
+      const fetchUrl = name === 'web_fetch' ? normalizeWebFetchUrl(args.url) : '';
+      const repeatedFetch = Boolean(fetchUrl && seenWebFetches.has(fetchUrl));
+      if (name === 'web_fetch' && !repeatedFetch) {
+        if (fetchUrl) seenWebFetches.add(fetchUrl);
+        webFetchAttempts += 1;
+      }
+      if (isWebTool && webResearchStop) {
+        result = JSON.stringify({ error: 'A pesquisa web já atingiu o limite desta tarefa. Conclua com as evidências obtidas.', code: 'WEB_RESEARCH_STOPPED' });
+      } else if (repeatedFetch) {
+        result = JSON.stringify({ error: 'Esta URL já foi consultada nesta tarefa. Use uma fonte nova ou conclua com as evidências obtidas.', code: 'DUPLICATE_WEB_FETCH', url: args.url });
+      } else {
+        const activeTool = beginToolRequest(control);
+        try {
+          result = await runTool(conversationId, name, args, sandboxOptions, { signal: activeTool.signal });
+        } catch (err) {
+          if (controlInterruptReason(control, activeTool) === 'stop') {
+            stopped = true;
+            result = JSON.stringify({ error: 'Execucao interrompida pelo usuario.', code: 'CANCELED' });
+          } else {
+            result = JSON.stringify({ error: err.message });
+          }
+        } finally {
+          releaseToolRequest(control, activeTool);
+        }
+      }
       executedToolCalls += 1;
       onEvent({ type: 'tool_result', name, content: result.slice(0, 2000) });
       messages.push({ role: 'tool', tool_call_id: call.id, content: result });
       // Freio de loop: conta falhas consecutivas das ferramentas
-      let failed = false;
-      let recoverable = false;
-      try {
-        const r = JSON.parse(result);
-        failed = !!r.error || (typeof r.exitCode === 'number' && r.exitCode !== 0);
-        recoverable = failed && !!r.recoverable;
-        if (failed && !recoverable) repeatedError = String(r.error || r.output || '').slice(-300);
-      } catch {}
-      consecutiveFailures = failed && !recoverable ? consecutiveFailures + 1 : 0;
+      const outcome = classifyToolOutcome(name, result);
+      if (outcome.failed && !outcome.recoverable) repeatedError = outcome.detail;
+      consecutiveFailures = outcome.failed && !outcome.recoverable ? consecutiveFailures + 1 : 0;
+      if (outcome.webUnavailable) unavailableWebSources += 1;
+      const researchReason = webResearchStopReason({
+        repeatedFetch,
+        unavailableSources: unavailableWebSources,
+        fetchAttempts: webFetchAttempts
+      });
+      if (researchReason && !webResearchStop) webResearchStop = researchReason;
     }
     if (stopped) break;
+    if (webResearchStop && !webResearchConclusionAttempted) {
+      webResearchConclusionAttempted = true;
+      tools = [];
+      messages[1] = { role: 'system', content: toolAvailabilityNote(tools) };
+      messages.push({ role: 'system', content: webResearchFinalizationNote(webResearchStop) });
+      onEvent({ type: 'status', content: 'Concluindo a pesquisa com as fontes já verificadas...' });
+      step -= 1;
+      continue;
+    }
     if (consecutiveFailures >= 5) {
       incomplete = true;
       failureMessage = 'As ferramentas falharam repetidamente durante a execução da tarefa.';
@@ -987,15 +1203,36 @@ export async function runOrchestrator({ conversationId, userText, model, assista
     let text = '';
     for (let attempt = 0; ; attempt++) {
       let segment = '';
+      let activeRequest;
       try {
-        const stream = await client.chat.completions.create({ model: coordModel, messages: msgs, temperature: 0.3, ...openRouterRouting(), stream: true, stream_options: { include_usage: true } });
+        activeRequest = beginProviderRequest(control);
+        const stream = await client.chat.completions.create({ model: coordModel, messages: msgs, temperature: 0.3, ...openRouterRouting(), stream: true, stream_options: { include_usage: true } }, { signal: activeRequest.signal });
         for await (const chunk of stream) {
+          if (await gate(control, onEvent)) { stopped = true; return text; }
           if (chunk.usage) addUsage(usage, chunk.usage);
           const d = chunk.choices?.[0]?.delta?.content || '';
           if (d) { segment += d; text += d; onEvent({ type: 'delta', content: d }); }
         }
         return text;
       } catch (err) {
+        const interrupted = controlInterruptReason(control, activeRequest);
+        if (interrupted === 'stop') {
+          stopped = true;
+          return text;
+        }
+        if (interrupted === 'pause') {
+          if (segment) {
+            msgs.push({ role: 'assistant', content: segment });
+            msgs.push({ role: 'system', content: STREAM_PAUSE_RESUME_NOTE });
+          }
+          onEvent({ type: 'status', content: 'Pausado' });
+          if (await gate(control, onEvent)) {
+            stopped = true;
+            return text;
+          }
+          attempt -= 1;
+          continue;
+        }
         if (!isRetryableStreamError(err) || attempt >= STREAM_RECOVERY_LIMIT) throw err;
         if (segment) {
           msgs.push({ role: 'assistant', content: segment });
@@ -1003,6 +1240,30 @@ export async function runOrchestrator({ conversationId, userText, model, assista
         }
         onEvent({ type: 'status', content: `O provedor demorou para responder. Retomando (${attempt + 1}/${STREAM_RECOVERY_LIMIT})...` });
         await retryDelay(attempt + 1);
+      } finally {
+        releaseProviderRequest(control, activeRequest);
+      }
+    }
+  }
+
+  async function askTeamMember(member, msgs) {
+    for (;;) {
+      if (await gate(control, onEvent)) return { stopped: true };
+      const activeRequest = beginProviderRequest(control);
+      try {
+        const completion = await client.chat.completions.create({ model: member.model || coordModel, messages: msgs, temperature: 0.3, ...openRouterRouting() }, { signal: activeRequest.signal });
+        return { completion };
+      } catch (err) {
+        const interrupted = controlInterruptReason(control, activeRequest);
+        if (interrupted === 'stop') return { stopped: true };
+        if (interrupted === 'pause') {
+          onEvent({ type: 'status', content: 'Pausado' });
+          if (await gate(control, onEvent)) return { stopped: true };
+          continue;
+        }
+        return { error: err };
+      } finally {
+        releaseProviderRequest(control, activeRequest);
       }
     }
   }
@@ -1072,15 +1333,20 @@ export async function runOrchestrator({ conversationId, userText, model, assista
       const msgs = [{ role: 'system', content: sys }];
       if (memory) msgs.push({ role: 'system', content: memory });
       msgs.push({ role: 'user', content: historyText ? `Histórico recente da conversa:\n${historyText}\n\nNOVA mensagem do usuário:\n${userText}` : userText });
-      try {
-        const c = await client.chat.completions.create({ model: a.model || coordModel, messages: msgs, temperature: 0.3, ...openRouterRouting() });
-        addUsage(usage, c.usage);
-        const text = c.choices[0].message.content || '';
-        perspectives.push({ name: a.name, emoji: a.emoji, text });
-        onEvent({ type: 'tool_result', name: a.name, content: text.slice(0, 600) });
-      } catch (err) {
-        onEvent({ type: 'tool_result', name: a.name, content: `erro: ${friendlyApiError(err)}` });
+      const memberResult = await askTeamMember(a, msgs);
+      if (memberResult.stopped) {
+        stopped = true;
+        break;
       }
+      if (memberResult.error) {
+        onEvent({ type: 'tool_result', name: a.name, content: `erro: ${friendlyApiError(memberResult.error)}` });
+        continue;
+      }
+      const c = memberResult.completion;
+      addUsage(usage, c.usage);
+      const text = c.choices[0].message.content || '';
+      perspectives.push({ name: a.name, emoji: a.emoji, text });
+      onEvent({ type: 'tool_result', name: a.name, content: text.slice(0, 600) });
     }
 
     if (stopped || await gate(control, onEvent)) {
@@ -1090,7 +1356,7 @@ export async function runOrchestrator({ conversationId, userText, model, assista
       const stoppedMsgId = await saveMessage(conversationId, 'assistant', finalText, { memoryMeta });
       onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId: stoppedMsgId });
       releaseConversationControl(conversationId, control);
-      return { text: finalText, usage, model: coordModel };
+      return { text: finalText, usage, model: coordModel, stopped: true };
     }
 
     if (requirement.required) {
@@ -1110,11 +1376,20 @@ export async function runOrchestrator({ conversationId, userText, model, assista
     catch (err) { finalText = `Não foi possível compilar a resposta final: ${friendlyApiError(err)}`; onEvent({ type: 'delta', content: finalText }); }
   }
   try {
-    if (!finalText.trim()) { finalText = 'Concluído.'; onEvent({ type: 'delta', content: finalText }); }
+    if (stopped) {
+      onEvent({ type: 'status', content: 'Interrompido pelo usuário' });
+      if (!finalText.trim()) {
+        finalText = '_Processamento interrompido pelo usuário._';
+        onEvent({ type: 'delta', content: finalText });
+      }
+    } else if (!finalText.trim()) {
+      finalText = 'Concluído.';
+      onEvent({ type: 'delta', content: finalText });
+    }
     const doneMsgId = await saveMessage(conversationId, 'assistant', finalText, { memoryMeta });
     onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId: doneMsgId });
     indexAfterReply(conversationId).catch(() => {});
-    return { text: finalText, usage, model: coordModel };
+    return { text: finalText, usage, model: coordModel, stopped };
   } finally {
     releaseConversationControl(conversationId, control);
   }
