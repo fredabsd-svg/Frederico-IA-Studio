@@ -10,6 +10,7 @@ import { buildModelCallPlan, detectToolRequirement, isUnsupportedToolError, mark
 import { execInSandbox, realInside, workspaceFor, pcFolderMounts } from './sandbox.js';
 import { db, now } from './db.js';
 import { nanoid } from 'nanoid';
+import { createToolProtocolStreamGuard, parseTextToolCalls, sanitizeToolProtocolText } from './toolProtocol.js';
 
 // Esforço da IA: controla o raciocínio (reasoning effort — funciona de verdade
 // nos modelos que raciocinam, via OpenRouter), o número máximo de etapas do
@@ -81,10 +82,12 @@ function referencedOutputFiles(text, files) {
   return [...picked.values()];
 }
 
-const OUTPUT_DELIVERY_REPAIR_NOTE = `O texto anterior afirmou que existe um arquivo para download, mas o sistema verificou que nenhum arquivo correspondente foi criado em /workspace/outputs. Corrija isso agora: use uma ferramenta para criar o arquivo real em /workspace/outputs. Não diga que há download, link ou caminho de saída até o arquivo existir de verdade.`;
-const MISSING_OUTPUT_NOTICE = '\n\n_Nota: o arquivo informado acima não foi encontrado na pasta de saída, então não há download disponível nesta resposta._';
+const OUTPUT_DELIVERY_REPAIR_NOTE = `O texto anterior afirmou que existe um arquivo para download, mas o sistema verificou que nenhum arquivo correspondente foi criado em /workspace/outputs. Corrija isso agora: use uma chamada NATIVA de ferramenta para criar o arquivo real e confira que ele existe. Não escreva código, XML, JSON, <tool_call>, <function> ou argumentos de ferramenta na resposta visível. Não diga que há download até o arquivo existir de verdade.`;
+const MISSING_OUTPUT_NOTICE = '\n\n**O arquivo não foi gerado nesta tentativa.** Nenhum download foi criado. Use **Reenviar** para tentar novamente; se o problema persistir, escolha outro modelo marcado com **Ferramentas**.';
 const EXECUTION_COMPLETION_REPAIR_NOTE = `A resposta anterior ficou apenas no plano, em código ilustrativo ou em próximos passos. O pedido do usuário exige execução real nesta conversa. Use as ferramentas disponíveis agora para realizar o trabalho. Não entregue instruções para um “assistente principal”, não deixe itens como pendentes e não encerre até verificar o resultado da ferramenta. Se o pedido for gerar um arquivo, crie o arquivo real em /workspace/outputs e confira que ele existe.`;
-const EXECUTION_INCOMPLETE_NOTICE = '\n\n_Nota: a execução solicitada não foi concluída. Não há resultado verificado para entregar nesta resposta._';
+const EXECUTION_INCOMPLETE_NOTICE = '\n\n**Não consegui concluir esta execução.** Nenhum resultado verificável foi produzido. Use **Reenviar** para tentar novamente.';
+const TOOL_PROTOCOL_REPAIR_NOTE = `A resposta anterior tentou ESCREVER uma chamada de ferramenta como texto. Isso não executa a ferramenta. Tente novamente agora usando exclusivamente a chamada nativa disponibilizada pela API. Não mostre <tool_call>, <function>, <parameter>, JSON de argumentos nem o código da ferramenta ao usuário.`;
+const TOOL_PROTOCOL_FAILURE_NOTICE = '\n\n**Não consegui executar a ferramenta nesta tentativa.** O modelo devolveu a chamada em um formato inválido e nenhum resultado foi criado. Use **Reenviar** ou escolha outro modelo marcado com **Ferramentas**.';
 const RESPONSE_TRUNCATED_REPAIR_NOTE = 'A resposta anterior foi cortada pelo limite de tamanho antes de ser concluida. Continue exatamente de onde parou, sem repetir o que ja foi dito. Termine o trabalho de forma verificavel antes de responder ao usuario.';
 const RESPONSE_TRUNCATED_NOTICE = '\n\n_Nota: a resposta foi interrompida pelo limite do modelo antes de terminar. Tente continuar com uma nova mensagem ou escolha um modelo com saida maior._';
 const DEFERRED_EXECUTION_RE = /\b(?:proximo passo|pendente|a executar|executar o script|assistente principal|deve(?:ria)?\s+(?:executar|criar|gerar|verificar)|responsavel|aguarde|vou\s+(?:criar|gerar|executar))\b/i;
@@ -282,9 +285,13 @@ export function isRetryableStreamError(error) {
     || /upstream idle timeout|gateway timeout|temporar(?:y|ily)|provider.*(?:overload|timeout)|econnreset|fetch failed/.test(detail);
 }
 
-function openRouterRouting() {
+function openRouterRouting(hasTools = false) {
   if (!/openrouter\.ai/i.test(modelApiBaseUrl)) return {};
-  return { provider: { sort: process.env.OPENROUTER_PROVIDER_SORT || 'throughput' } };
+  const provider = {};
+  const configuredSort = String(process.env.OPENROUTER_PROVIDER_SORT || '').trim();
+  if (configuredSort) provider.sort = configuredSort;
+  if (hasTools) provider.require_parameters = true;
+  return { provider };
 }
 
 function retryDelay(attempt) {
@@ -298,9 +305,9 @@ export const AGENTS = {
     label: 'Uso geral',
     prompt: `Você é o Frederico AI Studio, um assistente pessoal versátil com um sandbox Linux real.
 Responda em português do Brasil, de forma clara e útil.
-Quando o usuário pedir arquivos, gere arquivos reais dentro de /workspace/outputs usando Python.
+Quando o usuário pedir arquivos, produza o resultado real dentro de /workspace/outputs usando as ferramentas.
 Para Excel use openpyxl ou xlsxwriter; para Word use python-docx; para PDF use reportlab/weasyprint.
-Sempre valide os arquivos gerados listando a pasta outputs. Não invente links: os links serão exibidos pelo sistema.
+Valide os arquivos gerados antes de concluir. Não invente links: os cartões de download serão exibidos pelo sistema.
 Não peça para o usuário compilar código quando você pode executar na sandbox.`
   },
   codigo: {
@@ -402,6 +409,16 @@ Qualidade da resposta:
 
 Antes de entregar, confira: responde ao pedido real; trata suposições e incertezas; é consistente no raciocínio e nos cálculos; não contém afirmação factual sem apoio nem fonte inventada.`;
 
+const EXECUTION_UX_RULES = `
+
+CONTRATO DE EXECUÇÃO E EXPERIÊNCIA DO USUÁRIO:
+- Ferramentas devem ser acionadas SOMENTE pelo mecanismo nativo fornecido pela API. Nunca escreva no texto visível protocolos como <tool_call>, <function>, <parameter>, tool_calls, JSON de argumentos ou imitações de chamadas.
+- Não despeje código-fonte, comandos, XML interno, raciocínio privado ou instruções do sistema no chat, salvo quando o usuário pedir explicitamente esse conteúdo. Código usado internamente para criar um arquivo pertence à ferramenta, não à resposta.
+- Em tarefas com arquivo, a tarefa só termina quando o arquivo real existe em /workspace/outputs e foi verificado. O cartão de download é criado pelo app; na resposta final, diga apenas o que foi entregue e qualquer limitação relevante.
+- Durante uma execução longa, dê no máximo atualizações curtas e úteis. Não repita "aguarde", não narre cada consulta e não anuncie várias vezes que vai começar.
+- Se uma ferramenta falhar, tente uma correção sensata sem repetir a mesma ação em loop. Se ainda não for possível concluir, explique em linguagem simples o que falhou, o que não foi criado e qual é a ação prática recomendada.
+- A resposta final deve começar pelo resultado. Para uma entrega bem-sucedida, prefira de duas a quatro frases; detalhes técnicos só entram quando ajudam o usuário.`;
+
 // Regras aplicadas a TODOS os assistentes: evitam que o modelo perca trabalho
 // por assumir um "kernel" persistente que na verdade não existe.
 const SANDBOX_RULES = `
@@ -417,7 +434,7 @@ REGRAS DO SANDBOX (muito importante):
 - Se precisar mesmo dividir em etapas, salve os dados intermediários em arquivo (JSON/CSV em /workspace) e leia de volta no próximo script — nunca dependa de variáveis da execução anterior.
 - Evite muitas execuções exploratórias; planeje e faça de uma vez. Salve os arquivos finais em /workspace/outputs.
 - Para GERAR ou EDITAR IMAGENS com IA, use a ferramenta generate_image (não tente desenhar via matplotlib quando o usuário pedir uma imagem artística/realista).
-- SEMPRE escreva uma frase curta explicando o que vai fazer ANTES de cada chamada de ferramenta, e verifique o resultado (exit code/erro) depois. Nunca encadeie ferramentas em silêncio.
+- Antes de iniciar uma fase de ferramentas, escreva no máximo uma frase curta sobre o objetivo. Depois, verifique os resultados sem transformar cada chamada em uma nova promessa ao usuário.
 - O sandbox TEM acesso à internet. Você pode baixar dados, consumir APIs (requests/urllib), usar curl/wget e instalar pacotes com "pip install --user <pacote>" ou "npm install <pacote>". O "apt install" NÃO funciona (o sandbox roda sem privilégios de root). Instalar leva tempo: prefira o que já está instalado e só instale quando realmente faltar.
 - Docker e Docker Compose continuam deliberadamente indisponíveis na sandbox para preservar o isolamento do computador anfitrião. Não tente instalar daemon, expor socket nem prometer execução de containers.
 - Não há GPU/CUDA, systemd, firewall, Android/iOS, Flutter nem servidor persistente. Para IA local, use apenas modelos compatíveis com CPU e deixe explícito quando o usuário precisar fornecer ou baixar os pesos.
@@ -425,7 +442,7 @@ REGRAS DO SANDBOX (muito importante):
 
 function promptFor(assistant) {
   const base = assistant ? (assistant.system_prompt || AGENTS.geral.prompt) : AGENTS.geral.prompt;
-  return base + personalitySuffix(assistant?.personality) + SANDBOX_RULES;
+  return base + personalitySuffix(assistant?.personality) + EXECUTION_UX_RULES + SANDBOX_RULES;
 }
 function toolsFor(assistant) {
   const all = [...toolDefinitions, ...imageToolDefinitions];
@@ -457,15 +474,16 @@ function developerContextFor(request) {
   };
 }
 
-function toolAvailabilityNote(tools) {
+function toolAvailabilityNote(tools, { includeInventory = false } = {}) {
   const names = new Set(tools.map(t => t.function.name));
   const lines = ['FERRAMENTAS E AMBIENTE DISPONÍVEIS NESTA CHAMADA:'];
   lines.push('Arquivos da conversa: uploads em /workspace/uploads; resultados finais em /workspace/outputs.');
-  lines.push('Para entregar arquivo ao usuario, salve em /workspace/outputs e nao escreva link sandbox:/mnt/user-data/outputs; o chat anexa o download sozinho.');
+  lines.push('Para entregar arquivo ao usuário, salve em /workspace/outputs; o chat cria o cartão de download sozinho.');
+  lines.push('Acione ferramentas apenas pela chamada nativa da API. Nunca escreva o protocolo ou os argumentos da ferramenta como texto.');
 
   lines.push('Ferramentas do chat habilitadas para você:');
   if (names.has('run_python')) lines.push('- run_python: executar Python 3.12 real no sandbox.');
-  if (names.has('bash')) lines.push('- bash: executar comandos Linux offline no sandbox.');
+  if (names.has('bash')) lines.push('- bash: executar comandos Linux no sandbox.');
   if (names.has('write_file')) lines.push('- write_file: criar ou sobrescrever arquivos no workspace.');
   if (names.has('read_file')) lines.push('- read_file: ler arquivos de texto do workspace.');
   if (names.has('list_files')) lines.push('- list_files: listar uploads, outputs e arquivos da conversa.');
@@ -475,19 +493,19 @@ function toolAvailabilityNote(tools) {
   if (names.has('web_fetch')) lines.push('- web_fetch: abrir uma página da internet encontrada na pesquisa.');
   if (!tools.length) lines.push('- Nenhuma ferramenta de execução foi habilitada para este assistente. Responda por texto e avise se a tarefa exigir ferramenta.');
 
-  if (names.has('run_python')) {
+  if (includeInventory && names.has('run_python')) {
     lines.push('Inventário Python instalado via run_python:');
     for (const item of PYTHON_INVENTORY) lines.push(`- ${item}`);
   }
-  if (names.has('bash')) {
+  if (includeInventory && names.has('bash')) {
     lines.push('Inventário de shell instalado via bash:');
     for (const item of SHELL_INVENTORY) lines.push(`- ${item}`);
     lines.push('VERIFICAÇÃO OBRIGATÓRIA DE AMBIENTE: antes de afirmar que algo existe ou falta, execute o comando correspondente. Para C#: `command -v dotnet && dotnet --version`; para Kotlin: `command -v kotlinc && kotlinc -version`; para odfpy use `python -c "import odf"`; para PostgreSQL use `python -c "import psycopg, psycopg2"`.');
   }
-  if (names.has('bash')) {
+  if (includeInventory && names.has('bash')) {
     lines.push('Exemplos úteis de LibreOffice: soffice --headless --convert-to xlsx --outdir /workspace/outputs arquivo.xls; soffice --headless --convert-to pdf --outdir /workspace/outputs relatorio.docx.');
   }
-  if (names.has('run_python') || names.has('bash')) {
+  if (includeInventory && (names.has('run_python') || names.has('bash'))) {
     lines.push('Estratégia para PDFs difíceis: PyMuPDF/fitz; pdftotext -layout; pdfplumber/camelot para tabelas; ocrmypdf; pdf2image + pytesseract com lang="por".');
   }
   lines.push('Não invente capacidades fora deste inventário. Se a ferramenta necessária não estiver habilitada, diga isso claramente ao usuário.');
@@ -784,9 +802,14 @@ export async function runAgent({ conversationId, userText, model, assistant, web
   }
   // Economia de tokens: menos mensagens de histórico consideradas por resposta
   const historyLimit = getSettings().economy_mode ? 20 : Number(process.env.AGENT_HISTORY_LIMIT || 60);
+  const includeEnvironmentInventory = Boolean(developerContext) || ENVIRONMENT_QUERY_RE.test(String(userText || ''));
   // QUALITY_BAR entra como 3o item: o índice 1 é reservado (reescrito adiante
   // com a nota de ferramentas), então não pode ser deslocado.
-  const messages = [{ role: 'system', content: chosenPrompt }, { role: 'system', content: toolAvailabilityNote(tools) }, { role: 'system', content: QUALITY_BAR }];
+  const messages = [
+    { role: 'system', content: chosenPrompt },
+    { role: 'system', content: toolAvailabilityNote(tools, { includeInventory: includeEnvironmentInventory }) },
+    { role: 'system', content: QUALITY_BAR }
+  ];
   if (forceExecution || modelPlan.requirements.required) messages.push({ role: 'system', content: EXECUTION_CONTRACT_NOTE });
   if (executionBriefing) messages.push({ role: 'system', content: `PARECERES DA EQUIPE PARA ORIENTAR A EXECUÇÃO (use como referência, mas confira tudo com as ferramentas):\n${String(executionBriefing).slice(0, 12000)}` });
   if (lowSignalTurn) messages.push({ role: 'system', content: LOW_SIGNAL_TURN_NOTE });
@@ -805,11 +828,15 @@ export async function runAgent({ conversationId, userText, model, assistant, web
     const contextPlan = await buildContext({ conversationId, assistantId: assistant?.id, clientScope: await clientScopeFor(conversationId), userText, historyLimit, model: chosenModel });
     const ctxBlocks = contextPlan.blocks || [];
     memoryMeta = contextPlan.meta || null;
-    for (const b of ctxBlocks) messages.push({ role: 'system', content: b });
+    for (const b of ctxBlocks) {
+      const clean = sanitizeToolProtocolText(b);
+      if (clean) messages.push({ role: 'system', content: clean });
+    }
   } catch (err) {
     console.error('[memória] contexto indisponível nesta resposta:', err.message);
     const memory = await memoryNote(assistant?.id, await clientScopeFor(conversationId));
-    if (memory) messages.push({ role: 'system', content: memory });
+    const cleanMemory = sanitizeToolProtocolText(memory);
+    if (cleanMemory) messages.push({ role: 'system', content: cleanMemory });
   }
   const note = uploadsNote(conversationId);
   if (note) messages.push({ role: 'system', content: note });
@@ -825,7 +852,12 @@ export async function runAgent({ conversationId, userText, model, assistant, web
     onEvent({ type: 'memory_context', memory: memoryMeta });
   }
   const history = historyPlan.rows;
-  messages.push(...history.map(m => ({ role: m.role, content: m.content })));
+  messages.push(...history
+    .map(m => ({
+      role: m.role,
+      content: m.role === 'assistant' ? sanitizeToolProtocolText(m.content) : m.content
+    }))
+    .filter(m => String(m.content || '').trim()));
 
   const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
   const maxSteps = Number(process.env.AGENT_MAX_STEPS || eff.steps);
@@ -836,9 +868,10 @@ export async function runAgent({ conversationId, userText, model, assistant, web
   let stopped = false;
   let completedNaturally = false;
   let consecutiveFailures = 0;
-  let repeatedError = '';
   let toolFallbackApplied = false;
   let executionRepairAttempted = false;
+  let protocolRepairAttempted = false;
+  let forceNativeToolCall = false;
   let executedToolCalls = 0;
   let truncationContinuationAttempts = 0;
   let streamRecoveryAttempts = 0;
@@ -855,6 +888,8 @@ export async function runAgent({ conversationId, userText, model, assistant, web
     onEvent({ type: 'status', content: step === 0 ? 'Pensando...' : 'Continuando...' });
     // Streaming: o texto é enviado token a token para a interface (tela viva)
     let content = '';
+    let displayedContent = '';
+    const protocolGuard = createToolProtocolStreamGuard(tools.length > 0);
     const toolCalls = [];
     let finishReason = null;
     let stream;
@@ -864,10 +899,10 @@ export async function runAgent({ conversationId, userText, model, assistant, web
       stream = await client.chat.completions.create({
         model: chosenModel,
         messages,
-        ...(tools.length ? { tools, tool_choice: 'auto' } : {}),
+        ...(tools.length ? { tools, tool_choice: forceNativeToolCall ? 'required' : 'auto' } : {}),
         ...(reasoningEffort ? { reasoning: { effort: reasoningEffort } } : {}),
         temperature,
-        ...openRouterRouting(),
+        ...openRouterRouting(tools.length > 0),
         stream: true,
         stream_options: { include_usage: true }
       }, { signal: activeRequest.signal });
@@ -933,7 +968,16 @@ export async function runAgent({ conversationId, userText, model, assistant, web
         reasoningNotified = true;
         onEvent({ type: 'status', content: 'Raciocinando... (este modelo pensa antes de responder e pode demorar)' });
       }
-      if (delta.content) { content += delta.content; finalText += delta.content; onEvent({ type: 'delta', content: delta.content }); }
+      if (delta.content) {
+        const chunkText = String(delta.content);
+        content += chunkText;
+        const visible = protocolGuard.push(chunkText);
+        if (visible) {
+          displayedContent += visible;
+          finalText += visible;
+          onEvent({ type: 'delta', content: visible });
+        }
+      }
       if (delta.tool_calls) {
         for (const tc of delta.tool_calls) {
           const i = tc.index ?? 0;
@@ -956,7 +1000,7 @@ export async function runAgent({ conversationId, userText, model, assistant, web
         if (streamRecoveryAttempts < STREAM_RECOVERY_LIMIT) {
           streamRecoveryAttempts += 1;
           if (content || toolCalls.filter(Boolean).length) {
-            messages.push({ role: 'assistant', content: content ?? '' });
+            messages.push({ role: 'assistant', content: sanitizeToolProtocolText(content) });
             messages.push({ role: 'system', content: STREAM_RESUME_NOTE });
           }
           onEvent({ type: 'status', content: `A resposta do provedor foi interrompida. Retomando (${streamRecoveryAttempts}/${STREAM_RECOVERY_LIMIT})...` });
@@ -974,23 +1018,69 @@ export async function runAgent({ conversationId, userText, model, assistant, web
     } finally {
       releaseProviderRequest(control, activeRequest);
     }
+    const trailingVisible = protocolGuard.finish();
+    if (trailingVisible) {
+      displayedContent += trailingVisible;
+      finalText += trailingVisible;
+      onEvent({ type: 'delta', content: trailingVisible });
+    }
     streamRecoveryAttempts = 0;
     if (stopped) break;
     if (pausedDuringStream) {
       if (content) {
-        messages.push({ role: 'assistant', content });
+        messages.push({ role: 'assistant', content: sanitizeToolProtocolText(content) });
         messages.push({ role: 'system', content: STREAM_PAUSE_RESUME_NOTE });
       }
       onEvent({ type: 'status', content: 'Pausado' });
       step -= 1;
       continue;
     }
+    forceNativeToolCall = false;
+    const nativeToolCalls = toolCalls.filter(Boolean);
+    const textualProtocol = parseTextToolCalls(content, tools.map(tool => tool.function.name));
+    let protocolMalformed = false;
+    let candidateToolCalls = nativeToolCalls;
+    if (textualProtocol.detected) {
+      content = textualProtocol.visibleText || displayedContent;
+      if (!nativeToolCalls.length && textualProtocol.malformed) {
+        protocolMalformed = true;
+        console.warn(`[agent] ${chosenModel} devolveu uma chamada textual de ferramenta malformada`);
+      } else if (!nativeToolCalls.length && textualProtocol.calls.length) {
+        candidateToolCalls = textualProtocol.calls.map((call, index) => ({
+          id: `text_tool_${step}_${index}_${nanoid(8)}`,
+          type: 'function',
+          function: {
+            name: call.name,
+            arguments: JSON.stringify(call.arguments)
+          }
+        }));
+        console.warn(`[agent] ${chosenModel} devolveu protocolo textual; convertido para chamada nativa: ${textualProtocol.calls.map(call => call.name).join(', ')}`);
+        finishReason = 'tool_calls';
+        onEvent({ type: 'status', content: 'Executando a ferramenta solicitada...' });
+      }
+    }
+
     const remainingWebFetches = Math.max(0, WEB_RESEARCH_FETCH_LIMIT - webFetchAttempts);
-    const toolBatch = planToolCallBatch(toolCalls.filter(Boolean), seenWebFetches, TOOL_CALLS_PER_STEP_LIMIT, remainingWebFetches);
+    const toolBatch = planToolCallBatch(candidateToolCalls, seenWebFetches, TOOL_CALLS_PER_STEP_LIMIT, remainingWebFetches);
     const stepToolCalls = toolBatch.calls;
     if (toolBatch.webStopReason && !webResearchStop) webResearchStop = toolBatch.webStopReason;
     // Reenvia só o que a API espera (evita campos extras como reasoning_content)
     messages.push({ role: 'assistant', content: content ?? '', ...(stepToolCalls.length ? { tool_calls: stepToolCalls } : {}) });
+    if (protocolMalformed) {
+      if (!protocolRepairAttempted && tools.length) {
+        protocolRepairAttempted = true;
+        forceNativeToolCall = true;
+        messages.push({ role: 'system', content: TOOL_PROTOCOL_REPAIR_NOTE });
+        onEvent({ type: 'status', content: 'Corrigindo uma chamada de ferramenta inválida...' });
+        continue;
+      }
+      incomplete = true;
+      failureMessage = 'O modelo devolveu a chamada de ferramenta em um formato inválido.';
+      finalText += TOOL_PROTOCOL_FAILURE_NOTICE;
+      onEvent({ type: 'delta', content: TOOL_PROTOCOL_FAILURE_NOTICE });
+      completedNaturally = true;
+      break;
+    }
     if (!stepToolCalls.length) {
       if (webResearchStop && !webResearchConclusionAttempted) {
         webResearchConclusionAttempted = true;
@@ -1020,6 +1110,7 @@ export async function runAgent({ conversationId, userText, model, assistant, web
       });
       if (!executionRepairAttempted && tools.length && (missingClaimedOutput || incompleteExecution)) {
         executionRepairAttempted = true;
+        forceNativeToolCall = true;
         messages.push({ role: 'system', content: missingClaimedOutput ? OUTPUT_DELIVERY_REPAIR_NOTE : EXECUTION_COMPLETION_REPAIR_NOTE });
         onEvent({ type: 'status', content: missingClaimedOutput ? 'Conferindo o arquivo prometido...' : 'Executando o trabalho solicitado...' });
         continue;
@@ -1077,7 +1168,6 @@ export async function runAgent({ conversationId, userText, model, assistant, web
       messages.push({ role: 'tool', tool_call_id: call.id, content: result });
       // Freio de loop: conta falhas consecutivas das ferramentas
       const outcome = classifyToolOutcome(name, result);
-      if (outcome.failed && !outcome.recoverable) repeatedError = outcome.detail;
       consecutiveFailures = outcome.failed && !outcome.recoverable ? consecutiveFailures + 1 : 0;
       if (outcome.webUnavailable) unavailableWebSources += 1;
       const researchReason = webResearchStopReason({
@@ -1100,7 +1190,7 @@ export async function runAgent({ conversationId, userText, model, assistant, web
     if (consecutiveFailures >= 5) {
       incomplete = true;
       failureMessage = 'As ferramentas falharam repetidamente durante a execução da tarefa.';
-      const note = `\n\n_⚠️ Interrompi o processamento para evitar repetir o mesmo erro técnico. As últimas ${consecutiveFailures} execuções falharam seguidas. Último erro:_\n\`\`\`\n${repeatedError || 'sem detalhe'}\n\`\`\`\n_Sugestão: confira o caminho, arquivo ou dado citado no erro antes de tentar novamente. Se precisar, peça para o assistente listar os arquivos disponíveis primeiro._`;
+      const note = `\n\n**Não consegui concluir esta execução.** Interrompi após ${consecutiveFailures} falhas seguidas para evitar um loop. Use **Reenviar** para tentar novamente; o detalhe técnico continua disponível nas etapas de ferramenta acima.`;
       finalText += note;
       onEvent({ type: 'delta', content: note });
       completedNaturally = true; // evita acumular também o aviso de limite de etapas
@@ -1119,11 +1209,6 @@ export async function runAgent({ conversationId, userText, model, assistant, web
     const note = `\n\n_⚠️ Atingi o limite de ${maxSteps} etapas de processamento nesta tarefa. Ela ficou muito longa — provavelmente pela dificuldade de extrair os dados. Sugestão: peça em partes (ex.: 1º "extraia os dados do arquivo para um CSV", depois "gere a planilha final a partir do CSV")._`;
     finalText += note;
     onEvent({ type: 'delta', content: note });
-  } else if (!finalText.trim()) {
-    // O modelo terminou sem produzir texto: mostra algo na tela em vez de
-    // deixar o balão vazio (bug de streaming corrigido).
-    finalText = 'O modelo terminou sem gerar uma resposta em texto. Tente reformular o pedido ou escolher outro modelo.';
-    onEvent({ type: 'delta', content: finalText });
   }
   // Detecta os arquivos gerados NESTA resposta e os anexa à mensagem
   let outputsAfter = listOutputs(conversationId);
@@ -1138,11 +1223,28 @@ export async function runAgent({ conversationId, userText, model, assistant, web
     outputsAfter = listOutputs(conversationId);
     newFiles = outputsAfter.filter(f => outputsBefore.get(f.path) !== f.mtimeMs);
   }
-  if (!newFiles.length && mentionsOutputPath(finalText)) {
+  if (!newFiles.length && (requiresOutput || mentionsOutputPath(finalText))) {
     incomplete = true;
-    failureMessage = 'O arquivo informado na resposta não foi encontrado na pasta de saída.';
-    finalText += MISSING_OUTPUT_NOTICE;
-    onEvent({ type: 'delta', content: MISSING_OUTPUT_NOTICE });
+    failureMessage ||= 'A tarefa solicitou um arquivo, mas nenhum arquivo foi criado.';
+    const alreadyExplained = /\*\*(?:Não consegui|O arquivo não foi gerado)/i.test(finalText);
+    if (!alreadyExplained) {
+      finalText += MISSING_OUTPUT_NOTICE;
+      onEvent({ type: 'delta', content: MISSING_OUTPUT_NOTICE });
+    }
+  }
+  finalText = sanitizeToolProtocolText(finalText);
+  if (!finalText.trim() && newFiles.length) {
+    finalText = `Concluído. ${newFiles.length === 1 ? `O arquivo **${newFiles[0].name}** está disponível para download abaixo.` : `Os ${newFiles.length} arquivos gerados estão disponíveis para download abaixo.`}`;
+    onEvent({ type: 'delta', content: finalText });
+  } else if (!finalText.trim()) {
+    incomplete = executionRequired || incomplete;
+    failureMessage ||= executionRequired
+      ? 'A execução terminou sem produzir um resultado verificável.'
+      : 'O modelo terminou sem produzir uma resposta.';
+    finalText = executionRequired
+      ? (requiresOutput ? MISSING_OUTPUT_NOTICE.trim() : EXECUTION_INCOMPLETE_NOTICE.trim())
+      : 'O modelo terminou sem gerar uma resposta. Use **Reenviar** ou escolha outro modelo.';
+    onEvent({ type: 'delta', content: finalText });
   }
   // Primeiro registra a resposta e os arquivos juntos. Assim o card sempre
   // aponta para uma mensagem que sobreviverá ao recarregamento da conversa.

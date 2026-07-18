@@ -20,6 +20,16 @@ test('does not report an exhausted provider retry as success', () => {
   assert.equal(outcome.error, 'Provedor indisponivel.');
 });
 
+test('marks a missing generated file as an incomplete execution', () => {
+  const outcome = classifyTaskResult({
+    incomplete: true,
+    failureMessage: 'A tarefa solicitou um arquivo, mas nenhum arquivo foi criado.'
+  });
+  assert.equal(outcome.status, 'error');
+  assert.equal(outcome.progress, 'Nao concluida');
+  assert.match(outcome.error, /nenhum arquivo/i);
+});
+
 test('keeps a verified agent result as done', () => {
   assert.deepEqual(classifyTaskResult({ text: 'Tudo pronto.' }), {
     status: 'done', progress: 'Concluida', error: null

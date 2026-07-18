@@ -1045,10 +1045,28 @@ export default function App({ user } = {}) {
 
   // Reenvia uma mensagem que falhou: remove o balão de erro (e o balão do
   // usuário) e dispara o envio de novo com o mesmo texto.
-  function retrySend(idx, text) {
+  async function retrySend(idx, text) {
     if (busy || !text) return;
+    const userMessage = messages[idx - 1];
+    const savedUserMessage = userMessage?.role === 'user'
+      && userMessage.id
+      && !String(userMessage.id).startsWith('local-');
+    if (savedUserMessage && current?.id) {
+      try {
+        const res = await fetch(`${API}/api/conversations/${current.id}/truncate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messageId: userMessage.id })
+        });
+        if (!res.ok) throw new Error();
+      } catch {
+        showToast('Não foi possível preparar a nova tentativa. A conversa foi preservada.');
+        return;
+      }
+    }
     setMessages(prev => prev.slice(0, Math.max(0, idx - 1)));
-    sendMessage(text);
+    await loadFiles();
+    await sendMessage(text);
   }
 
   async function sendMessage(textArg) {
@@ -1071,7 +1089,11 @@ export default function App({ user } = {}) {
     // tem hora e o separador de data nao consegue agrupa-la.
     const sentAt = new Date().toISOString();
     setMessages(prev => [...prev, { role: 'user', content: text, created_at: sentAt }, { id: assistantMsgId, role: 'assistant', content: '', blocks: [], created_at: sentAt }]);
-    const update = (fn) => setMessages(prev => prev.map(m => m.id === assistantMsgId ? fn(m) : m));
+    let assistantMessageKey = assistantMsgId;
+    const update = (fn) => {
+      const key = assistantMessageKey;
+      setMessages(prev => prev.map(m => m.id === key ? fn(m) : m));
+    };
 
     const body = team
       ? {
@@ -1137,12 +1159,20 @@ export default function App({ user } = {}) {
             ...m,
             files: (m.files || []).map(file => ev.checks?.[file.path] ? { ...file, check: ev.checks[file.path] } : file)
           }));
-          if (ev.type === 'saved') setMessages(prev => {
-            const arr = [...prev];
-            const ai = arr.findIndex(m => m.id === assistantMsgId);
-            if (ai > -1) { arr[ai] = { ...arr[ai], id: ev.assistantMessageId }; if (arr[ai - 1]?.role === 'user') arr[ai - 1] = { ...arr[ai - 1], id: ev.userMessageId }; }
-            return arr;
-          });
+          if (ev.type === 'saved') {
+            const previousKey = assistantMessageKey;
+            assistantMessageKey = ev.assistantMessageId;
+            setMessages(prev => {
+              const arr = [...prev];
+              const ai = arr.findIndex(m => m.id === previousKey);
+              if (ai > -1) { arr[ai] = { ...arr[ai], id: ev.assistantMessageId }; if (arr[ai - 1]?.role === 'user') arr[ai - 1] = { ...arr[ai - 1], id: ev.userMessageId }; }
+              return arr;
+            });
+          }
+          if (ev.type === 'execution_failed') {
+            update(m => ({ ...m, failed: true, retryText: text }));
+            if (ev.content) showToast(ev.content);
+          }
           if (ev.type === 'error') update(m => ({ ...m, failed: true, retryText: text, blocks: [...(m.blocks || []), { type: 'text', content: `\n\n**Erro:** ${ev.content}` }] }));
         }
         if (done) break;

@@ -2,6 +2,7 @@ import { db } from '../db.js';
 import { getSettings, searchMemories, searchChunks, ECONOMY_CONTEXT_TOKENS } from './memoryService.js';
 import { estimateTokens } from './indexer.js';
 import { isLowSignalTurn } from './retrievalPolicy.js';
+import { sanitizeToolProtocolText } from '../toolProtocol.js';
 
 // Context Builder 2.0
 // Monta um contexto seguro por modelo e tambem devolve metadados para a UI
@@ -58,7 +59,14 @@ export async function selectHistoryForContext({ conversationId, limit = 60, budg
   let usedTokens = 0;
   let clipped = false;
 
-  for (const row of rowsDesc) {
+  for (const rawRow of rowsDesc) {
+    const row = {
+      ...rawRow,
+      content: rawRow.role === 'assistant'
+        ? sanitizeToolProtocolText(rawRow.content)
+        : rawRow.content
+    };
+    if (!String(row.content || '').trim()) continue;
     const tokens = estimateTokens(row.content);
     if (!kept.length && tokens > budgetTokens) {
       kept.push({ ...row, content: trimForTokens(row.content, budgetTokens) });
@@ -112,12 +120,13 @@ function memoryMeta(m, reason) {
 }
 
 function chunkMeta(c) {
+  const cleanContent = sanitizeToolProtocolText(c.content);
   return {
     title: c.source_title || 'Conversa anterior',
     scope: c.scope || 'global',
     scopeLabel: scopeLabel(c.scope || 'global'),
     date: (c.created_at || '').slice(0, 10),
-    preview: String(c.content || '').replace(/\s+/g, ' ').slice(0, 220)
+    preview: cleanContent.replace(/\s+/g, ' ').slice(0, 220)
   };
 }
 
@@ -237,7 +246,9 @@ export async function buildContext({ conversationId, assistantId, clientScope, u
     const limit = Math.max(0, Math.min(Number(settings.max_chunks) || 0, budget < 20000 ? 3 : 12));
     const chunks = limit ? await searchChunks(userText, { excludeConversationId: conversationId, scopes: chunkScopes, limit }) : [];
     if (chunks.length) {
-      const txt = chunks.map(c => `--- ${c.source_title || 'Conversa anterior'} (${(c.created_at || '').slice(0, 10)}) ---\n${c.content}`).join('\n');
+      const txt = chunks
+        .map(c => `--- ${c.source_title || 'Conversa anterior'} (${(c.created_at || '').slice(0, 10)}) ---\n${sanitizeToolProtocolText(c.content)}`)
+        .join('\n');
       blocks.push({
         priority: 5,
         text: `TRECHOS DE CONVERSAS ANTERIORES RELEVANTES (contexto recuperado automaticamente):\n${txt}`,
@@ -252,14 +263,16 @@ export async function buildContext({ conversationId, assistantId, clientScope, u
   const kept = [];
   let used = 0;
   for (const b of ordered) {
-    const t = estimateTokens(b.text);
+    const safeText = sanitizeToolProtocolText(b.text);
+    if (!safeText) continue;
+    const t = estimateTokens(safeText);
     if (used + t > budget) {
       const remaining = budget - used;
       // Bloco não cabe inteiro. Se ainda houver folga razoável, encaixa uma
       // versão aparada dele; senão, pula ESTE bloco e segue tentando os
       // próximos (menores) em vez de abandonar todos de uma vez.
       if (remaining > 800 && !meta.truncated) {
-        kept.push(trimForTokens(b.text, remaining));
+        kept.push(trimForTokens(safeText, remaining));
         used = budget;
         meta.truncated = true;
         addBlockMeta(meta, b);
@@ -268,7 +281,7 @@ export async function buildContext({ conversationId, assistantId, clientScope, u
       }
       continue;
     }
-    kept.push(b.text);
+    kept.push(safeText);
     used += t;
     addBlockMeta(meta, b);
   }

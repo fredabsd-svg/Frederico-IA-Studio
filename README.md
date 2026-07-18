@@ -39,6 +39,15 @@ ambiente de execução para documentos, planilhas, PDFs, código e automações.
 | 📁 | **Modo Desenvolvedor** | Trabalhe sobre uma pasta de projeto autorizada |
 | 🎙️ | **Voz e segundo plano** | Ditado por voz, tarefas em background, histórico por cliente |
 
+### Execução confiável
+
+Chamadas de ferramenta são validadas antes da execução. Se um provedor devolver
+como texto uma chamada que deveria vir no protocolo da API, o app a intercepta,
+tenta convertê-la com segurança e nunca despeja o código interno no chat. Uma
+tarefa que pediu arquivo só é considerada concluída quando o arquivo real existe;
+nesse caso, o download aparece como cartão na própria resposta. Se a execução
+falhar, a interface explica o resultado em linguagem simples e oferece **Reenviar**.
+
 <div align="center">
 <table>
 <tr>
@@ -119,10 +128,12 @@ docker compose up --build -d
 | `DEEPSEEK_API_KEY` | — | Chave do provedor de IA |
 | `DEEPSEEK_BASE_URL` | DeepSeek | Base compatível com OpenAI |
 | `DEEPSEEK_MODEL` | deepseek-chat | Modelo principal |
+| `OPENROUTER_PROVIDER_SORT` | automático | Ordenação opcional de provedores no OpenRouter |
 | `BETTER_AUTH_URL` | http://localhost:5173 | Origem pública do app e callbacks OAuth |
 | `BETTER_AUTH_SECRET` | — | Segredo de sessão do Better Auth |
 | `ENCRYPTION_KEY` | — | Reservada para chaves por usuário (próxima fase) |
 | `TOOL_TIMEOUT_MS` | 45000 | Tempo máximo de um comando de sandbox |
+| `AGENT_MAX_STEPS` | conforme o esforço | Limite de etapas da tarefa |
 | `SANDBOX_MEMORY / SANDBOX_CPUS` | 2048m / 1 | Recursos do sandbox |
 
 Consulte o [.env.example](.env.example) para todas as opções.
@@ -141,7 +152,8 @@ Consulte o [.env.example](.env.example) para todas as opções.
 ## ✅ Validação local
 
 ```powershell
-node --test backend/src/agent.control.test.js backend/src/tools.pathResolution.test.js frontend/src/sse.test.js
+docker compose exec -T backend node --test src/agent.control.test.js src/agent.outputDelivery.test.js src/toolProtocol.test.js src/taskOutcome.test.js
+docker compose exec -T frontend node --test src/sse.test.js
 docker compose exec -T frontend npm run build
 ```
 
