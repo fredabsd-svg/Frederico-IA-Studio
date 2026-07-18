@@ -8,12 +8,15 @@
 export const API = import.meta.env.VITE_API_URL || '';
 
 // Lista de reserva, usada só se a busca do catálogo do provedor falhar.
+// Lista de RESERVA: usada só enquanto a lista real do provedor (OpenRouter) não
+// carrega. A lista real, com as capacidades de cada modelo, chega por /api/models.
 export const FALLBACK_MODELS = [
-  { id: 'deepseek/deepseek-chat', name: 'DeepSeek Chat', tools: true, vision: false, image: false, video: false, reasoning: null, capabilities: { text: true, tools: true, vision: false, image: false, video: false, reasoning: null } },
-  { id: 'openai/gpt-4o-mini', name: 'GPT-4o mini', tools: true, vision: true, image: false, video: false, reasoning: null, capabilities: { text: true, tools: true, vision: true, image: false, video: false, reasoning: null } },
-  { id: 'openai/gpt-4o', name: 'GPT-4o', tools: true, vision: true, image: false, video: false, reasoning: null, capabilities: { text: true, tools: true, vision: true, image: false, video: false, reasoning: null } },
-  { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet', tools: true, vision: true, image: false, video: false, reasoning: null, capabilities: { text: true, tools: true, vision: true, image: false, video: false, reasoning: null } },
-  { id: 'google/gemini-flash-1.5', name: 'Gemini 1.5 Flash', tools: true, vision: true, image: false, video: false, reasoning: null, capabilities: { text: true, tools: true, vision: true, image: false, video: false, reasoning: null } }
+  { id: 'deepseek/deepseek-chat', name: 'DeepSeek Chat', tools: true, vision: false, image: false, video: false, reasoning: false, capabilities: { text: true, tools: true, vision: false, image: false, video: false, reasoning: false } },
+  { id: 'deepseek/deepseek-r1', name: 'DeepSeek R1 (raciocínio)', tools: false, vision: false, image: false, video: false, reasoning: true, capabilities: { text: true, tools: false, vision: false, image: false, video: false, reasoning: true } },
+  { id: 'openai/gpt-4o-mini', name: 'GPT-4o mini', tools: true, vision: true, image: false, video: false, reasoning: false, capabilities: { text: true, tools: true, vision: true, image: false, video: false, reasoning: false } },
+  { id: 'openai/gpt-4o', name: 'GPT-4o', tools: true, vision: true, image: false, video: false, reasoning: false, capabilities: { text: true, tools: true, vision: true, image: false, video: false, reasoning: false } },
+  { id: 'anthropic/claude-3.7-sonnet', name: 'Claude 3.7 Sonnet', tools: true, vision: true, image: false, video: false, reasoning: false, capabilities: { text: true, tools: true, vision: true, image: false, video: false, reasoning: false } },
+  { id: 'google/gemini-2.0-flash-001', name: 'Gemini 2.0 Flash', tools: true, vision: true, image: false, video: false, reasoning: false, capabilities: { text: true, tools: true, vision: true, image: false, video: false, reasoning: false } }
 ];
 
 // Ferramentas que um assistente pode ter acesso

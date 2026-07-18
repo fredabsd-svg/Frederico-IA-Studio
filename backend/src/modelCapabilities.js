@@ -67,9 +67,17 @@ export function deriveModelCapabilities(model = {}) {
     /(?:^|[_-])(?:reasoning|include_reasoning)(?:$|[_-])|reasoning_effort|reasoning_details/.test(parameter)
   );
 
+  // Ferramentas: o OpenRouter lista "tools"; alguns provedores usam
+  // "tool_choice" ou "functions" para o mesmo recurso.
+  const hasToolsParameter = supportedParameters
+    ? supportedParameters.some(p => p === 'tools' || p === 'tool_choice' || p === 'functions')
+    : null;
+
   return applyOverrides({
     text: acceptsText && returnsText,
-    tools: supportedParameters ? supportedParameters.includes('tools') : null,
+    tools: supportedParameters ? Boolean(hasToolsParameter) : null,
+    // Visão = aceita imagem na ENTRADA (input_modalities). "image" abaixo é
+    // GERAÇÃO de imagem (output_modalities) — coisas diferentes.
     vision: input.includes('image'),
     image: output.includes('image'),
     reasoning: supportedParameters ? Boolean(hasReasoningParameter) : null,
@@ -189,4 +197,11 @@ export function isUnsupportedToolError(error) {
 
 export function isUnsupportedReasoningError(error) {
   return /reasoning(?: effort| parameter| controls?)?.*(?:not supported|unsupported)|(?:not supported|unsupported).*reasoning/i.test(errorText(error));
+}
+
+// O modelo (ou o endpoint escolhido) não aceita imagem na entrada, apesar de
+// ter sido tratado como capaz de visão. Nesse caso removemos as imagens e
+// caímos para OCR.
+export function isUnsupportedVisionError(error) {
+  return /image(?:_url)?[^.]{0,40}(?:not supported|unsupported|invalid|no endpoints)|(?:not supported|unsupported|no endpoints found)[^.]{0,40}(?:image|vision|multimodal)|does not support image|modality.*image.*not/i.test(errorText(error));
 }

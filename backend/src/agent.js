@@ -7,7 +7,7 @@ import { buildContext, historyBudgetForModel, selectHistoryForContext } from './
 import { indexAfterReply } from './memory/indexer.js';
 import { getSettings } from './memory/memoryService.js';
 import { isLowSignalTurn, LOW_SIGNAL_TURN_NOTE } from './memory/retrievalPolicy.js';
-import { buildModelCallPlan, detectToolRequirement, isUnsupportedToolError, markModelCapabilityUnsupported, modelCompatibilityMessage } from './modelCapabilities.js';
+import { buildModelCallPlan, detectToolRequirement, isUnsupportedToolError, isUnsupportedVisionError, markModelCapabilityUnsupported, modelCompatibilityMessage } from './modelCapabilities.js';
 import { execInSandbox, realInside, workspaceFor, pcFolderMounts } from './sandbox.js';
 import { db, now } from './db.js';
 import { nanoid } from 'nanoid';
@@ -265,6 +265,60 @@ Não peça para o usuário reenviar. Para lê-los, use as ferramentas:
 - Conversão de formatos (quando a leitura direta falhar ou o usuário pedir outro formato): o LibreOffice ESTÁ INSTALADO — use bash: soffice --headless --convert-to xlsx|pdf|docx --outdir /workspace/outputs "arquivo". Funciona para .xls, .doc, .odt, .pptx e para gerar PDF fiel de docx/xlsx.
 - Texto simples: read_file.
 Sempre comece analisando o arquivo antes de responder.`;
+}
+
+const IMAGE_UPLOAD_RE = /\.(png|jpe?g|webp|gif|bmp)$/i;
+const VISION_MAX_IMAGES = 4;
+const VISION_MAX_BYTES = 8 * 1024 * 1024; // ignora imagens acima de 8 MB no envio direto
+
+// VISÃO MULTIMODAL: monta as imagens dos uploads como partes image_url (base64)
+// para enviar direto ao modelo — só usado quando o modelo TEM visão. As mais
+// recentes primeiro, com limites de quantidade e tamanho.
+function imageUploadParts(conversationId) {
+  let dir;
+  try { dir = workspaceFor(conversationId).uploads; } catch { return []; }
+  let entries = [];
+  try {
+    entries = fs.readdirSync(dir)
+      .filter(n => IMAGE_UPLOAD_RE.test(n))
+      .map(n => { const p = path.join(dir, n); let mt = 0, size = 0; try { const s = fs.statSync(p); mt = s.mtimeMs; size = s.size; } catch {} return { n, p, mt, size }; })
+      .filter(f => f.size > 0 && f.size <= VISION_MAX_BYTES)
+      .sort((a, b) => b.mt - a.mt)
+      .slice(0, VISION_MAX_IMAGES);
+  } catch { return []; }
+  const parts = [];
+  for (const f of entries) {
+    try {
+      const ext = path.extname(f.n).slice(1).toLowerCase().replace('jpg', 'jpeg');
+      const b64 = fs.readFileSync(f.p).toString('base64');
+      parts.push({ type: 'image_url', image_url: { url: `data:image/${ext};base64,${b64}` } });
+    } catch {}
+  }
+  return parts;
+}
+
+// Anexa as imagens à ÚLTIMA mensagem do usuário (formato multimodal). Retorna
+// true se anexou algo. Modelos sem visão não passam por aqui (usam OCR).
+export function attachImagesToLastUserMessage(messages, imageParts) {
+  if (!imageParts.length) return false;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'user') {
+      const txt = typeof messages[i].content === 'string' ? messages[i].content : '';
+      messages[i] = { role: 'user', content: [{ type: 'text', text: txt || 'Analise a(s) imagem(ns) enviada(s).' }, ...imageParts] };
+      return true;
+    }
+  }
+  return false;
+}
+
+// Remove as imagens anexadas (volta o conteúdo do usuário para texto puro),
+// usado no fallback quando o modelo recusa imagem.
+export function stripImagePartsFromMessages(messages) {
+  for (const m of messages) {
+    if (m.role === 'user' && Array.isArray(m.content)) {
+      m.content = m.content.find(p => p?.type === 'text')?.text || '';
+    }
+  }
 }
 
 const modelApiBaseUrl = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com';
@@ -888,6 +942,15 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
     }))
     .filter(m => String(m.content || '').trim()));
 
+  // VISÃO MULTIMODAL: se o modelo escolhido tem visão e há imagens anexadas,
+  // envia as imagens direto para o modelo (ele enxerga). Modelos SEM visão não
+  // recebem as imagens aqui — continuam lendo por OCR no sandbox.
+  let visionApplied = false;
+  if (modelPlan.capabilities?.vision === true) {
+    visionApplied = attachImagesToLastUserMessage(messages, imageUploadParts(conversationId));
+    if (visionApplied) onEvent({ type: 'status', content: 'Enviando a imagem para o modelo analisar...' });
+  }
+
   const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
   const maxSteps = Number(process.env.AGENT_MAX_STEPS || eff.steps);
   const executionRequired = forceExecution || modelPlan.requirements.required;
@@ -944,6 +1007,16 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
       }
       if (interrupted === 'pause') {
         onEvent({ type: 'status', content: 'Pausado' });
+        step -= 1;
+        continue;
+      }
+      // O modelo foi tratado como capaz de visão, mas recusou a imagem: corrige
+      // o catálogo, remove as imagens e refaz a etapa (a leitura cai para OCR).
+      if (isUnsupportedVisionError(err) && visionApplied) {
+        markModelCapabilityUnsupported(chosenModel, 'vision');
+        stripImagePartsFromMessages(messages);
+        visionApplied = false;
+        onEvent({ type: 'status', content: 'Este modelo não lê imagens diretamente; usando OCR no lugar.' });
         step -= 1;
         continue;
       }

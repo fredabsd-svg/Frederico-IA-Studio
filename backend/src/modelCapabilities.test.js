@@ -4,8 +4,10 @@ import {
   buildModelCallPlan,
   detectToolRequirement,
   isUnsupportedToolError,
+  isUnsupportedVisionError,
   modelCompatibilityMessage,
-  modelProfileFromProvider
+  modelProfileFromProvider,
+  deriveModelCapabilities
 } from './modelCapabilities.js';
 
 const granite = modelProfileFromProvider({
@@ -88,4 +90,37 @@ test('recognizes a document delivery request as execution that must create an ou
 test('recognizes provider tool errors for the runtime fallback', () => {
   assert.equal(isUnsupportedToolError(new Error('No endpoints found that support tool use.')), true);
   assert.equal(isUnsupportedToolError(new Error('Rate limit exceeded')), false);
+});
+
+test('detects vision from input modalities and image generation from output', () => {
+  const gpt = deriveModelCapabilities({
+    id: 'openai/gpt-4o',
+    supported_parameters: ['tools', 'temperature'],
+    architecture: { input_modalities: ['text', 'image'], output_modalities: ['text'] }
+  });
+  assert.equal(gpt.vision, true);   // aceita imagem na ENTRADA
+  assert.equal(gpt.image, false);   // não GERA imagem
+  assert.equal(gpt.tools, true);
+
+  const painter = deriveModelCapabilities({
+    id: 'x/image-gen',
+    architecture: { input_modalities: ['text'], output_modalities: ['text', 'image'] }
+  });
+  assert.equal(painter.vision, false);
+  assert.equal(painter.image, true); // GERA imagem
+});
+
+test('accepts tool_choice/functions as evidence of tool support', () => {
+  const a = deriveModelCapabilities({ id: 'a', supported_parameters: ['tool_choice', 'temperature'], architecture: { input_modalities: ['text'], output_modalities: ['text'] } });
+  const b = deriveModelCapabilities({ id: 'b', supported_parameters: ['functions'], architecture: { input_modalities: ['text'], output_modalities: ['text'] } });
+  const c = deriveModelCapabilities({ id: 'c', supported_parameters: ['temperature'], architecture: { input_modalities: ['text'], output_modalities: ['text'] } });
+  assert.equal(a.tools, true);
+  assert.equal(b.tools, true);
+  assert.equal(c.tools, false);
+});
+
+test('recognizes provider vision errors for the OCR fallback', () => {
+  assert.equal(isUnsupportedVisionError(new Error('No endpoints found that support image input.')), true);
+  assert.equal(isUnsupportedVisionError(new Error('This model does not support image messages')), true);
+  assert.equal(isUnsupportedVisionError(new Error('Rate limit exceeded')), false);
 });
