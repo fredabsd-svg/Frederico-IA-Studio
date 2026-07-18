@@ -260,6 +260,8 @@ Não peça para o usuário reenviar. Para lê-los, use as ferramentas:
   4) PDF escaneado ou texto ilegível/sobreposto: OCR — bash: ocrmypdf -l por --force-ocr entrada.pdf saida.pdf e extraia da saída; ou pdf2image + pytesseract (lang='por').
   Valide a qualidade: se o texto sair embaralhado, tente a próxima estratégia em vez de insistir.
 - Excel/CSV: run_python com pandas (pd.read_excel / pd.read_csv). Formatos legados suportados: .xls (xlrd), .xlsb (pyxlsb), .ods (odfpy) — o pandas detecta sozinho.
+- IMAGEM / FOTO (.jpg, .jpeg, .png, .webp — inclusive foto tirada pela câmera): faça a LEITURA AUTOMÁTICA, sem pedir nenhum comando ao usuário. Extraia o texto com OCR — run_python: import pytesseract; from PIL import Image; pytesseract.image_to_string(Image.open(caminho), lang='por'). Se sair pouco/embaralhado, melhore antes (opencv-python: escala de cinza, aumentar contraste/limiar, girar) e tente de novo. Depois interprete o conteúdo (é uma nota, guia, documento, tabela?) e responda com base nele.
+  - Se a foto estiver BORRADA, escura ou ILEGÍVEL a ponto de não dar para ler com confiança, NÃO invente o conteúdo: diga com gentileza que não deu para ler direito e peça uma nova foto com mais luz, foco e o documento reto/enquadrado.
 - Conversão de formatos (quando a leitura direta falhar ou o usuário pedir outro formato): o LibreOffice ESTÁ INSTALADO — use bash: soffice --headless --convert-to xlsx|pdf|docx --outdir /workspace/outputs "arquivo". Funciona para .xls, .doc, .odt, .pptx e para gerar PDF fiel de docx/xlsx.
 - Texto simples: read_file.
 Sempre comece analisando o arquivo antes de responder.`;
