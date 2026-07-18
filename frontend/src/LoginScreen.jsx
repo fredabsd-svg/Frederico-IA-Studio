@@ -2,12 +2,12 @@
 // Visual alinhado ao app (cartão central sobre o fundo). Ao concluir, a sessão
 // é criada e o AuthGate troca automaticamente para o app.
 import React, { useState } from 'react';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, ArrowLeft } from 'lucide-react';
 import { signIn, signUp, traduzErroAuth } from './authClient.js';
 import { callbackURLForOrigin } from './authUrls.js';
 
-export function LoginScreen() {
-  const [mode, setMode] = useState('login'); // 'login' | 'signup'
+export function LoginScreen({ initialMode = 'login', onBack = null }) {
+  const [mode, setMode] = useState(initialMode === 'signup' ? 'signup' : 'login'); // 'login' | 'signup'
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -53,6 +53,11 @@ export function LoginScreen() {
   return (
     <div className="loginWrap">
       <div className="loginCard">
+        {onBack && (
+          <button type="button" className="lpBack" onClick={onBack}>
+            <ArrowLeft size={15} /> Voltar
+          </button>
+        )}
         <div className="brand" style={{ justifyContent: 'center', marginBottom: 4 }}>Frederico <span>AI Studio</span></div>
         <p className="loginSub">{isSignup ? 'Crie sua conta para começar.' : 'Entre para continuar.'}</p>
 
