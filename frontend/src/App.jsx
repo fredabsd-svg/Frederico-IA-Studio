@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Download, FileText, FileSpreadsheet, FilePenLine, Plus, ArrowUp, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench, CalendarClock, Inbox, Palette, Gauge, SlidersHorizontal, Paperclip, MoreHorizontal, FolderOpen, Code2, Cpu, ChevronDown, ChevronRight, ChevronsUpDown, Calculator, Telescope, Scale, Briefcase, Receipt, Landmark, Megaphone, Lightbulb, ShieldCheck, GraduationCap, Stethoscope, Hammer, Leaf, LogOut, KeyRound } from 'lucide-react';
+import { Download, FileText, FileSpreadsheet, FilePenLine, Plus, ArrowUp, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench, CalendarClock, Inbox, Palette, Gauge, SlidersHorizontal, Paperclip, MoreHorizontal, FolderOpen, Code2, Cpu, ChevronDown, ChevronRight, ChevronsUpDown, Calculator, Telescope, Scale, Briefcase, Receipt, Landmark, Megaphone, Lightbulb, ShieldCheck, GraduationCap, Stethoscope, Hammer, Leaf, LogOut, KeyRound, Camera } from 'lucide-react';
 import { API, FALLBACK_MODELS, TOOL_INFO, TEMPLATES, QUICK_ACTIONS, THEMES, WORKSPACES, EFFORTS, EFFORT_DESC, emptyForm, ASSISTANT_ICONS, ASSISTANT_COLORS, isAssistantIcon } from './constants.js';
 import { signOut } from './authClient.js';
 import { ToolStep, Slider, Modal, Drawer, ModelPicker, Collapsible, useAppDialog } from './components.jsx';
@@ -13,6 +13,7 @@ import { DeveloperPanel } from './DeveloperPanel.jsx';
 import { RoutinesPanel } from './RoutinesPanel.jsx';
 import { InboxPanel } from './InboxPanel.jsx';
 import { ProviderPanel } from './ProviderPanel.jsx';
+import { CameraCapture } from './CameraCapture.jsx';
 import { takeSseEvents } from './sse.js';
 
 const QUICK_ACTION_ICON = {
@@ -344,6 +345,7 @@ export default function App({ user } = {}) {
   const [convFilter, setConvFilter] = useState('');
   const [dragActive, setDragActive] = useState(false);
   const [uploadingFiles, setUploadingFiles] = useState(false);
+  const [cameraOpen, setCameraOpen] = useState(false);
   const [loadingConv, setLoadingConv] = useState(false);
   const [connError, setConnError] = useState(false);
   const [needLogin, setNeedLogin] = useState(false);
@@ -1073,7 +1075,12 @@ export default function App({ user } = {}) {
 
   async function sendMessage(textArg) {
     const isRetry = typeof textArg === 'string';
-    const text = (isRetry ? textArg : input).trim();
+    const typed = (isRetry ? textArg : input).trim();
+    // "Zero atrito": se o usuário anexou algo (ex.: uma foto) e não escreveu
+    // nada, usamos um pedido padrão para a IA ler/analisar o anexo sozinha.
+    const text = typed || (!isRetry && uploads.length > 0
+      ? 'Leia e analise o(s) arquivo(s)/foto que enviei e me responda com base no conteúdo.'
+      : '');
     if (!text || busyRef.current) return;
     if (team && effectiveTeam.length === 0) { showToast('Selecione ao menos 1 assistente no painel da Equipe.'); return; }
     if (listening) recognitionRef.current?.stop();
@@ -1511,6 +1518,7 @@ export default function App({ user } = {}) {
         <div className="composer">
           <button className="attachBtn" onClick={() => fileInputRef.current?.click()} title="Anexar arquivo" aria-label="Anexar arquivo"><Paperclip size={19}/></button>
           <input ref={fileInputRef} type="file" multiple onChange={uploadFiles} style={{ display: 'none' }}/>
+          <button className="attachBtn" onClick={() => setCameraOpen(true)} title="Tirar foto com a câmera" aria-label="Tirar foto com a câmera"><Camera size={19}/></button>
           <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)} onInput={e => { e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 160) + 'px'; }} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }} placeholder={listening ? 'Ouvindo... fale agora' : (webSearch ? 'Pesquisa na internet ativada — pergunte algo atual...' : 'Peça para analisar arquivos, gerar Word, Excel, PDF...')} />
           <button className="sendBtn" onClick={sendMessage} disabled={busy} aria-label="Enviar"><ArrowUp size={18}/></button>
         </div>
@@ -1630,6 +1638,10 @@ export default function App({ user } = {}) {
     {routinesOpen && <RoutinesPanel assistants={assistants} clients={clients} showToast={showToast} askConfirm={askConfirm} onClose={() => setRoutinesOpen(false)}/>}
     {inboxOpen && <InboxPanel clients={clients} clientId={clientId} showToast={showToast} askConfirm={askConfirm} onOpenConversation={(id) => { fetchConversations(); openConversation(id); }} onClose={() => setInboxOpen(false)}/>}
     {providerOpen && <ProviderPanel showToast={showToast} onClose={() => setProviderOpen(false)}/>}
+    {cameraOpen && <CameraCapture
+      onClose={() => setCameraOpen(false)}
+      onCapture={async (file) => { setCameraOpen(false); await uploadSelectedFiles([file], 'camera'); }}
+    />}
     {themeOpen && <Modal title="Aparência e espaço de trabalho" icon={<Palette size={18}/>} onClose={() => setThemeOpen(false)}>
       <p className="muted appearanceIntro">Escolha como o app se organiza e, depois, a paleta que deixa a leitura mais confortável. As duas escolhas ficam salvas neste computador.</p>
       <section className="appearanceSection" aria-labelledby="workspace-title">
