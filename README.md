@@ -11,7 +11,7 @@ e receba arquivos reais no chat — Excel, Word, PDF, gráficos e mais.
 ![Node.js](https://img.shields.io/badge/Node.js-Express-339933?logo=nodedotjs&logoColor=white&labelColor=20232a)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?logo=postgresql&logoColor=white&labelColor=20232a)
 ![Docker](https://img.shields.io/badge/Docker-Sandbox-2496ED?logo=docker&logoColor=white&labelColor=20232a)
-![Status](https://img.shields.io/badge/Fase%203-em%20desenvolvimento-c67139)
+![Status](https://img.shields.io/badge/SaaS%20multiusu%C3%A1rio-em%20produ%C3%A7%C3%A3o-2ea043)
 
 <img src="docs/tela-chat.png" alt="Tela principal do chat" width="900">
 
@@ -20,6 +20,11 @@ e receba arquivos reais no chat — Excel, Word, PDF, gráficos e mais.
 Compatível com **OpenRouter**, **DeepSeek** e qualquer endpoint no padrão da API OpenAI.
 Combina chat, ferramentas, memória de longo prazo, pesquisa na web, modo equipe e um
 ambiente de execução para documentos, planilhas, PDFs, código e automações.
+
+É **multiusuário**: cada pessoa cria a própria conta (Better Auth) e só enxerga os
+próprios dados. Suporta **BYOK** — cada usuário usa a **própria chave** de IA (ideal para
+um site público), ou uma chave única do servidor para uso pessoal/de equipe. O modelo que
+você escolhe é enviado direto ao provedor, sem substituição.
 
 > 📌 Leia [CONTINUIDADE.md](CONTINUIDADE.md) antes de iniciar uma nova frente de trabalho —
 > ele registra a arquitetura, decisões, riscos e próximos passos.
@@ -30,12 +35,15 @@ ambiente de execução para documentos, planilhas, PDFs, código e automações.
 
 | | Recurso | Descrição |
 |---|---|---|
+| 👤 | **Multiusuário isolado** | Login por conta (Better Auth); cada pessoa só vê os próprios dados, conversas e arquivos |
+| 🔑 | **Cada um com sua chave (BYOK)** | Cada usuário cadastra a própria chave de IA — dá para exigir isso num site público (`ALLOW_SHARED_KEY=false`) |
 | 🤖 | **Assistentes personalizados** | Instruções, modelos, ferramentas e personalidade próprios |
 | 📄 | **Arquivos reais no chat** | Excel, Word, PDF, CSV, ZIP, imagens, gráficos e OCR |
+| 🏢 | **Consulta de CNPJ** | Dados cadastrais oficiais (BrasilAPI/ReceitaWS): razão social, situação, CNAE, endereço e sócios |
 | 🧠 | **Memória de longo prazo** | Recuperação semântica com painel de revisão |
 | 👥 | **Modo Equipe** | Combina perspectivas de vários assistentes |
 | 🖥️ | **Sandbox Docker** | Um container por conversa para Python, Bash e geração de arquivos |
-| 🌐 | **Pesquisa na web** | Google Custom Search ou DuckDuckGo |
+| 🌐 | **Pesquisa na web** | Google Custom Search, ou DuckDuckGo grátis (com dois endpoints de reserva) |
 | 📁 | **Modo Desenvolvedor** | Trabalhe sobre uma pasta de projeto autorizada |
 | 🎙️ | **Voz e segundo plano** | Ditado por voz, tarefas em background, histórico por cliente |
 
@@ -156,7 +164,10 @@ docker compose up --build -d
 | `OPENROUTER_PROVIDER_SORT` | automático | Ordenação opcional de provedores no OpenRouter |
 | `BETTER_AUTH_URL` | http://localhost:5173 | Origem pública do app e callbacks OAuth |
 | `BETTER_AUTH_SECRET` | — | Segredo de sessão do Better Auth |
-| `ENCRYPTION_KEY` | — | Reservada para chaves por usuário (próxima fase) |
+| `ENCRYPTION_KEY` | — | Criptografa a chave de IA de cada usuário (BYOK) no banco |
+| `ALLOW_SHARED_KEY` | true | `false` num site público: cada usuário precisa da própria chave |
+| `RATE_MSGS_PER_DAY` | 0 (sem limite) | Máximo de mensagens por usuário por dia |
+| `MAX_SANDBOXES_PER_USER` | 2 | Sandboxes ativos ao mesmo tempo por usuário |
 | `TOOL_TIMEOUT_MS` | 45000 | Tempo máximo de um comando de sandbox |
 | `AGENT_MAX_STEPS` | conforme o esforço | Limite de etapas da tarefa |
 | `SANDBOX_MEMORY / SANDBOX_CPUS` | 2048m / 1 | Recursos do sandbox |
@@ -167,10 +178,11 @@ Consulte o [.env.example](.env.example) para todas as opções.
 
 ## 🔒 Segurança e limites atuais
 
-- ⚠️ O backend recebe o **socket Docker** — permissão privilegiada; não exponha sem proteção adequada.
-- 🔐 A sandbox roda **sem privilégios** e com limites de CPU/memória, mas a rede fica habilitada para pesquisas e automações.
+- ✅ **Isolamento por usuário concluído:** cada conta só acessa os próprios dados (posse verificada em cada consulta). As chaves de IA por usuário são guardadas **criptografadas**.
+- ⚠️ O backend recebe o **socket Docker** — permissão privilegiada; use uma máquina **dedicada** a este app.
+- 🔐 A sandbox roda **sem privilégios** e com limites de CPU/memória, mas a rede fica habilitada para pesquisas e automações — código executado por um usuário tem acesso à internet.
+- 🌍 **Site público:** qualquer pessoa pode se cadastrar. Para uso amplo/indexado, considere adicionar confirmação de e-mail e/ou aprovação de conta; enquanto isso, prefira divulgar "por link" e mantenha os limites (`RATE_MSGS_PER_DAY`, `MAX_SANDBOXES_PER_USER`).
 - 📋 Conteúdo enviado ao modelo pode ser transmitido ao provedor configurado — avalie **LGPD** e sigilo antes de enviar dados sensíveis.
-- 🚧 O isolamento completo entre usuários está em desenvolvimento: não trate a instalação como SaaS multi-tenant até a conclusão da **Fase 3** ([CONTINUIDADE.md](CONTINUIDADE.md)).
 
 ---
 
