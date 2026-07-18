@@ -9,7 +9,8 @@ export const toolDefinitions = [
   { type: 'function', function: { name: 'write_file', description: 'Cria ou sobrescreve arquivo no workspace da sessão.', parameters: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path','content'] } } },
   { type: 'function', function: { name: 'read_file', description: 'Lê um arquivo de texto do workspace da sessão.', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } } },
   { type: 'function', function: { name: 'list_files', description: 'Lista arquivos enviados e gerados na sessão.', parameters: { type: 'object', properties: { folder: { type: 'string', enum: ['uploads','outputs','.'] } } } } },
-  { type: 'function', function: { name: 'zip_outputs', description: 'Compacta a pasta outputs em um arquivo ZIP.', parameters: { type: 'object', properties: { zip_name: { type: 'string' } } } } }
+  { type: 'function', function: { name: 'zip_outputs', description: 'Compacta a pasta outputs em um arquivo ZIP.', parameters: { type: 'object', properties: { zip_name: { type: 'string' } } } } },
+  { type: 'function', function: { name: 'consultar_cnpj', description: 'Consulta os dados cadastrais OFICIAIS de um CNPJ nas bases públicas (BrasilAPI/ReceitaWS): razão social, nome fantasia, situação cadastral, natureza jurídica, porte, CNAE principal e secundários, endereço, telefone, e-mail, capital social, opção pelo Simples/MEI e quadro de sócios (QSA). Funciona SEM o botão de pesquisa. Use SEMPRE que o pedido envolver dados de uma empresa por CNPJ — NÃO use web_search para isso.', parameters: { type: 'object', properties: { cnpj: { type: 'string', description: 'CNPJ com ou sem pontuação (14 dígitos)' } }, required: ['cnpj'] } } }
 ];
 
 // Ferramentas de busca web (rodam no BACKEND): entregam resultados prontos com
@@ -160,6 +161,112 @@ export async function webFetch(url, options = {}) {
   return { url: target.toString(), status: r.status, content: text.slice(0, 8000) };
 }
 
+// ---- Consulta de CNPJ nas bases públicas (roda no BACKEND) ----
+// Dados cadastrais de empresa vêm de APIs oficiais (JSON limpo), não de busca
+// genérica. BrasilAPI é a fonte primária (grátis, sem cadastro); ReceitaWS é a
+// reserva. Assim o assistente NÃO depende do botão de pesquisa nem do acaso do
+// buscador para montar um relatório de CNPJ.
+export function normalizeCnpj(value) {
+  return String(value || '').replace(/\D/g, '');
+}
+
+// Normaliza o retorno da BrasilAPI para uma forma estável e em português.
+function fromBrasilApi(d) {
+  const endereco = [
+    [d.descricao_tipo_de_logradouro, d.logradouro].filter(Boolean).join(' '),
+    d.numero, d.complemento, d.bairro,
+    [d.municipio, d.uf].filter(Boolean).join('/'),
+    d.cep
+  ].filter(Boolean).join(', ');
+  return {
+    fonte: 'BrasilAPI',
+    cnpj: d.cnpj,
+    razao_social: d.razao_social || null,
+    nome_fantasia: d.nome_fantasia || null,
+    situacao_cadastral: d.descricao_situacao_cadastral || null,
+    data_situacao_cadastral: d.data_situacao_cadastral || null,
+    data_inicio_atividade: d.data_inicio_atividade || null,
+    natureza_juridica: d.natureza_juridica || null,
+    porte: d.porte || null,
+    capital_social: d.capital_social ?? null,
+    cnae_principal: d.cnae_fiscal ? `${d.cnae_fiscal} - ${d.cnae_fiscal_descricao || ''}`.trim() : null,
+    cnaes_secundarios: Array.isArray(d.cnaes_secundarios)
+      ? d.cnaes_secundarios.filter(c => c.codigo).map(c => `${c.codigo} - ${c.descricao || ''}`.trim()) : [],
+    endereco,
+    telefone: d.ddd_telefone_1 || null,
+    email: d.email || null,
+    opcao_simples: d.opcao_pelo_simples === true ? 'Sim' : (d.opcao_pelo_simples === false ? 'Não' : null),
+    opcao_mei: d.opcao_pelo_mei === true ? 'Sim' : (d.opcao_pelo_mei === false ? 'Não' : null),
+    socios: Array.isArray(d.qsa)
+      ? d.qsa.map(s => ({ nome: s.nome_socio || s.nome || null, qualificacao: s.qualificacao_socio || null })) : []
+  };
+}
+
+// Normaliza o retorno da ReceitaWS (nomes de campos diferentes).
+function fromReceitaWs(d) {
+  const endereco = [
+    [d.logradouro, d.numero].filter(Boolean).join(', '),
+    d.complemento, d.bairro,
+    [d.municipio, d.uf].filter(Boolean).join('/'),
+    d.cep
+  ].filter(Boolean).join(', ');
+  const ap = Array.isArray(d.atividade_principal) ? d.atividade_principal[0] : null;
+  return {
+    fonte: 'ReceitaWS',
+    cnpj: d.cnpj || null,
+    razao_social: d.nome || null,
+    nome_fantasia: d.fantasia || null,
+    situacao_cadastral: d.situacao || null,
+    data_situacao_cadastral: d.data_situacao || null,
+    data_inicio_atividade: d.abertura || null,
+    natureza_juridica: d.natureza_juridica || null,
+    porte: d.porte || null,
+    capital_social: d.capital_social ?? null,
+    cnae_principal: ap ? `${ap.code} - ${ap.text || ''}`.trim() : null,
+    cnaes_secundarios: Array.isArray(d.atividades_secundarias)
+      ? d.atividades_secundarias.filter(c => c.code && c.code !== '00.00-0-00').map(c => `${c.code} - ${c.text || ''}`.trim()) : [],
+    endereco,
+    telefone: d.telefone || null,
+    email: d.email || null,
+    opcao_simples: d.simples?.optante === true ? 'Sim' : (d.simples?.optante === false ? 'Não' : null),
+    opcao_mei: d.simei?.optante === true ? 'Sim' : (d.simei?.optante === false ? 'Não' : null),
+    socios: Array.isArray(d.qsa)
+      ? d.qsa.map(s => ({ nome: s.nome || null, qualificacao: s.qual || null })) : []
+  };
+}
+
+export async function consultarCnpj(cnpj, options = {}) {
+  const digits = normalizeCnpj(cnpj);
+  if (digits.length !== 14) {
+    return { error: 'CNPJ inválido: informe os 14 dígitos (com ou sem pontuação).', code: 'CNPJ_INVALIDO', recoverable: true, requestedCnpj: cnpj };
+  }
+  const problemas = [];
+  // 1) BrasilAPI (primária)
+  try {
+    const r = await fetchWithTimeout(`https://brasilapi.com.br/api/cnpj/v1/${digits}`, 15000, { signal: options.signal });
+    if (r.ok) return fromBrasilApi(await r.json());
+    if (r.status === 404) return { error: 'CNPJ não encontrado na base da Receita.', code: 'CNPJ_NAO_ENCONTRADO', recoverable: false, cnpj: digits };
+    problemas.push(`BrasilAPI HTTP ${r.status}`);
+  } catch (e) { problemas.push(`BrasilAPI: ${e.message}`); }
+  // 2) ReceitaWS (reserva) — limita a ~3 consultas/min no plano grátis
+  try {
+    const r = await fetchWithTimeout(`https://receitaws.com.br/v1/cnpj/${digits}`, 15000, { signal: options.signal });
+    if (r.ok) {
+      const d = await r.json();
+      if (d && d.status === 'ERROR') return { error: d.message || 'CNPJ não encontrado.', code: 'CNPJ_NAO_ENCONTRADO', recoverable: false, cnpj: digits };
+      return fromReceitaWs(d);
+    }
+    problemas.push(`ReceitaWS HTTP ${r.status}`);
+  } catch (e) { problemas.push(`ReceitaWS: ${e.message}`); }
+  return {
+    error: 'Não foi possível consultar o CNPJ agora nas bases públicas. Tente novamente em instantes.',
+    code: 'CNPJ_CONSULTA_INDISPONIVEL',
+    recoverable: true,
+    cnpj: digits,
+    detalhes: problemas
+  };
+}
+
 // Geração/edição de IMAGENS com IA — roda no backend, usando o mesmo provedor
 // (OpenRouter) e a mesma chave do chat. O modelo de imagem é configurável.
 export const imageToolDefinitions = [
@@ -270,6 +377,7 @@ export async function runTool(conversationId, name, args = {}, sandboxOptions = 
   const signal = runtime?.signal;
   if (name === 'web_search') return JSON.stringify(await webSearch(args.query || '', { signal }));
   if (name === 'web_fetch') return JSON.stringify(await webFetch(args.url || '', { signal }));
+  if (name === 'consultar_cnpj') return JSON.stringify(await consultarCnpj(args.cnpj || '', { signal }));
   const ws = workspaceFor(conversationId);
   // Pastas do PC deste usuário (isolamento multi-tenant): sem userId, nenhuma.
   const pcMounts = pcFolderMounts(sandboxOptions.userId);
