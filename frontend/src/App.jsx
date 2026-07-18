@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Download, FileText, FileSpreadsheet, FilePenLine, Plus, ArrowUp, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench, CalendarClock, Inbox, Palette, Gauge, SlidersHorizontal, Paperclip, MoreHorizontal, FolderOpen, Code2, Cpu, ChevronDown, ChevronRight, ChevronsUpDown, Calculator, Telescope, Scale, Briefcase, Receipt, Landmark, Megaphone, Lightbulb, ShieldCheck, GraduationCap, Stethoscope, Hammer, Leaf, LogOut } from 'lucide-react';
+import { Download, FileText, FileSpreadsheet, FilePenLine, Plus, ArrowUp, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench, CalendarClock, Inbox, Palette, Gauge, SlidersHorizontal, Paperclip, MoreHorizontal, FolderOpen, Code2, Cpu, ChevronDown, ChevronRight, ChevronsUpDown, Calculator, Telescope, Scale, Briefcase, Receipt, Landmark, Megaphone, Lightbulb, ShieldCheck, GraduationCap, Stethoscope, Hammer, Leaf, LogOut, KeyRound } from 'lucide-react';
 import { API, FALLBACK_MODELS, TOOL_INFO, TEMPLATES, QUICK_ACTIONS, THEMES, WORKSPACES, EFFORTS, EFFORT_DESC, emptyForm, ASSISTANT_ICONS, ASSISTANT_COLORS, isAssistantIcon } from './constants.js';
 import { signOut } from './authClient.js';
 import { ToolStep, Slider, Modal, Drawer, ModelPicker, Collapsible, useAppDialog } from './components.jsx';
@@ -12,6 +12,7 @@ import { ToolsPanel } from './ToolsPanel.jsx';
 import { DeveloperPanel } from './DeveloperPanel.jsx';
 import { RoutinesPanel } from './RoutinesPanel.jsx';
 import { InboxPanel } from './InboxPanel.jsx';
+import { ProviderPanel } from './ProviderPanel.jsx';
 import { takeSseEvents } from './sse.js';
 
 const QUICK_ACTION_ICON = {
@@ -316,6 +317,7 @@ export default function App({ user } = {}) {
   const [developerStartMode, setDeveloperStartMode] = useState('plan');
   const [routinesOpen, setRoutinesOpen] = useState(false);
   const [inboxOpen, setInboxOpen] = useState(false);
+  const [providerOpen, setProviderOpen] = useState(false);
   const [team, setTeam] = useState(false);
   const [teamIds, setTeamIds] = useState(() => { try { return JSON.parse(localStorage.getItem('fred_team') || 'null'); } catch { return null; } });
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
@@ -1294,6 +1296,7 @@ export default function App({ user } = {}) {
           <button className="studio" onClick={openStudioNew}><Bot size={16}/> Assistentes</button>
           <button className="studio" onClick={openAnalytics}><BarChart3 size={16}/> Análises</button>
           <button className="studio" onClick={() => window.open(`${API}/api/backup`, '_blank')} title="Baixa um arquivo com o banco e todos os workspaces"><HardDriveDownload size={16}/> Backup</button>
+          <button className="studio" onClick={() => setProviderOpen(true)} title="Cadastre a sua própria chave de API"><KeyRound size={16}/> Provedor de IA</button>
           <button className="studio" onClick={() => setThemeOpen(true)} title="Trocar a paleta e o espaço de trabalho"><Palette size={16}/> Aparência</button>
         </div>
       </nav>
@@ -1626,6 +1629,7 @@ export default function App({ user } = {}) {
     {developerOpen && <DeveloperPanel initialMode={developerStartMode} onStart={startDeveloperTask} onManageFolders={() => { setDeveloperOpen(false); setPcOpen(true); }} onClose={() => setDeveloperOpen(false)}/>}
     {routinesOpen && <RoutinesPanel assistants={assistants} clients={clients} showToast={showToast} askConfirm={askConfirm} onClose={() => setRoutinesOpen(false)}/>}
     {inboxOpen && <InboxPanel clients={clients} clientId={clientId} showToast={showToast} askConfirm={askConfirm} onOpenConversation={(id) => { fetchConversations(); openConversation(id); }} onClose={() => setInboxOpen(false)}/>}
+    {providerOpen && <ProviderPanel showToast={showToast} onClose={() => setProviderOpen(false)}/>}
     {themeOpen && <Modal title="Aparência e espaço de trabalho" icon={<Palette size={18}/>} onClose={() => setThemeOpen(false)}>
       <p className="muted appearanceIntro">Escolha como o app se organiza e, depois, a paleta que deixa a leitura mais confortável. As duas escolhas ficam salvas neste computador.</p>
       <section className="appearanceSection" aria-labelledby="workspace-title">

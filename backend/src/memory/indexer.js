@@ -3,6 +3,7 @@ import { db, now } from '../db.js';
 import { nanoid } from 'nanoid';
 import { embed } from './embeddings.js';
 import { getSettings, addMemory, addMemorySuggestion, findSimilar, looksSensitive } from './memoryService.js';
+import { getUserProvider } from '../userProvider.js';
 import { sanitizeToolProtocolText } from '../toolProtocol.js';
 
 // Indexa conversas (chunks + resumo) e extrai fatos importantes para a
@@ -47,10 +48,10 @@ function parseJson(text) {
 }
 
 // Chamado após cada resposta do assistente (fire-and-forget)
-export async function indexAfterReply(conversationId) {
+export async function indexAfterReply(userId, conversationId) {
   const s = getSettings();
   if (!s.memory_enabled) return;
-  const conv = await db.prepare('SELECT * FROM conversations WHERE id=?').get(conversationId);
+  const conv = await db.prepare('SELECT * FROM conversations WHERE id=? AND user_id=?').get(conversationId, userId);
   if (!conv) return;
   const rawMsgs = await db.prepare('SELECT role, content, created_at FROM messages WHERE conversation_id=? ORDER BY created_at ASC, seq ASC').all(conversationId);
   const msgs = rawMsgs.map(message => ({
@@ -68,8 +69,8 @@ export async function indexAfterReply(conversationId) {
     const content = `Usuário: ${lastUser.content.slice(0, 1100)}\nAssistente: ${lastAsst.content.slice(0, 1100)}`;
     const [vec] = await embed([content], 'passage');
     const chunkScope = conv.client_id ? `client:${conv.client_id}` : 'global';
-    await db.prepare('INSERT INTO conversation_chunks (id, conversation_id, source_title, scope, content, embedding, token_count, created_at) VALUES (?,?,?,?,?,?,?,?)')
-      .run(nanoid(), conversationId, conv.title, chunkScope, content, vec, estimateTokens(content), now());
+    await db.prepare('INSERT INTO conversation_chunks (id, user_id, conversation_id, source_title, scope, content, embedding, token_count, created_at) VALUES (?,?,?,?,?,?,?,?,?)')
+      .run(nanoid(), userId, conversationId, conv.title, chunkScope, content, vec, estimateTokens(content), now());
   }
 
   // 2) Resumo + extração de fatos (uma chamada de LLM). No modo economia, roda
@@ -77,10 +78,14 @@ export async function indexAfterReply(conversationId) {
   // local/grátis, continua sendo salvo sempre.
   if (!s.auto_memory) return;
   if (s.economy_mode && msgs.length % 4 !== 0) return;
+  // BYOK: a extração de fatos (LLM) usa a chave do próprio usuário; sem chave,
+  // pula a extração (o chunk local acima, grátis, já foi salvo).
+  const provider = await getUserProvider(userId);
+  if (!provider.client) return;
   try {
     const recent = msgs.slice(-6).map(m => `${m.role === 'user' ? 'Usuário' : 'Assistente'}: ${m.content.slice(0, 700)}`).join('\n');
     const input = `Resumo atual da conversa: ${conv.summary_short || '(nenhum)'}\nTotal de mensagens: ${msgs.length}\n\nTrecho recente:\n${recent}`;
-    const completion = await client().chat.completions.create({
+    const completion = await provider.client.chat.completions.create({
       model: EXTRACT_MODEL(),
       messages: [{ role: 'system', content: EXTRACT_PROMPT }, { role: 'user', content: input }],
       temperature: 0
@@ -88,11 +93,11 @@ export async function indexAfterReply(conversationId) {
     const data = parseJson(completion.choices[0].message.content);
 
     if (data.summary_short) {
-      await db.prepare('UPDATE conversations SET summary_short=?, tags=? WHERE id=?')
-        .run(String(data.summary_short).slice(0, 300), JSON.stringify(data.tags || []).slice(0, 300), conversationId);
+      await db.prepare('UPDATE conversations SET summary_short=?, tags=? WHERE id=? AND user_id=?')
+        .run(String(data.summary_short).slice(0, 300), JSON.stringify(data.tags || []).slice(0, 300), conversationId, userId);
     }
     if (data.summary_long && msgs.length >= 8) {
-      await db.prepare('UPDATE conversations SET summary_long=? WHERE id=?').run(String(data.summary_long).slice(0, 1500), conversationId);
+      await db.prepare('UPDATE conversations SET summary_long=? WHERE id=? AND user_id=?').run(String(data.summary_long).slice(0, 1500), conversationId, userId);
     }
 
     const clientScope = conv.client_id ? `client:${conv.client_id}` : 'global';
@@ -109,13 +114,13 @@ export async function indexAfterReply(conversationId) {
       // outros). Só vira 'global' quando a conversa não tem cliente.
       const isClient = clientScope && clientScope !== 'global';
       const scope = isClient ? clientScope : ((type === 'perfil' || type === 'preferencia') ? 'global' : clientScope);
-      const dup = await findSimilar(content, 0.88, scope);
+      const dup = await findSimilar(userId, content, 0.88, scope);
       if (dup) {
-        await db.prepare('UPDATE memory SET importance=GREATEST(importance,?), updated_at=? WHERE id=?').run(importance, now(), dup.id);
+        await db.prepare('UPDATE memory SET importance=GREATEST(importance,?), updated_at=? WHERE id=? AND user_id=?').run(importance, now(), dup.id, userId);
         continue;
       }
-      if (s.review_auto_memory) await addMemorySuggestion({ content, type, scope, importance, confidence, source_type: 'auto', source_id: conversationId });
-      else await addMemory({ content, type, scope, importance, confidence, source_type: 'auto', source_id: conversationId });
+      if (s.review_auto_memory) await addMemorySuggestion(userId, { content, type, scope, importance, confidence, source_type: 'auto', source_id: conversationId });
+      else await addMemory(userId, { content, type, scope, importance, confidence, source_type: 'auto', source_id: conversationId });
     }
   } catch (err) {
     console.error('[memória] extração falhou (segue sem):', err.message);
@@ -177,18 +182,19 @@ function normalizeImportScope(scope) {
 }
 
 // Inicia a importação em SEGUNDO PLANO (a rota responde na hora)
-export function startImport(fileName, buffer, scope = 'global') {
+export function startImport(userId, fileName, buffer, scope = 'global') {
   if (importStatus.running) return { ok: false, error: 'Já existe uma importação em andamento.' };
   const targetScope = normalizeImportScope(scope);
   Object.assign(importStatus, { running: true, file: fileName, scope: targetScope, total: 0, processed: 0, chunks: 0, facts: 0, error: null, done: false });
-  importConversations(fileName, buffer, targetScope)
+  importConversations(userId, fileName, buffer, targetScope)
     .then(r => Object.assign(importStatus, { running: false, done: true, ...r }))
     .catch(err => Object.assign(importStatus, { running: false, done: true, error: err.message }));
   return { ok: true };
 }
 
-export async function importConversations(fileName, buffer, scope = 'global') {
+export async function importConversations(userId, fileName, buffer, scope = 'global') {
   const targetScope = normalizeImportScope(scope);
+  const provider = await getUserProvider(userId);          // BYOK p/ extração de fatos
   const text = buffer.toString('utf8');
   const convs = parseImport(fileName, text).slice(0, 200);
   importStatus.total = convs.length;
@@ -208,14 +214,15 @@ export async function importConversations(fileName, buffer, scope = 'global') {
       const batch = pieces.slice(i, i + 16);
       const vecs = await embed(batch, 'passage');
       for (let j = 0; j < batch.length; j++) {
-        await db.prepare('INSERT INTO conversation_chunks (id, conversation_id, source_title, scope, content, embedding, token_count, created_at) VALUES (?,?,?,?,?,?,?,?)')
-          .run(nanoid(), null, title, targetScope, batch[j], vecs[j], estimateTokens(batch[j]), now());
+        await db.prepare('INSERT INTO conversation_chunks (id, user_id, conversation_id, source_title, scope, content, embedding, token_count, created_at) VALUES (?,?,?,?,?,?,?,?,?)')
+          .run(nanoid(), userId, null, title, targetScope, batch[j], vecs[j], estimateTokens(batch[j]), now());
         chunks++;
       }
     }
     // colhe fatos do começo da conversa importada (perfil, preferências...)
+    if (!provider.client) continue;                        // sem chave: só os chunks (grátis)
     try {
-      const completion = await client().chat.completions.create({
+      const completion = await provider.client.chat.completions.create({
         model: EXTRACT_MODEL(),
         messages: [{ role: 'system', content: EXTRACT_PROMPT }, { role: 'user', content: `Conversa importada "${conv.title}":\n${body.slice(0, 5000)}` }],
         temperature: 0
@@ -224,12 +231,12 @@ export async function importConversations(fileName, buffer, scope = 'global') {
       for (const f of (data.facts || []).slice(0, 5)) {
         const content = String(f.content || '').trim();
         if (!content || looksSensitive(content) || (Number(f.confidence) || 0) < 0.6) continue;
-        const dup = await findSimilar(content, 0.88, targetScope);
+        const dup = await findSimilar(userId, content, 0.88, targetScope);
         if (dup) continue;
         const type = ['perfil', 'preferencia', 'projeto', 'fato'].includes(f.type) ? f.type : 'fato';
         const payload = { content, type, scope: targetScope, importance: Math.min(5, Number(f.importance) || 3), confidence: Number(f.confidence) || 0.7, source_type: 'import', source_id: title };
-        if (getSettings().review_auto_memory) await addMemorySuggestion(payload);
-        else await addMemory(payload);
+        if (getSettings().review_auto_memory) await addMemorySuggestion(userId, payload);
+        else await addMemory(userId, payload);
         facts++;
       }
     } catch {}

@@ -9,21 +9,33 @@ const docker = new Docker({ socketPath: '/var/run/docker.sock' });
 
 // Pastas do computador do usuário liberadas para o assistente. Cada uma vira
 // um mount em /mnt/pc/<label> dentro do sandbox (só leitura ou leitura+escrita).
-// Cache em memória das pastas do PC. Como o pg é assíncrono, ler a cada chamada
-// tornaria pcFolderMounts() async — e ele é usado como valor padrão de parâmetro
-// (tools.js) e dentro de funções síncronas (agent.js). Mantemos um cache
-// carregado no boot (loadPcFolders) e atualizado sempre que as pastas mudam
-// (via destroyAllSandboxes, chamado pelas rotas de pastas do PC).
-let pcFoldersCache = [];
+// Cache em memória das pastas do PC, AGRUPADAS POR USUÁRIO. Como o pg é
+// assíncrono, ler a cada chamada tornaria pcFolderMounts() async — e ele é
+// usado como valor padrão de parâmetro (tools.js) e dentro de funções
+// síncronas (agent.js). Mantemos um cache carregado no boot (loadPcFolders) e
+// atualizado sempre que as pastas mudam (via destroyAllSandboxes, chamado
+// pelas rotas de pastas do PC).
+// SEGURANÇA (multi-tenant): as pastas são separadas por usuário. Sem um userId,
+// NENHUMA pasta é montada — um usuário nunca enxerga as pastas de outro.
+let pcFoldersByUser = new Map(); // userId -> rows[]
 
 export async function loadPcFolders() {
-  try { pcFoldersCache = await db.prepare('SELECT * FROM pc_folders ORDER BY created_at ASC').all(); }
-  catch { pcFoldersCache = []; }
-  return pcFoldersCache;
+  const map = new Map();
+  try {
+    const rows = await db.prepare('SELECT * FROM pc_folders ORDER BY created_at ASC').all();
+    for (const r of rows) {
+      const uid = String(r.user_id || '');
+      if (!uid) continue; // pastas órfãs (sem dono) não são montadas em ninguém
+      if (!map.has(uid)) map.set(uid, []);
+      map.get(uid).push(r);
+    }
+  } catch {}
+  pcFoldersByUser = map;
+  return pcFoldersByUser;
 }
 
-export function pcFolderMounts() {
-  const rows = pcFoldersCache;
+export function pcFolderMounts(userId) {
+  const rows = (userId && pcFoldersByUser.get(String(userId))) || [];
   const used = new Set();
   return rows.map(r => {
     let label = String(r.label || 'pasta').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9_-]/g, '_').slice(0, 30) || 'pasta';
@@ -52,9 +64,12 @@ const hostRoot = process.env.HOST_WORKSPACE_ROOT || root;
 const image = process.env.SANDBOX_IMAGE || 'frederico-ai-sandbox:latest';
 const memory = process.env.SANDBOX_MEMORY || '1024m';
 const cpus = Number(process.env.SANDBOX_CPUS || 1);
+// Limite de sandboxes ATIVOS por usuário (proteção de recursos numa SaaS):
+// ao criar o (N+1)-ésimo, o mais antigo do mesmo usuário é descartado.
+const MAX_SANDBOXES_PER_USER = Math.max(1, Number(process.env.MAX_SANDBOXES_PER_USER || 2));
 
 fs.mkdirSync(root, { recursive: true });
-const sessions = new Map(); // id -> { container, lastUsed, policyKey }
+const sessions = new Map(); // id -> { container, lastUsed, policyKey, userId }
 
 const CONVERSATION_ID_RE = /^[A-Za-z0-9_-]{6,128}$/;
 
@@ -133,26 +148,43 @@ async function dropSession(conversationId) {
 
 export async function getContainer(conversationId, options = {}) {
   conversationId = assertConversationId(conversationId);
+  const userId = options.userId ? String(options.userId) : null;
   const policy = sandboxPolicy(options);
   const entry = sessions.get(conversationId);
   if (entry?.policyKey === policy.key) { entry.lastUsed = Date.now(); return entry.container; }
   if (entry) await dropSession(conversationId);
   const creatingKey = `${conversationId}:${policy.key}`;
   if (creating.has(creatingKey)) return creating.get(creatingKey);
-  const p = createContainer(conversationId, policy);
+  const p = createContainer(conversationId, policy, userId);
   creating.set(creatingKey, p);
   try { return await p; }
   finally { creating.delete(creatingKey); }
 }
 
-async function createContainer(conversationId, policy) {
+// Mantém no máximo MAX_SANDBOXES_PER_USER sandboxes ativos por usuário:
+// descarta os mais antigos (LRU) antes de abrir um novo.
+async function enforceUserSandboxCap(userId) {
+  if (!userId) return;
+  const mine = [...sessions.entries()].filter(([, e]) => e.userId === userId);
+  if (mine.length < MAX_SANDBOXES_PER_USER) return;
+  mine.sort((a, b) => a[1].lastUsed - b[1].lastUsed); // mais antigo primeiro
+  const excess = mine.length - MAX_SANDBOXES_PER_USER + 1; // abrir espaço para o novo
+  for (let i = 0; i < excess; i++) {
+    const [id] = mine[i];
+    await dropSession(id);
+  }
+}
+
+async function createContainer(conversationId, policy, userId = null) {
   await ensureSandboxImage();
+  await enforceUserSandboxCap(userId);
   const { base } = workspaceFor(conversationId);
   const hostBase = path.join(hostRoot, conversationId);
   const name = `frederico-ai-${conversationId}-${nanoid(5)}`;
   // Pastas do PC do usuário viram mounts /mnt/pc/<label> (Mounts evita o
   // problema de parsing de caminhos do Windows com ":" no formato de Bind).
-  const mounts = pcFolderMounts().map(m => ({
+  // pcFolderMounts(userId): só as pastas DESTE usuário (isolamento multi-tenant).
+  const mounts = pcFolderMounts(userId).map(m => ({
     Type: 'bind',
     Source: m.source,
     Target: m.target,
@@ -184,7 +216,7 @@ async function createContainer(conversationId, policy) {
     }
   });
   await container.start();
-  sessions.set(conversationId, { container, lastUsed: Date.now(), policyKey: policy.key });
+  sessions.set(conversationId, { container, lastUsed: Date.now(), policyKey: policy.key, userId });
   return container;
 }
 

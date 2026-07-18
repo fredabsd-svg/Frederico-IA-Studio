@@ -55,10 +55,14 @@ test('materializes a promised Markdown report as a real output file', () => {
 test('persists a DOCX card with its assistant message before validation', { skip: dbReady ? false : 'requer PostgreSQL (DATABASE_URL)' }, async () => {
   const conversationId = `output-card-${Date.now()}`;
   const stamp = now();
-  await db.prepare('INSERT INTO conversations (id,title,model,created_at,updated_at) VALUES (?,?,?,?,?)')
-    .run(conversationId, 'Teste', 'modelo-teste', stamp, stamp);
+  // A conversa pertence a um usuário (multi-tenant): cria o usuário e a conversa dele.
+  const uid = `test-user-${Date.now()}`;
+  await db.prepare('INSERT INTO "user" (id,name,email,"emailVerified","createdAt","updatedAt") VALUES (?,?,?,?,?,?)')
+    .run(uid, 'Teste', `${uid}@t.com`, false, stamp, stamp);
+  await db.prepare('INSERT INTO conversations (id,user_id,title,model,created_at,updated_at) VALUES (?,?,?,?,?,?)')
+    .run(conversationId, uid, 'Teste', 'modelo-teste', stamp, stamp);
 
-  const result = await persistAssistantReply(conversationId, 'Relatório pronto.', null, [{
+  const result = await persistAssistantReply(uid, conversationId, 'Relatório pronto.', null, [{
     name: 'relatorio_ambiente_app.docx',
     path: 'outputs/relatorio_ambiente_app.docx',
     size: 2048
