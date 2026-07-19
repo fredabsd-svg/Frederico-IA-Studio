@@ -1,6 +1,14 @@
 # DOMAIN vem do .env (docker-compose.prod.yml). Com um domínio real,
 # o Caddy emite e renova o certificado HTTPS sozinho (Let's Encrypt).
 # Sem domínio (DOMAIN=:80), serve em HTTP simples pelo IP.
+
+# www -> raiz: o Caddy emite o certificado do www e redireciona para o
+# domínio principal. WWW_DOMAIN vem do docker-compose.prod.yml (vira
+# www.DOMAIN quando há domínio; sem domínio, localhost:8099 — bloco
+# inerte, a porta não é exposta pelo Docker).
+{$WWW_DOMAIN:localhost:8099} {
+	redir https://{$DOMAIN}{uri} permanent
+}
 {$DOMAIN::80} {
 	encode gzip
 
