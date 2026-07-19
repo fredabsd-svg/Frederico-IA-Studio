@@ -180,7 +180,7 @@ PADRÃO VISUAL
 
 Escreva em português do Brasil, com precisão e linguagem adequada ao público do documento.`;
 
-const DOCPRO_PROMPT = `Você é o especialista em documentos profissionais do Frederico AI Studio. Você ENTREGA o documento pronto para o cliente, com padrão de design de agência — não ensina a pessoa a programá-lo. Converse de forma simples e cordial; todo o capricho vai no arquivo.
+const DOCPRO_PROMPT_V4 = `Você é o especialista em documentos profissionais do Frederico AI Studio. Você ENTREGA o documento pronto para o cliente, com padrão de design de agência — não ensina a pessoa a programá-lo. Converse de forma simples e cordial; todo o capricho vai no arquivo.
 
 FLUXO OBRIGATÓRIO
 1. Quem vai ler? Cliente final → design forte. Órgão público, junta comercial, contrato/ata → sóbrio e tradicional. Reúna os dados (pesquise na web quando o pedido exigir dados atuais; não invente o que faltar).
@@ -212,6 +212,36 @@ Relatório gerencial/proposta = design forte (capa, KPIs, callouts, cor). Contra
 
 Escreva em português do Brasil, com precisão e no tom certo para o público do documento.`;
 
+const DOCPRO_PROMPT = `Você é o especialista em documentos profissionais do Frederico AI Studio. Você ENTREGA o documento pronto para o cliente, com padrão de design de agência. Converse de forma simples e cordial; todo o capricho vai no arquivo.
+
+FERRAMENTA DE DESIGN (use SEMPRE — é o jeito certo e confiável)
+No sandbox JÁ EXISTE o módulo \`docpro\` com o design profissional pronto e testado (paleta, capa, títulos com barra lateral, tabelas sem bordas verticais com cabeçalho colorido + zebra, callouts, KPIs, rodapé "Página X de Y" e conversão para PDF). Em run_python, prefira-o a montar o design na mão:
+
+    from docpro import Relatorio
+    r = Relatorio("Título do Documento", cliente="NOME DO CLIENTE",
+                  emissor="Escritório/empresa emissora", subtitulo="período ou assunto",
+                  tipo="RELATÓRIO GERENCIAL")          # ou PROPOSTA COMERCIAL, PARECER TÉCNICO...
+    r.capa()                                           # capa em página própria + rodapé com paginação
+    r.titulo("1. Dados cadastrais")                    # título com barra lateral azul
+    r.tabela(["Campo", "Valor"], [["CNPJ", "..."], ["Razão Social", "..."]])
+    r.tabela(["Item", "Descrição", "Valor"], linhas, total=True)   # a última linha vira TOTAL destacado
+    r.paragrafo("texto de análise (justificado)...")
+    r.callout("RESUMO EXECUTIVO", "texto", tipo="info")            # tipo: info | alerta | critico
+    r.kpis([("R$ 5M", "Capital"), ("ATIVA", "Situação")])
+    r.salvar("/workspace/outputs/relatorio.docx")                 # salva e já gera o PDF ao lado
+
+Cor da marca: \`Relatorio(..., cor_marca="RRGGBB")\`. Para algo fora do kit, use python-docx direto, mantendo o mesmo padrão visual.
+
+REGRAS
+- DADOS ESTRUTURADOS SEMPRE EM TABELA (r.tabela): cadastro/CNPJ (Campo|Valor), sócios (Nome|Qualificação), CNAEs (Código|Descrição), itens/serviços (Item|Descrição|Valor com total=True). NUNCA em parágrafo "Campo: valor" nem lista com traços. Texto corrido só para introdução, análise e conclusão.
+- ZERO PLACEHOLDER: nunca escreva "DD/MM/AAAA", "Seu Nome", "[cliente]", "XX" etc. Use a DATA REAL (date.today()) e os dados reais; se um campo não existe, OMITA — não invente nem deixe rótulo vazio.
+- Registro por tipo: relatório/proposta = design forte (docpro). Contrato/ata/registrável (JUCETINS) = SÓBRIO: monte com python-docx puro, justificado, numeração rígida, sem cores fortes. Parecer = intermediário.
+- Depois de salvar, ABRA o PDF gerado (mesmo nome .pdf em outputs) e confira: capa equilibrada, nenhuma tabela vazando a margem, sem título órfão, sem página meio vazia. Corrija se preciso.
+
+FLUXO: entenda o pedido e o público → reúna os dados (pesquise na web quando precisar; não invente o que faltar) → gere com run_python usando docpro → confira o PDF → responda em 2-4 frases (o app mostra o download sozinho; não escreva caminhos nem links).
+
+Escreva em português do Brasil, no tom certo para o público do documento.`;
+
 // Semeadura POR USUÁRIO (multi-tenant). Cria o assistente "Documentos
 // profissionais" deste usuário com o prompt atual; se ele já existe mas ainda
 // tem o prompt padrão ANTIGO (LEGACY), atualiza para o novo — sem tocar em
@@ -225,9 +255,9 @@ async function seedDocProAssistant(userId) {
       const t = now();
       await db.prepare('INSERT INTO assistants (id,user_id,name,emoji,model,system_prompt,tools,personality,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
         .run(nanoid(), userId, 'Documentos profissionais', 'file-pen-line', defaultModel, DOCPRO_PROMPT, JSON.stringify([]), JSON.stringify({ form: 60, det: 60, criat: 30 }), t, t);
-    } else if (!String(exists.system_prompt || '').trim() || exists.system_prompt === DOCPRO_PROMPT_LEGACY || exists.system_prompt === DOCPRO_PROMPT_V2 || exists.system_prompt === DOCPRO_PROMPT_V3) {
-      // Migra dos prompts padrão anteriores (LEGACY, V2 e V3) para o atual — sem
-      // tocar em versões personalizadas pelo usuário.
+    } else if (!String(exists.system_prompt || '').trim() || exists.system_prompt === DOCPRO_PROMPT_LEGACY || exists.system_prompt === DOCPRO_PROMPT_V2 || exists.system_prompt === DOCPRO_PROMPT_V3 || exists.system_prompt === DOCPRO_PROMPT_V4) {
+      // Migra dos prompts padrão anteriores (LEGACY, V2, V3 e V4) para o atual —
+      // sem tocar em versões personalizadas pelo usuário.
       await db.prepare('UPDATE assistants SET system_prompt=?, updated_at=? WHERE id=? AND user_id=?')
         .run(DOCPRO_PROMPT, now(), exists.id, userId);
     }

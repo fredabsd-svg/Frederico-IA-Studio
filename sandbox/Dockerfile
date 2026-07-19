@@ -120,6 +120,11 @@ RUN mkdir -p "$DOTNET_ROOT" && \
     ln -s /opt/dotnet/dotnet /usr/local/bin/dotnet && \
     rm -f /tmp/dotnet-install.sh
 
+# Kit de DESIGN profissional para Word (.docx): importável como `from docpro import Relatorio`.
+# Fornece capa, títulos com barra, tabelas estilizadas, callouts, KPIs e rodapé
+# paginado prontos — o assistente "Documentos profissionais" usa este módulo.
+COPY docpro.py /usr/local/lib/python3.12/site-packages/docpro.py
+
 # Compatibilidade com modelos que tentam salvar arquivos no caminho usado por
 # outros sandboxes. Aqui ele aponta para o workspace real da conversa.
 RUN mkdir -p /mnt && ln -sfnT /workspace /mnt/user-data
