@@ -81,6 +81,24 @@ test('stream guard hides a protocol marker even when it is split across chunks',
   assert.doesNotMatch(visible, /tool_call|run_python|print/);
 });
 
+test('stream guard suppresses leaked protocol even in no-tools mode', () => {
+  // Regressão do bug de produção (consulta de CNPJ): no modo SEM ferramentas o
+  // guard repassava tudo, então <tool_call>/<function=>/código python vazavam.
+  const guard = createToolProtocolStreamGuard(false);
+  const parts = [
+    'Vou criar o relatório.',
+    '\n<tool_call>\n<function=run_python>\n<parameter=code>\n',
+    'from docx import Document\ndoc = Document()\ndoc.save("/workspace/outputs/x.docx")\n',
+    '</parameter>\n</function>\n</tool_call>'
+  ];
+  let visible = '';
+  for (const p of parts) visible += guard.push(p);
+  visible += guard.finish();
+  assert.equal(visible, 'Vou criar o relatório.');
+  assert.equal(guard.suppressed, true);
+  assert.doesNotMatch(visible, /tool_call|function=|from docx|doc\.save/);
+});
+
 test('stream guard leaves an ordinary response unchanged', () => {
   const guard = createToolProtocolStreamGuard(true);
   const original = 'Relatorio concluido com sucesso e pronto para download.';

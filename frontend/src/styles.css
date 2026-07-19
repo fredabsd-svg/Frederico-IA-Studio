@@ -713,3 +713,14 @@ input[type=checkbox]:focus-visible,input[type=radio]:focus-visible{outline-offse
 
 .toolstep.error{border-color:rgba(239,68,68,.45);color:var(--danger)}
 .toolstep.error code,.toolstep.error .ic{color:var(--danger)}
+
+/* Anti-overflow do conteúdo das mensagens (bug em produção: caminhos longos,
+   linhas "====" e tabelas grandes estouravam a tela no celular). Palavras/
+   tokens sem espaço passam a quebrar; blocos de código e tabelas rolam dentro
+   da própria caixa em vez de empurrar a página. */
+.msg{overflow-wrap:anywhere;word-break:break-word;min-width:0}
+.msg pre{max-width:100%;overflow-x:auto;white-space:pre}
+.msg :not(pre)>code{overflow-wrap:anywhere;word-break:break-word;white-space:pre-wrap}
+.msg table{display:block;max-width:100%;overflow-x:auto}
+.msg img{max-width:100%;height:auto}
+.msg a{overflow-wrap:anywhere;word-break:break-word}

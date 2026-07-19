@@ -6,7 +6,19 @@ process.env.DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || 'test-key';
 
 const { estimateTokens } = await import('./memory/indexer.js');
 const { contextBudgetForModel, historyBudgetForModel } = await import('./memory/contextBuilder.js');
-const { clipForBriefing, withoutSystemNotices, fileSignature } = await import('./agent.js');
+const { clipForBriefing, withoutSystemNotices, fileSignature, looksDegenerate } = await import('./agent.js');
+
+// Freio de repetição: eco do prompt em loop dispara; texto normal não.
+test('looksDegenerate detecta eco repetido e ignora texto normal', () => {
+  const echo = 'Usuario Faça uma pesquisa ampla na internet sobre essa empresa traga todos os dados. '.repeat(60);
+  assert.equal(looksDegenerate(echo), true);
+  // texto longo, porém VARIADO (nenhum bloco exato de 80 chars repetido): não dispara
+  let normal = '';
+  for (let i = 0; i < 120; i++) normal += `Seção ${i}: análise ${i * 7 + 3} sobre o item ${(i * 13) % 97} com dados distintos e conclusão própria número ${i}. `;
+  assert.ok(normal.length > 4000);
+  assert.equal(looksDegenerate(normal), false);
+  assert.equal(looksDegenerate('resposta curta e válida'), false);
+});
 
 // CL-01: contagem de tokens não pode SUBESTIMAR em alfabetos não-latinos.
 // (o valor antigo era length/3.5; o novo é sempre >= a esse, e mais próximo do

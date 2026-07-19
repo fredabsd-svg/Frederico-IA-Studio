@@ -33,6 +33,29 @@ Os bugs abaixo foram verificados no código-fonte. Dois deles têm **prova empí
 
 ---
 
+## 🔴 Bugs encontrados AO VIVO em produção (fredericostudio.com.br)
+
+Testes executados de verdade contra o app em produção (login real via Better
+Auth, modelos reais, arquivos reais baixados e inspecionados). Confirmações:
+
+| ID | Bug (produção) | Evidência | Correção |
+|---|---|---|---|
+| LIVE-01 | **Protocolo de ferramenta vaza no chat** (aparece `<tool_call>`, `<function=run_python>`, código python-docx) na consulta de CNPJ/relatório | Screenshots do usuário + causa-raiz no código | `toolProtocol.js`: o stream guard era DESLIGADO no modo sem-ferramentas (`enabled=false` → repassava tudo); agora suprime SEMPRE |
+| LIVE-02 | **Loop de repetição**: o assistente ecoa o prompt do usuário dezenas de vezes ("Usuario Faça uma pesquisa…") | Screenshot do usuário | `agent.js`: freio `looksDegenerate` interrompe a saída degenerada com aviso |
+| LIVE-03 | **Formatação estoura a tela** no celular (caminhos longos, linhas `====`, tabelas) | Screenshot do usuário | `styles.css`: `overflow-wrap`/`word-break` no conteúdo; `pre`/tabelas rolam dentro da caixa |
+| LIVE-04 | **Validação de Excel dá "ok" falso**: o app reportou `{ok:true,'1 abas'}` para toda planilha, sem checar fórmula | SSE `file_checks` capturado ao vivo | Já corrigido em CG-01 (recálculo LibreOffice) |
+| LIVE-05 | **Modelo crava número errado no chat**: `deepseek/deepseek-chat` afirmou "total R$ 149,50" enquanto a planilha (correta) soma **181,00** | Arquivo baixado e recomputado | Comportamento de modelo; mitigável exigindo verificação — a planilha em si estava correta |
+
+Observação de fidelidade multi-modelo: no MESMO teste de fórmula, `deepseek-chat`
+errou o total no texto (149,50) mas `nemotron-3-ultra:free` acertou (181,00) e
+gerou o arquivo correto — confirma que a robustez varia por modelo e que o app
+precisa tratar a saída de forma defensiva (é o que as correções fazem).
+
+> ⚠️ Produção roda o código atual (`main`); estas correções entram em vigor
+> após o deploy da branch (`git pull && docker compose -f docker-compose.prod.yml up -d --build`).
+
+---
+
 ## ✅ Status das correções (todas aplicadas)
 
 Todos os bugs desta lista foram corrigidos no código e a suíte de testes do

@@ -151,6 +151,23 @@ export function clipForBriefing(text, limit) {
   return s.length > limit ? `${s.slice(0, limit)}\n…[conteúdo truncado para caber no resumo da equipe]` : s;
 }
 
+// Detecta saída DEGENERADA — o modelo trava repetindo o mesmo trecho (ex.: eco
+// do prompt em loop, como visto na consulta de CNPJ em produção). É conservador
+// para nunca pegar conteúdo legítimo: só dispara quando um trecho idêntico de
+// 80 caracteres reaparece 6+ vezes numa cauda longa (>4k chars). Uma tabela ou
+// lista normal não repete o MESMO bloco exato tantas vezes.
+export function looksDegenerate(text) {
+  const s = String(text || '');
+  if (s.length < 4000) return false;
+  const tail = s.slice(-2400);
+  const probe = tail.slice(-80);
+  if (probe.replace(/\s+/g, '').length < 40) return false; // cauda quase em branco
+  let count = 0, idx = 0;
+  while ((idx = tail.indexOf(probe, idx)) !== -1) { count += 1; idx += probe.length; }
+  return count >= 6;
+}
+const DEGEN_CHECK_STEP = 1500; // reavalia a cada ~1500 chars novos (barato)
+
 const WEB_RESEARCH_FAILURE_LIMIT = Math.max(1, Number(process.env.WEB_RESEARCH_FAILURE_LIMIT || 3));
 const WEB_RESEARCH_FETCH_LIMIT = Math.max(1, Number(process.env.WEB_RESEARCH_FETCH_LIMIT || 8));
 const TOOL_CALLS_PER_STEP_LIMIT = Math.max(1, Number(process.env.TOOL_CALLS_PER_STEP_LIMIT || 12));
@@ -1147,6 +1164,8 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
     // Streaming: o texto é enviado token a token para a interface (tela viva)
     let content = '';
     let displayedContent = '';
+    let degenerate = false;
+    let lastDegenCheckLen = 0;
     const protocolGuard = createToolProtocolStreamGuard(tools.length > 0);
     const toolCalls = [];
     let finishReason = null;
@@ -1253,6 +1272,13 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
           finalText += visible;
           onEvent({ type: 'delta', content: visible });
         }
+        // Freio de repetição: se o modelo travar repetindo o mesmo trecho,
+        // interrompe em vez de despejar um muro de texto repetido no chat.
+        if (!degenerate && content.length - lastDegenCheckLen >= DEGEN_CHECK_STEP) {
+          lastDegenCheckLen = content.length;
+          if (looksDegenerate(content)) degenerate = true;
+        }
+        if (degenerate) break;
       }
       if (delta.tool_calls) {
         for (const tc of delta.tool_calls) {
@@ -1314,6 +1340,17 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
     }
     streamRecoveryAttempts = 0;
     if (stopped) break;
+    if (degenerate) {
+      const note = displayedContent.trim()
+        ? '\n\n_A resposta foi interrompida: o modelo entrou em repetição (ficou repetindo o mesmo trecho). Use **Reenviar** ou escolha outro modelo._'
+        : 'O modelo entrou em repetição e não produziu uma resposta útil. Use **Reenviar** ou escolha outro modelo.';
+      finalText = sanitizeToolProtocolText(finalText) + note;
+      onEvent({ type: 'delta', content: note });
+      incomplete = true;
+      failureMessage ||= 'O modelo entrou em repetição (saída degenerada).';
+      completedNaturally = true;
+      break;
+    }
     if (pausedDuringStream) {
       if (content) {
         messages.push({ role: 'assistant', content: sanitizeToolProtocolText(content) });
