@@ -118,7 +118,7 @@ class Planilha:
         if congelar:
             ws.freeze_panes = ws.cell(row=r0 + 1, column=1)
         return {"ws": ws, "r0": r0, "r1": r0 + n, "c0": 1, "c1": ncols,
-                "cols": list(cabecalho)}
+                "cols": list(cabecalho), "total": bool(total)}
 
     def _idx(self, info, nome):
         # Mensagem clara quando o 2º argumento do gráfico não é o dict retornado
@@ -145,11 +145,14 @@ class Planilha:
     def _grafico(self, chart, ws, info, categoria, valor, titulo, anchor):
         cat_c = self._idx(info, categoria)
         val_c = self._idx(info, valor)
-        # exclui a linha de TOTAL do gráfico (min_row = primeira linha de dados)
+        # Exclui a linha de TOTAL do gráfico: senão ela vira uma fatia/barra
+        # gigante (= soma de todas as outras) que distorce a leitura. info["r1"]
+        # é a última linha de dados; se a tabela tem TOTAL, ela é essa última.
+        last = info["r1"] - (1 if info.get("total") else 0)
         dados = Reference(info["ws"], min_col=val_c, min_row=info["r0"],
-                          max_row=info["r1"])
+                          max_row=last)
         cats = Reference(info["ws"], min_col=cat_c, min_row=info["r0"] + 1,
-                         max_row=info["r1"])
+                         max_row=last)
         chart.add_data(dados, titles_from_data=True)
         chart.set_categories(cats)
         chart.title = titulo or valor
