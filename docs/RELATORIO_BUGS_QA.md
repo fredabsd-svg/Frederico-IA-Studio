@@ -55,6 +55,28 @@ Gap identificado para próxima iteração: **validar gráficos do Excel** (hoje 
 verifica se as referências de dados do gráfico são válidas) — o recálculo de
 fórmulas do CG-01 não cobre isso.
 
+## 🚨 CAUSA-RAIZ: arquivo não gera após pesquisa web (todos os modelos)
+
+Sintoma relatado pelo usuário: pedir "pesquise o CNPJ e faça um relatório em
+Word" **falha em qualquer modelo** — o forte (DeepSeek V4) responde *"não disponho
+de ferramenta de execução de código"* e entrega texto; o fraco (Nemotron) tenta
+como texto e dá "formato inválido". **Não é o modelo — é o app.**
+
+Causa (em `agent.js`): quando a pesquisa web atinge o limite (fontes esgotadas
+ou nº de páginas), o app fazia `tools = []` — **removia TODAS as ferramentas**,
+não só as de web — e reescrevia o inventário dizendo "nenhuma ferramenta". A
+partir daí o modelo ficava **sem `run_python`**, então não tinha como gerar o
+arquivo. Como o usuário quase sempre usa a pesquisa ligada nos relatórios, isso
+quebrava a geração em todos os modelos.
+
+**Correção:** ao encerrar a pesquisa, remover **apenas** `web_search`/`web_fetch`
+(`WEB_TOOL_NAMES`), mantendo `run_python`/`write_file` etc.; e a nota de
+finalização passou a instruir o modelo a GERAR o arquivo com os dados já
+obtidos, em vez de "responder agora em texto". Também: reduzida a priming do
+formato textual no system prompt (não enumerar mais `<tool_call>/<function>`),
+e a tarefa deixou de ser abortada quando o usuário sai da página/minimiza
+(a geração continua e o resultado é salvo).
+
 ## 🔴 Bugs encontrados AO VIVO em produção (fredericostudio.com.br)
 
 Testes executados de verdade contra o app em produção (login real via Better

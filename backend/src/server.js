@@ -1044,18 +1044,33 @@ app.post('/api/conversations/:id/chat', async (req, res) => {
   res.setHeader('Connection', 'keep-alive');
   res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders?.();
-  const send = (event) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(event)}\n\n`); };
+  // clientGone: o usuário saiu da página/minimizou (conexão SSE fechada). A
+  // partir daí, as escritas SSE viram no-op — mas a TAREFA continua rodando.
+  let clientGone = false;
+  const send = (event) => {
+    if (clientGone || res.writableEnded) return;
+    try { res.write(`data: ${JSON.stringify(event)}\n\n`); }
+    catch { clientGone = true; }
+  };
   // Pulso (heartbeat): comentário SSE a cada 15s para a conexão nunca ficar
   // "ociosa" durante esperas longas (modelo pensando, pesquisa na web). Sem
   // isso, proxies/gateways cortam com "Upstream idle timeout exceeded". O
   // cliente ignora linhas que não começam com "data:".
-  const heartbeat = setInterval(() => { if (!res.writableEnded) res.write(': ping\n\n'); }, 15000);
-  // Se o navegador desconectar (aba fechada/rede), interrompe a execução
-  // para não continuar gastando tokens sem ninguém assistindo.
+  const heartbeat = setInterval(() => { if (!clientGone && !res.writableEnded) { try { res.write(': ping\n\n'); } catch { clientGone = true; } } }, 15000);
+  // Se o navegador desconectar (TROCAR DE ABA, MINIMIZAR no celular, rede
+  // oscilando), a tarefa NÃO é mais interrompida: ela continua rodando e o
+  // resultado é salvo na conversa, então ao voltar o usuário encontra o
+  // arquivo/resposta prontos (antes, sair da página abortava tudo com "conexão
+  // interrompida" — o bug relatado). Só cancelamos ao desconectar se
+  // CANCEL_ON_DISCONNECT=true (comportamento antigo, para economizar tokens).
   // IMPORTANTE: usar o 'close' da RESPOSTA (res), não do pedido (req) — o
-  // 'close' do req dispara assim que o corpo do POST termina de chegar, o
-  // que interrompia toda resposta logo no primeiro token.
-  res.on('close', () => { clearInterval(heartbeat); if (!res.writableEnded) setControl(req.params.id, 'stop'); });
+  // 'close' do req dispara assim que o corpo do POST termina de chegar.
+  const cancelOnDisconnect = String(process.env.CANCEL_ON_DISCONNECT || '').toLowerCase() === 'true';
+  res.on('close', () => {
+    clientGone = true;
+    clearInterval(heartbeat);
+    if (cancelOnDisconnect && !res.writableEnded) setControl(req.params.id, 'stop');
+  });
   try {
     const text = String(req.body?.message || '').trim();
     // Título automático: usa o início da 1ª mensagem em vez de "Nova conversa"

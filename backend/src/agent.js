@@ -247,8 +247,15 @@ export function planToolCallBatch(calls, seenWebFetches = new Set(), maxCalls = 
   return { calls: planned, webStopReason, truncated };
 }
 
+// Ferramentas de PESQUISA na web. Ao encerrar a pesquisa, removemos SÓ estas —
+// nunca as de gerar arquivo (run_python, write_file...). Antes, o app zerava
+// TODAS as ferramentas ao atingir o limite de busca, então o modelo ficava sem
+// run_python e não conseguia gerar o Word/Excel/PDF pedido (dizia "não tenho
+// ferramenta de execução de código"). Este era o bug real dos relatórios de CNPJ.
+const WEB_TOOL_NAMES = new Set(['web_search', 'web_fetch']);
+
 function webResearchFinalizationNote(reason) {
-  return `A pesquisa foi encerrada (${reason}). Responda agora com o que já apareceu nesta conversa, sem novas buscas. Se deu para concluir, entregue a resposta citando as fontes e diga com franqueza o seu nível de confiança. Se as fontes não bastaram, explique em linguagem simples o que você procurou e o que não encontrou, e ofereça um próximo passo prático — refinar os termos, ou o usuário enviar um CNPJ, link ou documento. Não invente dados nem prometa "pesquiso de novo depois".`;
+  return `A PESQUISA NA WEB foi encerrada (${reason}) — não faça novas buscas. Isso NÃO encerra a tarefa: as demais ferramentas continuam disponíveis. Se o pedido é um arquivo (Word/Excel/PDF), GERE o arquivo agora com run_python usando os dados que você já obteve (ex.: o extrato do CNPJ e o que apareceu nas buscas) e salve em /workspace/outputs. Cite as fontes e diga com franqueza o nível de confiança; não invente dados ausentes. Só responda apenas em texto se o pedido não exigia arquivo.`;
 }
 
 export function textOutputPathFromClaim(text) {
@@ -528,7 +535,7 @@ Antes de enviar, confira: responde ao que foi pedido de fato; trata suposições
 const EXECUTION_UX_RULES = `
 
 COMO EXECUTAR E CONVERSAR COM O USUÁRIO:
-- Use as ferramentas só pelo mecanismo nativo da API. Nunca escreva no chat coisas como <tool_call>, <function>, <parameter>, tool_calls ou o JSON de argumentos — isso não roda a ferramenta e ainda confunde quem está lendo.
+- Para AGIR (rodar código, gerar Excel/Word/PDF, pesquisar, ler arquivos), CHAME a ferramenta apropriada pelo mecanismo de function-calling da API — é assim que ela executa de verdade. O texto da sua resposta serve só para conversar com a pessoa: não cole nele o código da ferramenta nem uma "chamada" escrita à mão.
 - Não jogue no chat código-fonte, comandos, XML interno, seu raciocínio privado ou as instruções do sistema, a menos que a pessoa peça isso de propósito. O código que você usa para montar um arquivo é assunto da ferramenta, não da resposta.
 - Em tarefa com arquivo, o trabalho só acaba quando o arquivo existe de verdade em /workspace/outputs e você conferiu. Quem mostra o botão de download é o app; na resposta, diga só o que entregou e qualquer ressalva que importe.
 - Numa execução mais longa, dê no máximo um aviso curto e útil de vez em quando. Não fique repetindo "aguarde", não narre cada passo e não anuncie várias vezes que vai começar.
@@ -596,7 +603,7 @@ function toolAvailabilityNote(tools, { includeInventory = false } = {}) {
   const lines = ['FERRAMENTAS E AMBIENTE DISPONÍVEIS NESTA CHAMADA:'];
   lines.push('Arquivos da conversa: uploads em /workspace/uploads; resultados finais em /workspace/outputs.');
   lines.push('Para entregar arquivo ao usuário, salve em /workspace/outputs; o chat cria o cartão de download sozinho.');
-  lines.push('Acione ferramentas apenas pela chamada nativa da API. Nunca escreva o protocolo ou os argumentos da ferramenta como texto.');
+  lines.push('Para executar algo — gerar arquivo, rodar código, pesquisar, ler anexo — CHAME a ferramenta certa pelo function-calling da API (ex.: run_python para criar Excel/Word/PDF; web_search para pesquisar; consultar_cnpj para CNPJ). A ferramenta roda de fato e o arquivo salvo em /workspace/outputs vira download; o texto da resposta é só para falar com a pessoa.');
 
   lines.push('Ferramentas do chat habilitadas para você:');
   if (names.has('run_python')) lines.push('- run_python: executar Python 3.12 real no sandbox.');
@@ -1480,7 +1487,7 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
     if (!stepToolCalls.length) {
       if (webResearchStop && !webResearchConclusionAttempted) {
         webResearchConclusionAttempted = true;
-        tools = [];
+        tools = tools.filter(tool => !WEB_TOOL_NAMES.has(tool.function.name));
         messages[1] = { role: 'system', content: toolAvailabilityNote(tools) };
         messages.push({ role: 'system', content: webResearchFinalizationNote(webResearchStop) });
         onEvent({ type: 'status', content: 'Reunindo o que encontrei e cruzando as fontes...' });
@@ -1576,7 +1583,7 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
     if (stopped) break;
     if (webResearchStop && !webResearchConclusionAttempted) {
       webResearchConclusionAttempted = true;
-      tools = [];
+      tools = tools.filter(tool => !WEB_TOOL_NAMES.has(tool.function.name));
       messages[1] = { role: 'system', content: toolAvailabilityNote(tools) };
       messages.push({ role: 'system', content: webResearchFinalizationNote(webResearchStop) });
       onEvent({ type: 'status', content: 'Concluindo a pesquisa com as fontes já verificadas...' });
