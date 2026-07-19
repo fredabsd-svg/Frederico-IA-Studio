@@ -1,6 +1,6 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
-## 🎨 Kits de design de documentos + endurecimento por QA ao vivo (2026-07-19, PRs #24–#33)
+## 🎨 Kits de design de documentos + endurecimento por QA ao vivo (2026-07-19, PRs #24–#35)
 
 Frente para elevar a QUALIDADE e a CONFIABILIDADE dos documentos gerados
 (Word/Excel/PDF), toda verificada AO VIVO na produção (login real, assistente
@@ -18,10 +18,16 @@ Instalados na imagem do sandbox (`sandbox/Dockerfile` copia para
   múltiplas abas e gráficos (barras/linhas/pizza).
 - **`pdfpro.py`** → `from pdfpro import RelatorioPDF` (PDF, reportlab): capa em
   página própria, tabelas estilizadas, callouts e rodapé "Página X de Y".
+- **`docpro.Sobrio`** → `from docpro import Sobrio` (Word SÓBRIO/registrável — ata,
+  contrato, alteração contratual): estilo Normal que **já nasce JUSTIFICADO**
+  (`jc=both`), Times New Roman 12, entrelinha 1,5, margens oficiais, ZERO cor,
+  rodapé paginado. Métodos: `titulo`, `secao`, `paragrafo`, `item`, `fecho`,
+  `assinaturas`, `salvar` (+PDF). A justificação é estrutural, não depende do
+  modelo lembrar (#35).
 - Paleta comum: `1A3C6E`/`2E75B6`/`262626`/`595959`/`F2F6FA`/`D9E2EC`.
 
-### Prompt do assistente "Documentos profissionais" (DOCPRO_PROMPT, hoje v9)
-Versão migra automática por usuário (`seedDocProAssistant`: LEGACY/V2…V8 → atual,
+### Prompt do assistente "Documentos profissionais" (DOCPRO_PROMPT, hoje v10)
+Versão migra automática por usuário (`seedDocProAssistant`: LEGACY/V2…V9 → atual,
 sem tocar em prompts personalizados). Evolução:
 - **v6 (#28):** ensina os TRÊS kits com exemplos concretos (antes só Word) — o
   modelo importava xlspro/pdfpro mas escrevia tabela com openpyxl cru.
@@ -30,10 +36,12 @@ sem tocar em prompts personalizados). Evolução:
   real.
 - **v8 (#30):** gráfico de pizza/participação em formato LONGO (categoria por
   linha), não coluna de totais por período.
-- **v9 (#33):** documento SÓBRIO/registrável (contrato/ata/JUCETINS) sai
-  JUSTIFICADO (`WD_ALIGN_PARAGRAPH.JUSTIFY`), python-docx puro sem cor; ZERO
-  PLACEHOLDER passa a proibir também preenchimento geográfico genérico
-  ("Cidade/Estado", "Rua Nova") — usar local concreto (ex.: Palmas/TO).
+- **v9 (#33):** ZERO PLACEHOLDER passa a proibir preenchimento geográfico
+  genérico ("Cidade/Estado", "Rua Nova") — usar local concreto (ex.: Palmas/TO);
+  primeira tentativa de justificar o documento sóbrio via instrução no prompt.
+- **v10 (#35):** a regra de documento SÓBRIO passa a mandar usar
+  `from docpro import Sobrio` (justificação estrutural, ver acima), em vez de
+  instruir o modelo a alinhar cada parágrafo — o modelo ignorava a instrução.
 
 ### Validação (`validateOutputs`/`check_charts` em `agent.js`)
 - **Gráfico com série de valores vazia (#29):** resolve as refs dentro de
@@ -61,8 +69,13 @@ a tarefa inteira → zero arquivo entregue**. Corrigido nos três:
 - **Word longo:** 7 tabelas estilizadas, callouts info/alerta/crítico, rodapé
   paginado, sem placeholder.
 - **PDF:** capa própria, tabela com TOTAL somado, callout, "Página X de Y".
-- **Ata registrável (sóbria):** zero cor, estrutura jurídica completa (v9 fecha
-  justificação e placeholder geográfico).
+- **Ata registrável (sóbria):** zero cor, estrutura jurídica completa, dados
+  concretos (Palmas/TO) e — com o helper `Sobrio` (v10) — corpo JUSTIFICADO com
+  garantia estrutural (Normal `jc=both`, verificado no docx gerado). Reforço só
+  no prompt (v9) não bastava: o modelo ignorava a justificação; embutir no kit
+  resolveu. Resíduo conhecido: o modelo às vezes ainda escreve um bairro genérico
+  ("Bairro Novo") — é conteúdo, não formatação, e "Bairro Novo"/"Rua Nova" são
+  nomes reais, então não dá para barrar na validação sem falso positivo.
 
 ### Também nesta frente (rounds anteriores da mesma branch)
 - **#23:** geração de arquivo após pesquisa web (causa-raiz, todos os modelos):
