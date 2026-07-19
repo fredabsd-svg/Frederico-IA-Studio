@@ -1,7 +1,7 @@
 // Tela de Entrar / Criar conta — e-mail/senha + GitHub + Google.
 // Visual alinhado ao app (cartão central sobre o fundo). Ao concluir, a sessão
 // é criada e o AuthGate troca automaticamente para o app.
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { RefreshCw, ArrowLeft } from 'lucide-react';
 import { signIn, signUp, traduzErroAuth } from './authClient.js';
 import { callbackURLForOrigin } from './authUrls.js';
@@ -14,6 +14,18 @@ export function LoginScreen({ initialMode = 'login', onBack = null }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [social, setSocial] = useState('');
+  // Provedores sociais habilitados NO SERVIDOR (via /api/health). Só mostra os
+  // botões que realmente funcionam; null = ainda carregando (mostra os dois).
+  const [provedores, setProvedores] = useState(null);
+
+  useEffect(() => {
+    let ativo = true;
+    fetch('/api/health')
+      .then(r => r.json())
+      .then(h => { if (ativo) setProvedores(Array.isArray(h?.socialProviders) ? h.socialProviders : ['github', 'google']); })
+      .catch(() => { if (ativo) setProvedores(['github', 'google']); });
+    return () => { ativo = false; };
+  }, []);
 
   async function submit(e) {
     e.preventDefault();
@@ -41,7 +53,14 @@ export function LoginScreen({ initialMode = 'login', onBack = null }) {
     try {
       // Redireciona para o GitHub/Google e volta para a raiz já logado.
       const callbackURL = callbackURLForOrigin(window.location.origin);
-      await signIn.social({ provider, callbackURL });
+      // A Better Auth devolve { error } em vez de lançar — sem tratar, o botão
+      // ficava girando para sempre e travava o formulário inteiro.
+      const { error } = (await signIn.social({ provider, callbackURL })) || {};
+      if (error) {
+        setSocial('');
+        setError(traduzErroAuth(error));
+      }
+      // Sem erro: o navegador já está sendo redirecionado ao provedor.
     } catch {
       setSocial('');
       setError('Não foi possível iniciar o login social.');
@@ -61,16 +80,24 @@ export function LoginScreen({ initialMode = 'login', onBack = null }) {
         <div className="brand" style={{ justifyContent: 'center', marginBottom: 4 }}>Frederico <span>AI Studio</span></div>
         <p className="loginSub">{isSignup ? 'Crie sua conta para começar.' : 'Entre para continuar.'}</p>
 
-        <div className="loginSocial">
-          <button type="button" className="socialBtn" onClick={() => entrarCom('github')} disabled={busy || !!social}>
-            {social === 'github' ? <RefreshCw size={18} className="spinIcon" /> : <GitHubIcon />} Continuar com GitHub
-          </button>
-          <button type="button" className="socialBtn" onClick={() => entrarCom('google')} disabled={busy || !!social}>
-            {social === 'google' ? <RefreshCw size={18} className="spinIcon" /> : <GoogleIcon />} Continuar com Google
-          </button>
-        </div>
+        {(provedores === null || provedores.length > 0) && (
+          <>
+            <div className="loginSocial">
+              {(provedores === null || provedores.includes('github')) && (
+                <button type="button" className="socialBtn" onClick={() => entrarCom('github')} disabled={busy || !!social}>
+                  {social === 'github' ? <RefreshCw size={18} className="spinIcon" /> : <GitHubIcon />} Continuar com GitHub
+                </button>
+              )}
+              {(provedores === null || provedores.includes('google')) && (
+                <button type="button" className="socialBtn" onClick={() => entrarCom('google')} disabled={busy || !!social}>
+                  {social === 'google' ? <RefreshCw size={18} className="spinIcon" /> : <GoogleIcon />} Continuar com Google
+                </button>
+              )}
+            </div>
 
-        <div className="loginOr"><span>ou com e-mail</span></div>
+            <div className="loginOr"><span>ou com e-mail</span></div>
+          </>
+        )}
 
         <form onSubmit={submit} className="loginForm">
           {isSignup && (

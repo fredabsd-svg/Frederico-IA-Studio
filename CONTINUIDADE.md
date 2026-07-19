@@ -185,6 +185,13 @@ As 5 fases da transformação em SaaS estão CONCLUÍDAS e o app está NO AR:
   (nunca no repo). Login social (GitHub/Google) **não** configurado em produção —
   só e-mail/senha (para ativar: preencher credenciais no `.env` + callback
   `https://fredericostudio.com.br/api/auth/callback/{provider}`).
+- **Botões sociais agora são automáticos**: o backend só registra os provedores
+  com credenciais no `.env` e publica a lista em `/api/health` →
+  `socialProviders`; a tela de login só mostra os botões que funcionam. Antes,
+  clicar em Google/GitHub sem credenciais dava 500 silencioso e o spinner
+  travava o formulário inteiro (parecia que até o cadastro estava quebrado —
+  o `signIn.social` da Better Auth devolve `{ error }` em vez de lançar, e o
+  retorno não era tratado).
 
 **Operação (no servidor, pasta do projeto):**
 - Atualizar: `git pull && docker compose -f docker-compose.prod.yml up -d --build`.

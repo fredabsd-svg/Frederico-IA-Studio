@@ -14,7 +14,7 @@ import { normalizeScheduleDay, normalizeScheduleHour, resolveScheduleTimeZone, s
 import { listMemories, addMemory, updateMemory, deleteMemory, deleteAllMemories, exportAll, reindexAll, getSettings, setSettings, looksSensitive, listMemorySuggestions, updateMemorySuggestion, approveMemorySuggestion, rejectMemorySuggestion, maybeReindexOnModelChange, loadSettings } from './memory/memoryService.js';
 import { startImport, importStatus } from './memory/indexer.js';
 import { workspaceFor, destroyConversation, insideBase, isConversationId, realInside, destroyAllSandboxes, loadPcFolders } from './sandbox.js';
-import { auth, requireAuth } from './auth.js';
+import { auth, requireAuth, enabledSocialProviders } from './auth.js';
 import { toNodeHandler } from 'better-auth/node';
 import { registerModelCatalog } from './modelCapabilities.js';
 import { runMigrations } from './migrate.js';
@@ -580,7 +580,7 @@ async function enforceDailyLimit(userId) {
   return null;
 }
 
-app.get('/api/health', (_, res) => res.json({ ok: true, name: 'Frederico AI Studio', auth: true, scheduleTimeZone }));
+app.get('/api/health', (_, res) => res.json({ ok: true, name: 'Frederico AI Studio', auth: true, scheduleTimeZone, socialProviders: enabledSocialProviders }));
 
 // Dados do usuário logado + flags que a interface usa (ex.: mostrar o botão de
 // backup só para o administrador; esconder "Pastas do PC" quando desligado).

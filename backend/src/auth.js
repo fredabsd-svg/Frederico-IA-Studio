@@ -15,6 +15,25 @@ import pg from 'pg';
 
 const { Pool } = pg;
 
+// Só registra os provedores sociais com credenciais preenchidas no .env.
+// Sem isso, um clique em "Continuar com Google/GitHub" num servidor sem as
+// credenciais devolvia 500 — os botões devem nem aparecer nesse caso
+// (o frontend consulta a lista via /api/health → socialProviders).
+const socialProviders = {};
+if (process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET) {
+  socialProviders.github = {
+    clientId: process.env.GITHUB_CLIENT_ID,
+    clientSecret: process.env.GITHUB_CLIENT_SECRET,
+  };
+}
+if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
+  socialProviders.google = {
+    clientId: process.env.GOOGLE_CLIENT_ID,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+  };
+}
+export const enabledSocialProviders = Object.keys(socialProviders);
+
 export const auth = betterAuth({
   database: new Pool({
     connectionString:
@@ -26,16 +45,7 @@ export const auth = betterAuth({
   // GitHub/Google. Em produção, troque por https://SEU_DOMINIO no .env.
   baseURL: process.env.BETTER_AUTH_URL || 'http://localhost:5173',
   emailAndPassword: { enabled: true },
-  socialProviders: {
-    github: {
-      clientId: process.env.GITHUB_CLIENT_ID,
-      clientSecret: process.env.GITHUB_CLIENT_SECRET,
-    },
-    google: {
-      clientId: process.env.GOOGLE_CLIENT_ID,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-    },
-  },
+  socialProviders,
   trustedOrigins: [process.env.FRONTEND_URL, process.env.BETTER_AUTH_URL].filter(Boolean),
 });
 
