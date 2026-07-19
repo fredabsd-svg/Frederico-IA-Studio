@@ -377,8 +377,10 @@ export default function App({ user } = {}) {
   const dragDepth = useRef(0);
   const busyRef = useRef(false);
   const creatingConvRef = useRef(null);
+  const currentRef = useRef(null);
   const { askConfirm, askPrompt, dialog: appDialog } = useAppDialog();
   useEffect(() => { busyRef.current = busy; }, [busy]);
+  useEffect(() => { currentRef.current = current; }, [current]);
   function setChatBusy(next) {
     busyRef.current = next;
     setBusy(next);
@@ -1075,6 +1077,28 @@ export default function App({ user } = {}) {
     await sendMessage(text);
   }
 
+  // Recuperação após queda de conexão: a tarefa CONTINUA no servidor e o
+  // resultado é salvo, então buscamos a resposta pronta recarregando a conversa
+  // (em vez de mostrar "Conexão interrompida"). Roda em segundo plano; quando o
+  // último item da conversa for a resposta do assistente já salva, exibe-a.
+  async function recoverPendingReply(convId) {
+    for (let i = 0; i < 60; i++) {
+      await new Promise(r => setTimeout(r, 4000)); // verifica a cada 4s (até ~4 min)
+      if (currentRef.current?.id !== convId) return; // usuário saiu desta conversa
+      try {
+        const res = await fetch(`${API}/api/conversations/${convId}`);
+        if (!res.ok) continue;
+        const data = await res.json();
+        const msgs = data.messages || [];
+        const last = msgs[msgs.length - 1];
+        if (last && last.role === 'assistant' && String(last.content || '').trim()) {
+          if (currentRef.current?.id === convId) { setMessages(msgs); loadFiles(convId); }
+          return;
+        }
+      } catch {}
+    }
+  }
+
   async function sendMessage(textArg) {
     const isRetry = typeof textArg === 'string';
     const typed = (isRetry ? textArg : input).trim();
@@ -1189,7 +1213,12 @@ export default function App({ user } = {}) {
         if (done) break;
       }
     } catch (err) {
-      update(m => ({ ...m, failed: true, retryText: text, blocks: [...(m.blocks || []), { type: 'text', content: `\n\n**Conexão interrompida:** ${err.message}` }] }));
+      // A conexão SSE caiu (trocar de aba / minimizar no celular / rede
+      // oscilando). A tarefa CONTINUA rodando no servidor e salva o resultado —
+      // então, em vez de marcar como falha, deixamos um aviso calmo e buscamos
+      // a resposta pronta em segundo plano (aparece aqui quando terminar).
+      update(m => ({ ...m, retryText: text, blocks: [...(m.blocks || []), { type: 'text', content: '\n\n_A conexão caiu, mas a tarefa continua rodando no servidor. O resultado aparece aqui assim que terminar — se preferir, é só recarregar a conversa._' }] }));
+      recoverPendingReply(conv.id);
     }
     // Fecha qualquer ferramenta que tenha ficado "rodando"
     update(m => ({ ...m, blocks: (m.blocks || []).map(b => b.type === 'tool' && b.status === 'running' ? { ...b, status: 'done', ended: Date.now() } : b) }));
