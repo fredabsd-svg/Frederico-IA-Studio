@@ -52,10 +52,20 @@ você escolhe é enviado direto ao provedor, sem substituição.
 
 Chamadas de ferramenta são validadas antes da execução. Se um provedor devolver
 como texto uma chamada que deveria vir no protocolo da API, o app a intercepta,
-tenta convertê-la com segurança e nunca despeja o código interno no chat. Uma
-tarefa que pediu arquivo só é considerada concluída quando o arquivo real existe;
-nesse caso, o download aparece como cartão na própria resposta. Se a execução
-falhar, a interface explica o resultado em linguagem simples e oferece **Reenviar**.
+tenta convertê-la com segurança e **nunca despeja o código interno no chat**
+(mesmo quando o modelo não tem ferramentas). Uma tarefa que pediu arquivo só é
+considerada concluída quando o arquivo real existe; nesse caso, o download
+aparece como cartão na própria resposta. Se a execução falhar, a interface
+explica o resultado em linguagem simples e oferece **Reenviar**.
+
+Os arquivos gerados são **checados de verdade** antes de entregar: os `.xlsx`
+são **recalculados** (LibreOffice) para detectar erros reais de fórmula
+(`#DIV/0!`, `#REF!` etc.) e têm os **gráficos verificados** (referências de
+dados inválidas, como intervalos invertidos, são apontadas); os `.docx` são
+inspecionados (documento vazio é sinalizado) e os `.pdf` têm as páginas
+conferidas. Se o modelo travar repetindo o mesmo trecho, o app corta a saída em
+vez de despejar um muro de texto; se o provedor cair no meio, há **failover**
+automático para um modelo de reserva sem perder o trabalho.
 
 <div align="center">
 <table>
