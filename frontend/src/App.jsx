@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Download, FileText, FileSpreadsheet, FilePenLine, Plus, ArrowUp, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench, CalendarClock, Inbox, Palette, Gauge, SlidersHorizontal, Paperclip, MoreHorizontal, FolderOpen, Code2, Cpu, ChevronDown, ChevronRight, ChevronsUpDown, Calculator, Telescope, Scale, Briefcase, Receipt, Landmark, Megaphone, Lightbulb, ShieldCheck, GraduationCap, Stethoscope, Hammer, Leaf, LogOut, KeyRound, Camera } from 'lucide-react';
+import { Download, FileText, FileSpreadsheet, FilePenLine, Plus, ArrowUp, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench, CalendarClock, Inbox, Palette, Gauge, SlidersHorizontal, Paperclip, MoreHorizontal, FolderOpen, Code2, Cpu, ChevronDown, ChevronRight, ChevronsUpDown, Calculator, Telescope, Scale, Briefcase, Receipt, Landmark, Megaphone, Lightbulb, ShieldCheck, GraduationCap, Stethoscope, Hammer, Leaf, LogOut, KeyRound, Camera, Cable } from 'lucide-react';
 import { API, FALLBACK_MODELS, TOOL_INFO, TEMPLATES, QUICK_ACTIONS, THEMES, WORKSPACES, EFFORTS, EFFORT_DESC, emptyForm, ASSISTANT_ICONS, ASSISTANT_COLORS, isAssistantIcon } from './constants.js';
 import { signOut } from './authClient.js';
 import { ToolStep, Slider, Modal, Drawer, ModelPicker, Collapsible, useAppDialog } from './components.jsx';
@@ -13,6 +13,7 @@ import { DeveloperPanel } from './DeveloperPanel.jsx';
 import { RoutinesPanel } from './RoutinesPanel.jsx';
 import { InboxPanel } from './InboxPanel.jsx';
 import { ProviderPanel } from './ProviderPanel.jsx';
+import { ConnectorsPanel } from './ConnectorsPanel.jsx';
 import { CameraCapture } from './CameraCapture.jsx';
 import { takeSseEvents } from './sse.js';
 
@@ -319,6 +320,7 @@ export default function App({ user } = {}) {
   const [routinesOpen, setRoutinesOpen] = useState(false);
   const [inboxOpen, setInboxOpen] = useState(false);
   const [providerOpen, setProviderOpen] = useState(false);
+  const [connectorsOpen, setConnectorsOpen] = useState(false);
   const [team, setTeam] = useState(false);
   const [teamIds, setTeamIds] = useState(() => { try { return JSON.parse(localStorage.getItem('fred_team') || 'null'); } catch { return null; } });
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
@@ -661,13 +663,13 @@ export default function App({ user } = {}) {
     return true;
   }
 
-  function startDeveloperTask({ mode, projectId, brief, rules }) {
+  function startDeveloperTask({ mode, projectId, github, brief, rules }) {
     const developerAssistant = assistants.find(assistant => /programa|codigo|codex|desenvolv/i.test(`${assistant.name || ''} ${assistant.system_prompt || ''}`)) || assistants[0];
     if (!startNewChat()) return;
     setTeam(false);
     setWebSearch(false);
     if (developerAssistant) pickAssistant(developerAssistant.id);
-    setDeveloperSession({ mode, projectId, rules, conversationId: null });
+    setDeveloperSession({ mode, projectId, github: github || null, rules, conversationId: null });
     setInput(brief);
     setDeveloperOpen(false);
     setTimeout(() => inputRef.current?.focus(), 60);
@@ -1139,7 +1141,7 @@ export default function App({ user } = {}) {
           effort,
           orchestrate: true,
           orchestrateIds: effectiveTeam.map(a => a.id),
-          ...(activeDeveloper ? { developer: { mode: activeDeveloper.mode, projectId: activeDeveloper.projectId, rules: activeDeveloper.rules } } : {})
+          ...(activeDeveloper ? { developer: { mode: activeDeveloper.mode, projectId: activeDeveloper.projectId, github: activeDeveloper.github || null, rules: activeDeveloper.rules } } : {})
         }
       : {
           message: text,
@@ -1147,7 +1149,7 @@ export default function App({ user } = {}) {
           assistantId,
           webSearch,
           effort,
-          ...(activeDeveloper ? { developer: { mode: activeDeveloper.mode, projectId: activeDeveloper.projectId, rules: activeDeveloper.rules } } : {})
+          ...(activeDeveloper ? { developer: { mode: activeDeveloper.mode, projectId: activeDeveloper.projectId, github: activeDeveloper.github || null, rules: activeDeveloper.rules } } : {})
         };
     try {
       const res = await fetch(`${API}/api/conversations/${conv.id}/chat`, {
@@ -1335,6 +1337,7 @@ export default function App({ user } = {}) {
           <button className="studio" onClick={openAnalytics}><BarChart3 size={16}/> Análises</button>
           {me?.isAdmin && <button className="studio" onClick={() => window.open(`${API}/api/backup`, '_blank')} title="Baixa um arquivo com o banco e todos os workspaces (somente administrador)"><HardDriveDownload size={16}/> Backup</button>}
           <button className="studio" onClick={() => setProviderOpen(true)} title="Cadastre a sua própria chave de API"><KeyRound size={16}/> Provedor de IA</button>
+          <button className="studio" onClick={() => setConnectorsOpen(true)} title="Conecte serviços externos, como o GitHub"><Cable size={16}/> Conectores</button>
           <button className="studio" onClick={() => setThemeOpen(true)} title="Trocar a paleta e o espaço de trabalho"><Palette size={16}/> Aparência</button>
         </div>
       </nav>
@@ -1504,6 +1507,7 @@ export default function App({ user } = {}) {
       <footer className="composerWrap">
         {developerSession && (!developerSession.conversationId || developerSession.conversationId === current?.id) && <div className="devSessionBar">
           <Code2 size={15}/><span>Modo desenvolvedor</span><b>{{ plan: 'Planejar', build: 'Construir', review: 'Revisar' }[developerSession.mode] || 'Ativo'}</b>
+          {developerSession.github?.repo && <span className="muted" title={`Repositório GitHub${developerSession.github.branch ? ` · branch ${developerSession.github.branch}` : ''}`}>· {developerSession.github.repo}{developerSession.github.branch ? ` (${developerSession.github.branch})` : ''}</span>}
           <button onClick={() => setDeveloperSession(null)} title="Sair do modo desenvolvedor" aria-label="Sair do modo desenvolvedor"><X size={14}/></button>
         </div>}
         {uploads.length > 0 && <div className="attachChips">
@@ -1665,10 +1669,11 @@ export default function App({ user } = {}) {
     {memoryOpen && <MemoryPanel assistants={assistants} clients={clients} clientId={clientId} showToast={showToast} askConfirm={askConfirm} askPrompt={askPrompt} onClose={() => setMemoryOpen(false)}/>}
     {pcOpen && <PcFoldersPanel showToast={showToast} askConfirm={askConfirm} onClose={() => setPcOpen(false)}/>}
     {toolsOpen && <ToolsPanel onPick={pickTool} onClose={() => setToolsOpen(false)}/>}
-    {developerOpen && <DeveloperPanel initialMode={developerStartMode} onStart={startDeveloperTask} onManageFolders={() => { setDeveloperOpen(false); setPcOpen(true); }} onClose={() => setDeveloperOpen(false)}/>}
+    {developerOpen && <DeveloperPanel initialMode={developerStartMode} onStart={startDeveloperTask} onManageFolders={() => { setDeveloperOpen(false); setPcOpen(true); }} onOpenConnectors={() => { setDeveloperOpen(false); setConnectorsOpen(true); }} onClose={() => setDeveloperOpen(false)}/>}
     {routinesOpen && <RoutinesPanel assistants={assistants} clients={clients} showToast={showToast} askConfirm={askConfirm} onClose={() => setRoutinesOpen(false)}/>}
     {inboxOpen && <InboxPanel clients={clients} clientId={clientId} showToast={showToast} askConfirm={askConfirm} onOpenConversation={(id) => { fetchConversations(); openConversation(id); }} onClose={() => setInboxOpen(false)}/>}
     {providerOpen && <ProviderPanel showToast={showToast} onClose={() => setProviderOpen(false)}/>}
+    {connectorsOpen && <ConnectorsPanel showToast={showToast} onClose={() => setConnectorsOpen(false)}/>}
     {cameraOpen && <CameraCapture
       onClose={() => setCameraOpen(false)}
       onCapture={async (file) => { setCameraOpen(false); await uploadSelectedFiles([file], 'camera'); }}

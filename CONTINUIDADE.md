@@ -1,5 +1,49 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 🔌 Conector GitHub — primeiro conector do app (2026-07-19)
+
+O app ganhou **Conectores** (Configurações → Conectores), começando pelo
+GitHub: o usuário conecta a conta com um token (PAT) e a IA passa a clonar
+repositórios, alterar o código e enviar de volta (push/Pull Request) — pelo
+chat ou pelo modo desenvolvedor.
+
+**Desenho de segurança (não regredir):**
+- Token cifrado por usuário em `user_connectors` (migration `004_connectors.sql`),
+  AES-256-GCM com a mesma `ENCRYPTION_KEY` do BYOK; o GET da API só devolve
+  estado/conta, nunca o token.
+- **O token NUNCA entra no sandbox.** Clone/fetch/pull/push rodam no BACKEND
+  (`backend/src/connectors/github.js`, `runGit` com spawn) sobre o workspace da
+  conversa (bind-mount do sandbox). A autenticação vai por `http.extraheader`
+  POR INVOCAÇÃO — nunca na URL nem no `.git/config` (que o modelo enxerga).
+  Toda saída de git passa por `scrubSecrets` antes de voltar ao modelo.
+- O modelo edita arquivos e usa git LOCAL (status/diff/commit) pelo bash do
+  sandbox; `git push` pelo bash falha de propósito (sem credencial lá).
+- Após escrita do backend no repo, `chown -R 1000:1000` (regra da casa: o exec
+  do sandbox roda como uid 1000).
+- Nomes de repo/branch validados (`isValidRepoFullName`/`isValidBranchName`)
+  contra injeção de flag/caminho; `git pull` só `--ff-only` (nunca cria merge).
+
+**Peças:**
+- Backend: `connectors/github.js` (ferramentas `github_list_repos`,
+  `github_clone` → `/workspace/repo/<nome>`, `github_push`, `github_create_pr`;
+  API REST com erros traduzidos), rotas `/api/connectors*` no `server.js`
+  (PUT valida o token no GitHub antes de salvar), roteamento `github_*` no
+  `runTool` (tools.js). `agent.js`: ferramentas só entram quando o usuário TEM
+  conexão (`hasGithubConnection`); em plan/review as de escrita (push/PR) ficam
+  de fora (`GITHUB_WRITE_TOOLS`); `developerContextFor` aceita
+  `developer.github={repo,branch}` com nota que manda clonar primeiro e, no
+  build, commitar/enviar ao final. Dockerfile do backend agora instala `git`.
+- Frontend: `ConnectorsPanel.jsx` (conectar/testar/desconectar; exporta
+  `GitHubIcon` SVG — lucide não tem mais ícones de marca), `DeveloperPanel.jsx`
+  (repositórios GitHub no seletor de projeto com prefixo `gh:`, seletor de
+  branch, aviso "conecte a sua conta"), `App.jsx` (botão Conectores no menu,
+  `developer.github` no corpo do chat, repo na barra do modo desenvolvedor).
+- Envs opcionais: `GITHUB_CLONE_TIMEOUT_MS` (300s), `GITHUB_GIT_TIMEOUT_MS` (120s).
+- Testes: `connectors.github.test.js` (validações puras + scrub). Suíte 86/88
+  (2 pulados sem Postgres); build Vite ok.
+- Próximos conectores sugeridos: Google Drive, Notion — seguir o mesmo padrão
+  (tabela `user_connectors`, provider novo, painel no mesmo drawer).
+
 ## 🧪 GIMP avaliado e REMOVIDO — inviável headless no sandbox (2026-07-19, PRs #37–#39)
 
 Instalamos o GIMP a pedido e testamos a fundo (13 baterias ao vivo). Conclusão:

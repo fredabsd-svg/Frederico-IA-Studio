@@ -12,6 +12,7 @@ import { execInSandbox, realInside, workspaceFor, pcFolderMounts } from './sandb
 import { db, now } from './db.js';
 import { nanoid } from 'nanoid';
 import { createToolProtocolStreamGuard, parseTextToolCalls, sanitizeToolProtocolText } from './toolProtocol.js';
+import { githubToolDefinitions, GITHUB_WRITE_TOOLS, hasGithubConnection, isValidRepoFullName, repoDirName } from './connectors/github.js';
 
 // Esforço da IA: controla o raciocínio (reasoning effort — funciona de verdade
 // nos modelos que raciocinam, via OpenRouter), o número máximo de etapas do
@@ -583,10 +584,19 @@ function developerContextFor(request, userId) {
   if (!mode) return null;
   const projectId = String(request.projectId || '');
   const project = projectId ? pcFolderMounts(userId).find(folder => folder.id === projectId) : null;
-  const readOnlyProject = mode !== 'build' || !project?.writable;
-  const projectNote = project
-    ? `Projeto selecionado: "${project.label}" em ${project.target}. ${readOnlyProject ? 'Ele está montado somente para leitura nesta tarefa.' : 'Somente esta pasta do PC está autorizada para escrita nesta tarefa.'}`
-    : 'Nenhuma pasta do PC foi selecionada. Trabalhe apenas no workspace temporário e entregue arquivos em /workspace/outputs quando necessário.';
+  // Projeto vindo do conector GitHub (selecionado no painel do modo desenvolvedor).
+  const githubRaw = request.github && typeof request.github === 'object' ? request.github : null;
+  const github = githubRaw && isValidRepoFullName(githubRaw.repo)
+    ? { repo: String(githubRaw.repo).trim(), branch: String(githubRaw.branch || '').trim() || null }
+    : null;
+  // Em projeto GitHub, o trabalho acontece no workspace da conversa (sempre
+  // gravável); "somente leitura" vale para plan/review, que não devem editar.
+  const readOnlyProject = mode !== 'build' || (github ? false : !project?.writable);
+  const projectNote = github
+    ? `Projeto selecionado: repositório GitHub "${github.repo}"${github.branch ? ` (branch de trabalho: "${github.branch}")` : ''}. PRIMEIRO PASSO OBRIGATÓRIO: chame a ferramenta github_clone com {"repo":"${github.repo}"${github.branch ? `,"branch":"${github.branch}"` : ''}} para trazer (ou atualizar) o código em /workspace/repo/${repoDirName(github.repo)}. Depois trabalhe nos arquivos por bash/run_python; git status/diff/log/commit funcionam pelo bash do sandbox. Push e Pull Request só pelas ferramentas github_push/github_create_pr (a autenticação é do app — nunca peça token nem tente git push pelo bash, não funciona).${mode === 'build' ? ' Ao concluir a missão, faça commit com mensagem descritiva em português e envie com github_push; informe no final a branch e o commit enviados.' : ' Nesta tarefa NÃO altere arquivos nem use github_push/github_create_pr.'}`
+    : project
+      ? `Projeto selecionado: "${project.label}" em ${project.target}. ${readOnlyProject ? 'Ele está montado somente para leitura nesta tarefa.' : 'Somente esta pasta do PC está autorizada para escrita nesta tarefa.'}`
+      : 'Nenhuma pasta do PC foi selecionada. Trabalhe apenas no workspace temporário e entregue arquivos em /workspace/outputs quando necessário.';
   const modeNote = {
     plan: 'PLANEJAR: investigue a base antes de sugerir mudanças. Leia AGENTS.md/AGENTS.override.md, README, manifests, comandos de teste e pontos de entrada. Não altere arquivos do projeto, não faça staging, commits ou instalações. Entregue uma leitura curta do projeto, um plano ordenado com arquivos prováveis, riscos e verificações.',
     build: 'CONSTRUIR: antes da primeira edição, investigue o projeto e suas instruções locais. Faça somente mudanças dentro da missão, preserve alterações existentes e execute a verificação mais relevante disponível. Não instale dependências sem pedido explícito. Ao final, enumere arquivos alterados, verificações e limitações.',
@@ -594,8 +604,10 @@ function developerContextFor(request, userId) {
   }[mode];
   const rules = String(request.rules || '').trim().slice(0, 6000);
   return {
+    mode,
+    github,
     readOnlyProject,
-    sandboxOptions: readOnlyProject ? { readOnlyPc: true } : { writablePcFolderId: project.id },
+    sandboxOptions: project && !readOnlyProject ? { writablePcFolderId: project.id } : { readOnlyPc: true },
     note: ['MODO DESENVOLVEDOR ATIVO.', projectNote, modeNote, rules ? `REGRAS DO PROJETO:\n${rules}` : null].filter(Boolean).join('\n\n')
   };
 }
@@ -618,6 +630,10 @@ function toolAvailabilityNote(tools, { includeInventory = false } = {}) {
   if (names.has('generate_image')) lines.push('- generate_image: gerar ou editar imagens com IA e salvar em outputs.');
   if (names.has('web_search')) lines.push('- web_search: pesquisar na internet pelo backend quando o globo estiver ativado.');
   if (names.has('web_fetch')) lines.push('- web_fetch: abrir uma página da internet encontrada na pesquisa.');
+  if (names.has('github_clone')) lines.push('- github_clone: clonar/atualizar um repositório GitHub da conta conectada para /workspace/repo/<nome>. A autenticação é do app — nunca peça token ao usuário.');
+  if (names.has('github_push')) lines.push('- github_push: commitar (opcional) e enviar as mudanças do repositório clonado para o GitHub. git push pelo bash NÃO funciona (sem credenciais no sandbox) — use sempre esta ferramenta.');
+  if (names.has('github_create_pr')) lines.push('- github_create_pr: abrir um Pull Request no GitHub (faça github_push antes).');
+  if (names.has('github_list_repos')) lines.push('- github_list_repos: listar os repositórios GitHub da conta conectada.');
   if (!tools.length) lines.push('- Nenhuma ferramenta de execução foi habilitada para este assistente. Responda por texto e avise se a tarefa exigir ferramenta.');
 
   if (includeInventory && names.has('run_python')) {
@@ -1109,6 +1125,15 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   let requestedTools = toolsFor(assistant);
   if (developerContext?.readOnlyProject) requestedTools = requestedTools.filter(tool => !['write_file', 'zip_outputs', 'generate_image'].includes(tool.function.name));
   if (webSearchActive) requestedTools = [...requestedTools, ...webToolDefinitions];
+  // Conector GitHub: as ferramentas github_* só são oferecidas a quem conectou
+  // a conta (Configurações → Conectores). Em plan/review, as de escrita
+  // (push/PR) ficam de fora — esses modos não alteram nada.
+  if (!lowSignalTurn && await hasGithubConnection(userId)) {
+    const githubTools = developerContext && developerContext.mode !== 'build'
+      ? githubToolDefinitions.filter(tool => !GITHUB_WRITE_TOOLS.has(tool.function.name))
+      : githubToolDefinitions;
+    requestedTools = [...requestedTools, ...githubTools];
+  }
   if (lowSignalTurn) requestedTools = [];
 
   const modelPlan = buildModelCallPlan({

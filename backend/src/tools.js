@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { nanoid } from 'nanoid';
 import { execInSandbox, workspaceFor, safeJoin, pcFolderMounts } from './sandbox.js';
+import { runGithubTool } from './connectors/github.js';
 
 export const toolDefinitions = [
   { type: 'function', function: { name: 'run_python', description: 'Executa Python 3.12 real na sandbox Linux isolada. Use para análises, planilhas, Word, PDF, gráficos, OCR, APIs e automações. Pacotes incluem pandas, numpy, openpyxl, python-docx, odfpy (importe odf), reportlab, weasyprint, PyMuPDF/fitz, pdfplumber, camelot, ocrmypdf, pytesseract, duckdb, polars, Flask/FastAPI/Uvicorn, pytest/black/ruff, SQLAlchemy, psycopg (v3), psycopg2 e clientes MySQL/Redis/MongoDB. Para ML em CPU: scikit-learn e onnxruntime para inferência; transformers, sentencepiece e safetensors para tokenização/configuração. Sem PyTorch/TensorFlow, use modelos ONNX com onnxruntime.', parameters: { type: 'object', properties: { code: { type: 'string' } }, required: ['code'] } } },
@@ -488,6 +489,8 @@ export async function runTool(conversationId, name, args = {}, sandboxOptions = 
   if (name === 'web_search') return JSON.stringify(await webSearch(args.query || '', { signal }));
   if (name === 'web_fetch') return JSON.stringify(await webFetch(args.url || '', { signal }));
   if (name === 'consultar_cnpj') return JSON.stringify(await consultarCnpj(args.cnpj || '', { signal }));
+  // Conector GitHub: roda no BACKEND (o token do usuário nunca entra no sandbox).
+  if (name.startsWith('github_')) return JSON.stringify(await runGithubTool(name, args, { userId: sandboxOptions.userId, conversationId, signal }));
   const ws = workspaceFor(conversationId);
   // Pastas do PC deste usuário (isolamento multi-tenant): sem userId, nenhuma.
   const pcMounts = pcFolderMounts(sandboxOptions.userId);
