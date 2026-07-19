@@ -120,14 +120,6 @@ RUN mkdir -p "$DOTNET_ROOT" && \
     ln -s /opt/dotnet/dotnet /usr/local/bin/dotnet && \
     rm -f /tmp/dotnet-install.sh
 
-# GIMP: edição avançada de imagens em lote/headless (retoque, conversão,
-# composição, filtros) via Script-Fu — ex.: gimp -i -b '(...)' -b '(gimp-quit 0)'.
-# Fica ACIMA do COPY dos kits para ser cacheado (editar os kits não reconstrói o
-# GIMP). --no-install-recommends evita puxar o stack de desktop inteiro.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gimp && \
-    rm -rf /var/lib/apt/lists/*
-
 # Kits de DESIGN profissional prontos (mesma paleta): Word (docpro), Excel
 # (xlspro) e PDF (pdfpro). Importáveis como `from docpro import Relatorio`,
 # `from xlspro import Planilha`, `from pdfpro import RelatorioPDF`. Dão capa,
@@ -141,15 +133,5 @@ RUN mkdir -p /mnt && ln -sfnT /workspace /mnt/user-data
 
 RUN useradd -m -u 1000 sandbox
 USER sandbox
-
-# Pré-aquece o GIMP como usuário sandbox: uma execução headless popula
-# ~/.config/GIMP/3.0 (pluginrc — a varredura de plug-ins é a parte cara do
-# startup) e o cache de fontes, para o primeiro batch em runtime ter mais chance
-# de caber no timeout curto de comando do sandbox. Roda sob Xvfb porque o
-# interpretador Script-Fu da GIMP 3.0 é ligado ao GTK. "|| true": nunca quebra o
-# build por causa disso.
-RUN xvfb-run -a gimp-console -idf --batch-interpreter=plug-in-script-fu-eval \
-        -b '(gimp-quit 0)' >/dev/null 2>&1 || true
-
 WORKDIR /workspace
 CMD ["sleep", "infinity"]
