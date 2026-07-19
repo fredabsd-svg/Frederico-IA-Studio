@@ -33,6 +33,28 @@ Os bugs abaixo foram verificados no código-fonte. Dois deles têm **prova empí
 
 ---
 
+## 🔬 2ª rodada ao vivo — geração de Word/Excel/PDF/código (produção)
+
+Gerados e baixados de verdade na produção (modelo `deepseek/deepseek-chat`):
+
+| ID | Artefato | Resultado / bug | Nível |
+|---|---|---|---|
+| DOC-01 | **Word** (relatório) | Bom: capa 28pt, títulos coloridos, tabela com dados reais. Bugs: **data errada ("2023" p/ relatório 2025)**, **capa não fica em página própria** (sem quebra), listas com "•" como texto (não são bullets reais), hierarquia de títulos inconsistente | Qualidade |
+| XLS-02 | **Excel** (dashboard) | 3 abas + 2 gráficos, MAS **gráficos com referências quebradas** (ranges invertidos `C2:B2`, off-by-one), **aba "Gráfico" vazia**, **Resumo sem totais por mês**. App validou como `{ok:true,'3 abas'}` — não detecta gráfico quebrado | **Alto** (silencioso) |
+| PDF-01 | **PDF** (proposta) | 2 páginas, mas a **página 2 fica em branco** (padding só com rodapé) | Qualidade |
+| COD-01 | **Código, contexto 25k chars** | ✅ Retenção da "agulha" enterrada FUNCIONOU (`ALIQUOTA_ISS=0.0625`, `frederico.conf` no código). ❌ Mas o modelo **executou** o código em vez de **salvar** o `.py` em outputs → nenhum arquivo. App pegou (`execution_failed`). **Corrigido:** reforço no reparo de execução e no prompt para SALVAR o arquivo de código, não só executar | Corrigido (prompt) |
+| API-01 | Endpoint `/files` | Retorna cada arquivo **duplicado** (id real + id base64 do walk do filesystem) | Baixo |
+| VAL-02 | `deepseek-chat` texto vs arquivo | Repetidamente crava total errado no texto (149,50/150,50) enquanto a planilha soma 181 corretamente | Modelo |
+
+Nota positiva de robustez: o novo caminho de guard/repetição/CSS não vazou nem
+travou em nenhuma geração desta rodada. A retenção de contexto longo (25k chars)
+manteve o requisito enterrado — o ponto fraco não foi o contexto, e sim o modelo
+executar em vez de salvar (agora endereçado).
+
+Gap identificado para próxima iteração: **validar gráficos do Excel** (hoje nada
+verifica se as referências de dados do gráfico são válidas) — o recálculo de
+fórmulas do CG-01 não cobre isso.
+
 ## 🔴 Bugs encontrados AO VIVO em produção (fredericostudio.com.br)
 
 Testes executados de verdade contra o app em produção (login real via Better
