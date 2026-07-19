@@ -141,5 +141,15 @@ RUN mkdir -p /mnt && ln -sfnT /workspace /mnt/user-data
 
 RUN useradd -m -u 1000 sandbox
 USER sandbox
+
+# Pré-aquece o GIMP como usuário sandbox: uma execução headless popula
+# ~/.config/GIMP/3.0 (pluginrc — a varredura de plug-ins é a parte cara do
+# startup) e o cache de fontes, para o primeiro batch em runtime ter mais chance
+# de caber no timeout curto de comando do sandbox. Roda sob Xvfb porque o
+# interpretador Script-Fu da GIMP 3.0 é ligado ao GTK. "|| true": nunca quebra o
+# build por causa disso.
+RUN xvfb-run -a gimp-console -idf --batch-interpreter=plug-in-script-fu-eval \
+        -b '(gimp-quit 0)' >/dev/null 2>&1 || true
+
 WORKDIR /workspace
 CMD ["sleep", "infinity"]
