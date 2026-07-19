@@ -120,6 +120,14 @@ RUN mkdir -p "$DOTNET_ROOT" && \
     ln -s /opt/dotnet/dotnet /usr/local/bin/dotnet && \
     rm -f /tmp/dotnet-install.sh
 
+# GIMP: edição avançada de imagens em lote/headless (retoque, conversão,
+# composição, filtros) via Script-Fu — ex.: gimp -i -b '(...)' -b '(gimp-quit 0)'.
+# Fica ACIMA do COPY dos kits para ser cacheado (editar os kits não reconstrói o
+# GIMP). --no-install-recommends evita puxar o stack de desktop inteiro.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gimp && \
+    rm -rf /var/lib/apt/lists/*
+
 # Kits de DESIGN profissional prontos (mesma paleta): Word (docpro), Excel
 # (xlspro) e PDF (pdfpro). Importáveis como `from docpro import Relatorio`,
 # `from xlspro import Planilha`, `from pdfpro import RelatorioPDF`. Dão capa,
