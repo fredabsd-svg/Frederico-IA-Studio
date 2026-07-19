@@ -1,5 +1,23 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 🧪 GIMP avaliado e REMOVIDO — inviável headless no sandbox (2026-07-19, PRs #37–#39)
+
+Instalamos o GIMP a pedido e testamos a fundo (13 baterias ao vivo). Conclusão:
+**não é usável para automação de imagem neste ambiente**, e foi removido.
+- A **GIMP 3.0** (única no Debian atual) mudou muito a API de Script-Fu em
+  relação à 2.10 documentada: procedures renomeadas/removidas
+  (`gimp-image-get-active-drawable`, `file-png-save`, `plug-in-gauss`, até a
+  introspecção `gimp-pdb-proc-exists`). Praticamente não há exemplos 3.0 online.
+- **Python-Fu quebrado**: o módulo `gi` (PyGObject) não importa no ambiente de
+  plug-ins do GIMP.
+- O startup dava para resolver (pré-aquecer o `pluginrc` no build → ~4,5s com
+  `xvfb-run`), mas **qualquer erro de script trava até o `TOOL_TIMEOUT_MS` de
+  45s** do sandbox, tornando a descoberta da API impraticável.
+- **Decisão:** removido do Dockerfile e do inventário (#39). Para imagem em
+  lote, o caminho é **imagemagick / Pillow / OpenCV** (headless, rápidos,
+  testados — o ImageMagick fez blur gaussiano perfeito no teste). NÃO reinstalar
+  o GIMP sem uma necessidade que só ele atenda e um plano para o timeout de 45s.
+
 ## 🎨 Kits de design de documentos + endurecimento por QA ao vivo (2026-07-19, PRs #24–#35)
 
 Frente para elevar a QUALIDADE e a CONFIABILIDADE dos documentos gerados
