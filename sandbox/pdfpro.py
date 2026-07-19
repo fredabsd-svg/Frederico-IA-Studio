@@ -150,11 +150,15 @@ class RelatorioPDF:
 
     def tabela(self, cabecalho, linhas, total=False, larguras=None):
         p = self.pal
+        ncols = len(cabecalho)
+        # Robustez: reportlab exige que toda linha tenha o MESMO nº de colunas.
+        # Normaliza cada linha para a largura do cabeçalho (completa as curtas,
+        # corta as extras) — evita crash com dados de largura irregular.
+        linhas = [list(linha)[:ncols] + [""] * (ncols - len(linha)) for linha in linhas]
         head = [Paragraph(str(c), self.s_cellh) for c in cabecalho]
         dados = [head]
         for linha in linhas:
             dados.append([Paragraph(str(v), self.s_cell) for v in linha])
-        ncols = len(cabecalho)
         if not larguras:
             larguras = [17.0 * cm / ncols] * ncols
         t = Table(dados, colWidths=larguras, repeatRows=1)

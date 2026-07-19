@@ -163,6 +163,12 @@ class Relatorio:
         tblPr.append(b)
 
     def tabela(self, cabecalho, linhas, total=False):
+        # Robustez: a tabela tem exatamente len(cabecalho) colunas. Normaliza
+        # cada linha para essa largura (completa as curtas, corta as extras) —
+        # assim uma linha com nº de valores diferente do cabeçalho nunca derruba
+        # a geração inteira do documento com IndexError.
+        ncols = len(cabecalho)
+        linhas = [list(linha)[:ncols] + [""] * (ncols - len(linha)) for linha in linhas]
         t = self.doc.add_table(rows=1, cols=len(cabecalho))
         t.alignment = WD_TABLE_ALIGNMENT.CENTER
         try:
