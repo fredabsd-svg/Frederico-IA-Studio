@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   createToolProtocolStreamGuard,
   parseTextToolCalls,
+  parseBareJsonToolCall,
   sanitizeToolProtocolText
 } from './toolProtocol.js';
 
@@ -88,6 +89,40 @@ test('stream guard leaves an ordinary response unchanged', () => {
 
   assert.equal(visible, original);
   assert.equal(guard.suppressed, false);
+});
+
+test('detecta JSON puro de ferramenta ({"code":...}) como protocolo textual', () => {
+  // Reproduz o loop do DeepSeek: a chamada vem como JSON puro + cerca ```json.
+  const response = '{"code":"import pandas as pd\\ndf = pd.read_csv(\'/x.csv\', sep=\';\')"}\n```json';
+  const parsed = parseTextToolCalls(response, ['run_python']);
+
+  assert.equal(parsed.detected, true);
+  assert.equal(parsed.malformed, true);       // sem o nome da tool -> aciona correção
+  assert.equal(parsed.visibleText, '');        // não vaza o JSON no chat
+  assert.deepEqual(parsed.calls, []);
+});
+
+test('converte JSON puro nomeado em chamada nativa', () => {
+  const response = '{"name":"web_search","arguments":{"query":"capital do Tocantins"}}';
+  const parsed = parseTextToolCalls(response, ['web_search']);
+
+  assert.equal(parsed.detected, true);
+  assert.equal(parsed.malformed, false);
+  assert.deepEqual(parsed.calls, [{ name: 'web_search', arguments: { query: 'capital do Tocantins' } }]);
+});
+
+test('não confunde uma resposta JSON legítima com chamada de ferramenta', () => {
+  // Objeto sem chaves de ferramenta e sem nome de tool disponível: é conteúdo.
+  const response = '{"cidade":"Palmas","estado":"TO"}';
+  const parsed = parseTextToolCalls(response, ['web_search']);
+
+  assert.equal(parsed.detected, false);
+  assert.equal(parsed.visibleText, response);
+});
+
+test('não trata {"code"} como ferramenta quando NÃO há ferramentas disponíveis', () => {
+  const response = '{"code":"print(1)"}';
+  assert.equal(parseBareJsonToolCall(response, []).detected, false);
 });
 
 test('sanitizes old saved responses while preserving the useful notice', () => {

@@ -92,6 +92,16 @@ test('recognizes provider tool errors for the runtime fallback', () => {
   assert.equal(isUnsupportedToolError(new Error('Rate limit exceeded')), false);
 });
 
+test('a palavra "teste" sozinha nao classifica a conversa como execucao', () => {
+  // Regressao: "teste" esta em TOOL_ACTION_RE e TOOL_TARGET_RE; uma unica
+  // ocorrencia (verbo e alvo no mesmo token) nao pode exigir ferramenta.
+  assert.equal(detectToolRequirement({ userText: 'Teste de controle: responda somente com a palavra PRONTO.' }).required, false);
+  assert.equal(detectToolRequirement({ userText: 'Teste rapido: responda somente OK.' }).required, false);
+  // Mas acao + alvo em posicoes diferentes continua sendo execucao.
+  assert.equal(detectToolRequirement({ userText: 'rode o teste que esta falhando' }).required, true);
+  assert.equal(detectToolRequirement({ userText: 'corrija o erro no arquivo' }).required, true);
+});
+
 test('detects vision from input modalities and image generation from output', () => {
   const gpt = deriveModelCapabilities({
     id: 'openai/gpt-4o',

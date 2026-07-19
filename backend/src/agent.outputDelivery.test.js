@@ -106,9 +106,22 @@ test('accepts a completed execution when the requested output was created', () =
     toolsAvailable: true,
     executedToolCalls: 1,
     outputsBefore: new Map(),
-    outputsAfter: [{ path: 'outputs/relatorio.docx', mtimeMs: 321 }],
+    outputsAfter: [{ path: 'outputs/relatorio.docx', mtimeMs: 321, size: 2048 }],
     responseText: 'O relatorio foi criado e verificado.'
   }), false);
+});
+
+test('exige refazer quando o arquivo criado está VAZIO (0 byte)', () => {
+  // Um arquivo criado mas de 0 byte não conta como entrega concluída.
+  assert.equal(shouldRepairExecution({
+    requiresExecution: true,
+    requiresOutput: true,
+    toolsAvailable: true,
+    executedToolCalls: 1,
+    outputsBefore: new Map(),
+    outputsAfter: [{ path: 'outputs/relatorio.docx', mtimeMs: 321, size: 0 }],
+    responseText: 'O relatorio foi criado.'
+  }), true);
 });
 
 test('continues a model response that ended only because of the output limit', () => {

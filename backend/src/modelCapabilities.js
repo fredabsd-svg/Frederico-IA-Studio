@@ -20,6 +20,31 @@ function normalizedText(value) {
     .toLowerCase();
 }
 
+// Coleta os deslocamentos de todas as ocorr\u00eancias de um padr\u00e3o no texto.
+function matchOffsets(re, text) {
+  const flags = re.flags.includes('g') ? re.flags : re.flags + 'g';
+  const rx = new RegExp(re.source, flags);
+  const offsets = [];
+  let m;
+  while ((m = rx.exec(text)) !== null) {
+    offsets.push(m.index);
+    if (m.index === rx.lastIndex) rx.lastIndex++; // evita loop em match vazio
+  }
+  return offsets;
+}
+
+// Verdadeiro s\u00f3 quando h\u00e1 um verbo de A\u00c7\u00c3O e um ALVO em posi\u00e7\u00f5es DIFERENTES.
+// Palavras que est\u00e3o nas duas listas (ex.: "teste") n\u00e3o podem, sozinhas,
+// classificar a mensagem como execu\u00e7\u00e3o \u2014 "Teste de controle" deixa de ser
+// tratado como pedido de ferramenta, mas "rode o teste" continua sendo.
+function hasActionOnTarget(actionRe, targetRe, text) {
+  const actions = matchOffsets(actionRe, text);
+  if (!actions.length) return false;
+  const targets = matchOffsets(targetRe, text);
+  if (!targets.length) return false;
+  return actions.some(a => targets.some(t => t !== a));
+}
+
 function asStringList(value) {
   return Array.isArray(value) ? value.map(item => String(item).toLowerCase()) : null;
 }
@@ -136,11 +161,11 @@ export function markModelCapabilityUnsupported(id, capability) {
 export function detectToolRequirement({ userText, webSearch = false, developer = false, hasUploads = false } = {}) {
   const reasons = [];
   const text = normalizedText(userText);
-  const expectsOutput = (OUTPUT_ACTION_RE.test(text) && OUTPUT_TARGET_RE.test(text)) || DIRECT_DELIVERY_RE.test(text);
+  const expectsOutput = hasActionOnTarget(OUTPUT_ACTION_RE, OUTPUT_TARGET_RE, text) || DIRECT_DELIVERY_RE.test(text);
   if (webSearch) reasons.push('a pesquisa na internet ativada');
   if (developer) reasons.push('o modo desenvolvedor');
   if (hasUploads && UPLOAD_REFERENCE_RE.test(text)) reasons.push('a leitura dos arquivos anexados');
-  if ((TOOL_ACTION_RE.test(text) && TOOL_TARGET_RE.test(text)) || DIRECT_DELIVERY_RE.test(text)) {
+  if (hasActionOnTarget(TOOL_ACTION_RE, TOOL_TARGET_RE, text) || DIRECT_DELIVERY_RE.test(text)) {
     reasons.push('a criação ou o processamento solicitado');
   }
   return { required: reasons.length > 0, reasons, expectsOutput };

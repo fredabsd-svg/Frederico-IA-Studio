@@ -1,5 +1,35 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 🧪 AUDITORIA E CORREÇÕES (2026-07-19)
+
+Bateria exaustiva de testes E2E em produção (Playwright + análise byte-a-byte
+dos arquivos). Base sólida (chat, geração de Excel/Word/PDF/código, CNPJ, 9
+painéis, BYOK). Seis defeitos corrigidos nesta frente (todos com teste):
+
+- **Classificador de execução** (`modelCapabilities.js`): a palavra "teste"
+  (presente em `TOOL_ACTION_RE` e `TOOL_TARGET_RE`) fazia "Teste de controle…"
+  ser tratado como pedido de ferramenta e anexava o falso aviso "Não consegui
+  concluir esta execução". Agora exige AÇÃO e ALVO em posições diferentes
+  (`hasActionOnTarget`); "rode o teste" continua valendo.
+- **Memória de longo prazo** (`agent.js`): a injeção do bloco está correta
+  (teste novo em `contextBuilder.test.js` prova que a nota manual global chega
+  ao contexto), mas os modelos negavam ter memória. Adicionado
+  `MEMORY_AWARENESS_NOTE` sempre que há blocos de memória — proíbe o bordão
+  "cada conversa começa do zero".
+- **Loop de tool-call-como-texto** (`toolProtocol.js` + `agent.js`): DeepSeek V3
+  despejava `{"code":…}` + ```json em loop. Novo `parseBareJsonToolCall`
+  reconhece JSON puro de ferramenta (esconde do chat e aciona correção) e um
+  freio de repetição (`REPEAT_TEXT_LIMIT`) interrompe respostas idênticas.
+- **Pesquisa web** (`tools.js`): DuckDuckGo bloqueia IP de datacenter (HTTP 202
+  anti-robô). UA de navegador realista, fallback keyless na **Wikipédia (pt)**,
+  filtro de links de anúncio, tratamento do 202 e log/`dica` do motivo real.
+- **Entrega de arquivo incompleto** (`agent.js`): arquivo de 0 byte não conta
+  como entregue; regra de qualidade manda o modelo ABRIR e conferir o arquivo
+  (colunas/valores/somas) antes de declarar pronto.
+
+Validação: backend 78/78, frontend 7/7 + build OK. Relatório completo da
+auditoria foi entregue ao usuário como artefato.
+
 ## ✅ SaaS COMPLETO E EM PRODUÇÃO (2026-07-18)
 
 As 5 fases da transformação em SaaS estão CONCLUÍDAS e o app está NO AR:

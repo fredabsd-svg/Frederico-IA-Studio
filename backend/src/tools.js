@@ -87,12 +87,19 @@ function extractTdText(html, className) {
 
 // Emparelha links e resumos pela ordem de aparição (índice preservado mesmo
 // quando um link é descartado) e devolve no máximo `limit` resultados válidos.
+// Links de anúncio/rastreamento do DuckDuckGo (não são resultados orgânicos).
+function isAdOrTrackerUrl(url) {
+  return /duckduckgo\.com\/y\.js|[?&](?:ad_domain|ad_provider|ad_type)=|bing\.com\/aclick|\/duckduckgo-help-pages\//i.test(url);
+}
+
 function pairResults(links, snippets, limit) {
   const results = [];
   for (let i = 0; i < links.length && results.length < limit; i++) {
     const url = decodeDuckUrl(links[i].href);
     const title = stripHtml(links[i].inner);
-    if (title && /^https?:\/\//i.test(url)) results.push({ title, url, snippet: snippets[i] || '' });
+    if (title && /^https?:\/\//i.test(url) && !isAdOrTrackerUrl(url)) {
+      results.push({ title, url, snippet: snippets[i] || '' });
+    }
   }
   return results;
 }
@@ -115,11 +122,42 @@ export function parseDuckLite(html, limit = 6) {
 
 // POST form-encoded imita o formulário do site (mais confiável que GET nesses
 // endpoints) e fixa a região Brasil/Português (kl=br-pt) para resultados locais.
+// UA de navegador real: o DuckDuckGo bloqueia (HTML vazio / 403) requisições
+// com User-Agent que "parece robô" — comum em IP de datacenter/VPS. Enviamos
+// cabeçalhos equivalentes aos de um Chrome no Windows.
+const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
+// Busca na Wikipédia em português (API pública, sem chave). Diferente do
+// DuckDuckGo, funciona a partir de IPs de datacenter/VPS. Cobre bem o público
+// do app (empresas, legislação, tributos, conceitos) — não cobre notícias/
+// cotações do dia, mas é um fallback confiável quando não há chave do Google.
+async function wikipediaSearch(query, signal) {
+  const api = `https://pt.wikipedia.org/w/api.php?action=query&list=search&format=json&origin=*&srlimit=6&srsearch=${encodeURIComponent(query)}`;
+  const r = await fetchWithTimeout(api, 15000, {
+    signal,
+    headers: { 'User-Agent': BROWSER_UA, 'Accept': 'application/json' }
+  });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const data = await r.json();
+  const hits = data?.query?.search || [];
+  return hits.map(h => ({
+    title: h.title,
+    url: `https://pt.wikipedia.org/wiki/${encodeURIComponent(String(h.title).replace(/ /g, '_'))}`,
+    snippet: stripHtml(h.snippet || '')
+  }));
+}
+
 function duckFetch(endpoint, query, signal) {
   return fetchWithTimeout(endpoint, 15000, {
     method: 'POST',
     signal,
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    headers: {
+      'User-Agent': BROWSER_UA,
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8',
+      'Referer': 'https://duckduckgo.com/'
+    },
     body: `q=${encodeURIComponent(query)}&kl=br-pt`
   });
 }
@@ -129,6 +167,7 @@ async function webSearch(query, options = {}) {
   if (!q) return { engine: 'nenhum', results: [], erro: 'Consulta de pesquisa vazia.' };
   // Com chaves do Google configuradas, usa a API oficial (Custom Search).
   const gKey = process.env.GOOGLE_API_KEY, gCx = process.env.GOOGLE_CSE_ID;
+  const problemas = [];
   if (gKey && gCx) {
     try {
       const url = `https://www.googleapis.com/customsearch/v1?key=${encodeURIComponent(gKey)}&cx=${encodeURIComponent(gCx)}&num=6&q=${encodeURIComponent(q)}`;
@@ -137,8 +176,14 @@ async function webSearch(query, options = {}) {
         const data = await r.json();
         const results = (data.items || []).map(i => ({ title: i.title, url: i.link, snippet: i.snippet }));
         if (results.length) return { engine: 'google', results };
+        problemas.push('google: 0 resultados');
+      } else {
+        // Motivos comuns: 403 (chave/cota) ou 400 (CSE mal configurado).
+        problemas.push(`google HTTP ${r.status}`);
       }
-    } catch { /* cai para a busca gratuita abaixo */ }
+    } catch (e) { problemas.push(`google: ${e.message}`); }
+  } else {
+    problemas.push('google: sem GOOGLE_API_KEY/GOOGLE_CSE_ID (usando busca gratuita)');
   }
   // Sem chaves (ou Google falhou): DuckDuckGo gratuito, com dois endpoints de
   // reserva. Não exige cadastro.
@@ -146,21 +191,37 @@ async function webSearch(query, options = {}) {
     { engine: 'duckduckgo', url: 'https://html.duckduckgo.com/html/', parse: parseDuckHtml },
     { engine: 'duckduckgo-lite', url: 'https://lite.duckduckgo.com/lite/', parse: parseDuckLite }
   ];
-  const problemas = [];
   for (const a of attempts) {
     try {
       const r = await duckFetch(a.url, q, options.signal);
+      // 202 = página anti-robô do DuckDuckGo (comum em IP de datacenter/VPS):
+      // vem "ok" mas sem resultados. Tratamos como bloqueio explícito.
+      if (r.status === 202) { problemas.push(`${a.engine}: bloqueio anti-robô (HTTP 202)`); continue; }
       if (!r.ok) { problemas.push(`${a.engine} HTTP ${r.status}`); continue; }
       const results = a.parse(await r.text());
       if (results.length) return { engine: a.engine, results };
       problemas.push(`${a.engine}: 0 resultados`);
     } catch (e) { problemas.push(`${a.engine}: ${e.message}`); }
   }
+  // Fallback keyless que funciona de datacenter: Wikipédia (pt). Cobre bem
+  // conceitos, empresas, legislação e tributos — o dia a dia do público do app.
+  try {
+    const wiki = await wikipediaSearch(q, options.signal);
+    if (wiki.length) return { engine: 'wikipedia', results: wiki, aviso: 'Resultados da Wikipédia (busca geral indisponível sem GOOGLE_API_KEY/GOOGLE_CSE_ID). Confirme dados sensíveis/atuais em fonte oficial.' };
+    problemas.push('wikipedia: 0 resultados');
+  } catch (e) { problemas.push(`wikipedia: ${e.message}`); }
+  // Registra o motivo REAL no log do servidor — sem isso, a falha de busca em
+  // produção fica invisível para quem opera o app (ex.: DDG 403 no IP da VPS).
+  console.warn(`[web_search] sem resultados para ${JSON.stringify(q)} — ${problemas.join(' | ')}`);
   return {
     engine: 'nenhum',
     results: [],
-    erro: 'A pesquisa gratuita não retornou resultados agora. Tente reformular os termos ou tente de novo em instantes.',
-    detalhes: problemas
+    erro: 'A pesquisa não retornou resultados agora.',
+    detalhes: problemas,
+    // Dica objetiva para o modelo explicar ao usuário em vez de "não achei".
+    dica: problemas.some(p => /HTTP 403|HTTP 429/.test(p))
+      ? 'O provedor de busca gratuito bloqueou a consulta (limite/robô). Configure GOOGLE_API_KEY e GOOGLE_CSE_ID no servidor para uma busca estável.'
+      : 'Tente reformular os termos; se persistir, configure GOOGLE_API_KEY e GOOGLE_CSE_ID no servidor.'
   };
 }
 

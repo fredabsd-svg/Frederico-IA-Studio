@@ -30,3 +30,32 @@ test('does not attach stored context to a greeting', { skip: dbReady ? false : '
   assert.equal(plan.meta.stats.memoriesUsed, 0);
   assert.equal(plan.meta.stats.chunksUsed, 0);
 });
+
+test('injeta a nota manual global do usuário numa pergunta com assunto', { skip: dbReady ? false : 'requer PostgreSQL (DATABASE_URL)' }, async () => {
+  // Regressão do achado de auditoria: memória salva + buscável no painel deve
+  // CHEGAR ao assistente. Uma nota manual de escopo global tem de aparecer no
+  // contexto de uma nova conversa (clientScope=null), sem depender de embeddings.
+  const uid = 'user-mem-regressao';
+  await db.prepare(`INSERT INTO "user" (id, name, email, "emailVerified", "createdAt", "updatedAt")
+    VALUES (?,?,?,?,now(),now()) ON CONFLICT (id) DO NOTHING`)
+    .run(uid, 'Teste Memória', 'mem-regressao@teste.local', true);
+  await db.prepare(`INSERT INTO memory (id, user_id, scope, content, type, importance, created_at, updated_at)
+    VALUES (?,?,?,?,?,?,?,?) ON CONFLICT (id) DO UPDATE SET content=excluded.content`)
+    .run('mem-cliente-prioritario', uid, 'global',
+      'O cliente prioritário do escritório é a Aurora Alimentos Ltda e o contato é João Almeida.',
+      'manual', 4, '2026-07-19T00:00:00.000Z', '2026-07-19T00:00:00.000Z');
+
+  const plan = await buildContext({
+    userId: uid,
+    conversationId: 'conv-mem-regressao',
+    assistantId: 'asst-mem',
+    clientScope: null,
+    userText: 'quem é o cliente prioritário do escritório e quem é o contato dele?',
+    model: 'anthropic/claude-sonnet-5'
+  });
+
+  const texto = (plan.blocks || []).join('\n');
+  assert.match(texto, /NOTAS SALVAS PELO USUARIO/);
+  assert.match(texto, /Aurora Alimentos/);
+  assert.match(texto, /João Almeida/);
+});

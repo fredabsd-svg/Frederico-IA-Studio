@@ -87,10 +87,80 @@ export function toolProtocolStartIndex(value) {
   return String(value || '').search(TOOL_PROTOCOL_START_RE);
 }
 
+// Alguns provedores (ex.: DeepSeek) devolvem a chamada de ferramenta como um
+// objeto JSON PURO no texto — sem <tool_call>/<function> — tipicamente
+// {"code":"..."} ou {"name":"run_python","arguments":{...}}, às vezes seguido de
+// uma cerca ```json. Sem interceptar, o JSON vaza no chat e o modelo repete em
+// loop. Aqui detectamos esse formato para escondê-lo e acionar a correção.
+const BARE_JSON_TOOL_KEYS = new Set(['code', 'command', 'cmd', 'shell', 'script']);
+
+function stripLeadingFence(value) {
+  return String(value || '').replace(/^\s*```(?:json|tool_call|python|bash)?\s*/i, '');
+}
+
+// Extrai o primeiro objeto JSON balanceado a partir do início (ignora chaves
+// dentro de strings). Retorna o texto do objeto ou null.
+function leadingJsonObject(value) {
+  const s = stripLeadingFence(value).trimStart();
+  if (s[0] !== '{') return null;
+  let depth = 0, inStr = false, esc = false;
+  for (let i = 0; i < s.length && i < TOOL_PROTOCOL_MAX_CHARS; i++) {
+    const ch = s[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+    } else if (ch === '"') inStr = true;
+    else if (ch === '{') depth++;
+    else if (ch === '}') { depth--; if (depth === 0) return s.slice(0, i + 1); }
+  }
+  return null;
+}
+
+// Analisa um JSON puro de ferramenta no início do texto.
+//  - { detected:false } quando não parece uma chamada de ferramenta;
+//  - { detected:true, malformed:true } quando é uma chamada, mas não dá para
+//    converter com segurança (esconde do usuário e aciona a correção);
+//  - { detected:true, calls:[...] } quando dá para converter em chamada nativa.
+export function parseBareJsonToolCall(value, availableToolNames = []) {
+  const text = String(value || '');
+  const objText = leadingJsonObject(text);
+  if (!objText) return { detected: false };
+  let obj;
+  try { obj = JSON.parse(objText); } catch { return { detected: false }; }
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return { detected: false };
+
+  const allowed = new Set([...availableToolNames].map(name => String(name)));
+  const keys = Object.keys(obj);
+
+  // Forma nomeada: {"name":"run_python","arguments":{...}}
+  const named = normalizeJsonCalls(obj);
+  if (named && named.length) {
+    const ok = named.every(call => allowed.has(call.name));
+    return ok ? { detected: true, malformed: false, calls: named }
+              : { detected: true, malformed: true, calls: [] };
+  }
+
+  // Forma só-argumentos: {"code":...} / {"command":...} — sem o nome da tool.
+  // Só tratamos como chamada quando HÁ ferramentas disponíveis; caso contrário
+  // pode ser uma resposta JSON legítima do assistente.
+  const hasToolKey = keys.some(k => BARE_JSON_TOOL_KEYS.has(k.toLowerCase()));
+  if (hasToolKey && allowed.size) {
+    return { detected: true, malformed: true, calls: [] };
+  }
+  return { detected: false };
+}
+
 export function parseTextToolCalls(value, availableToolNames = []) {
   const text = String(value || '');
   const start = toolProtocolStartIndex(text);
   if (start < 0) {
+    // Sem marcador XML: tenta o formato JSON puro ({"code":...}) antes de
+    // considerar a resposta como texto comum.
+    const bare = parseBareJsonToolCall(text, availableToolNames);
+    if (bare.detected) {
+      return { detected: true, malformed: !!bare.malformed, calls: bare.calls || [], visibleText: '' };
+    }
     return { detected: false, malformed: false, calls: [], visibleText: text };
   }
 

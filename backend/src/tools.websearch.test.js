@@ -74,3 +74,14 @@ test('parsers devolvem lista vazia (não quebram) para HTML sem resultados', () 
   assert.deepEqual(parseDuckHtml('<html><body>bloqueado</body></html>'), []);
   assert.deepEqual(parseDuckLite('<html><body>bloqueado</body></html>'), []);
 });
+
+test('filtra links de anúncio/rastreamento do DuckDuckGo', () => {
+  const html = `
+    <a class="result-link" href="https://duckduckgo.com/y.js?ad_provider=bingv7aa&u3=x">Anúncio patrocinado</a>
+    <a class="result-link" href="https://www.planalto.gov.br/lei">Lei Complementar 123</a>
+  `;
+  const r = parseDuckLite(html);
+  assert.equal(r.length, 1);
+  assert.equal(r[0].url, 'https://www.planalto.gov.br/lei');
+  assert.doesNotMatch(JSON.stringify(r), /y\.js|ad_provider/);
+});
