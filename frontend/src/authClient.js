@@ -20,8 +20,10 @@ export function traduzErroAuth(error) {
     PASSWORD_TOO_LONG: 'A senha é muito longa.',
     EMAIL_NOT_VERIFIED: 'Confirme seu e-mail antes de entrar.',
     CREDENTIAL_ACCOUNT_NOT_FOUND: 'Conta não encontrada. Crie uma conta.',
+    PROVIDER_NOT_FOUND: 'Este login social não está habilitado no servidor. Use e-mail e senha.',
   };
   if (map[code]) return map[code];
+  if (/provider/i.test(msg)) return 'Este login social não está habilitado no servidor. Use e-mail e senha.';
   if (/already exists/i.test(msg)) return 'Já existe uma conta com esse e-mail. Tente entrar.';
   if (/invalid.*(email|password)/i.test(msg)) return 'E-mail ou senha incorretos.';
   if (/password/i.test(msg) && /short|least|8/i.test(msg)) return 'A senha precisa ter pelo menos 8 caracteres.';
