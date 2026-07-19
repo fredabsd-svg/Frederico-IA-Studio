@@ -99,6 +99,6 @@ test('DOCPRO_PROMPT ensina docpro, xlspro e pdfpro', async () => {
   assert.match(prompt, /FÓRMULAS DO EXCEL/i, 'deve ter regra de fórmulas corretas');
   assert.match(prompt, /PREENCHA TODAS AS COLUNAS/, 'deve exigir linhas completas / coluna Total preenchida');
   assert.match(prompt, /GRÁFICO DE PIZZA\/participação/, 'deve orientar pizza por categoria (formato longo)');
-  assert.match(prompt, /WD_ALIGN_PARAGRAPH\.JUSTIFY/, 'documento sóbrio deve ser justificado');
   assert.match(prompt, /Cidade\/Estado|preenchimento GEOGRÁFICO/, 'deve proibir placeholder geográfico genérico');
+  assert.match(prompt, /from docpro import Sobrio/, 'documento sóbrio deve usar o helper Sobrio (justificado de fábrica)');
 });

@@ -283,6 +283,125 @@ class Relatorio:
         return caminho
 
 
+class Sobrio:
+    """Documento SÓBRIO/registrável (ata, contrato, alteração contratual) em
+    python-docx puro: ZERO cor, corpo SEMPRE JUSTIFICADO, fonte formal, margens
+    de documento oficial e rodapé "Página X de Y". A justificação nasce no
+    estilo Normal — não depende de o modelo lembrar de alinhar cada parágrafo.
+
+    Uso:
+        from docpro import Sobrio
+        a = Sobrio()                       # Times New Roman 12, entrelinha 1,5
+        a.titulo("ATA DE REUNIÃO DE SÓCIOS")
+        a.paragrafo("Aos vinte e cinco dias do mês de ...")   # já sai justificado
+        a.secao("ORDEM DO DIA")
+        a.item("1. Aprovação das contas do exercício ...")
+        a.fecho("Palmas/TO, 25 de outubro de 2025.")
+        a.assinaturas(["João da Silva", "Maria Oliveira"],
+                      subtitulos=["Sócio-administrador", "Sócia"])
+        a.salvar("/workspace/outputs/ata.docx")               # gera o PDF ao lado
+    """
+
+    def __init__(self, fonte="Times New Roman", tamanho=12, entrelinha=1.5,
+                 rodape_paginado=True):
+        self.doc = Document()
+        self.tam = tamanho
+        for s in self.doc.sections:
+            s.top_margin = Cm(2.5); s.bottom_margin = Cm(2.5)
+            s.left_margin = Cm(3.0); s.right_margin = Cm(2.0)
+        st = self.doc.styles["Normal"]
+        st.font.name = fonte
+        st.font.size = Pt(tamanho)
+        st.font.color.rgb = RGBColor(0, 0, 0)
+        # garante a fonte em todos os scripts (evita fallback estranho)
+        rpr = st.element.get_or_add_rPr()
+        rfonts = rpr.find(qn("w:rFonts"))
+        if rfonts is None:
+            rfonts = _el("w:rFonts"); rpr.append(rfonts)
+        for a in ("ascii", "hAnsi", "cs"):
+            rfonts.set(qn("w:" + a), fonte)
+        pf = st.paragraph_format
+        pf.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY   # <- justificação de fábrica
+        pf.line_spacing = entrelinha
+        pf.space_after = Pt(6)
+        if rodape_paginado:
+            self._rodape()
+
+    def titulo(self, texto):
+        p = self.doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        r = p.add_run(str(texto).upper()); r.bold = True; r.font.size = Pt(self.tam + 1)
+        p.paragraph_format.space_after = Pt(12)
+        return p
+
+    def secao(self, texto, caps=True):
+        p = self.doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+        r = p.add_run(str(texto).upper() if caps else str(texto)); r.bold = True
+        p.paragraph_format.space_before = Pt(10); p.paragraph_format.space_after = Pt(4)
+        return p
+
+    def paragrafo(self, texto, recuo=True):
+        p = self.doc.add_paragraph(str(texto))
+        p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+        if recuo:
+            p.paragraph_format.first_line_indent = Cm(1.25)
+        return p
+
+    def item(self, texto, recuo=False):
+        # cláusula/deliberação numerada — o texto já traz "1.", "CLÁUSULA 1ª" etc.
+        return self.paragrafo(texto, recuo=recuo)
+
+    def fecho(self, local_data):
+        p = self.doc.add_paragraph(str(local_data))
+        p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+        p.paragraph_format.space_before = Pt(14)
+        return p
+
+    def assinaturas(self, nomes, subtitulos=None):
+        subtitulos = subtitulos or [None] * len(nomes)
+        self.doc.add_paragraph().paragraph_format.space_after = Pt(6)
+        for i, nome in enumerate(nomes):
+            self.doc.add_paragraph()  # respiro para assinar
+            l = self.doc.add_paragraph("_" * 40); l.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            l.paragraph_format.space_after = Pt(0)
+            n = self.doc.add_paragraph(); n.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            n.add_run(str(nome)).bold = True
+            n.paragraph_format.space_after = Pt(0)
+            if i < len(subtitulos) and subtitulos[i]:
+                s = self.doc.add_paragraph(); s.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                s.add_run(str(subtitulos[i])).font.size = Pt(self.tam - 2)
+
+    def _rodape(self):
+        f = self.doc.sections[-1].footer
+        f.is_linked_to_previous = False
+        p = f.paragraphs[0]; p.text = ""; p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p.add_run("Página ").font.size = Pt(9)
+        self._campo(p, "PAGE")
+        p.add_run(" de ").font.size = Pt(9)
+        self._campo(p, "NUMPAGES")
+
+    def _campo(self, p, code):
+        r = p.add_run(); r._r.append(_el("w:fldChar", fldCharType="begin"))
+        r2 = p.add_run(); instr = OxmlElement("w:instrText")
+        instr.set(qn("xml:space"), "preserve"); instr.text = " " + code + " "; r2._r.append(instr)
+        r3 = p.add_run(); r3._r.append(_el("w:fldChar", fldCharType="end"))
+        for rr in (r, r2, r3):
+            rr.font.size = Pt(9); rr.font.color.rgb = RGBColor(0, 0, 0)
+
+    def salvar(self, caminho, pdf=True):
+        self.doc.save(caminho)
+        if pdf:
+            import subprocess, os
+            try:
+                subprocess.run(["soffice", "--headless", "--convert-to", "pdf", "--outdir",
+                                os.path.dirname(caminho) or ".", caminho],
+                               timeout=90, capture_output=True, check=False)
+            except Exception:
+                pass
+        return caminho
+
+
 # atalhos de módulo
 def sombrear(cell, cor):
     sombrear_celula(cell, cor)
