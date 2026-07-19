@@ -710,7 +710,7 @@ async function validateOutputs(conversationId, files, onEvent, sandboxOptions = 
   if (!targets.length) return {};
   onEvent({ type: 'status', content: 'Validando arquivos gerados...' });
   const listJson = JSON.stringify(targets.map(f => f.path));
-  const code = `import json, os, subprocess, tempfile, shutil
+  const code = `import json, os, subprocess, tempfile, shutil, zipfile, re
 files = json.loads('''${listJson}''')
 ERRS = ("#REF!", "#VALUE!", "#DIV/0!", "#N/A", "#NAME?", "#NULL!", "#NUM!", "#SPILL!", "#CALC!")
 MAX_CELLS = int(os.environ.get("VALIDATE_MAX_CELLS", "40000"))
@@ -791,6 +791,66 @@ def recalc_took(orig, calc):
                     return True
     return False
 
+def _col_to_num(col):
+    n = 0
+    for ch in col.upper():
+        n = n * 26 + (ord(ch) - 64)
+    return n
+
+def _parse_ref(ref):
+    m = re.match(r"^(?:'([^']+)'|([^!]+))!(.+)$", ref.strip())
+    if not m:
+        return None
+    sheet = m.group(1) or m.group(2)
+    rng = m.group(3).replace("$", "")
+    cells = rng.split(":")
+    def cell(c):
+        mm = re.match(r"^([A-Za-z]+)(\\d+)$", c)
+        return (_col_to_num(mm.group(1)), int(mm.group(2))) if mm else None
+    a = cell(cells[0])
+    b = cell(cells[-1]) if len(cells) > 1 else a
+    if not a or not b:
+        return (sheet, None)
+    return (sheet, (a[0], a[1], b[0], b[1]))
+
+def check_charts(p, sheetnames):
+    # Valida os GRÁFICOS do .xlsx (openpyxl descarta charts ao carregar, então
+    # lemos o XML direto do zip). Modelos geram gráficos com referências
+    # quebradas — intervalos INVERTIDOS (ex.: C2:B2), aba inexistente ou sem
+    # série — que abririam vazios/errados no Excel, e nada verificava isso.
+    problems = []
+    n = 0
+    try:
+        z = zipfile.ZipFile(p)
+    except Exception:
+        return 0, problems
+    for cn in [x for x in z.namelist() if re.match(r"xl/charts/chart\\d+\\.xml", x)]:
+        n += 1
+        try:
+            xml = z.read(cn).decode("utf-8", "replace")
+        except Exception:
+            continue
+        refs = re.findall(r"<(?:\\w+:)?f>([^<]+)</(?:\\w+:)?f>", xml)
+        sers = len(re.findall(r"<(?:\\w+:)?ser>", xml))
+        if not refs:
+            problems.append("grafico sem referencias de dados")
+            continue
+        if sers == 0:
+            problems.append("grafico sem series")
+        for ref in refs:
+            parsed = _parse_ref(ref)
+            if not parsed:
+                continue
+            sheet, coords = parsed
+            if sheet not in sheetnames:
+                problems.append("grafico referencia aba inexistente '" + sheet + "'")
+                continue
+            if coords:
+                c1, r1, c2, r2 = coords
+                if c1 > c2 or r1 > r2:
+                    problems.append("grafico com intervalo invertido/degenerado (" + ref + ")")
+    return n, problems
+
 def check_xlsx(p):
     from openpyxl import load_workbook
     wb = load_workbook(p)
@@ -812,6 +872,7 @@ def check_xlsx(p):
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
     total = errs_lint + errs_calc
+    chart_n, chart_problems = check_charts(p, wb.sheetnames)
     parts = [str(sheets) + " abas"]
     if total:
         parts.append(str(total) + " celula(s) com erro de formula")
@@ -819,9 +880,13 @@ def check_xlsx(p):
         parts.append("formulas recalculadas: sem erros")
     else:
         parts.append("formulas NAO recalculadas (verificacao parcial)")
+    if chart_problems:
+        parts.append(str(len(chart_problems)) + " problema(s) em grafico: " + chart_problems[0])
+    elif chart_n:
+        parts.append(str(chart_n) + " grafico(s) ok")
     if capped:
         parts.append("varredura limitada a " + str(MAX_CELLS) + " celulas")
-    return {"ok": total == 0, "info": "; ".join(parts)}
+    return {"ok": total == 0 and not chart_problems, "info": "; ".join(parts)}
 
 def check_docx(p):
     from docx import Document
