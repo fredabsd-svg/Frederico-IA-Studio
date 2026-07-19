@@ -1193,6 +1193,45 @@ Instalamos o GIMP a pedido e testamos a fundo (13 baterias ao vivo). Conclusão:
   testados — o ImageMagick fez blur gaussiano perfeito no teste). NÃO reinstalar
   o GIMP sem uma necessidade que só ele atenda e um plano para o timeout de 45s.
 
+## 🛡️ Correção do SSRF residual no `web_fetch` (2026-07-19, mesclado em 2026-07-21 — PR #40)
+
+Fecha a **pendência §0** (SSRF residual, aberta desde a revisão de 2026-07-16).
+Uma análise crítica do repositório levantou vários pontos de segurança; ao
+conferir cada alegação contra o código, a maioria já estava mitigada (o
+`isBlockedHost` já cobria faixas privadas IPv4/IPv6, e o `web_fetch` já revalida
+cada redirect com `redirect: 'manual'`). Os formatos numéricos decimal/octal/hex
+citados como vetores **já eram neutralizados** pelo parser WHATWG de URL (ele
+normaliza `http://2130706433/` para `127.0.0.1` antes do filtro). Mas dois furos
+reais foram encontrados e corrigidos em `backend/src/tools.js`:
+
+1. **Bypass por IPv6 entre colchetes** (não visto pela análise): o hostname de
+   uma URL IPv6 chega **com colchetes** (`[::1]`), e o filtro comparava com
+   `::1` sem colchetes — então TODO literal IPv6 (loopback, ULA, link-local e a
+   forma IPv4-mapeada `[::ffff:127.0.0.1]`, que o parser normaliza para
+   `[::ffff:7f00:1]`) escapava e alcançava a rede interna. Correção: remover os
+   colchetes antes de comparar (`stripIpv6Brackets`), tratar IPv4 mapeado nas
+   formas pontilhada e hexadecimal (`mappedIpv4`), cobrir toda a faixa
+   link-local `fe80::/10` (antes só `fe80` literal) e somar multicast/reservado
+   (`224/4`, `240/4`) ao bloqueio IPv4 (`isBlockedIpv4`).
+2. **DNS rebinding**: filtro por texto não basta — um domínio público pode
+   resolver para IP interno. Novo `assertHostResolvesPublic` resolve o hostname
+   via DNS e valida CADA IP retornado antes de conectar, a cada redirect. O
+   `AbortSignal` é respeitado também durante a resolução (cancelamento
+   continua funcionando). Resta uma janela TOCTOU mínima entre resolver e
+   conectar — é a mitigação padrão; um pinning de IP na conexão fica como
+   trabalho futuro, se necessário.
+
+**Testes:** novo `backend/src/tools.ssrf.test.js` (8 casos: bypasses corrigidos
++ regressão de endereços públicos que devem seguir liberados). O teste de
+cancelamento (`tools.pathResolution.test.js`) passou a usar IP literal, que pula
+o DNS via `net.isIP` e exercita o repasse do sinal de forma determinística.
+Suíte do backend: 88 passam, 0 falham (2 pulados exigem PostgreSQL).
+
+**NÃO alterado de propósito:** a senha `studio` do Postgres nos `docker-compose*`
+é fixa; trocá-la no repositório quebraria o deploy em produção em execução — é
+mudança de operação (variável `POSTGRES_PASSWORD` + atualização do banco) a
+cargo do operador.
+
 ## 🎨 Kits de design de documentos + endurecimento por QA ao vivo (2026-07-19, PRs #24–#35)
 
 Frente para elevar a QUALIDADE e a CONFIABILIDADE dos documentos gerados
@@ -1919,15 +1958,16 @@ chat · Upload como chips · Tela responsiva (gaveta mobile) · Tema claro/escur
 
 ## 8. Pendências / próximos passos sugeridos
 
-0. **[Segurança, revisão 2026-07-16] SSRF residual no `web_fetch`** (`tools.js`,
-   `isBlockedHost`): o bloqueio filtra por **texto do hostname**, então deixa passar
-   IPv6 entre colchetes (`http://[::1]/`), IP em decimal/hex/octal (`http://2130706433/`
-   = 127.0.0.1) e **DNS rebinding** (domínio público que resolve p/ IP interno). Como
-   o backend tem rede, isso alcança serviços internos. NÃO é regressão (pré-existente;
-   a validação de redirect até melhorou). Corrigir validando o **IP resolvido**
-   (desembrulhar colchetes IPv6, cobrir IPv4-mapeado, formatos numéricos) antes do
-   fetch. Também: `ENVIRONMENT_QUERY_RE` (`agent.js`) é amplo demais e dispara um
-   `bash` de auditoria no sandbox em mensagens comuns — estreitar.
+0. ✅ **[RESOLVIDO em 2026-07-19] SSRF residual no `web_fetch`** (`tools.js`,
+   `isBlockedHost`): o bloqueio filtrava por **texto do hostname** e deixava passar
+   IPv6 entre colchetes (`http://[::1]/`) e o IPv4-mapeado; o **DNS rebinding**
+   também não era coberto. Corrigido: colchetes desembrulhados, IPv4-mapeado
+   tratado, faixa link-local completa, e resolução de DNS com validação de cada
+   IP antes do fetch (`assertHostResolvesPublic`). Ver a entrada de log no topo
+   deste arquivo. Os formatos decimal/hex/octal já eram neutralizados pelo parser
+   de URL. **Ainda pendente nesta linha:** `ENVIRONMENT_QUERY_RE` (`agent.js`) é
+   amplo demais e dispara um `bash` de auditoria no sandbox em mensagens comuns —
+   estreitar.
 1. **Usuário testar a memória** (git pull + iniciar.bat; 1ª conversa baixa o
    modelo de embeddings ~112MB) — perguntar "quem sou eu?" após algumas conversas.
 2. Testar **importação** do export do Claude (conversations.json).
