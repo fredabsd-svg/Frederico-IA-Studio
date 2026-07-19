@@ -21,6 +21,9 @@ let pcFoldersByUser = new Map(); // userId -> rows[]
 
 export async function loadPcFolders() {
   const map = new Map();
+  // Desligado (padrão numa VPS pública): nunca monta pastas do host, mesmo que
+  // existam linhas antigas na tabela.
+  if (process.env.ENABLE_PC_FOLDERS !== 'true') { pcFoldersByUser = map; return map; }
   try {
     const rows = await db.prepare('SELECT * FROM pc_folders ORDER BY created_at ASC').all();
     for (const r of rows) {

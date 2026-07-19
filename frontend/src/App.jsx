@@ -346,6 +346,7 @@ export default function App({ user } = {}) {
   const [dragActive, setDragActive] = useState(false);
   const [uploadingFiles, setUploadingFiles] = useState(false);
   const [cameraOpen, setCameraOpen] = useState(false);
+  const [me, setMe] = useState(null); // { email, isAdmin, pcFoldersEnabled }
   const [loadingConv, setLoadingConv] = useState(false);
   const [connError, setConnError] = useState(false);
   const [needLogin, setNeedLogin] = useState(false);
@@ -591,6 +592,7 @@ export default function App({ user } = {}) {
       loadAssistants();
       loadClients();
       try { const h = await (await fetch(`${API}/api/health`)).json(); setUnprotected(h && h.auth === false); } catch {}
+      try { const m = await (await fetch(`${API}/api/me`)).json(); setMe(m || null); } catch {}
     } catch (err) {
       if (err?.auth) setNeedLogin(true);
       else setConnError(true);
@@ -1296,13 +1298,13 @@ export default function App({ user } = {}) {
         <div className="navGroup navGroupKnowledge">
           <div className="navGroupTitle">Conhecimento</div>
           <button className="studio" onClick={() => setMemoryOpen(true)}><Brain size={16}/> Memória</button>
-          <button className="studio" onClick={() => setPcOpen(true)} title="Libere pastas do seu PC para o assistente procurar, ler e organizar arquivos"><FolderCog size={16}/> Pastas do PC</button>
+          {me?.pcFoldersEnabled && <button className="studio" onClick={() => setPcOpen(true)} title="Libere pastas do seu PC para o assistente procurar, ler e organizar arquivos"><FolderCog size={16}/> Pastas do PC</button>}
         </div>
         <div className="navGroup navGroupAdmin">
           <div className="navGroupTitle">Administração</div>
           <button className="studio" onClick={openStudioNew}><Bot size={16}/> Assistentes</button>
           <button className="studio" onClick={openAnalytics}><BarChart3 size={16}/> Análises</button>
-          <button className="studio" onClick={() => window.open(`${API}/api/backup`, '_blank')} title="Baixa um arquivo com o banco e todos os workspaces"><HardDriveDownload size={16}/> Backup</button>
+          {me?.isAdmin && <button className="studio" onClick={() => window.open(`${API}/api/backup`, '_blank')} title="Baixa um arquivo com o banco e todos os workspaces (somente administrador)"><HardDriveDownload size={16}/> Backup</button>}
           <button className="studio" onClick={() => setProviderOpen(true)} title="Cadastre a sua própria chave de API"><KeyRound size={16}/> Provedor de IA</button>
           <button className="studio" onClick={() => setThemeOpen(true)} title="Trocar a paleta e o espaço de trabalho"><Palette size={16}/> Aparência</button>
         </div>
