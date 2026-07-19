@@ -39,6 +39,7 @@ você escolhe é enviado direto ao provedor, sem substituição.
 | 🔑 | **Cada um com sua chave (BYOK)** | Cada usuário cadastra a própria chave de IA — dá para exigir isso num site público (`ALLOW_SHARED_KEY=false`) |
 | 🤖 | **Assistentes personalizados** | Instruções, modelos, ferramentas e personalidade próprios |
 | 📄 | **Arquivos reais no chat** | Excel, Word, PDF, CSV, ZIP, imagens, gráficos e OCR |
+| 🎨 | **Documentos com design de agência** | O assistente "Documentos profissionais" usa kits prontos e testados (Word, Excel e PDF) — capa, tabelas estilizadas, gráficos, callouts e rodapé paginado; modo **sóbrio/registrável** (ata, contrato) justificado e sem cor para a Junta Comercial |
 | 📷 | **Câmera e imagens** | Fotografe um documento (webcam no PC, câmera no celular) ou anexe uma imagem — a IA lê sozinha (**visão** nos modelos com visão; **OCR** nos demais) |
 | 🏢 | **Consulta de CNPJ** | Dados cadastrais oficiais (BrasilAPI/ReceitaWS): razão social, situação, CNAE, endereço e sócios |
 | 🧠 | **Memória de longo prazo** | Recuperação semântica com painel de revisão |
