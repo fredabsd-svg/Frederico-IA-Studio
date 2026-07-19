@@ -821,11 +821,31 @@ def _parse_ref(ref):
         return (sheet, None)
     return (sheet, (a[0], a[1], b[0], b[1]))
 
-def check_charts(p, sheetnames):
+def _range_has_number(wb, sheet, coords):
+    # True se houver ao menos uma célula NUMÉRICA no intervalo. Usado para pegar
+    # gráfico cuja série de VALORES aponta para um intervalo sem números (ex.:
+    # coluna "Total" declarada no cabeçalho mas deixada vazia pelo modelo).
+    try:
+        ws = wb[sheet]
+    except Exception:
+        return True  # na dúvida, não acusa
+    c1, r1, c2, r2 = coords
+    for r in range(r1, r2 + 1):
+        for c in range(c1, c2 + 1):
+            v = ws.cell(row=r, column=c).value
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                return True
+            if isinstance(v, str) and v.startswith("="):
+                return True  # fórmula: assume que produz número
+    return False
+
+def check_charts(p, wb):
     # Valida os GRÁFICOS do .xlsx (openpyxl descarta charts ao carregar, então
     # lemos o XML direto do zip). Modelos geram gráficos com referências
-    # quebradas — intervalos INVERTIDOS (ex.: C2:B2), aba inexistente ou sem
-    # série — que abririam vazios/errados no Excel, e nada verificava isso.
+    # quebradas — intervalos INVERTIDOS (ex.: C2:B2), aba inexistente, sem série
+    # ou uma série de VALORES apontando para um intervalo vazio (coluna sem
+    # dados) — que abririam vazios/errados no Excel, e nada verificava isso.
+    sheetnames = wb.sheetnames
     problems = []
     n = 0
     try:
@@ -840,6 +860,11 @@ def check_charts(p, sheetnames):
             continue
         refs = re.findall(r"<(?:\\w+:)?f>([^<]+)</(?:\\w+:)?f>", xml)
         sers = len(re.findall(r"<(?:\\w+:)?ser>", xml))
+        # referências que são SÉRIE DE VALORES (dentro de <val>...</val>) — só
+        # essas precisam ter números; categorias podem ser texto.
+        val_refs = []
+        for blk in re.findall(r"<(?:\\w+:)?val>(.*?)</(?:\\w+:)?val>", xml, re.S):
+            val_refs += re.findall(r"<(?:\\w+:)?f>([^<]+)</(?:\\w+:)?f>", blk)
         if not refs:
             problems.append("grafico sem referencias de dados")
             continue
@@ -857,6 +882,9 @@ def check_charts(p, sheetnames):
                 c1, r1, c2, r2 = coords
                 if c1 > c2 or r1 > r2:
                     problems.append("grafico com intervalo invertido/degenerado (" + ref + ")")
+                    continue
+                if ref in val_refs and not _range_has_number(wb, sheet, coords):
+                    problems.append("grafico com serie de valores vazia (" + ref + ")")
     return n, problems
 
 def check_xlsx(p):
@@ -880,7 +908,7 @@ def check_xlsx(p):
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
     total = errs_lint + errs_calc
-    chart_n, chart_problems = check_charts(p, wb.sheetnames)
+    chart_n, chart_problems = check_charts(p, wb)
     parts = [str(sheets) + " abas"]
     if total:
         parts.append(str(total) + " celula(s) com erro de formula")

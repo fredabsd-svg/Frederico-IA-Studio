@@ -97,4 +97,5 @@ test('DOCPRO_PROMPT ensina docpro, xlspro e pdfpro', async () => {
   assert.match(prompt, /p\.tabela\(/, 'deve mostrar p.tabela para Excel estilizado');
   assert.match(prompt, /openpyxl cru/i, 'deve proibir estilizar célula na mão');
   assert.match(prompt, /FÓRMULAS DO EXCEL/i, 'deve ter regra de fórmulas corretas');
+  assert.match(prompt, /PREENCHA TODAS AS COLUNAS/, 'deve exigir linhas completas / coluna Total preenchida');
 });
