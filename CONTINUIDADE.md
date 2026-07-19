@@ -1,5 +1,32 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 🧹 System prompt: mensagem única + deduplicação + fim dos pins de versão (2026-07-19)
+
+Revisão do system prompt (`backend/src/agent.js` e descrições em `tools.js`),
+sem mudar os loops de reparo/validação:
+- **Mensagem system ÚNICA**: `runAgent` montava 10+ mensagens `role:system`
+  (prompt, ferramentas, QUALITY_BAR, notas condicionais, memória, uploads,
+  pastas do PC). Como o app roda modelos heterogêneos via OpenRouter e vários
+  tratam mal múltiplas mensagens system (alguns só honram a primeira), agora
+  todas as seções iniciais viajam JUNTAS em `messages[0]`, recompostas por
+  `refreshSystemMessage()` quando as ferramentas mudam no meio da execução
+  (fallback sem tools / fim da pesquisa web). **ARMADILHA**: não voltar a
+  reescrever `messages[1]` — esse índice agora é histórico/notas posicionais.
+  Notas de reparo durante o loop continuam sendo mensagens system anexadas
+  DEPOIS do histórico (posicionais, de propósito). Mesma consolidação nos 3
+  caminhos do Modo Equipe (coordenador direto, especialistas, síntese).
+- **Deduplicação**: cada regra passou a morar num lugar só — caminho de
+  arquivos/downloads e aviso anti-`/mnt/user-data` só na `toolAvailabilityNote`;
+  "uma frase antes da fase de ferramentas" só em `EXECUTION_UX_RULES`; regras de
+  internet/pip/Docker/Android só em `SANDBOX_RULES` (o prompt do modo Programação
+  perdeu os bullets duplicados). Checklist final do `QUALITY_BAR` comprimido.
+- **Precedência de estilo**: o sufixo dos sliders de personalidade agora declara
+  que prevalece sobre as regras gerais de estilo (antes conflitava com
+  QUALITY_BAR/nudge de esforço sem critério).
+- **Sem pins de versão no prompt**: "Python 3.12" → "Python 3", "kotlinc 2.3.21"
+  → "kotlinc" (agent.js e tools.js). Pins divergem da imagem com o tempo e viram
+  mentira; versão real é conferida ao vivo pela `verifiedEnvironmentNote`/audit.
+
 ## 🧪 GIMP avaliado e REMOVIDO — inviável headless no sandbox (2026-07-19, PRs #37–#39)
 
 Instalamos o GIMP a pedido e testamos a fundo (13 baterias ao vivo). Conclusão:

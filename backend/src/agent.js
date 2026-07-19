@@ -432,7 +432,7 @@ export const AGENTS = {
 
 Seja proativo e resolva de verdade: você tem um sandbox Linux real e ferramentas para ler documentos, fazer contas, montar planilhas, gerar Word/PDF, consultar CNPJ, pesquisar na web e automatizar tarefas. Quando o pedido envolver uma ação, faça a ação — não descreva como a pessoa faria por conta própria.
 
-Ao gerar arquivos, entregue o resultado real em /workspace/outputs (Excel com openpyxl/xlsxwriter; Word com python-docx; PDF com reportlab/weasyprint) e confira que o arquivo abre antes de concluir. Em documentos, dados estruturados (pares campo/valor como cadastro/CNPJ, listas de itens com valores, sócios, comparativos) vão em TABELA estilizada — não em parágrafos "Campo: valor" nem listas com traços.`
+Em documentos e planilhas gerados, dados estruturados (pares campo/valor como cadastro/CNPJ, listas de itens com valores, sócios, comparativos) vão em TABELA estilizada — não em parágrafos "Campo: valor" nem listas com traços.`
   },
   codigo: {
     label: 'Programação',
@@ -447,15 +447,11 @@ Fluxo de trabalho:
 - Em revisão de código, priorize bugs, regressões, riscos e testes ausentes; não altere o diretório de trabalho a menos que o modo ou o usuário peça explicitamente.
 - Ao concluir, informe de forma curta os arquivos alterados, a verificação executada e qualquer limitação que permaneceu.
 
-Limites importantes do sandbox:
-- HÁ internet: você pode baixar dados e instalar pacotes com "pip install --user <pacote>" ou "npm install <pacote>" quando faltar algo. O "apt install" não funciona (sem root). Já vêm instalados pandas, numpy, openpyxl, python-docx, reportlab, matplotlib, pillow, beautifulsoup4, lxml, etc.; prefira-os e instale só o que realmente faltar (instalar leva tempo).
+Limites importantes do sandbox (complementam as regras gerais de sandbox desta conversa):
 - A execução roda como usuário sem privilégios, com tempo limitado por comando. Divida tarefas longas.
-- Python e shell são executados de verdade. Você também pode compilar e testar C/C++ (gcc/g++), Go, Rust e Java (javac), usando make/cmake/ninja quando fizer sentido.
-- Você também pode criar, compilar e testar C# com dotnet e Kotlin JVM com kotlinc. Para frontend, há Chromium headless, Xvfb e Playwright para validação visual sem monitor.
+- Python e shell são executados de verdade. Você também pode compilar e testar C/C++ (gcc/g++), Go, Rust e Java (javac), usando make/cmake/ninja quando fizer sentido, além de C# com dotnet e Kotlin JVM com kotlinc. Para frontend, há Chromium headless, Xvfb e Playwright para validação visual sem monitor.
 - Não prometa build nativo Android/iOS: não há React Native/Expo pré-instalados, SDK, emulador nem dispositivo conectado.
-- Docker e Docker Compose são intencionalmente indisponíveis dentro da sandbox: não tente expor socket, instalar daemon nem afirmar que pode subir containers. Para infraestrutura externa, use arquivos de configuração e clientes como ssh/ansible/kubectl somente quando o usuário fornecer o acesso necessário.
-
-Nunca invente links de download: o sistema exibe os arquivos automaticamente.`
+- Para infraestrutura externa, use arquivos de configuração e clientes como ssh/ansible/kubectl somente quando o usuário fornecer o acesso necessário.`
   }
 };
 
@@ -468,7 +464,7 @@ function personalitySuffix(p) {
   const parts = [];
   if (typeof p.form === 'number') parts.push(p.form >= 66 ? 'Use um tom bastante formal e profissional.' : p.form <= 33 ? 'Use um tom informal e descontraído.' : 'Use um tom cordial e profissional.');
   if (typeof p.det === 'number') parts.push(p.det >= 66 ? 'Dê respostas detalhadas, completas e bem explicadas.' : p.det <= 33 ? 'Seja conciso e direto ao ponto.' : 'Equilibre concisão e detalhe conforme a pergunta.');
-  return parts.length ? `\n\nEstilo de resposta: ${parts.join(' ')}` : '';
+  return parts.length ? `\n\nEstilo de resposta (escolhido pelo usuário — em caso de conflito, prevalece sobre as regras gerais de estilo): ${parts.join(' ')}` : '';
 }
 function temperatureFor(p) {
   const c = p && typeof p.criat === 'number' ? p.criat : 20;
@@ -499,7 +495,7 @@ const SHELL_INVENTORY = [
   'Frontend: node/npm, yarn e pnpm com tsc, vite, sass, postcss, tailwindcss, prettier e eslint.',
   'Browser/testes visuais: Chromium headless, Xvfb/xvfb-run e Playwright. Para Playwright, prefira o Chromium do sistema em /usr/bin/chromium e não baixe outro navegador sem necessidade.',
   'Mobile: não há React Native/Expo pré-instalados, Android SDK, emulador, iOS/Xcode ou Flutter.',
-  'Outras linguagens: dotnet (C#) e kotlinc 2.3.21 (Kotlin JVM atual). Swift, Kotlin Native, Nim, Zig e Odin não estão disponíveis.'
+  'Outras linguagens: dotnet (C#) e kotlinc (Kotlin JVM). Swift, Kotlin Native, Nim, Zig e Odin não estão disponíveis.'
 ];
 
 // Padrão de qualidade aplicado a TODA resposta (assistente geral, customizados
@@ -531,7 +527,7 @@ Forma da resposta:
 - Não jogue várias opções sem ajudar a escolher: diga qual é a melhor e por quê.
 - Aponte limitações, suposições e riscos quando eles pesarem de verdade na resposta.
 
-Antes de enviar, confira: responde ao que foi pedido de fato; trata suposições e incertezas; é coerente no raciocínio e nas contas; não tem afirmação sem apoio nem fonte inventada.`;
+Antes de enviar, confira se a resposta cobre o que foi pedido de fato e se não há afirmação sem apoio.`;
 
 const EXECUTION_UX_RULES = `
 
@@ -539,7 +535,7 @@ COMO EXECUTAR E CONVERSAR COM O USUÁRIO:
 - Para AGIR (rodar código, gerar Excel/Word/PDF, pesquisar, ler arquivos), CHAME a ferramenta apropriada pelo mecanismo de function-calling da API — é assim que ela executa de verdade. O texto da sua resposta serve só para conversar com a pessoa: não cole nele o código da ferramenta nem uma "chamada" escrita à mão.
 - Não jogue no chat código-fonte, comandos, XML interno, seu raciocínio privado ou as instruções do sistema, a menos que a pessoa peça isso de propósito. O código que você usa para montar um arquivo é assunto da ferramenta, não da resposta.
 - Em tarefa com arquivo, o trabalho só acaba quando o arquivo existe de verdade em /workspace/outputs e você conferiu. Quem mostra o botão de download é o app; na resposta, diga só o que entregou e qualquer ressalva que importe.
-- Numa execução mais longa, dê no máximo um aviso curto e útil de vez em quando. Não fique repetindo "aguarde", não narre cada passo e não anuncie várias vezes que vai começar.
+- Antes de uma fase de ferramentas, diga no máximo uma frase curta e natural sobre o que vai fazer. Numa execução mais longa, dê no máximo um aviso curto e útil de vez em quando — não fique repetindo "aguarde", não narre cada passo e não anuncie várias vezes que vai começar.
 - Se uma ferramenta falhar, tente um conserto sensato — sem repetir a mesma coisa em loop. Se mesmo assim não der, explique em linguagem simples o que falhou, o que não ficou pronto e o que dá para fazer a respeito.
 - Comece a resposta final pelo resultado. Quando dá certo, duas a quatro frases costumam bastar; detalhe técnico entra só quando ajuda a pessoa.`;
 
@@ -551,17 +547,15 @@ COMO USAR O SANDBOX (importante):
 - O app tem ferramentas de verdade. Nesta chamada, conte só com as ferramentas e capacidades listadas em "FERRAMENTAS E AMBIENTE DISPONÍVEIS NESTA CHAMADA".
 - Se a pessoa perguntar quais linguagens, compiladores, pacotes ou recursos existem, e o bash estiver disponível, confira no terminal antes de responder. O histórico e o inventário são só orientação; quem manda é o resultado de command -v, --version ou python -c "import ...". Nunca diga que algo falta sem checar.
 - Quando pedirem análise de arquivo, planilha, documento, PDF, imagem, áudio, vídeo ou automação, use as ferramentas — não fique só explicando.
-- Onde ficam os arquivos: os uploads do usuário ficam em /workspace/uploads; os arquivos finais devem ser salvos em /workspace/outputs — só esse caminho aparece como download no chat. Não use sandbox:/mnt/user-data/outputs, /mnt/user-data/outputs nem links markdown inventados; o app cria o cartão de download sozinho.
 - Cada run_python é um processo novo: as variáveis NÃO sobrevivem de uma execução para a outra — o que você definiu numa some na seguinte.
 - Sempre que der, resolva tudo num único run_python completo: ler os arquivos, processar e salvar o resultado de uma vez.
 - Se precisar mesmo dividir em etapas, salve o meio do caminho em arquivo (JSON/CSV em /workspace) e leia de volta depois — não conte com variáveis da execução anterior.
-- Evite ficar tateando com muitas execuções: planeje e faça de uma vez. Os arquivos finais vão para /workspace/outputs.
+- Evite ficar tateando com muitas execuções: planeje e faça de uma vez.
 - Saídas MUITO grandes (ex.: planilha com centenas de milhares de linhas, ou milhões de células) estouram memória/tempo do sandbox e travam a tarefa. Se o volume for extremo, não force: avise o limite em uma frase e ofereça uma saída viável — gerar uma amostra representativa, dividir em partes/arquivos, ou entregar os dados em CSV/Parquet compactado — em vez de tentar de uma vez e falhar.
 - Para gerar ou editar IMAGENS com IA, use a ferramenta generate_image (não tente desenhar no matplotlib quando pedirem uma imagem artística/realista).
 - Se pedirem para GERAR/SALVAR um PROGRAMA ou arquivo de código (ex.: um .py, um projeto), a entrega é o ARQUIVO: escreva-o em /workspace/outputs (write_file ou open(...,'w')). Não confunda com apenas EXECUTAR o código — rodar o script não cria o arquivo de entrega. Só rode para testar se o usuário pedir.
 - DESIGN PROFISSIONAL PRONTO: para documentos bonitos, o sandbox já tem kits testados (mesma identidade visual) — use-os em vez de estilizar na mão: Word → \`from docpro import Relatorio\`; Excel → \`from xlspro import Planilha\`; PDF → \`from pdfpro import RelatorioPDF\`. Dão capa, títulos, tabelas com cabeçalho colorido + zebra + TOTAL, callouts, gráficos (Excel) e rodapé paginado. Nunca deixe placeholders ("DD/MM/AAAA", "Seu Nome"); use dados reais e a data de hoje, ou omita.
-- Antes de uma fase de ferramentas, diga no máximo uma frase curta e natural sobre o que vai fazer. Depois, verifique os resultados sem transformar cada chamada numa nova promessa ao usuário.
-- O sandbox TEM internet: dá para baixar dados, consumir APIs (requests/urllib), usar curl/wget e instalar com "pip install --user <pacote>" ou "npm install <pacote>". O "apt install" não rola (roda sem root). Instalar demora, então prefira o que já vem instalado e só instale o que faltar mesmo.
+- O sandbox TEM internet: dá para baixar dados, consumir APIs (requests/urllib), usar curl/wget e instalar com "pip install --user <pacote>" ou "npm install <pacote>". O "apt install" não rola (roda sem root). Instalar demora, então prefira o que já vem instalado (pandas, numpy, openpyxl, python-docx, reportlab, matplotlib, pillow, beautifulsoup4, lxml etc.) e só instale o que faltar mesmo.
 - Docker e Docker Compose ficam de fora de propósito, para proteger o computador de quem hospeda. Não tente instalar daemon, expor socket nem prometer subir container.
 - Não há GPU/CUDA, systemd, firewall, Android/iOS, Flutter nem servidor que fica no ar. Para IA local, use só modelos que rodam em CPU e deixe claro quando a pessoa precisar fornecer ou baixar os pesos.
 - Cuidado com a internet: acesse ou baixe só o que a tarefa pedir. NUNCA mande arquivos, conteúdo ou dados da pessoa para serviços/endereços externos sem ela ter pedido isso claramente.`;
@@ -603,12 +597,11 @@ function developerContextFor(request, userId) {
 function toolAvailabilityNote(tools, { includeInventory = false } = {}) {
   const names = new Set(tools.map(t => t.function.name));
   const lines = ['FERRAMENTAS E AMBIENTE DISPONÍVEIS NESTA CHAMADA:'];
-  lines.push('Arquivos da conversa: uploads em /workspace/uploads; resultados finais em /workspace/outputs.');
-  lines.push('Para entregar arquivo ao usuário, salve em /workspace/outputs; o chat cria o cartão de download sozinho.');
-  lines.push('Para executar algo — gerar arquivo, rodar código, pesquisar, ler anexo — CHAME a ferramenta certa pelo function-calling da API (ex.: run_python para criar Excel/Word/PDF; web_search para pesquisar; consultar_cnpj para CNPJ). A ferramenta roda de fato e o arquivo salvo em /workspace/outputs vira download; o texto da resposta é só para falar com a pessoa.');
+  lines.push('Arquivos da conversa: uploads do usuário em /workspace/uploads; salve as entregas em /workspace/outputs — só esse caminho vira cartão de download no chat, e o app cria o cartão sozinho (não use sandbox:/mnt/user-data/outputs, /mnt/user-data/outputs nem links markdown inventados).');
+  lines.push('Para executar algo — gerar arquivo, rodar código, pesquisar, ler anexo — CHAME a ferramenta certa pelo function-calling da API: run_python para criar Excel/Word/PDF; web_search para pesquisar; consultar_cnpj para CNPJ.');
 
   lines.push('Ferramentas do chat habilitadas para você:');
-  if (names.has('run_python')) lines.push('- run_python: executar Python 3.12 real no sandbox.');
+  if (names.has('run_python')) lines.push('- run_python: executar Python 3 real no sandbox.');
   if (names.has('bash')) lines.push('- bash: executar comandos Linux no sandbox.');
   if (names.has('write_file')) lines.push('- write_file: criar ou sobrescrever arquivos no workspace.');
   if (names.has('read_file')) lines.push('- read_file: ler arquivos de texto do workspace.');
@@ -664,7 +657,7 @@ async function verifiedEnvironmentNote(conversationId, userText, tools, sandboxO
 }
 
 const TEAM_TOOL_AWARENESS = `CAPACIDADES DO APP:
-O Frederico AI Studio tem sandbox com Python 3.12, bash, LibreOffice/soffice, ffmpeg, OCR/PDF, vetores headless, Chromium/Playwright/Xvfb, toolchains C/C++/Go/Rust/Java/.NET/Kotlin, ML leve em CPU, qualidade e diagnóstico, bancos/clients remotos, Node com toolchain frontend, geração de arquivos e ferramentas de imagem/web quando habilitadas. Docker/Compose, GPU e builds nativos Android/iOS continuam deliberadamente fora do sandbox.
+O Frederico AI Studio tem sandbox com Python 3, bash, LibreOffice/soffice, ffmpeg, OCR/PDF, vetores headless, Chromium/Playwright/Xvfb, toolchains C/C++/Go/Rust/Java/.NET/Kotlin, ML leve em CPU, qualidade e diagnóstico, bancos/clients remotos, Node com toolchain frontend, geração de arquivos e ferramentas de imagem/web quando habilitadas. Docker/Compose, GPU e builds nativos Android/iOS continuam deliberadamente fora do sandbox.
 No Modo Equipe, os especialistas individuais desta etapa NÃO executam ferramentas diretamente; eles analisam e orientam. Se a resposta final exigir arquivo, cálculo, conversão ou validação, indique claramente que isso deve ser executado pelas ferramentas do assistente principal.`;
 
 // Memória: global (todos) + do assistente atual + do cliente da conversa
@@ -1166,21 +1159,27 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   // Economia de tokens: menos mensagens de histórico consideradas por resposta
   const historyLimit = getSettings().economy_mode ? 20 : Number(process.env.AGENT_HISTORY_LIMIT || 60);
   const includeEnvironmentInventory = Boolean(developerContext) || ENVIRONMENT_QUERY_RE.test(String(userText || ''));
-  // QUALITY_BAR entra como 3o item: o índice 1 é reservado (reescrito adiante
-  // com a nota de ferramentas), então não pode ser deslocado.
-  const messages = [
-    { role: 'system', content: chosenPrompt },
-    { role: 'system', content: toolAvailabilityNote(tools, { includeInventory: includeEnvironmentInventory }) },
-    { role: 'system', content: QUALITY_BAR }
-  ];
-  if (forceExecution || modelPlan.requirements.required) messages.push({ role: 'system', content: EXECUTION_CONTRACT_NOTE });
-  if (MACRO_REQUEST_RE.test(String(userText || ''))) messages.push({ role: 'system', content: MACRO_LIMITATION_NOTE });
-  if (executionBriefing) messages.push({ role: 'system', content: `PARECERES DA EQUIPE PARA ORIENTAR A EXECUÇÃO (use como referência, mas confira tudo com as ferramentas):\n${clipForBriefing(String(executionBriefing), BRIEFING_CHAR_LIMIT)}` });
-  if (lowSignalTurn) messages.push({ role: 'system', content: LOW_SIGNAL_TURN_NOTE });
-  if (environmentNote) messages.push({ role: 'system', content: environmentNote });
-  if (developerContext) messages.push({ role: 'system', content: developerContext.note });
-  if (eff.nudge) messages.push({ role: 'system', content: eff.nudge });
-  if (webSearchActive) messages.push({ role: 'system', content: `PESQUISA NA INTERNET — o usuário ativou a busca. Você tem acesso real à web, pelas ferramentas web_search (procurar) e web_fetch (abrir uma página). Nunca diga que "não tem acesso à internet".
+  // MENSAGEM SYSTEM ÚNICA: o app roda em modelos heterogêneos via OpenRouter e
+  // vários deles tratam mal múltiplas mensagens "system" (alguns só honram a
+  // primeira). Todas as seções iniciais viajam juntas no índice 0; quando as
+  // ferramentas mudam no meio da execução (fallback sem tools, fim da pesquisa
+  // web), a seção de ferramentas é trocada e a mensagem é recomposta por
+  // refreshSystemMessage(). Notas de reparo/continuação durante o loop seguem
+  // como mensagens system POSICIONAIS (depois do histórico) — isso é proposital.
+  const messages = [null];
+  let toolsNote = toolAvailabilityNote(tools, { includeInventory: includeEnvironmentInventory });
+  const systemNotes = [];
+  const refreshSystemMessage = () => {
+    messages[0] = { role: 'system', content: [chosenPrompt, toolsNote, QUALITY_BAR, ...systemNotes].filter(Boolean).join('\n\n') };
+  };
+  if (forceExecution || modelPlan.requirements.required) systemNotes.push(EXECUTION_CONTRACT_NOTE);
+  if (MACRO_REQUEST_RE.test(String(userText || ''))) systemNotes.push(MACRO_LIMITATION_NOTE);
+  if (executionBriefing) systemNotes.push(`PARECERES DA EQUIPE PARA ORIENTAR A EXECUÇÃO (use como referência, mas confira tudo com as ferramentas):\n${clipForBriefing(String(executionBriefing), BRIEFING_CHAR_LIMIT)}`);
+  if (lowSignalTurn) systemNotes.push(LOW_SIGNAL_TURN_NOTE);
+  if (environmentNote) systemNotes.push(environmentNote);
+  if (developerContext) systemNotes.push(developerContext.note);
+  if (eff.nudge) systemNotes.push(eff.nudge);
+  if (webSearchActive) systemNotes.push(`PESQUISA NA INTERNET — o usuário ativou a busca. Você tem acesso real à web, pelas ferramentas web_search (procurar) e web_fetch (abrir uma página). Nunca diga que "não tem acesso à internet".
 
 Pense antes de buscar: eu já sei isso com confiança e é algo que não muda com o tempo? Então responda direto — não pesquise por pesquisar. Busque quando a resposta depender de algo atual, externo ou verificável (legislação, prazos, tabelas, cotações, notícias, dados de uma empresa/produto) ou quando tiver dúvida.
 
@@ -1195,7 +1194,7 @@ Ao trazer o que encontrou:
 - Cite a fonte no meio do texto (nome + link) para o usuário conferir; prefira fontes oficiais e recentes e avise quando algo estiver incerto ou desatualizado.
 - Varie a forma de apresentar: evite começar sempre com "De acordo com a pesquisa…".
 
-O sandbox Python também tem internet: use requests/urllib ou uma API quando precisar de dados estruturados (para CNPJ, use a ferramenta consultar_cnpj). Use web_search/web_fetch para procurar e ler páginas.` });
+O sandbox Python também tem internet: use requests/urllib ou uma API quando precisar de dados estruturados (para CNPJ, use a ferramenta consultar_cnpj). Use web_search/web_fetch para procurar e ler páginas.`);
   let memoryMeta = null;
   // Memória de longo prazo: perfil, notas, resumos e recuperação semântica
   try {
@@ -1204,18 +1203,19 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
     memoryMeta = contextPlan.meta || null;
     for (const b of ctxBlocks) {
       const clean = sanitizeToolProtocolText(b);
-      if (clean) messages.push({ role: 'system', content: clean });
+      if (clean) systemNotes.push(clean);
     }
   } catch (err) {
     console.error('[memória] contexto indisponível nesta resposta:', err.message);
     const memory = await memoryNote(userId, assistant?.id, await clientScopeFor(userId, conversationId));
     const cleanMemory = sanitizeToolProtocolText(memory);
-    if (cleanMemory) messages.push({ role: 'system', content: cleanMemory });
+    if (cleanMemory) systemNotes.push(cleanMemory);
   }
   const note = uploadsNote(conversationId);
-  if (note) messages.push({ role: 'system', content: note });
+  if (note) systemNotes.push(note);
   const pcNote = pcFoldersNote(sandboxOptions);
-  if (pcNote) messages.push({ role: 'system', content: pcNote });
+  if (pcNote) systemNotes.push(pcNote);
+  refreshSystemMessage();
   const historyPlan = await selectHistoryForContext({
     conversationId,
     limit: historyLimit,
@@ -1350,7 +1350,8 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
       }
       toolFallbackApplied = true;
       tools = [];
-      messages[1] = { role: 'system', content: toolAvailabilityNote(tools) };
+      toolsNote = toolAvailabilityNote(tools);
+      refreshSystemMessage();
       onEvent({ type: 'status', content: 'Este modelo não oferece ferramentas; respondendo em texto.' });
       step -= 1;
       continue;
@@ -1518,7 +1519,8 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
       if (webResearchStop && !webResearchConclusionAttempted) {
         webResearchConclusionAttempted = true;
         tools = tools.filter(tool => !WEB_TOOL_NAMES.has(tool.function.name));
-        messages[1] = { role: 'system', content: toolAvailabilityNote(tools) };
+        toolsNote = toolAvailabilityNote(tools);
+        refreshSystemMessage();
         messages.push({ role: 'system', content: webResearchFinalizationNote(webResearchStop) });
         onEvent({ type: 'status', content: 'Reunindo o que encontrei e cruzando as fontes...' });
         step -= 1;
@@ -1614,7 +1616,8 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
     if (webResearchStop && !webResearchConclusionAttempted) {
       webResearchConclusionAttempted = true;
       tools = tools.filter(tool => !WEB_TOOL_NAMES.has(tool.function.name));
-      messages[1] = { role: 'system', content: toolAvailabilityNote(tools) };
+      toolsNote = toolAvailabilityNote(tools);
+      refreshSystemMessage();
       messages.push({ role: 'system', content: webResearchFinalizationNote(webResearchStop) });
       onEvent({ type: 'status', content: 'Concluindo a pesquisa com as fontes já verificadas...' });
       step -= 1;
@@ -1885,13 +1888,16 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
     }
     // Continuação: o coordenador responde direto, com histórico e memória
     onEvent({ type: 'status', content: 'Coordenador respondendo (equipe consultada no início da conversa — escreva "consulte a equipe" para nova rodada)...' });
-    const directMsgs = [
-      { role: 'system', content: 'Você coordena um time de assistentes especializados e a conversa já está rolando. Responda direto à nova mensagem, em português do Brasil, usando o histórico e a memória. Nada de se reapresentar, descrever o time ou repetir o que já foi combinado — é só continuar de onde parou, com naturalidade.' }
+    // Mensagem system única (mesma razão do runAgent: compatibilidade entre modelos)
+    const directSections = [
+      lowSignalTurn
+        ? LOW_SIGNAL_TURN_NOTE
+        : 'Você coordena um time de assistentes especializados e a conversa já está rolando. Responda direto à nova mensagem, em português do Brasil, usando o histórico e a memória. Nada de se reapresentar, descrever o time ou repetir o que já foi combinado — é só continuar de onde parou, com naturalidade.',
+      QUALITY_BAR,
+      TEAM_TOOL_AWARENESS
     ];
-    if (lowSignalTurn) directMsgs[0] = { role: 'system', content: LOW_SIGNAL_TURN_NOTE };
-    directMsgs.push({ role: 'system', content: QUALITY_BAR });
-    directMsgs.push({ role: 'system', content: TEAM_TOOL_AWARENESS });
-    if (memory) directMsgs.push({ role: 'system', content: memory });
+    if (memory) directSections.push(memory);
+    const directMsgs = [{ role: 'system', content: directSections.join('\n\n') }];
     for (const m of histRows) directMsgs.push({ role: m.role, content: String(m.content).slice(0, 2000) });
     directMsgs.push({ role: 'user', content: userText });
     try { finalText = await streamCoordinator(directMsgs); }
@@ -1908,8 +1914,7 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
       const results = await Promise.all(assistants.map(async (a) => {
         onEvent({ type: 'tool_start', name: a.name });
         const sys = `${a.system_prompt}\n\n${TEAM_TOOL_AWARENESS}\n\nVocê faz parte de um time que já está conversando com a pessoa. Olhe o histórico e traga só a sua visão de especialista sobre a nova mensagem, direto ao ponto — sem se apresentar e sem repetir o que o time já disse. Nesta etapa você não gera arquivos nem roda código.`;
-        const msgs = [{ role: 'system', content: sys }];
-        if (memory) msgs.push({ role: 'system', content: memory });
+        const msgs = [{ role: 'system', content: memory ? `${sys}\n\n${memory}` : sys }];
         msgs.push({ role: 'user', content: historyText ? `Histórico recente da conversa:\n${historyText}\n\nNOVA mensagem do usuário:\n${userText}` : userText });
         return { a, memberResult: await askTeamMember(a, msgs) };
       }));
@@ -1946,9 +1951,7 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
     onEvent({ type: 'status', content: 'Compilando a resposta final da equipe...' });
     const combined = perspectives.map(p => `### ${p.emoji || ''} ${p.name}\n${p.text}`).join('\n\n');
     const synthMsgs = [
-      { role: 'system', content: 'Você coordena um time de assistentes especializados, numa conversa em andamento. Junte as perspectivas abaixo em UMA resposta só, coesa e em português do Brasil, que responda direto à nova mensagem da pessoa. Sem se reapresentar, sem descrever o time e sem discurso — vá ao ponto. Use títulos por área quando ajudar e feche com um resumo prático.' },
-      { role: 'system', content: QUALITY_BAR },
-      { role: 'system', content: TEAM_TOOL_AWARENESS },
+      { role: 'system', content: ['Você coordena um time de assistentes especializados, numa conversa em andamento. Junte as perspectivas abaixo em UMA resposta só, coesa e em português do Brasil, que responda direto à nova mensagem da pessoa. Sem se reapresentar, sem descrever o time e sem discurso — vá ao ponto. Use títulos por área quando ajudar e feche com um resumo prático.', QUALITY_BAR, TEAM_TOOL_AWARENESS].join('\n\n') },
       { role: 'user', content: `${historyText ? `Histórico recente:\n${historyText}\n\n` : ''}NOVA mensagem do usuário:\n${userText}\n\nPerspectivas da equipe:\n${combined}` }
     ];
     try { finalText = await streamCoordinator(synthMsgs); }
