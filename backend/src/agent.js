@@ -783,7 +783,11 @@ def recalc_took(orig, calc):
     for ws in calc.worksheets:
         for row in ws.iter_rows():
             for c in row:
-                if (ws.title, c.coordinate) in keys and isinstance(c.value, (int, float)):
+                # Qualquer valor em cache (número OU string de erro tipo #DIV/0!)
+                # prova que o recálculo aconteceu. Antes exigia só numérico, o
+                # que descartava o recálculo quando TODAS as fórmulas viravam
+                # erro — exatamente o caso que mais precisamos detectar.
+                if (ws.title, c.coordinate) in keys and c.value is not None:
                     return True
     return False
 
