@@ -1,5 +1,78 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 🎨 Kits de design de documentos + endurecimento por QA ao vivo (2026-07-19, PRs #24–#33)
+
+Frente para elevar a QUALIDADE e a CONFIABILIDADE dos documentos gerados
+(Word/Excel/PDF), toda verificada AO VIVO na produção (login real, assistente
+"Documentos profissionais", modelo real, arquivos baixados e inspeccionados
+byte a byte).
+
+### Três kits de design prontos no sandbox (mesma identidade visual)
+Instalados na imagem do sandbox (`sandbox/Dockerfile` copia para
+`site-packages`), evitam o modelo reinventar o estilo na mão:
+- **`docpro.py`** → `from docpro import Relatorio` (Word): capa, títulos com barra
+  lateral, tabelas sem bordas verticais com cabeçalho colorido + zebra, callouts,
+  KPIs, rodapé "Página X de Y" e conversão a PDF.
+- **`xlspro.py`** → `from xlspro import Planilha` (Excel): tabelas com cabeçalho
+  `1A3C6E` + zebra, formatos R$/%/milhar, congelar cabeçalho, linha TOTAL,
+  múltiplas abas e gráficos (barras/linhas/pizza).
+- **`pdfpro.py`** → `from pdfpro import RelatorioPDF` (PDF, reportlab): capa em
+  página própria, tabelas estilizadas, callouts e rodapé "Página X de Y".
+- Paleta comum: `1A3C6E`/`2E75B6`/`262626`/`595959`/`F2F6FA`/`D9E2EC`.
+
+### Prompt do assistente "Documentos profissionais" (DOCPRO_PROMPT, hoje v9)
+Versão migra automática por usuário (`seedDocProAssistant`: LEGACY/V2…V8 → atual,
+sem tocar em prompts personalizados). Evolução:
+- **v6 (#28):** ensina os TRÊS kits com exemplos concretos (antes só Word) — o
+  modelo importava xlspro/pdfpro mas escrevia tabela com openpyxl cru.
+- **v7 (#29):** exige preencher TODAS as colunas, calcular colunas derivadas
+  (Total = Qtd×Preço) e incluir linha de TOTAL geral; fórmulas apontando a célula
+  real.
+- **v8 (#30):** gráfico de pizza/participação em formato LONGO (categoria por
+  linha), não coluna de totais por período.
+- **v9 (#33):** documento SÓBRIO/registrável (contrato/ata/JUCETINS) sai
+  JUSTIFICADO (`WD_ALIGN_PARAGRAPH.JUSTIFY`), python-docx puro sem cor; ZERO
+  PLACEHOLDER passa a proibir também preenchimento geográfico genérico
+  ("Cidade/Estado", "Rua Nova") — usar local concreto (ex.: Palmas/TO).
+
+### Validação (`validateOutputs`/`check_charts` em `agent.js`)
+- **Gráfico com série de valores vazia (#29):** resolve as refs dentro de
+  `<val>` e reprova (`ok:false`) quando o intervalo plotado não tem número —
+  pega a coluna declarada no cabeçalho mas deixada vazia. Não gera falso
+  positivo em categorias de texto.
+
+### Kits à prova de crash (#31) — o bug mais grave desta frente
+Uma linha com nº de valores ≠ cabeçalho estourava `IndexError` no kit e **matava
+a tarefa inteira → zero arquivo entregue**. Corrigido nos três:
+- `xlspro.tabela`: célula além do cabeçalho é escrita sem formato, sem crash.
+- `docpro.tabela` / `pdfpro.tabela`: normalizam cada linha para a largura do
+  cabeçalho (completam curtas, cortam extras) — python-docx e reportlab exigem
+  tabela retangular.
+- `xlspro.grafico_*`: erro claro quando o 2º arg não é o dict de `p.tabela()`.
+
+### Gráficos excluem a linha TOTAL (#32)
+`_grafico` incluía a linha "Total" como fatia/barra gigante (= soma das demais).
+`tabela()` devolve `info["total"]` e `_grafico` exclui essa última linha.
+
+### Provas ao vivo (produção, após cada deploy)
+- **Excel pesado** (12 meses, 3 abas, DRE, 3 gráficos): 0 falhas; participação
+  soma 100%; DRE com margem coerente; faturamento anual bate; pizza por produto;
+  gráficos sem a linha Total.
+- **Word longo:** 7 tabelas estilizadas, callouts info/alerta/crítico, rodapé
+  paginado, sem placeholder.
+- **PDF:** capa própria, tabela com TOTAL somado, callout, "Página X de Y".
+- **Ata registrável (sóbria):** zero cor, estrutura jurídica completa (v9 fecha
+  justificação e placeholder geográfico).
+
+### Também nesta frente (rounds anteriores da mesma branch)
+- **#23:** geração de arquivo após pesquisa web (causa-raiz, todos os modelos):
+  `tools=[]` removia o `run_python` depois de um web_search; passou a filtrar só
+  as ferramentas web (`WEB_TOOL_NAMES`).
+- **#24:** documentos com tabelas (regra forte) + resultado não se perde ao sair
+  da página (backend continua e salva; frontend faz `recoverPendingReply`).
+- **#25/#26/#27:** design profissional de Word e nascimento dos kits docpro,
+  depois xlspro/pdfpro.
+
 ## 🛡️ Endurecimento de QA — geração de documentos, contexto longo e multi-modelo (2026-07-19)
 
 Auditoria de caça a bugs (relatório em `docs/RELATORIO_BUGS_QA.md`) seguida da
