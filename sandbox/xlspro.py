@@ -95,7 +95,11 @@ class Planilha:
                     if zebra:
                         c.fill = zebra_fill
                     c.border = Border(bottom=thin)
-                col_nome = cabecalho[j - 1]
+                # Robustez: uma linha pode vir com MAIS valores que o cabeçalho
+                # (erro comum do modelo). Nesse caso a célula extra é escrita sem
+                # formato especial — nunca deixamos um IndexError derrubar a
+                # geração inteira do arquivo.
+                col_nome = cabecalho[j - 1] if j - 1 < len(cabecalho) else None
                 if col_nome in moeda:
                     c.number_format = MOEDA_FMT
                 elif col_nome in pct:
@@ -117,7 +121,17 @@ class Planilha:
                 "cols": list(cabecalho)}
 
     def _idx(self, info, nome):
-        return info["cols"].index(nome) + 1
+        # Mensagem clara quando o 2º argumento do gráfico não é o dict retornado
+        # por p.tabela(...) — evita um TypeError opaco e ajuda a corrigir.
+        if not isinstance(info, dict) or "cols" not in info:
+            raise ValueError(
+                "grafico_*: passe como 2º argumento o dict retornado por "
+                "p.tabela(...) (o 'info'), não uma lista/tabela crua.")
+        cols = info["cols"]
+        if nome not in cols:
+            raise ValueError(
+                "grafico_*: coluna '%s' não existe no cabecalho %s" % (nome, cols))
+        return cols.index(nome) + 1
 
     def grafico_barras(self, ws, info, categoria, valor, titulo="", anchor=None):
         self._grafico(BarChart(), ws, info, categoria, valor, titulo, anchor)
