@@ -81,3 +81,20 @@ test('withoutSystemNotices remove o aviso de arquivo ausente', () => {
   const withNotice = body + '\n\n**O arquivo não foi gerado nesta tentativa.** Nenhum download foi criado. Use **Reenviar** para tentar novamente; se o problema persistir, escolha outro modelo marcado com **Ferramentas**.';
   assert.equal(withoutSystemNotices(withNotice), body);
 });
+
+// DOC-KIT: o assistente "Documentos profissionais" ensina os TRÊS kits de
+// design (Word/Excel/PDF), não só o docpro. Sem isso o modelo importa o
+// xlspro mas escreve a tabela com openpyxl cru (sem cabeçalho colorido/zebra).
+test('DOCPRO_PROMPT ensina docpro, xlspro e pdfpro', async () => {
+  const fs = await import('node:fs');
+  const src = fs.readFileSync(new URL('./server.js', import.meta.url), 'utf8');
+  const m = src.match(/const DOCPRO_PROMPT = `([\s\S]*?)`;/);
+  assert.ok(m, 'DOCPRO_PROMPT deveria existir');
+  const prompt = m[1];
+  assert.match(prompt, /from docpro import Relatorio/, 'deve ensinar o kit Word');
+  assert.match(prompt, /from xlspro import Planilha/, 'deve ensinar o kit Excel');
+  assert.match(prompt, /from pdfpro import RelatorioPDF/, 'deve ensinar o kit PDF');
+  assert.match(prompt, /p\.tabela\(/, 'deve mostrar p.tabela para Excel estilizado');
+  assert.match(prompt, /openpyxl cru/i, 'deve proibir estilizar célula na mão');
+  assert.match(prompt, /FÓRMULAS DO EXCEL/i, 'deve ter regra de fórmulas corretas');
+});
