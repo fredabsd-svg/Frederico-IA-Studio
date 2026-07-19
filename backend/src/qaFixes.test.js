@@ -98,4 +98,5 @@ test('DOCPRO_PROMPT ensina docpro, xlspro e pdfpro', async () => {
   assert.match(prompt, /openpyxl cru/i, 'deve proibir estilizar célula na mão');
   assert.match(prompt, /FÓRMULAS DO EXCEL/i, 'deve ter regra de fórmulas corretas');
   assert.match(prompt, /PREENCHA TODAS AS COLUNAS/, 'deve exigir linhas completas / coluna Total preenchida');
+  assert.match(prompt, /GRÁFICO DE PIZZA\/participação/, 'deve orientar pizza por categoria (formato longo)');
 });
