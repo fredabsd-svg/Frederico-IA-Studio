@@ -141,6 +141,13 @@ export function sanitizeToolProtocolText(value) {
     .trim();
 }
 
+// O parâmetro `enabled` NÃO deve desligar a supressão do protocolo. Antes,
+// `enabled=false` (usado no modo SEM ferramentas) fazia o guard repassar TUDO —
+// então, quando um modelo caía para o modo sem-tools mas mesmo assim escrevia
+// `<tool_call><function=run_python>...` como texto, o protocolo e o código
+// python vazavam inteiros no chat (bug real em produção na consulta de CNPJ).
+// A supressão do protocolo agora é SEMPRE ativa: texto de chamada de ferramenta
+// nunca deve ser mostrado ao usuário, tenha ele ferramentas ou não.
 export function createToolProtocolStreamGuard(enabled = true) {
   let pending = '';
   let suppressed = false;
@@ -148,7 +155,6 @@ export function createToolProtocolStreamGuard(enabled = true) {
   return {
     push(chunk) {
       const text = String(chunk || '');
-      if (!enabled) return text;
       if (suppressed) return '';
       pending += text;
 
@@ -167,11 +173,7 @@ export function createToolProtocolStreamGuard(enabled = true) {
       return visible;
     },
     finish() {
-      if (!enabled || suppressed) {
-        const visible = enabled ? '' : pending;
-        pending = '';
-        return visible;
-      }
+      if (suppressed) { pending = ''; return ''; }
       const start = toolProtocolStartIndex(pending);
       const visible = start >= 0
         ? cleanVisiblePrefix(pending.slice(0, start))

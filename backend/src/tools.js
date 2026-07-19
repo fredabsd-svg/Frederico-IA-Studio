@@ -400,11 +400,32 @@ async function generateImage(ws, args, options = {}) {
 }
 
 // Rede ligada: curl/wget e instalações (pip/npm) são permitidos. Continuam
-// bloqueados apenas comandos destrutivos ou que tentam escalar privilégios.
-const blocked = ['rm -rf /', 'mkfs', ':(){', 'shutdown', 'reboot', 'docker ', 'sudo ', 'su '];
+// bloqueados apenas comandos destrutivos ou que tentam escalar privilégio.
+// Isto é defesa em profundidade — a fronteira real de segurança é o container
+// (CapDrop ALL, no-new-privileges, uid 1000, mounts limitados). Mesmo assim,
+// bloquear os padrões abaixo evita que código gerado apague os arquivos REAIS
+// do usuário montados em /mnt/pc. Antes casava só substrings cruas, então
+// "rm  -rf" (espaços duplos) e "find / -delete" escapavam.
+const GUARD_PATTERNS = [
+  { re: /\brm\b[^|;&]*-[a-z]*r[a-z]*f|\brm\b[^|;&]*-[a-z]*f[a-z]*r/, extra: /(\s|^)(\/|~|\/\*|\$home)(\s|\/|\*|$)/, msg: 'rm -rf em caminho de sistema' },
+  { re: /--no-preserve-root/, msg: 'rm --no-preserve-root' },
+  { re: /\bmkfs\b|\bmke2fs\b/, msg: 'formatar sistema de arquivos' },
+  { re: /:\s*\(\s*\)\s*\{[^}]*\|[^}]*&[^}]*\}|:\(\)\{.*:\|:/, msg: 'fork bomb' },
+  { re: /(^|[\s;&|])(shutdown|reboot|halt|poweroff)\b|\binit\s+0\b/, msg: 'desligar/reiniciar o host' },
+  { re: /\bdd\b[^|;&]*\bof=\/dev\/(sd|nvme|hd|vd|mmc)/, msg: 'dd sobre dispositivo de bloco' },
+  { re: />\s*\/dev\/(sd|nvme|hd|vd|mmc)/, msg: 'escrita direta em disco' },
+  { re: /\bfind\b\s+(\/|~|\/mnt|\/home|\/etc|\/usr|\/var)[^|;&]*\s-delete\b/, msg: 'find -delete em caminho de sistema' },
+  { re: /(^|[\s;&|])(sudo|doas)\s|(^|[\s;&|])su\s+-/, msg: 'escalonamento de privilégio' },
+  { re: /(^|[\s;&|])docker(\s|$)|docker-compose/, msg: 'docker' },
+  { re: /\bchmod\s+-r[^|;&]*\s\/(\s|$)|\bchown\s+-r[^|;&]*\s\/(\s|$)/, msg: 'chmod/chown recursivo na raiz' }
+];
 function guardCommand(command) {
-  const lower = String(command).toLowerCase();
-  for (const bad of blocked) if (lower.includes(bad)) throw new Error(`Comando bloqueado: ${bad}`);
+  const norm = String(command || '').toLowerCase().replace(/[ \t]+/g, ' ').trim();
+  for (const p of GUARD_PATTERNS) {
+    if (!p.re.test(norm)) continue;
+    if (p.extra && !p.extra.test(norm)) continue;
+    throw new Error(`Comando bloqueado (${p.msg}). O sandbox é isolado e sem privilégios; esta operação é considerada perigosa e não será executada.`);
+  }
 }
 
 // O modelo enxerga /workspace e /mnt/user-data dentro da sandbox, enquanto
@@ -476,7 +497,7 @@ export async function runTool(conversationId, name, args = {}, sandboxOptions = 
     fs.writeFileSync(script, args.code || '', 'utf8');
     try { fs.chownSync(script, 1000, 1000); } catch {}
     try {
-      const result = await execInSandbox(conversationId, `python ${path.basename(script)}`, undefined, { ...sandboxOptions, signal });
+      const result = await execInSandbox(conversationId, `python ${path.basename(script)}`, runtime.timeoutMs, { ...sandboxOptions, signal });
       return JSON.stringify(result);
     } finally {
       try { fs.unlinkSync(script); } catch {}
@@ -484,7 +505,7 @@ export async function runTool(conversationId, name, args = {}, sandboxOptions = 
   }
   if (name === 'bash') {
     guardCommand(args.command || '');
-    return JSON.stringify(await execInSandbox(conversationId, args.command, undefined, { ...sandboxOptions, signal }));
+    return JSON.stringify(await execInSandbox(conversationId, args.command, runtime.timeoutMs, { ...sandboxOptions, signal }));
   }
   if (name === 'write_file') {
     if (resolveMountedPcPath(args.path, pcMounts)) throw new Error('write_file grava apenas no workspace da conversa. Para editar uma pasta do PC autorizada, use bash ou run_python.');

@@ -85,7 +85,8 @@ function referencedOutputFiles(text, files) {
 
 const OUTPUT_DELIVERY_REPAIR_NOTE = `O texto anterior afirmou que existe um arquivo para download, mas o sistema verificou que nenhum arquivo correspondente foi criado em /workspace/outputs. Corrija isso agora: use uma chamada NATIVA de ferramenta para criar o arquivo real e confira que ele existe. Não escreva código, XML, JSON, <tool_call>, <function> ou argumentos de ferramenta na resposta visível. Não diga que há download até o arquivo existir de verdade.`;
 const MISSING_OUTPUT_NOTICE = '\n\n**O arquivo não foi gerado nesta tentativa.** Nenhum download foi criado. Use **Reenviar** para tentar novamente; se o problema persistir, escolha outro modelo marcado com **Ferramentas**.';
-const EXECUTION_COMPLETION_REPAIR_NOTE = `A resposta anterior ficou apenas no plano, em código ilustrativo ou em próximos passos. O pedido do usuário exige execução real nesta conversa. Use as ferramentas disponíveis agora para realizar o trabalho. Não entregue instruções para um “assistente principal”, não deixe itens como pendentes e não encerre até verificar o resultado da ferramenta. Se o pedido for gerar um arquivo, crie o arquivo real em /workspace/outputs e confira que ele existe.`;
+const EXECUTION_COMPLETION_REPAIR_NOTE = `A resposta anterior ficou apenas no plano, em código ilustrativo ou em próximos passos. O pedido do usuário exige execução real nesta conversa. Use as ferramentas disponíveis agora para realizar o trabalho. Não entregue instruções para um “assistente principal”, não deixe itens como pendentes e não encerre até verificar o resultado da ferramenta. Se o pedido for gerar um arquivo, crie o arquivo real em /workspace/outputs e confira que ele existe.
+ATENÇÃO: se o usuário pediu para GERAR/SALVAR um PROGRAMA ou arquivo de código (ex.: um .py, .js, projeto), o objetivo é ENTREGAR o arquivo — NÃO basta executar o código. Escreva o conteúdo COMPLETO no caminho pedido em /workspace/outputs (use write_file, ou em run_python abra o arquivo e grave com open(...,'w')). Rodar o script no sandbox NÃO cria o arquivo de entrega; salve-o de verdade e confirme com list_files que ele existe em outputs.`;
 const EXECUTION_INCOMPLETE_NOTICE = '\n\n**Não consegui concluir esta execução.** Nenhum resultado verificável foi produzido. Use **Reenviar** para tentar novamente.';
 const TOOL_PROTOCOL_REPAIR_NOTE = `A resposta anterior tentou ESCREVER uma chamada de ferramenta como texto. Isso não executa a ferramenta. Tente novamente agora usando exclusivamente a chamada nativa disponibilizada pela API. Não mostre <tool_call>, <function>, <parameter>, JSON de argumentos nem o código da ferramenta ao usuário.`;
 const TOOL_PROTOCOL_FAILURE_NOTICE = '\n\n**Não consegui executar a ferramenta nesta tentativa.** O modelo devolveu a chamada em um formato inválido e nenhum resultado foi criado. Use **Reenviar** ou escolha outro modelo marcado com **Ferramentas**.';
@@ -93,16 +94,44 @@ const RESPONSE_TRUNCATED_REPAIR_NOTE = 'A resposta anterior foi cortada pelo lim
 const RESPONSE_TRUNCATED_NOTICE = '\n\n_Nota: a resposta foi interrompida pelo limite do modelo antes de terminar. Tente continuar com uma nova mensagem ou escolha um modelo com saida maior._';
 const DEFERRED_EXECUTION_RE = /\b(?:proximo passo|pendente|a executar|executar o script|assistente principal|deve(?:ria)?\s+(?:executar|criar|gerar|verificar)|responsavel|aguarde|vou\s+(?:criar|gerar|executar))\b/i;
 const EXECUTION_CONTRACT_NOTE = `Este pedido precisa de uma ação de verdade, não só de um plano. Use as ferramentas da conversa, confira o resultado e só então responda — nada de entregar código ilustrativo, uma lista de "próximos passos" ou a tarefa pela metade. Se o pedido é um arquivo, ele precisa existir mesmo em /workspace/outputs antes de você dizer que está pronto.`;
+// Pedidos de macro VBA: o ambiente (openpyxl/xlsxwriter) NÃO gera um
+// vbaProject.bin funcional — não dá para criar uma macro que roda de verdade.
+// Sem este aviso, o modelo salvava um .xlsm "com macro" que na prática não
+// executa nada e afirmava sucesso. Aqui a limitação é dita com franqueza e são
+// oferecidas alternativas reais.
+const MACRO_REQUEST_RE = /\b(macros?|vba|\.xlsm|xlsm|worksheet_open|thisworkbook|auto_?open|application\.ontime)\b/i;
+const MACRO_LIMITATION_NOTE = `LIMITAÇÃO IMPORTANTE — MACROS VBA: neste ambiente você NÃO consegue gerar uma macro VBA que funcione de verdade (não há como criar/compilar um vbaProject.bin executável com openpyxl/xlsxwriter). NÃO diga que entregou um .xlsm com macro funcional — isso seria falso. Seja honesto sobre isso e ofereça a melhor alternativa real para o que a pessoa quer: (a) resolver com FÓRMULAS e formatação/ordenação já aplicadas na planilha (a ordenação/filtro pode ser feita no Python antes de salvar); (b) entregar um .xlsm com o código VBA num módulo de texto MAIS instruções claras de como colar/ativar no Excel; ou (c) automatizar a tarefa em Python e entregar o resultado já pronto. Explique o trade-off em uma frase e faça a opção mais útil.`;
+
+// Remove os avisos padronizados do sistema (anexados ao final da resposta) para
+// que eles não acabem gravados dentro de um .md/.txt materializado. A lista é
+// montada em tempo de CHAMADA (não no carregamento do módulo) porque parte dos
+// avisos — ex.: PROVIDER_TIMEOUT_NOTICE — é declarada mais adiante no arquivo.
+export function withoutSystemNotices(text) {
+  let out = String(text || '');
+  for (const notice of [MISSING_OUTPUT_NOTICE, EXECUTION_INCOMPLETE_NOTICE, RESPONSE_TRUNCATED_NOTICE, TOOL_PROTOCOL_FAILURE_NOTICE, PROVIDER_TIMEOUT_NOTICE]) {
+    if (notice) out = out.split(notice).join('');
+  }
+  return out.trim();
+}
+
+// Assinatura de um arquivo de saída para detectar "novo/alterado nesta resposta".
+// Usa mtime E tamanho: só o mtime falha quando o modelo REGENERA um arquivo com
+// o MESMO nome e o sistema de arquivos tem granularidade grosseira de mtime —
+// aí o arquivo novo não era detectado (falso "não gerado"). O tamanho quase
+// sempre difere numa regeneração, cobrindo esse caso.
+export function fileSignature(file) {
+  return `${file?.mtimeMs}:${file?.size}`;
+}
 
 export function shouldRepairOutputDelivery(text, outputsBefore, outputsAfter) {
   if (!mentionsOutputPath(text)) return false;
-  const createdThisTurn = outputsAfter.some(file => outputsBefore.get(file.path) !== file.mtimeMs);
+  const createdThisTurn = outputsAfter.some(file => outputsBefore.get(file.path) !== fileSignature(file));
   return !createdThisTurn && referencedOutputFiles(text, outputsAfter).length === 0;
 }
 
 export function shouldRepairExecution({ requiresExecution, requiresOutput, toolsAvailable, executedToolCalls, outputsBefore, outputsAfter, responseText }) {
   if (!requiresExecution || !toolsAvailable) return false;
-  const createdOutput = outputsAfter.some(file => outputsBefore.get(file.path) !== file.mtimeMs);
+  const createdOutput = outputsAfter.some(file => outputsBefore.get(file.path) !== fileSignature(file));
   if (requiresOutput && !createdOutput) return true;
   if (!executedToolCalls) return true;
   return DEFERRED_EXECUTION_RE.test(String(responseText || ''));
@@ -111,6 +140,34 @@ export function shouldRepairExecution({ requiresExecution, requiresOutput, tools
 export function shouldContinueAfterTruncation(finishReason, attempts = 0) {
   return String(finishReason || '').toLowerCase() === 'length' && attempts < 2;
 }
+
+// Limites do briefing da equipe (MM-02): antes cada parecer era cortado em
+// 3000 chars e o briefing total em 12000, e o corte era SILENCIOSO — com vários
+// especialistas, os últimos sumiam do resumo entregue ao executor. Agora os
+// limites são maiores e o corte deixa uma marca explícita.
+const PERSPECTIVE_CHAR_LIMIT = Math.max(1000, Number(process.env.TEAM_PERSPECTIVE_CHARS || 6000));
+const BRIEFING_CHAR_LIMIT = Math.max(4000, Number(process.env.TEAM_BRIEFING_CHARS || 20000));
+export function clipForBriefing(text, limit) {
+  const s = String(text || '');
+  return s.length > limit ? `${s.slice(0, limit)}\n…[conteúdo truncado para caber no resumo da equipe]` : s;
+}
+
+// Detecta saída DEGENERADA — o modelo trava repetindo o mesmo trecho (ex.: eco
+// do prompt em loop, como visto na consulta de CNPJ em produção). É conservador
+// para nunca pegar conteúdo legítimo: só dispara quando um trecho idêntico de
+// 80 caracteres reaparece 6+ vezes numa cauda longa (>4k chars). Uma tabela ou
+// lista normal não repete o MESMO bloco exato tantas vezes.
+export function looksDegenerate(text) {
+  const s = String(text || '');
+  if (s.length < 4000) return false;
+  const tail = s.slice(-2400);
+  const probe = tail.slice(-80);
+  if (probe.replace(/\s+/g, '').length < 40) return false; // cauda quase em branco
+  let count = 0, idx = 0;
+  while ((idx = tail.indexOf(probe, idx)) !== -1) { count += 1; idx += probe.length; }
+  return count >= 6;
+}
+const DEGEN_CHECK_STEP = 1500; // reavalia a cada ~1500 chars novos (barato)
 
 const WEB_RESEARCH_FAILURE_LIMIT = Math.max(1, Number(process.env.WEB_RESEARCH_FAILURE_LIMIT || 3));
 const WEB_RESEARCH_FETCH_LIMIT = Math.max(1, Number(process.env.WEB_RESEARCH_FETCH_LIMIT || 8));
@@ -211,7 +268,7 @@ export function materializeTextOutput(conversationId, text) {
   const outputRoot = path.resolve(ws.outputs);
   const target = path.resolve(ws.base, ...relative.split('/'));
   if (!target.startsWith(outputRoot + path.sep) || fs.existsSync(target)) return null;
-  const body = String(text || '').trim();
+  const body = withoutSystemNotices(text);
   if (!body) return null;
   try {
     fs.mkdirSync(path.dirname(target), { recursive: true });
@@ -491,7 +548,9 @@ COMO USAR O SANDBOX (importante):
 - Sempre que der, resolva tudo num único run_python completo: ler os arquivos, processar e salvar o resultado de uma vez.
 - Se precisar mesmo dividir em etapas, salve o meio do caminho em arquivo (JSON/CSV em /workspace) e leia de volta depois — não conte com variáveis da execução anterior.
 - Evite ficar tateando com muitas execuções: planeje e faça de uma vez. Os arquivos finais vão para /workspace/outputs.
+- Saídas MUITO grandes (ex.: planilha com centenas de milhares de linhas, ou milhões de células) estouram memória/tempo do sandbox e travam a tarefa. Se o volume for extremo, não force: avise o limite em uma frase e ofereça uma saída viável — gerar uma amostra representativa, dividir em partes/arquivos, ou entregar os dados em CSV/Parquet compactado — em vez de tentar de uma vez e falhar.
 - Para gerar ou editar IMAGENS com IA, use a ferramenta generate_image (não tente desenhar no matplotlib quando pedirem uma imagem artística/realista).
+- Se pedirem para GERAR/SALVAR um PROGRAMA ou arquivo de código (ex.: um .py, um projeto), a entrega é o ARQUIVO: escreva-o em /workspace/outputs (write_file ou open(...,'w')). Não confunda com apenas EXECUTAR o código — rodar o script não cria o arquivo de entrega. Só rode para testar se o usuário pedir.
 - Antes de uma fase de ferramentas, diga no máximo uma frase curta e natural sobre o que vai fazer. Depois, verifique os resultados sem transformar cada chamada numa nova promessa ao usuário.
 - O sandbox TEM internet: dá para baixar dados, consumir APIs (requests/urllib), usar curl/wget e instalar com "pip install --user <pacote>" ou "npm install <pacote>". O "apt install" não rola (roda sem root). Instalar demora, então prefira o que já vem instalado e só instale o que faltar mesmo.
 - Docker e Docker Compose ficam de fora de propósito, para proteger o computador de quem hospeda. Não tente instalar daemon, expor socket nem prometer subir container.
@@ -634,55 +693,230 @@ function addUsage(acc, u) {
   acc.total_tokens += u.total_tokens || 0;
 }
 
-// Valida automaticamente os arquivos gerados (abre? abas? erros de fórmula?)
-const VALIDATABLE = /\.(xlsx|pdf|docx)$/i;
+// Valida automaticamente os arquivos gerados (abre? abas? erros de fórmula?).
+// IMPORTANTE: para .xlsx/.xlsm, o openpyxl lê a STRING da fórmula, não o valor
+// calculado — e um arquivo recém-gerado não tem valor em cache. Por isso, sem
+// recálculo, um #REF!/#DIV/0! NUNCA aparecia e a validação dava um "ok" falso.
+// Aqui recalculamos com o LibreOffice (headless, com recálculo-ao-abrir) para
+// materializar os valores e detectar erros de verdade; além disso fazemos um
+// "lint" das strings de fórmula (pega referências quebradas como =#REF!*2) e
+// varremos os valores literais. Se o recálculo não estiver disponível, a
+// verificação é rotulada como PARCIAL — nunca mais alegamos "sem erros" sem ter
+// de fato recalculado.
+const VALIDATABLE = /\.(xlsx|xlsm|pdf|docx)$/i;
+const VALIDATE_TIMEOUT_MS = Math.max(15000, Number(process.env.VALIDATE_TIMEOUT_MS || 60000));
 async function validateOutputs(conversationId, files, onEvent, sandboxOptions = {}) {
   const targets = files.filter(f => VALIDATABLE.test(f.name)).slice(0, 5);
   if (!targets.length) return {};
   onEvent({ type: 'status', content: 'Validando arquivos gerados...' });
   const listJson = JSON.stringify(targets.map(f => f.path));
-  const code = [
-    'import json',
-    `files = json.loads('''${listJson}''')`,
-    'out = []',
-    'ERRS = ("#REF!", "#VALUE!", "#DIV/0!", "#N/A", "#NAME?", "#NULL!", "#NUM!")',
-    'for rel in files:',
-    "    p = '/workspace/' + rel",
-    "    r = {'path': rel, 'ok': True, 'info': ''}",
-    '    try:',
-    "        ext = rel.lower().rsplit('.', 1)[-1]",
-    "        if ext == 'xlsx':",
-    '            from openpyxl import load_workbook',
-    '            wb = load_workbook(p)',
-    '            errs = 0',
-    '            for ws in wb.worksheets:',
-    '                for row in ws.iter_rows():',
-    '                    for c in row:',
-    '                        v = c.value',
-    '                        if isinstance(v, str) and any(e in v for e in ERRS):',
-    '                            errs += 1',
-    "            r['info'] = str(len(wb.sheetnames)) + ' abas'",
-    '            if errs:',
-    "                r['ok'] = False",
-    "                r['info'] += ', ' + str(errs) + ' celulas com erro de formula'",
-    "        elif ext == 'pdf':",
-    '            from pypdf import PdfReader',
-    '            n = len(PdfReader(p).pages)',
-    "            r['info'] = str(n) + ' paginas'",
-    '            if n == 0:',
-    "                r['ok'] = False",
-    "        elif ext == 'docx':",
-    '            from docx import Document',
-    '            d = Document(p)',
-    "            r['info'] = str(len(d.paragraphs)) + ' paragrafos'",
-    '    except Exception as e:',
-    "        r['ok'] = False",
-    "        r['info'] = ('nao abre: ' + str(e))[:90]",
-    '    out.append(r)',
-    'print(json.dumps(out))'
-  ].join('\n');
+  const code = `import json, os, subprocess, tempfile, shutil, zipfile, re
+files = json.loads('''${listJson}''')
+ERRS = ("#REF!", "#VALUE!", "#DIV/0!", "#N/A", "#NAME?", "#NULL!", "#NUM!", "#SPILL!", "#CALC!")
+MAX_CELLS = int(os.environ.get("VALIDATE_MAX_CELLS", "40000"))
+RECALC_ENABLED = os.environ.get("VALIDATE_RECALC", "true").lower() == "true"
+RECALC_TIMEOUT = int(os.environ.get("SANDBOX_RECALC_TIMEOUT_S", "25"))
+RECALC_MAX_FILES = int(os.environ.get("RECALC_MAX_FILES", "2"))
+_recalc_budget = [RECALC_MAX_FILES]
+
+def scan_errors(wb, cap):
+    errs = scanned = 0
+    capped = False
+    for ws in wb.worksheets:
+        for row in ws.iter_rows():
+            for c in row:
+                if scanned >= cap:
+                    capped = True
+                    break
+                v = c.value
+                if v is not None:
+                    scanned += 1
+                if isinstance(v, str) and any(e in v for e in ERRS):
+                    errs += 1
+            if capped:
+                break
+        if capped:
+            break
+    return errs, capped
+
+def recalc(path):
+    tmp = tempfile.mkdtemp(prefix="lo_recalc_")
+    prof = os.path.join(tmp, "profile", "user")
+    os.makedirs(prof, exist_ok=True)
+    with open(os.path.join(prof, "registrymodifications.xcu"), "w", encoding="utf-8") as f:
+        f.write('<?xml version="1.0" encoding="UTF-8"?>'
+                '<oor:items xmlns:oor="http://openoffice.org/2001/registry" '
+                'xmlns:xs="http://www.w3.org/2001/XMLSchema" '
+                'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
+                '<item oor:path="/org.openoffice.Office.Calc/Formula/Load">'
+                '<prop oor:name="OOXMLRecalcMode" oor:op="fuse"><value>0</value></prop></item>'
+                '<item oor:path="/org.openoffice.Office.Calc/Formula/Load">'
+                '<prop oor:name="ODFRecalcMode" oor:op="fuse"><value>0</value></prop></item>'
+                '</oor:items>')
+    outdir = os.path.join(tmp, "out")
+    os.makedirs(outdir, exist_ok=True)
+    try:
+        subprocess.run(["soffice", "-env:UserInstallation=file://" + os.path.join(tmp, "profile"),
+                        "--headless", "--calc", "--convert-to", "xlsx:Calc MS Excel 2007 XML",
+                        "--outdir", outdir, path],
+                       timeout=RECALC_TIMEOUT, capture_output=True, check=False)
+    except Exception:
+        return None, tmp
+    cand = os.path.join(outdir, os.path.splitext(os.path.basename(path))[0] + ".xlsx")
+    return (cand if os.path.exists(cand) else None), tmp
+
+def recalc_took(orig, calc):
+    keys = set()
+    for ws in orig.worksheets:
+        for row in ws.iter_rows():
+            for c in row:
+                if isinstance(c.value, str) and c.value.startswith("="):
+                    keys.add((ws.title, c.coordinate))
+                    if len(keys) > 40:
+                        break
+            if len(keys) > 40:
+                break
+        if len(keys) > 40:
+            break
+    if not keys:
+        return True
+    for ws in calc.worksheets:
+        for row in ws.iter_rows():
+            for c in row:
+                # Qualquer valor em cache (número OU string de erro tipo #DIV/0!)
+                # prova que o recálculo aconteceu. Antes exigia só numérico, o
+                # que descartava o recálculo quando TODAS as fórmulas viravam
+                # erro — exatamente o caso que mais precisamos detectar.
+                if (ws.title, c.coordinate) in keys and c.value is not None:
+                    return True
+    return False
+
+def _col_to_num(col):
+    n = 0
+    for ch in col.upper():
+        n = n * 26 + (ord(ch) - 64)
+    return n
+
+def _parse_ref(ref):
+    m = re.match(r"^(?:'([^']+)'|([^!]+))!(.+)$", ref.strip())
+    if not m:
+        return None
+    sheet = m.group(1) or m.group(2)
+    rng = m.group(3).replace("$", "")
+    cells = rng.split(":")
+    def cell(c):
+        mm = re.match(r"^([A-Za-z]+)(\\d+)$", c)
+        return (_col_to_num(mm.group(1)), int(mm.group(2))) if mm else None
+    a = cell(cells[0])
+    b = cell(cells[-1]) if len(cells) > 1 else a
+    if not a or not b:
+        return (sheet, None)
+    return (sheet, (a[0], a[1], b[0], b[1]))
+
+def check_charts(p, sheetnames):
+    # Valida os GRÁFICOS do .xlsx (openpyxl descarta charts ao carregar, então
+    # lemos o XML direto do zip). Modelos geram gráficos com referências
+    # quebradas — intervalos INVERTIDOS (ex.: C2:B2), aba inexistente ou sem
+    # série — que abririam vazios/errados no Excel, e nada verificava isso.
+    problems = []
+    n = 0
+    try:
+        z = zipfile.ZipFile(p)
+    except Exception:
+        return 0, problems
+    for cn in [x for x in z.namelist() if re.match(r"xl/charts/chart\\d+\\.xml", x)]:
+        n += 1
+        try:
+            xml = z.read(cn).decode("utf-8", "replace")
+        except Exception:
+            continue
+        refs = re.findall(r"<(?:\\w+:)?f>([^<]+)</(?:\\w+:)?f>", xml)
+        sers = len(re.findall(r"<(?:\\w+:)?ser>", xml))
+        if not refs:
+            problems.append("grafico sem referencias de dados")
+            continue
+        if sers == 0:
+            problems.append("grafico sem series")
+        for ref in refs:
+            parsed = _parse_ref(ref)
+            if not parsed:
+                continue
+            sheet, coords = parsed
+            if sheet not in sheetnames:
+                problems.append("grafico referencia aba inexistente '" + sheet + "'")
+                continue
+            if coords:
+                c1, r1, c2, r2 = coords
+                if c1 > c2 or r1 > r2:
+                    problems.append("grafico com intervalo invertido/degenerado (" + ref + ")")
+    return n, problems
+
+def check_xlsx(p):
+    from openpyxl import load_workbook
+    wb = load_workbook(p)
+    sheets = len(wb.sheetnames)
+    errs_lint, capped = scan_errors(wb, MAX_CELLS)
+    errs_calc = 0
+    did_recalc = False
+    if RECALC_ENABLED and _recalc_budget[0] > 0:
+        _recalc_budget[0] -= 1
+        calc_path, tmp = recalc(p)
+        try:
+            if calc_path:
+                calc_wb = load_workbook(calc_path, data_only=True)
+                if recalc_took(wb, calc_wb):
+                    did_recalc = True
+                    errs_calc, _ = scan_errors(calc_wb, MAX_CELLS)
+        except Exception:
+            pass
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+    total = errs_lint + errs_calc
+    chart_n, chart_problems = check_charts(p, wb.sheetnames)
+    parts = [str(sheets) + " abas"]
+    if total:
+        parts.append(str(total) + " celula(s) com erro de formula")
+    elif did_recalc:
+        parts.append("formulas recalculadas: sem erros")
+    else:
+        parts.append("formulas NAO recalculadas (verificacao parcial)")
+    if chart_problems:
+        parts.append(str(len(chart_problems)) + " problema(s) em grafico: " + chart_problems[0])
+    elif chart_n:
+        parts.append(str(chart_n) + " grafico(s) ok")
+    if capped:
+        parts.append("varredura limitada a " + str(MAX_CELLS) + " celulas")
+    return {"ok": total == 0 and not chart_problems, "info": "; ".join(parts)}
+
+def check_docx(p):
+    from docx import Document
+    d = Document(p)
+    n_par = len([x for x in d.paragraphs if x.text.strip()])
+    empty = (n_par == 0 and len(d.tables) == 0 and len(d.inline_shapes) == 0)
+    return {"ok": not empty, "info": str(len(d.paragraphs)) + " paragrafos, " + str(len(d.tables)) + " tabelas" + (" - documento vazio" if empty else "")}
+
+out = []
+for rel in files:
+    p = "/workspace/" + rel
+    r = {"path": rel, "ok": True, "info": ""}
+    try:
+        ext = rel.lower().rsplit(".", 1)[-1]
+        if ext in ("xlsx", "xlsm"):
+            r.update(check_xlsx(p))
+        elif ext == "pdf":
+            from pypdf import PdfReader
+            n = len(PdfReader(p).pages)
+            r["info"] = str(n) + " paginas"
+            r["ok"] = n > 0
+        elif ext == "docx":
+            r.update(check_docx(p))
+    except Exception as e:
+        r["ok"] = False
+        r["info"] = ("nao abre: " + str(e))[:120]
+    out.append(r)
+print(json.dumps(out))`;
   try {
-    const raw = await runTool(conversationId, 'run_python', { code }, sandboxOptions);
+    const raw = await runTool(conversationId, 'run_python', { code }, sandboxOptions, { timeoutMs: VALIDATE_TIMEOUT_MS });
     const r = JSON.parse(raw);
     if (r.exitCode !== 0) return {};
     const line = String(r.output || '').trim().split('\n').pop();
@@ -711,7 +945,7 @@ export function friendlyApiError(err) {
 }
 
 // ---- Controle de execução (pausar / continuar / parar) ----
-const controls = new Map(); // conversationId -> { paused, stopped, activeRequest, activeTool }
+const controls = new Map(); // conversationId -> { paused, stopped, activeRequests: Set, activeTool }
 
 export class ConversationBusyError extends Error {
   constructor() {
@@ -723,7 +957,11 @@ export class ConversationBusyError extends Error {
 
 export function acquireConversationControl(conversationId) {
   if (controls.has(conversationId)) throw new ConversationBusyError();
-  const control = { paused: false, stopped: false, activeRequest: null, activeTool: null };
+  // activeRequests é um Set porque o Modo Equipe consulta vários modelos EM
+  // PARALELO — com um slot único, pausar/parar abortaria só a última requisição
+  // e deixaria as outras rodando. Com o Set, o pause/stop aborta todas as que
+  // estiverem em voo.
+  const control = { paused: false, stopped: false, activeRequests: new Set(), activeTool: null };
   controls.set(conversationId, control);
   return control;
 }
@@ -734,12 +972,12 @@ export function releaseConversationControl(conversationId, control) {
 
 export function beginProviderRequest(control) {
   const request = new AbortController();
-  control.activeRequest = request;
+  control.activeRequests.add(request);
   return request;
 }
 
 export function releaseProviderRequest(control, request) {
-  if (control?.activeRequest === request) control.activeRequest = null;
+  control?.activeRequests?.delete(request);
 }
 
 export function beginToolRequest(control) {
@@ -761,8 +999,9 @@ export function controlInterruptReason(control, request) {
 }
 
 function abortActiveProviderRequest(control, reason) {
-  const request = control?.activeRequest;
-  if (request && !request.signal.aborted) request.abort(reason);
+  for (const request of control?.activeRequests || []) {
+    if (request && !request.signal.aborted) request.abort(reason);
+  }
 }
 
 function abortActiveToolRequest(control, reason) {
@@ -807,7 +1046,21 @@ async function gate(control, onEvent) {
 export async function runAgent({ userId, conversationId, userText, model, assistant, webSearch, effort, developer, onEvent, saveUserMessage = true, existingUserMessageId = null, executionBriefing = null, forceExecution = false, control: inheritedControl = null }) {
   const provider = await getUserProvider(userId);          // BYOK: chave do usuário
   const client = provider.client;                          // sombreia o cliente global
-  const chosenModel = model || assistant?.model || provider.model;
+  let chosenModel = model || assistant?.model || provider.model;
+  // FAILOVER (MM-04): se o provedor cair no meio da tarefa, antes o app só
+  // repetia o MESMO modelo e desistia. Agora há uma cadeia de reserva — os
+  // modelos de MODEL_FALLBACKS (env) e, por padrão, o modelo-base da conta —
+  // acionada só quando o modelo escolhido falha de forma recuperável, sem
+  // perder o trabalho já feito (as mensagens/ferramentas já executadas ficam).
+  const fallbackChain = [
+    ...String(process.env.MODEL_FALLBACKS || '').split(',').map(s => s.trim()).filter(Boolean),
+    ...(provider.model && provider.model !== chosenModel ? [provider.model] : [])
+  ];
+  const triedModels = new Set([chosenModel]);
+  const nextFallbackModel = () => {
+    for (const m of fallbackChain) if (m && !triedModels.has(m)) { triedModels.add(m); return m; }
+    return null;
+  };
   const chosenPrompt = promptFor(assistant);
   const eff = effortCfg(effort);
   const developerContext = developerContextFor(developer, userId);
@@ -884,7 +1137,8 @@ export async function runAgent({ userId, conversationId, userText, model, assist
     { role: 'system', content: QUALITY_BAR }
   ];
   if (forceExecution || modelPlan.requirements.required) messages.push({ role: 'system', content: EXECUTION_CONTRACT_NOTE });
-  if (executionBriefing) messages.push({ role: 'system', content: `PARECERES DA EQUIPE PARA ORIENTAR A EXECUÇÃO (use como referência, mas confira tudo com as ferramentas):\n${String(executionBriefing).slice(0, 12000)}` });
+  if (MACRO_REQUEST_RE.test(String(userText || ''))) messages.push({ role: 'system', content: MACRO_LIMITATION_NOTE });
+  if (executionBriefing) messages.push({ role: 'system', content: `PARECERES DA EQUIPE PARA ORIENTAR A EXECUÇÃO (use como referência, mas confira tudo com as ferramentas):\n${clipForBriefing(String(executionBriefing), BRIEFING_CHAR_LIMIT)}` });
   if (lowSignalTurn) messages.push({ role: 'system', content: LOW_SIGNAL_TURN_NOTE });
   if (environmentNote) messages.push({ role: 'system', content: environmentNote });
   if (developerContext) messages.push({ role: 'system', content: developerContext.note });
@@ -955,7 +1209,7 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
   const maxSteps = Number(process.env.AGENT_MAX_STEPS || eff.steps);
   const executionRequired = forceExecution || modelPlan.requirements.required;
   const requiresOutput = modelPlan.requirements.expectsOutput;
-  const outputsBefore = new Map(listOutputs(conversationId).map(f => [f.path, f.mtimeMs]));
+  const outputsBefore = new Map(listOutputs(conversationId).map(f => [f.path, fileSignature(f)]));
   let finalText = '';
   let stopped = false;
   let completedNaturally = false;
@@ -981,6 +1235,8 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
     // Streaming: o texto é enviado token a token para a interface (tela viva)
     let content = '';
     let displayedContent = '';
+    let degenerate = false;
+    let lastDegenCheckLen = 0;
     const protocolGuard = createToolProtocolStreamGuard(tools.length > 0);
     const toolCalls = [];
     let finishReason = null;
@@ -1029,6 +1285,14 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
           continue;
         }
         if (isRetryableStreamError(err)) {
+          const fb = nextFallbackModel();
+          if (fb) {
+            onEvent({ type: 'status', content: `O provedor falhou com ${chosenModel}. Tentando o modelo de reserva ${fb}...` });
+            chosenModel = fb;
+            streamRecoveryAttempts = 0;
+            step -= 1;
+            continue;
+          }
           providerFailure = true;
           failureMessage = 'O provedor do modelo ficou indisponível antes de concluir a tarefa.';
           finalText += PROVIDER_TIMEOUT_NOTICE;
@@ -1079,6 +1343,13 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
           finalText += visible;
           onEvent({ type: 'delta', content: visible });
         }
+        // Freio de repetição: se o modelo travar repetindo o mesmo trecho,
+        // interrompe em vez de despejar um muro de texto repetido no chat.
+        if (!degenerate && content.length - lastDegenCheckLen >= DEGEN_CHECK_STEP) {
+          lastDegenCheckLen = content.length;
+          if (looksDegenerate(content)) degenerate = true;
+        }
+        if (degenerate) break;
       }
       if (delta.tool_calls) {
         for (const tc of delta.tool_calls) {
@@ -1110,6 +1381,18 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
           step -= 1;
           continue;
         }
+        const fb = nextFallbackModel();
+        if (fb) {
+          if (content || toolCalls.filter(Boolean).length) {
+            messages.push({ role: 'assistant', content: sanitizeToolProtocolText(content) });
+            messages.push({ role: 'system', content: STREAM_RESUME_NOTE });
+          }
+          onEvent({ type: 'status', content: `Falha no provedor com ${chosenModel}. Continuando com o modelo de reserva ${fb}...` });
+          chosenModel = fb;
+          streamRecoveryAttempts = 0;
+          step -= 1;
+          continue;
+        }
         finalText += PROVIDER_TIMEOUT_NOTICE;
         providerFailure = true;
         failureMessage = 'O provedor do modelo interrompeu a resposta antes de concluir a tarefa.';
@@ -1128,6 +1411,17 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
     }
     streamRecoveryAttempts = 0;
     if (stopped) break;
+    if (degenerate) {
+      const note = displayedContent.trim()
+        ? '\n\n_A resposta foi interrompida: o modelo entrou em repetição (ficou repetindo o mesmo trecho). Use **Reenviar** ou escolha outro modelo._'
+        : 'O modelo entrou em repetição e não produziu uma resposta útil. Use **Reenviar** ou escolha outro modelo.';
+      finalText = sanitizeToolProtocolText(finalText) + note;
+      onEvent({ type: 'delta', content: note });
+      incomplete = true;
+      failureMessage ||= 'O modelo entrou em repetição (saída degenerada).';
+      completedNaturally = true;
+      break;
+    }
     if (pausedDuringStream) {
       if (content) {
         messages.push({ role: 'assistant', content: sanitizeToolProtocolText(content) });
@@ -1314,16 +1608,16 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
   }
   // Detecta os arquivos gerados NESTA resposta e os anexa à mensagem
   let outputsAfter = listOutputs(conversationId);
-  let newFiles = outputsAfter.filter(f => outputsBefore.get(f.path) !== f.mtimeMs);
+  let newFiles = outputsAfter.filter(f => outputsBefore.get(f.path) !== fileSignature(f));
   if (!newFiles.length && mentionsOutputPath(finalText)) {
     await recoverAlternateOutputs(conversationId, sandboxOptions);
     outputsAfter = listOutputs(conversationId);
-    newFiles = outputsAfter.filter(f => outputsBefore.get(f.path) !== f.mtimeMs);
+    newFiles = outputsAfter.filter(f => outputsBefore.get(f.path) !== fileSignature(f));
   }
   if (!newFiles.length && mentionsOutputPath(finalText)) newFiles = referencedOutputFiles(finalText, outputsAfter);
   if (!newFiles.length && mentionsOutputPath(finalText) && materializeTextOutput(conversationId, finalText)) {
     outputsAfter = listOutputs(conversationId);
-    newFiles = outputsAfter.filter(f => outputsBefore.get(f.path) !== f.mtimeMs);
+    newFiles = outputsAfter.filter(f => outputsBefore.get(f.path) !== fileSignature(f));
   }
   if (!newFiles.length && (requiresOutput || mentionsOutputPath(finalText))) {
     incomplete = true;
@@ -1403,13 +1697,18 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
     if (memoryMeta) onEvent({ type: 'memory_context', memory: memoryMeta });
   }
   catch { memory = await memoryNote(userId, null, await clientScopeFor(userId, conversationId)); }
-  // Histórico da conversa (a mensagem atual do usuário já foi salva — exclui ela)
+  // Histórico da conversa (a mensagem atual do usuário já foi salva — exclui ela).
+  // Limites ampliados (antes 13 msgs × 600 chars): com o corte agressivo, um
+  // documento longo colado no início da conversa ficava praticamente invisível
+  // para os especialistas. Configurável por env.
+  const TEAM_HISTORY_MSGS = Math.max(6, Number(process.env.TEAM_HISTORY_MSGS || 21));
+  const TEAM_HISTORY_CHARS = Math.max(600, Number(process.env.TEAM_HISTORY_CHARS || 1600));
   const histRows = (await db.prepare(`
     SELECT role, content FROM (
       SELECT role, content, created_at, seq FROM messages
-      WHERE conversation_id=? ORDER BY created_at DESC, seq DESC LIMIT 13
-    ) sub ORDER BY created_at ASC, seq ASC`).all(conversationId)).slice(0, -1);
-  const historyText = histRows.map(m => `${m.role === 'user' ? 'Usuário' : 'Equipe'}: ${String(m.content).slice(0, 600)}`).join('\n');
+      WHERE conversation_id=? ORDER BY created_at DESC, seq DESC LIMIT ?
+    ) sub ORDER BY created_at ASC, seq ASC`).all(conversationId, TEAM_HISTORY_MSGS)).slice(0, -1);
+  const historyText = histRows.map(m => `${m.role === 'user' ? 'Usuário' : 'Equipe'}: ${String(m.content).slice(0, TEAM_HISTORY_CHARS)}`).join('\n');
   const isFollowUp = histRows.some(m => m.role === 'assistant');
 
   async function streamCoordinator(msgs) {
@@ -1459,26 +1758,48 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
     }
   }
 
-  async function askTeamMember(member, msgs) {
-    for (;;) {
+  // Consulta um especialista. Diferente do caminho de agente único, aqui a
+  // chamada é NÃO-streaming; antes, se a resposta batesse no teto de tokens do
+  // modelo (finish_reason='length'), o parecer PARCIAL era usado em silêncio no
+  // briefing/síntese. Agora detectamos o truncamento e continuamos de onde
+  // parou (até 2 vezes); se ainda ficar cortado, devolvemos truncated=true para
+  // o parecer ser marcado como incompleto — nunca mais silencioso.
+  const TEAM_MEMBER_CONTINUATIONS = Math.max(0, Number(process.env.TEAM_MEMBER_CONTINUATIONS || 2));
+  async function askTeamMember(member, baseMsgs) {
+    const msgs = [...baseMsgs];
+    const memberUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+    let text = '';
+    let truncated = false;
+    for (let round = 0; round <= TEAM_MEMBER_CONTINUATIONS; ) {
       if (await gate(control, onEvent)) return { stopped: true };
       const activeRequest = beginProviderRequest(control);
+      let completion;
       try {
-        const completion = await client.chat.completions.create({ model: member.model || coordModel, messages: msgs, temperature: 0.3, ...openRouterRouting() }, { signal: activeRequest.signal });
-        return { completion };
+        completion = await client.chat.completions.create({ model: member.model || coordModel, messages: msgs, temperature: 0.3, ...openRouterRouting() }, { signal: activeRequest.signal });
       } catch (err) {
         const interrupted = controlInterruptReason(control, activeRequest);
         if (interrupted === 'stop') return { stopped: true };
         if (interrupted === 'pause') {
           onEvent({ type: 'status', content: 'Pausado' });
           if (await gate(control, onEvent)) return { stopped: true };
-          continue;
+          continue; // repete a mesma rodada após retomar
         }
-        return { error: err };
+        return { error: err, text, usage: memberUsage };
       } finally {
         releaseProviderRequest(control, activeRequest);
       }
+      addUsage(memberUsage, completion.usage);
+      const choice = completion.choices?.[0];
+      const piece = choice?.message?.content || '';
+      text += piece;
+      if (String(choice?.finish_reason || '').toLowerCase() !== 'length') { truncated = false; break; }
+      truncated = true;
+      round += 1;
+      if (round > TEAM_MEMBER_CONTINUATIONS) break; // ainda cortado após as tentativas
+      msgs.push({ role: 'assistant', content: piece });
+      msgs.push({ role: 'system', content: 'Sua resposta anterior foi cortada pelo limite do modelo. Continue exatamente de onde parou, sem repetir o que já escreveu.' });
     }
+    return { text, usage: memberUsage, truncated };
   }
 
   async function executeTeamTask(perspectives) {
@@ -1486,7 +1807,7 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
       || assistants.find(a => /program|codigo|codex|desenvolv|document/i.test(`${a.name || ''} ${a.system_prompt || ''}`))
       || { name: 'Executor', emoji: 'code-2', model: coordModel, system_prompt: AGENTS.codigo.prompt, tools: [], personality: {} };
     const briefing = perspectives.length
-      ? perspectives.map(p => `### ${p.emoji || ''} ${p.name}\n${String(p.text || '').slice(0, 3000)}`).join('\n\n').slice(0, 12000)
+      ? clipForBriefing(perspectives.map(p => `### ${p.emoji || ''} ${p.name}\n${clipForBriefing(String(p.text || ''), PERSPECTIVE_CHAR_LIMIT)}`).join('\n\n'), BRIEFING_CHAR_LIMIT)
       : 'Nenhum parecer adicional foi produzido. Execute o pedido original integralmente.';
     onEvent({ type: 'status', content: perspectives.length ? 'Equipe concluiu a análise. Executando a tarefa...' : 'Executando a tarefa solicitada...' });
     const result = await runAgent({
@@ -1539,28 +1860,35 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
     try { finalText = await streamCoordinator(directMsgs); }
     catch (err) { finalText = `Não foi possível responder: ${friendlyApiError(err)}`; onEvent({ type: 'delta', content: finalText }); }
   } else {
-    for (const a of assistants) {
-      if (await gate(control, onEvent)) { stopped = true; break; }
-      onEvent({ type: 'status', content: `${a.emoji || '🧑'} ${a.name} analisando...` });
-      onEvent({ type: 'tool_start', name: a.name });
-      const sys = `${a.system_prompt}\n\n${TEAM_TOOL_AWARENESS}\n\nVocê faz parte de um time que já está conversando com a pessoa. Olhe o histórico e traga só a sua visão de especialista sobre a nova mensagem, direto ao ponto — sem se apresentar e sem repetir o que o time já disse. Nesta etapa você não gera arquivos nem roda código.`;
-      const msgs = [{ role: 'system', content: sys }];
-      if (memory) msgs.push({ role: 'system', content: memory });
-      msgs.push({ role: 'user', content: historyText ? `Histórico recente da conversa:\n${historyText}\n\nNOVA mensagem do usuário:\n${userText}` : userText });
-      const memberResult = await askTeamMember(a, msgs);
-      if (memberResult.stopped) {
-        stopped = true;
-        break;
+    // Os especialistas são consultados EM PARALELO (antes era em série: a
+    // latência somava e, sob carga, cada membro extra aumentava a janela para
+    // timeout do provedor). Cada um é independente; a ordem dos pareceres segue
+    // a ordem dos assistentes (Promise.all preserva). O pause/stop aborta todas
+    // as chamadas em voo via o Set de requisições ativas do controle.
+    if (await gate(control, onEvent)) { stopped = true; }
+    else {
+      onEvent({ type: 'status', content: `Consultando ${assistants.length} especialista(s) em paralelo...` });
+      const results = await Promise.all(assistants.map(async (a) => {
+        onEvent({ type: 'tool_start', name: a.name });
+        const sys = `${a.system_prompt}\n\n${TEAM_TOOL_AWARENESS}\n\nVocê faz parte de um time que já está conversando com a pessoa. Olhe o histórico e traga só a sua visão de especialista sobre a nova mensagem, direto ao ponto — sem se apresentar e sem repetir o que o time já disse. Nesta etapa você não gera arquivos nem roda código.`;
+        const msgs = [{ role: 'system', content: sys }];
+        if (memory) msgs.push({ role: 'system', content: memory });
+        msgs.push({ role: 'user', content: historyText ? `Histórico recente da conversa:\n${historyText}\n\nNOVA mensagem do usuário:\n${userText}` : userText });
+        return { a, memberResult: await askTeamMember(a, msgs) };
+      }));
+      for (const { a, memberResult } of results) {
+        if (memberResult.stopped) { stopped = true; continue; }
+        if (memberResult.error) {
+          onEvent({ type: 'tool_result', name: a.name, content: `erro: ${friendlyApiError(memberResult.error)}` });
+          continue;
+        }
+        addUsage(usage, memberResult.usage);
+        const text = memberResult.truncated
+          ? `${memberResult.text}\n\n_[parecer truncado pelo limite do modelo — pode estar incompleto]_`
+          : memberResult.text;
+        perspectives.push({ name: a.name, emoji: a.emoji, text });
+        onEvent({ type: 'tool_result', name: a.name, content: text.slice(0, 600) });
       }
-      if (memberResult.error) {
-        onEvent({ type: 'tool_result', name: a.name, content: `erro: ${friendlyApiError(memberResult.error)}` });
-        continue;
-      }
-      const c = memberResult.completion;
-      addUsage(usage, c.usage);
-      const text = c.choices[0].message.content || '';
-      perspectives.push({ name: a.name, emoji: a.emoji, text });
-      onEvent({ type: 'tool_result', name: a.name, content: text.slice(0, 600) });
     }
 
     if (stopped || await gate(control, onEvent)) {

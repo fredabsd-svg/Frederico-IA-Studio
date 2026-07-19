@@ -1,5 +1,58 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 🛡️ Endurecimento de QA — geração de documentos, contexto longo e multi-modelo (2026-07-19)
+
+Auditoria de caça a bugs (relatório em `docs/RELATORIO_BUGS_QA.md`) seguida da
+correção de todos os achados. Suíte do backend verde (79 testes) + novos testes
+em `backend/src/qaFixes.test.js` e `toolProtocol.test.js`. Destaques:
+
+- **Validação de Excel que mentia (crítico):** `validateOutputs` lia a *string*
+  da fórmula (openpyxl) e nunca via `#REF!`/`#DIV/0!`, dando "ok" falso. Agora
+  recalcula com LibreOffice (recálculo-ao-abrir), faz lint das fórmulas e, sem
+  recálculo disponível, rotula "verificação parcial" em vez de alegar sucesso.
+  Passou a validar `.xlsm`, cobre `.docx` vazio e tem teto de células.
+- **Contexto longo:** `estimateTokens` ficou ciente de alfabeto (não subestima
+  mais 2–3× em japonês/árabe/cirílico); `trimForTokens` corta pelo custo real;
+  modelos `:free` de janela grande não são mais rebaixados a 18k (`contextBuilder`).
+- **Multi-modelo:** especialistas rodam em PARALELO (controle com `Set` de
+  requisições ativas); parecer truncado é continuado e/ou marcado; briefing com
+  limites maiores e corte visível; **failover automático de modelo**
+  (`MODEL_FALLBACKS` + modelo-base) quando o provedor cai, sem perder o trabalho.
+- **Robustez:** coletor de lixo de disco (`.tmp_*` órfãos + `OUTPUT_RETENTION_DAYS`),
+  `guardCommand` mais robusto, detecção de arquivo novo por `mtime:size`, avisos
+  do sistema fora dos arquivos materializados, aviso honesto sobre macros VBA.
+- Novas envs (todas opcionais, padrões seguros): ver `.env.example` e README.
+
+### Bugs de produção + validações extras (mesma frente, PR #22)
+
+Testes **ao vivo na produção** (login real, modelos reais, arquivos baixados e
+inspecionados) revelaram e corrigiram mais bugs de nível de app:
+
+- **Vazamento do protocolo de ferramenta no chat** (consulta de CNPJ): o stream
+  guard era desligado no modo SEM ferramentas (`enabled=false` repassava tudo),
+  então `<tool_call>/<function=run_python>/`código python-docx vazavam. Agora o
+  guard suprime o protocolo **sempre** (`toolProtocol.js`).
+- **Loop de repetição** do modelo (eco do prompt): freio `looksDegenerate` corta
+  a saída degenerada com aviso (`agent.js`).
+- **Formatação estourando a tela no mobile:** `overflow-wrap`/`word-break` no
+  conteúdo; `pre`/tabelas rolam na caixa (`frontend/src/styles.css`).
+- **Modelo executava o código em vez de salvar:** ao pedir para GERAR/SALVAR um
+  programa, o modelo rodava o script (só imprimia o help) e não gravava o `.py`;
+  reforço no prompt e no reparo de execução para ESCREVER o arquivo em outputs.
+- **Validação de gráficos do Excel:** `validateOutputs` lê os `xl/charts/*.xml`
+  e marca o arquivo como não-ok quando um gráfico tem referência quebrada
+  (intervalo invertido tipo `C2:B2`, aba inexistente, sem série/refs) — o
+  recálculo de fórmulas não cobria gráficos.
+- **`recalc_took`:** reconhece o recálculo mesmo quando TODAS as fórmulas viram
+  erro (antes exigia valor numérico e descartava o pior caso, o all-error).
+
+**Verificado em produção após deploy da branch:** ÷0 agora dá
+`ok:false, "1 célula com erro de fórmula"` (antes "ok, 1 abas"); code-gen com
+contexto de 25k reteve o requisito enterrado E salvou o `.py`; guard, repetição
+e CSS sem incidentes na bateria Word/Excel/PDF/código. Estado dos achados e das
+provas: `docs/RELATORIO_BUGS_QA.md`. **Gap aberto:** o app não confere o valor
+numérico que o modelo afirma no texto vs. o da fórmula no arquivo.
+
 ## ✅ SaaS COMPLETO E EM PRODUÇÃO (2026-07-18)
 
 As 5 fases da transformação em SaaS estão CONCLUÍDAS e o app está NO AR:

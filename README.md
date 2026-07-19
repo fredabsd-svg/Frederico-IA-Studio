@@ -52,10 +52,20 @@ você escolhe é enviado direto ao provedor, sem substituição.
 
 Chamadas de ferramenta são validadas antes da execução. Se um provedor devolver
 como texto uma chamada que deveria vir no protocolo da API, o app a intercepta,
-tenta convertê-la com segurança e nunca despeja o código interno no chat. Uma
-tarefa que pediu arquivo só é considerada concluída quando o arquivo real existe;
-nesse caso, o download aparece como cartão na própria resposta. Se a execução
-falhar, a interface explica o resultado em linguagem simples e oferece **Reenviar**.
+tenta convertê-la com segurança e **nunca despeja o código interno no chat**
+(mesmo quando o modelo não tem ferramentas). Uma tarefa que pediu arquivo só é
+considerada concluída quando o arquivo real existe; nesse caso, o download
+aparece como cartão na própria resposta. Se a execução falhar, a interface
+explica o resultado em linguagem simples e oferece **Reenviar**.
+
+Os arquivos gerados são **checados de verdade** antes de entregar: os `.xlsx`
+são **recalculados** (LibreOffice) para detectar erros reais de fórmula
+(`#DIV/0!`, `#REF!` etc.) e têm os **gráficos verificados** (referências de
+dados inválidas, como intervalos invertidos, são apontadas); os `.docx` são
+inspecionados (documento vazio é sinalizado) e os `.pdf` têm as páginas
+conferidas. Se o modelo travar repetindo o mesmo trecho, o app corta a saída em
+vez de despejar um muro de texto; se o provedor cair no meio, há **failover**
+automático para um modelo de reserva sem perder o trabalho.
 
 <div align="center">
 <table>
@@ -171,7 +181,10 @@ docker compose up --build -d
 | `MAX_SANDBOXES_PER_USER` | 2 | Sandboxes ativos ao mesmo tempo por usuário |
 | `TOOL_TIMEOUT_MS` | 45000 | Tempo máximo de um comando de sandbox |
 | `AGENT_MAX_STEPS` | conforme o esforço | Limite de etapas da tarefa |
-| `SANDBOX_MEMORY / SANDBOX_CPUS` | 2048m / 1 | Recursos do sandbox |
+| `SANDBOX_MEMORY / SANDBOX_CPUS` | 1024m / 1 | Recursos do sandbox |
+| `MODEL_FALLBACKS` | — | Modelos de reserva (ordem) para failover automático quando o provedor cai; sem isso, cai para o modelo-base da conta |
+| `VALIDATE_RECALC` | true | Recalcula .xlsx/.xlsm com LibreOffice para detectar erros reais de fórmula (#DIV/0!, #REF!); `false` = validação parcial mais rápida |
+| `OUTPUT_RETENTION_DAYS` | 0 (desligado) | Remove arquivos de saída mais antigos que N dias (útil em uso público/soak) |
 
 Consulte o [.env.example](.env.example) para todas as opções.
 

@@ -31,9 +31,9 @@ test('asks for repair when a response promises an output file that does not exis
 
 test('does not repair a response when the claimed file is actually present', () => {
   const response = 'O relatório está disponível em /workspace/outputs/recursos_frederico_ai_studio.md.';
-  const files = [{ path: 'outputs/recursos_frederico_ai_studio.md', name: 'recursos_frederico_ai_studio.md', mtimeMs: 123 }];
+  const files = [{ path: 'outputs/recursos_frederico_ai_studio.md', name: 'recursos_frederico_ai_studio.md', mtimeMs: 123, size: 10 }];
 
-  assert.equal(shouldRepairOutputDelivery(response, new Map([['outputs/recursos_frederico_ai_studio.md', 123]]), files), false);
+  assert.equal(shouldRepairOutputDelivery(response, new Map([['outputs/recursos_frederico_ai_studio.md', '123:10']]), files), false);
 });
 
 test('accepts only direct Markdown or text claims inside outputs for the fallback file', () => {
@@ -106,7 +106,7 @@ test('accepts a completed execution when the requested output was created', () =
     toolsAvailable: true,
     executedToolCalls: 1,
     outputsBefore: new Map(),
-    outputsAfter: [{ path: 'outputs/relatorio.docx', mtimeMs: 321 }],
+    outputsAfter: [{ path: 'outputs/relatorio.docx', mtimeMs: 321, size: 2048 }],
     responseText: 'O relatorio foi criado e verificado.'
   }), false);
 });

@@ -58,7 +58,10 @@ test('aborts the active provider request for pause and stop', () => {
     setControl(id, 'resume');
     const activeRequest = beginProviderRequest(control);
     releaseProviderRequest(control, pausedRequest);
-    assert.equal(control.activeRequest, activeRequest);
+    // activeRequests é um Set (suporta várias requisições em paralelo no Modo
+    // Equipe): após liberar a antiga, só a nova permanece rastreada.
+    assert.ok(control.activeRequests.has(activeRequest));
+    assert.ok(!control.activeRequests.has(pausedRequest));
 
     setControl(id, 'stop');
     assert.equal(activeRequest.signal.aborted, true);
