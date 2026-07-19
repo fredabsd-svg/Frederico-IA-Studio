@@ -22,7 +22,26 @@ function client() {
 const EXTRACT_MODEL = () => process.env.EXTRACT_MODEL || process.env.DEEPSEEK_MODEL ||
   ((process.env.DEEPSEEK_BASE_URL || '').includes('openrouter') ? 'deepseek/deepseek-chat' : 'deepseek-chat');
 
-export const estimateTokens = (s) => Math.ceil(String(s || '').length / 3.5);
+// Estimativa de tokens ciente de alfabeto. O fator plano len/3.5 é calibrado
+// para texto latino e SUBESTIMA 2–3× em japonês/chinês/coreano, árabe, cirílico
+// etc. — o que fazia o orçamento de contexto estourar em silêncio (o provedor
+// truncava no servidor). Aqui o ASCII mantém o fator original (nenhuma regressão
+// para português/código/JSON) e os caracteres não-latinos somam um peso extra,
+// próximo do custo real desses scripts em tokenizers modernos. O resultado é
+// sempre >= o valor antigo, então o orçamento só fica mais seguro, nunca menos.
+export const estimateTokens = (s) => {
+  const str = String(s || '');
+  let ascii = 0, cjk = 0, other = 0;
+  for (const ch of str) {
+    const c = ch.codePointAt(0);
+    if (c < 0x80) ascii++;
+    else if ((c >= 0x3040 && c <= 0x30FF) || (c >= 0x3400 && c <= 0x9FFF) ||
+             (c >= 0xAC00 && c <= 0xD7AF) || (c >= 0xF900 && c <= 0xFAFF) ||
+             (c >= 0x20000 && c <= 0x2FA1F)) cjk++;   // CJK, kana, hangul
+    else other++;                                     // árabe, cirílico, grego, acentos soltos, emoji...
+  }
+  return Math.max(1, Math.ceil(ascii / 3.5 + cjk * 1.1 + other * 0.9));
+};
 
 const EXTRACT_PROMPT = `Você é o módulo de memória de um assistente. Analise o trecho de conversa e devolva APENAS um JSON válido, sem comentários, no formato:
 {

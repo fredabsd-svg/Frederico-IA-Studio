@@ -1,5 +1,28 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 🛡️ Endurecimento de QA — geração de documentos, contexto longo e multi-modelo (2026-07-19)
+
+Auditoria de caça a bugs (relatório em `docs/RELATORIO_BUGS_QA.md`) seguida da
+correção de todos os achados. Suíte do backend verde (77 testes) + novos testes
+em `backend/src/qaFixes.test.js`. Destaques:
+
+- **Validação de Excel que mentia (crítico):** `validateOutputs` lia a *string*
+  da fórmula (openpyxl) e nunca via `#REF!`/`#DIV/0!`, dando "ok" falso. Agora
+  recalcula com LibreOffice (recálculo-ao-abrir), faz lint das fórmulas e, sem
+  recálculo disponível, rotula "verificação parcial" em vez de alegar sucesso.
+  Passou a validar `.xlsm`, cobre `.docx` vazio e tem teto de células.
+- **Contexto longo:** `estimateTokens` ficou ciente de alfabeto (não subestima
+  mais 2–3× em japonês/árabe/cirílico); `trimForTokens` corta pelo custo real;
+  modelos `:free` de janela grande não são mais rebaixados a 18k (`contextBuilder`).
+- **Multi-modelo:** especialistas rodam em PARALELO (controle com `Set` de
+  requisições ativas); parecer truncado é continuado e/ou marcado; briefing com
+  limites maiores e corte visível; **failover automático de modelo**
+  (`MODEL_FALLBACKS` + modelo-base) quando o provedor cai, sem perder o trabalho.
+- **Robustez:** coletor de lixo de disco (`.tmp_*` órfãos + `OUTPUT_RETENTION_DAYS`),
+  `guardCommand` mais robusto, detecção de arquivo novo por `mtime:size`, avisos
+  do sistema fora dos arquivos materializados, aviso honesto sobre macros VBA.
+- Novas envs (todas opcionais, padrões seguros): ver `.env.example` e README.
+
 ## ✅ SaaS COMPLETO E EM PRODUÇÃO (2026-07-18)
 
 As 5 fases da transformação em SaaS estão CONCLUÍDAS e o app está NO AR:

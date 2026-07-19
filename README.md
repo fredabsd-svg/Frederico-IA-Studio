@@ -171,7 +171,10 @@ docker compose up --build -d
 | `MAX_SANDBOXES_PER_USER` | 2 | Sandboxes ativos ao mesmo tempo por usuário |
 | `TOOL_TIMEOUT_MS` | 45000 | Tempo máximo de um comando de sandbox |
 | `AGENT_MAX_STEPS` | conforme o esforço | Limite de etapas da tarefa |
-| `SANDBOX_MEMORY / SANDBOX_CPUS` | 2048m / 1 | Recursos do sandbox |
+| `SANDBOX_MEMORY / SANDBOX_CPUS` | 1024m / 1 | Recursos do sandbox |
+| `MODEL_FALLBACKS` | — | Modelos de reserva (ordem) para failover automático quando o provedor cai; sem isso, cai para o modelo-base da conta |
+| `VALIDATE_RECALC` | true | Recalcula .xlsx/.xlsm com LibreOffice para detectar erros reais de fórmula (#DIV/0!, #REF!); `false` = validação parcial mais rápida |
+| `OUTPUT_RETENTION_DAYS` | 0 (desligado) | Remove arquivos de saída mais antigos que N dias (útil em uso público/soak) |
 
 Consulte o [.env.example](.env.example) para todas as opções.
 

@@ -102,6 +102,50 @@ setInterval(async () => {
   }
 }, 60 * 1000).unref();
 
+// Coletor de lixo de DISCO (o reaper acima só recicla CONTAINERS). Num soak
+// (loop gerando arquivos por horas) o disco crescia sem limite: scripts .tmp_*
+// órfãos e a pasta outputs acumulando. Aqui:
+//  - removemos scripts .tmp_*.py com mais de 2h (um run tem timeout de ~1min,
+//    então esses são certamente abandonados por uma queda de processo);
+//  - se OUTPUT_RETENTION_DAYS > 0, removemos arquivos de outputs mais antigos
+//    que isso (desligado por padrão — apagar entregas do usuário é decisão do
+//    operador; ligue num ambiente público/de carga).
+const TMP_SCRIPT_TTL_MS = 2 * 60 * 60 * 1000;
+const OUTPUT_RETENTION_DAYS = Math.max(0, Number(process.env.OUTPUT_RETENTION_DAYS || 0));
+const DISK_SWEEP_INTERVAL_MS = Math.max(60 * 1000, Number(process.env.DISK_SWEEP_INTERVAL_MS || 30 * 60 * 1000));
+function reapDisk() {
+  const nowMs = Date.now();
+  let convDirs = [];
+  try { convDirs = fs.readdirSync(root, { withFileTypes: true }).filter(d => d.isDirectory()).map(d => d.name); } catch { return; }
+  for (const conv of convDirs) {
+    const convBase = path.join(root, conv);
+    // 1) scripts temporários órfãos direto na base da conversa
+    try {
+      for (const name of fs.readdirSync(convBase)) {
+        if (!/^\.tmp_.*\.py$/.test(name)) continue;
+        const full = path.join(convBase, name);
+        try { if (nowMs - fs.statSync(full).mtimeMs > TMP_SCRIPT_TTL_MS) fs.rmSync(full, { force: true }); } catch {}
+      }
+    } catch {}
+    // 2) retenção opcional dos arquivos de saída
+    if (OUTPUT_RETENTION_DAYS > 0) {
+      const cutoff = nowMs - OUTPUT_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+      const outDir = path.join(convBase, 'outputs');
+      const sweep = (dir) => {
+        let entries = [];
+        try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+        for (const e of entries) {
+          const full = path.join(dir, e.name);
+          if (e.isDirectory()) { sweep(full); continue; }
+          try { if (fs.statSync(full).mtimeMs < cutoff) fs.rmSync(full, { force: true }); } catch {}
+        }
+      };
+      sweep(outDir);
+    }
+  }
+}
+setInterval(reapDisk, DISK_SWEEP_INTERVAL_MS).unref();
+
 export function workspaceFor(id) {
   const conversationId = assertConversationId(id);
   const base = path.join(root, conversationId);

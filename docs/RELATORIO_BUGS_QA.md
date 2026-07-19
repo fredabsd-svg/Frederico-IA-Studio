@@ -31,6 +31,45 @@ Os bugs abaixo foram verificados no código-fonte. Dois deles têm **prova empí
 
 ---
 
+---
+
+## ✅ Status das correções (todas aplicadas)
+
+Todos os bugs desta lista foram corrigidos no código e a suíte de testes do
+backend passa (77 testes, 0 falhas; 2 pulados por exigirem PostgreSQL). Foram
+adicionados testes novos (`backend/src/qaFixes.test.js`) travando as correções.
+
+| ID | Correção aplicada | Arquivo(s) |
+|---|---|---|
+| CG-01 | Recálculo com LibreOffice (recálculo-ao-abrir) + lint das fórmulas + rótulo honesto ("recalculadas" vs "verificação parcial") — nunca mais "ok" falso | `agent.js` (`validateOutputs`) |
+| CG-02 | Aviso honesto quando o pedido é macro VBA (não alega macro funcional); `.xlsm` passou a ser validado | `agent.js` (`MACRO_LIMITATION_NOTE`, `VALIDATABLE`) |
+| CG-03 | Teto de células varridas (`VALIDATE_MAX_CELLS`) evita timeout silencioso | `agent.js` |
+| CG-04 | `.docx` sem parágrafos/tabelas/imagens é marcado como vazio (ok=false) | `agent.js` |
+| CL-01 | `estimateTokens` ciente de alfabeto (peso extra para CJK/árabe/cirílico); sempre ≥ o valor antigo | `memory/indexer.js` |
+| CL-02 | `:free` deixou de rebaixar a janela; sinais de janela grande têm prioridade | `memory/contextBuilder.js` |
+| CL-03 | Histórico da equipe ampliado (21 msgs × 1600 chars, configurável) | `agent.js` |
+| CL-04 | `trimForTokens` faz busca binária pelo maior prefixo que cabe de verdade | `memory/contextBuilder.js` |
+| MM-01 | Especialista truncado é continuado (até 2×) e, se ainda cortado, marcado | `agent.js` (`askTeamMember`) |
+| MM-02 | Limites do briefing maiores e corte com marca visível | `agent.js` (`clipForBriefing`) |
+| MM-03 | Especialistas consultados em paralelo (controle com `Set` de requisições) | `agent.js` |
+| MM-04 | Failover automático de modelo (`MODEL_FALLBACKS` + modelo-base) sem perder o trabalho | `agent.js` (`runAgent`) |
+| ST-01 | Coletor de lixo de disco (`.tmp_*` órfãos + retenção opcional de outputs) | `sandbox.js` |
+| ST-03 | `guardCommand` normaliza espaços e cobre variações (`rm  -rf /`, `find / -delete`, `dd of=/dev/...`) | `tools.js` |
+| ST-04 | Orientação de recusa graciosa para saídas gigantes | `agent.js` (`SANDBOX_RULES`) |
+| EC-01 | Detecção de arquivo novo por assinatura `mtime:size` (pega regeneração de mesmo nome) | `agent.js` (`fileSignature`) |
+| EC-02 | Avisos do sistema não são mais gravados dentro do `.md/.txt` materializado | `agent.js` (`withoutSystemNotices`) |
+
+Detalhes de teste: a lógica testável fora do Docker foi validada com execução
+real — o novo `validateOutputs` reprovou (`ok:false`) planilhas com `#REF!`/erro
+e `.docx` vazio; o `estimateTokens` foi calibrado contra um tokenizer real
+(`tiktoken`) garantindo que nenhum idioma fica subestimado; e o `guardCommand`
+foi testado contra 20 comandos perigosos e 17 legítimos sem falso positivo. O
+recálculo via LibreOffice roda no sandbox real (indisponível nesta bancada), com
+fallback à prova de falhas: sem LibreOffice, a validação é rotulada "parcial" em
+vez de alegar "sem erros".
+
+---
+
 ## Categoria A — Contexto Hiper-Longo e Multi-Idioma
 
 ### 🟠 BUG-CL-01 — Contagem de tokens subestima 2–3× em idiomas não-latinos 🧪

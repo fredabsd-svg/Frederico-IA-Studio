@@ -21,10 +21,17 @@ function unique(arr) {
 }
 
 function modelContextCap(model) {
-  const id = String(model || '').toLowerCase();
-  if (/(mini|flash|haiku|8b|7b|3b|free|small)/.test(id)) return { cap: 18000, tier: 'leve' };
+  // ":free"/":nitro"/":floor" são variantes de PREÇO/roteamento no OpenRouter,
+  // não indicam o tamanho da janela. Removê-los antes de classificar evita
+  // rebaixar um modelo de janela grande (ex.: um Claude ":free") para o teto
+  // "leve" de 18k só por causa do sufixo — o que estourava justamente o caso
+  // de uso de modelos gratuitos com contexto longo.
+  const id = String(model || '').toLowerCase().replace(/:(free|nitro|floor|beta)\b/g, '');
+  // Janela grande vem PRIMEIRO: um sinal explícito de janela (200k/128k/1m) ou
+  // uma família comprovadamente grande vence um rótulo de tamanho pequeno.
   if (/(1m|1000k|1024k|200k|256k|128k|gemini-1\.5|gemini-2|claude|sonnet|opus)/.test(id)) return { cap: 120000, tier: 'grande' };
-  if (/(gpt-4|deepseek|qwen|llama|mistral|command)/.test(id)) return { cap: 60000, tier: 'medio' };
+  if (/(mini|flash|haiku|8b|7b|3b|small)/.test(id)) return { cap: 18000, tier: 'leve' };
+  if (/(gpt-4|deepseek|qwen|llama|mistral|command|nemotron)/.test(id)) return { cap: 60000, tier: 'medio' };
   return { cap: 32000, tier: 'padrao' };
 }
 
@@ -45,9 +52,21 @@ export function historyBudgetForModel(model, contextBudget) {
 
 function trimForTokens(text, maxTokens) {
   const raw = String(text || '');
-  const maxChars = Math.max(200, Math.floor(maxTokens * 3.5));
-  if (raw.length <= maxChars) return raw;
-  return raw.slice(0, maxChars - 80) + '\n\n[conteudo encurtado automaticamente para caber na janela de contexto]';
+  if (estimateTokens(raw) <= maxTokens) return raw;
+  const note = '\n\n[conteudo encurtado automaticamente para caber na janela de contexto]';
+  const budget = Math.max(1, maxTokens - estimateTokens(note));
+  // O número de caracteres por token varia MUITO entre alfabetos (um corte
+  // por "maxTokens * 3.5" chars deixava passar 2–3× o orçamento em japonês,
+  // árabe, cirílico...). Busca binária pelo maior prefixo cujo custo ESTIMADO
+  // (já ciente de script) realmente cabe — garante que o texto aparado não
+  // estoure a janela.
+  let lo = 0, hi = raw.length, best = 0;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (estimateTokens(raw.slice(0, mid)) <= budget) { best = mid; lo = mid + 1; }
+    else hi = mid - 1;
+  }
+  return raw.slice(0, best) + note;
 }
 
 export async function selectHistoryForContext({ conversationId, limit = 60, budgetTokens = 25000 } = {}) {
