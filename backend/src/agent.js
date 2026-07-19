@@ -492,6 +492,7 @@ const SHELL_INVENTORY = [
   'PDF/OCR: pdftotext, ocrmypdf, tesseract/tesseract-ocr-por, qpdf.',
   'Mídia: ffmpeg para cortar, juntar, converter, extrair áudio, redimensionar e legendar vídeo/áudio.',
   'Dados/documentos: jq (JSON), xmlstarlet (XML), imagemagick/convert, Inkscape headless, rsvg-convert, potrace, zip/unzip.',
+  'Imagens (edição avançada em lote): GIMP headless via Script-Fu — gimp -i -b \'(script-fu ...)\' -b \'(gimp-quit 0)\'. Para retoque, composição, filtros e conversões que passam do imagemagick. Também Pillow/OpenCV em Python.',
   'Compilação: gcc/g++, make, cmake, ninja, go, rustc/cargo e javac/default-jdk-headless.',
   'Qualidade/diagnóstico: shellcheck, gdb, valgrind, strace, lsof, htop, procps, iproute2, net-tools e dnsutils.',
   'Bancos e operação externa: sqlite3, psql, mysql, redis-cli, ssh, rsync, ansible e kubectl.',
