@@ -20,6 +20,7 @@ import { registerModelCatalog } from './modelCapabilities.js';
 import { runMigrations } from './migrate.js';
 import { encryptSecret, decryptSecret, maskSecret } from './crypto.js';
 import { getUserProvider } from './userProvider.js';
+import { getGithubConnection, testGithubToken, listGithubRepos, listGithubBranches } from './connectors/github.js';
 import { sanitizeToolProtocolText } from './toolProtocol.js';
 import OpenAI from 'openai';
 
@@ -930,6 +931,65 @@ app.post('/api/provider/test', async (req, res) => {
   if (!client) return res.status(400).json({ ok: false, error: 'Nenhuma chave configurada.' });
   try { await client.models.list(); res.json({ ok: true }); }
   catch (e) { res.json({ ok: false, error: friendlyApiError(e) }); }
+});
+
+// ---- Conectores de serviços externos (GitHub é o primeiro) ----
+// O token fica cifrado (mesma ENCRYPTION_KEY do BYOK) e NUNCA volta em texto
+// claro — o GET devolve só o estado e a conta conectada.
+app.get('/api/connectors', async (req, res) => {
+  const conn = await getGithubConnection(req.userId);
+  res.json([{ provider: 'github', connected: !!conn, login: conn?.login || '', name: conn?.name || '' }]);
+});
+
+// PUT valida o token no GitHub antes de salvar; token '' desconecta.
+app.put('/api/connectors/github', async (req, res) => {
+  const token = String(req.body?.token || '').trim();
+  try {
+    if (!token) {
+      await db.prepare("DELETE FROM user_connectors WHERE user_id=? AND provider='github'").run(req.userId);
+      return res.json({ ok: true, connected: false });
+    }
+    const test = await testGithubToken(token);
+    if (!test.ok) return res.status(400).json({ ok: false, error: test.error });
+    const t = now();
+    await db.prepare(`INSERT INTO user_connectors (user_id, provider, token_enc, account_login, account_name, created_at, updated_at)
+      VALUES (?,?,?,?,?,?,?)
+      ON CONFLICT (user_id, provider) DO UPDATE SET token_enc=excluded.token_enc, account_login=excluded.account_login, account_name=excluded.account_name, updated_at=excluded.updated_at`)
+      .run(req.userId, 'github', encryptSecret(token), test.login, test.name, t, t);
+    res.json({ ok: true, connected: true, login: test.login, name: test.name });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: 'Não foi possível salvar. Verifique se a ENCRYPTION_KEY está configurada no servidor.' });
+  }
+});
+
+app.delete('/api/connectors/github', async (req, res) => {
+  await db.prepare("DELETE FROM user_connectors WHERE user_id=? AND provider='github'").run(req.userId);
+  res.json({ ok: true });
+});
+
+// Testa a conexão salva (ou um token recém-digitado, ainda não salvo).
+app.post('/api/connectors/github/test', async (req, res) => {
+  const typed = String(req.body?.token || '').trim();
+  const token = typed || (await getGithubConnection(req.userId))?.token;
+  if (!token) return res.status(400).json({ ok: false, error: 'Nenhum token do GitHub configurado.' });
+  res.json(await testGithubToken(token));
+});
+
+// Repositórios e branches da conta conectada (para o painel do modo desenvolvedor).
+app.get('/api/connectors/github/repos', async (req, res) => {
+  const conn = await getGithubConnection(req.userId);
+  if (!conn) return res.status(400).json({ error: 'GitHub não conectado.' });
+  const r = await listGithubRepos(conn.token);
+  if (r.error) return res.status(502).json({ error: r.error });
+  res.json(r.repos);
+});
+
+app.get('/api/connectors/github/branches', async (req, res) => {
+  const conn = await getGithubConnection(req.userId);
+  if (!conn) return res.status(400).json({ error: 'GitHub não conectado.' });
+  const r = await listGithubBranches(conn.token, String(req.query.repo || ''));
+  if (r.error) return res.status(400).json({ error: r.error });
+  res.json(r.branches);
 });
 
 // Rotas legadas (compatibilidade com versões antigas da interface)
