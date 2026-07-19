@@ -70,6 +70,20 @@ const cpus = Number(process.env.SANDBOX_CPUS || 1);
 // Limite de sandboxes ATIVOS por usuário (proteção de recursos numa SaaS):
 // ao criar o (N+1)-ésimo, o mais antigo do mesmo usuário é descartado.
 const MAX_SANDBOXES_PER_USER = Math.max(1, Number(process.env.MAX_SANDBOXES_PER_USER || 2));
+// Limite GLOBAL de sandboxes simultâneos (especificação de produção, seção 4):
+// mesmo com muitos usuários dentro da cota individual, a VPS tem um teto.
+// Ao atingir, o sandbox mais ocioso de QUALQUER usuário é reciclado (LRU).
+const MAX_SANDBOXES_GLOBAL = Math.max(1, Number(process.env.MAX_SANDBOXES_GLOBAL || 20));
+
+// Rede do sandbox (especificação de produção, seção 4): 'full' (padrão atual,
+// com internet) ou 'none' (saída de rede totalmente bloqueada — as ferramentas
+// web_search/web_fetch continuam funcionando porque rodam no BACKEND, não no
+// contêiner). Num ambiente público sem necessidade de pip/curl dentro do
+// sandbox, 'none' é a configuração recomendada.
+export function resolveSandboxNetwork(value) {
+  return String(value || '').trim().toLowerCase() === 'none' ? 'none' : 'full';
+}
+const SANDBOX_NETWORK = resolveSandboxNetwork(process.env.SANDBOX_NETWORK);
 
 fs.mkdirSync(root, { recursive: true });
 const sessions = new Map(); // id -> { container, lastUsed, policyKey, userId }
@@ -90,12 +104,25 @@ export function assertConversationId(value) {
   return id;
 }
 
-// Remove containers ociosos (sem exec há 30 min) para não acumular
+// Remove containers ociosos (sem exec há 30 min) para não acumular, e aplica
+// o TETO ABSOLUTO de vida do contêiner (especificação de produção, seção 4):
+// mesmo em uso contínuo, um sandbox não vive mais que SANDBOX_MAX_AGE_MS
+// (padrão 12h; 0 desliga o teto). A próxima execução recria o contêiner
+// automaticamente, então o custo para o usuário é só um cold start.
 const IDLE_TTL_MS = Number(process.env.SANDBOX_IDLE_TTL_MS || 30 * 60 * 1000);
+const MAX_AGE_MS = Math.max(0, Number(process.env.SANDBOX_MAX_AGE_MS ?? 12 * 60 * 60 * 1000));
+
+// Decide se um sandbox deve ser reciclado pelo reaper (puro, para teste).
+export function sandboxExpired(entry, nowMs, idleTtlMs = IDLE_TTL_MS, maxAgeMs = MAX_AGE_MS) {
+  if (entry.lastUsed < nowMs - idleTtlMs) return true;
+  if (maxAgeMs > 0 && entry.createdAt && entry.createdAt < nowMs - maxAgeMs) return true;
+  return false;
+}
+
 setInterval(async () => {
-  const cutoff = Date.now() - IDLE_TTL_MS;
+  const nowMs = Date.now();
   for (const [id, entry] of sessions) {
-    if (entry.lastUsed < cutoff) {
+    if (sandboxExpired(entry, nowMs)) {
       sessions.delete(id);
       try { await entry.container.remove({ force: true }); } catch {}
     }
@@ -222,9 +249,24 @@ async function enforceUserSandboxCap(userId) {
   }
 }
 
+// Teto GLOBAL de sandboxes simultâneos: ao atingir, recicla o mais ocioso de
+// qualquer usuário (LRU) para abrir espaço — a conversa reciclada recria o
+// contêiner sozinha na próxima execução.
+async function enforceGlobalSandboxCap() {
+  while (sessions.size >= MAX_SANDBOXES_GLOBAL) {
+    let oldestId = null, oldestUsed = Infinity;
+    for (const [id, e] of sessions) {
+      if (e.lastUsed < oldestUsed) { oldestUsed = e.lastUsed; oldestId = id; }
+    }
+    if (!oldestId) return;
+    await dropSession(oldestId);
+  }
+}
+
 async function createContainer(conversationId, policy, userId = null) {
   await ensureSandboxImage();
   await enforceUserSandboxCap(userId);
+  await enforceGlobalSandboxCap();
   const { base } = workspaceFor(conversationId);
   const hostBase = path.join(hostRoot, conversationId);
   const name = `frederico-ai-${conversationId}-${nanoid(5)}`;
@@ -244,12 +286,14 @@ async function createContainer(conversationId, policy, userId = null) {
     Cmd: ['sleep', 'infinity'],
     Tty: false,
     OpenStdin: false,
-    // Rede LIGADA por opção do usuário: o sandbox tem acesso à internet.
-    // ATENÇÃO: isto reduz o isolamento — código gerado pela IA (ou injetado
-    // por um documento malicioso) passa a poder acessar a rede e, em tese,
-    // exfiltrar dados/arquivos montados. Demais proteções seguem ativas
+    // Rede controlada por SANDBOX_NETWORK: 'full' (padrão, com internet) ou
+    // 'none' (saída bloqueada — recomendação da especificação de produção
+    // para cadastro aberto; web_search/web_fetch seguem funcionando porque
+    // rodam no backend). Com 'full', código gerado pela IA (ou injetado por
+    // um documento malicioso) pode acessar a rede e, em tese, exfiltrar
+    // dados/arquivos montados. Demais proteções seguem ativas
     // (CapDrop ALL, no-new-privileges, uid 1000, limites de CPU/RAM/PIDs).
-    NetworkDisabled: false,
+    NetworkDisabled: SANDBOX_NETWORK === 'none',
     HostConfig: {
       Binds: [`${hostBase}:/workspace`],
       Mounts: mounts,
@@ -263,7 +307,7 @@ async function createContainer(conversationId, policy, userId = null) {
     }
   });
   await container.start();
-  sessions.set(conversationId, { container, lastUsed: Date.now(), policyKey: policy.key, userId });
+  sessions.set(conversationId, { container, lastUsed: Date.now(), createdAt: Date.now(), policyKey: policy.key, userId });
   return container;
 }
 

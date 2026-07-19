@@ -21,6 +21,7 @@ import { runMigrations } from './migrate.js';
 import { encryptSecret, decryptSecret, maskSecret } from './crypto.js';
 import { getUserProvider } from './userProvider.js';
 import { sanitizeToolProtocolText } from './toolProtocol.js';
+import { logAudit } from './audit.js';
 import OpenAI from 'openai';
 
 const app = express();
@@ -499,6 +500,11 @@ async function ensureConversation(userId, id, model) {
 // > 0 → cada usuário pode enviar no máximo N mensagens por dia. Registrado em
 // usage_daily (contador por usuário e por dia, no fuso do app).
 const RATE_MSGS_PER_DAY = Math.max(0, Number(process.env.RATE_MSGS_PER_DAY || 0));
+// Cota diária de TOKENS por usuário (especificação de produção, seção 8 —
+// controle de custo): 0 = sem limite. O consumo do dia é acumulado em
+// usage_daily.tokens a cada resposta; ao atingir o teto, novas mensagens e
+// tarefas são bloqueadas até o dia virar.
+const RATE_TOKENS_PER_DAY = Math.max(0, Number(process.env.RATE_TOKENS_PER_DAY || 0));
 
 // Contabiliza uma mensagem do usuário no dia de hoje e devolve o total já usado.
 // Faz UPSERT atômico (INSERT ... ON CONFLICT ... RETURNING) para não perder
@@ -513,10 +519,33 @@ async function bumpDailyUsage(userId) {
   return Number(row?.msgs || 0);
 }
 
-// Aplica o limite ANTES de rodar o agente. Se estourar, devolve a mensagem de
+// Acumula os tokens de uma resposta no dia corrente (para RATE_TOKENS_PER_DAY
+// e visibilidade de consumo diário). Nunca propaga erro: contabilidade não
+// pode derrubar a entrega da resposta.
+async function bumpDailyTokens(userId, totalTokens) {
+  const total = Number(totalTokens);
+  if (!userId || !Number.isFinite(total) || total <= 0) return;
+  const day = scheduleDateKey(new Date(), scheduleTimeZone);
+  try {
+    await db.prepare(
+      `INSERT INTO usage_daily (user_id, day, msgs, tokens) VALUES (?,?,0,?)
+       ON CONFLICT (user_id, day) DO UPDATE SET tokens = usage_daily.tokens + EXCLUDED.tokens`
+    ).run(userId, day, Math.round(total));
+  } catch (e) { console.error('[usage] tokens diários:', e.message); }
+}
+
+// Aplica os limites ANTES de rodar o agente. Se estourar, devolve a mensagem de
 // erro amigável (string); caso contrário devolve null (pode prosseguir).
 async function enforceDailyLimit(userId) {
-  if (!RATE_MSGS_PER_DAY) return null; // sem limite configurado
+  // Cota de tokens: verificada primeiro (sem consumir uma "mensagem" do dia).
+  if (RATE_TOKENS_PER_DAY) {
+    const day = scheduleDateKey(new Date(), scheduleTimeZone);
+    const row = await db.prepare('SELECT tokens FROM usage_daily WHERE user_id=? AND day=?').get(userId, day);
+    if (Number(row?.tokens || 0) >= RATE_TOKENS_PER_DAY) {
+      return `Você atingiu o limite de ${RATE_TOKENS_PER_DAY.toLocaleString('pt-BR')} tokens por dia deste plano. O contador zera amanhã. Se precisar de mais, fale com o administrador.`;
+    }
+  }
+  if (!RATE_MSGS_PER_DAY) return null; // sem limite de mensagens configurado
   const used = await bumpDailyUsage(userId);
   if (used > RATE_MSGS_PER_DAY) {
     return `Você atingiu o limite de ${RATE_MSGS_PER_DAY} mensagens por dia deste plano. O contador zera amanhã. Se precisar de mais, fale com o administrador.`;
@@ -1029,7 +1058,18 @@ app.get('/api/conversations/:id/download/*', async (req, res) => {
   const rel = req.params[0];
   const target = path.resolve(ws.base, rel);
   if (!insideBase(ws.base, target) || !realInside(ws.base, target) || !fs.existsSync(target)) return res.status(404).send('Arquivo não encontrado');
+  logAudit({ userId: req.userId, conversationId: req.params.id, kind: 'download', detail: rel });
   res.download(target);
+});
+
+// Trilha de auditoria (especificação de produção): o administrador vê os
+// eventos de toda a plataforma; um usuário comum vê apenas os PRÓPRIOS.
+app.get('/api/audit', async (req, res) => {
+  const limit = Math.min(500, Math.max(1, Number(req.query.limit || 200)));
+  const rows = isAdmin(req)
+    ? await db.prepare('SELECT * FROM audit_log ORDER BY created_at DESC LIMIT ?').all(limit)
+    : await db.prepare('SELECT * FROM audit_log WHERE user_id=? ORDER BY created_at DESC LIMIT ?').all(req.userId, limit);
+  res.json(rows);
 });
 
 // ---- Fila de tarefas (execução em segundo plano) ----
@@ -1054,6 +1094,7 @@ async function processTasks() {
         if (result?.usage) {
           await db.prepare('INSERT INTO usage (id,user_id,conversation_id,assistant_id,model,kind,prompt_tokens,completion_tokens,total_tokens,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
             .run(nanoid(), t.user_id, t.conversation_id, t.assistant_id, result.model, 'tarefa', result.usage.prompt_tokens, result.usage.completion_tokens, result.usage.total_tokens, now());
+          await bumpDailyTokens(t.user_id, result.usage.total_tokens);
         }
         const outcome = classifyTaskResult(result);
         await db.prepare("UPDATE tasks SET status=?, finished_at=?, result_text=?, progress_text=?, error=? WHERE id=?")
@@ -1382,6 +1423,7 @@ app.post('/api/conversations/:id/chat', async (req, res) => {
     if (result?.usage) {
       await db.prepare('INSERT INTO usage (id,user_id,conversation_id,assistant_id,model,kind,prompt_tokens,completion_tokens,total_tokens,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
         .run(nanoid(), req.userId, req.params.id, usageAssistantId, result.model, kind, result.usage.prompt_tokens, result.usage.completion_tokens, result.usage.total_tokens, now());
+      await bumpDailyTokens(req.userId, result.usage.total_tokens);
     }
     send({ type: 'done' });
   } catch (err) {

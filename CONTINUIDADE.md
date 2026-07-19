@@ -1,5 +1,35 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 📋 Especificação de produção aplicada (2026-07-19)
+
+O relatório "Especificação Técnica para Produção" (docx de 18/07, escrito SEM
+acesso ao repositório) foi confrontado com o código — análise completa em
+`docs/ESPEC_PRODUCAO_GAP.md`. Conclusão: Fases 1–2 do plano do documento já
+estavam em produção; as lacunas P1 restantes foram implementadas:
+
+- **Sandbox (§4):** `SANDBOX_MAX_AGE_MS` (teto ABSOLUTO de vida do contêiner,
+  padrão 12h, além do TTL de ociosidade — `sandboxExpired` puro e testado),
+  `MAX_SANDBOXES_GLOBAL` (teto global com reciclagem LRU, padrão 20) e
+  `SANDBOX_NETWORK=none` (bloqueia a saída de rede do contêiner; padrão `full`
+  preserva a produção atual; web_search/web_fetch não são afetados pois rodam
+  no backend).
+- **Custo (§8):** `RATE_TOKENS_PER_DAY` — cota diária de tokens por usuário.
+  `usage_daily` ganhou coluna `tokens` (migration 004) acumulada via
+  `bumpDailyTokens` após cada resposta (chat E tarefas); `enforceDailyLimit`
+  verifica a cota ANTES de rodar o agente, sem consumir mensagem do dia.
+- **Auditoria (§5/§8):** tabela `audit_log` (migration 004) + `audit.js`
+  (`logAudit`, fire-and-forget — nunca derruba a operação). Registram-se:
+  chamadas externas em `tools.js` (web_search, web_fetch, consultar_cnpj,
+  generate_image, com o parâmetro relevante) e downloads na rota de download.
+  `GET /api/audit`: admin vê tudo, usuário comum só o próprio.
+- **Docs/env:** `.env.example` documenta as novas variáveis (todas opcionais);
+  testes novos em `backend/src/producao.test.js` (suíte 85 pass / 2 skip).
+
+**Roadmap herdado do documento (não implementado, por prioridade):** sandbox
+com isolamento reforçado (dind→gVisor) + verificação de e-mail + termos antes
+de cadastro aberto indexado; cliente MCP por tenant; tools/modelo por
+assistente; allowlist de web_fetch; notificações; cota dura de disco.
+
 ## 🎨 Kits de design de documentos + endurecimento por QA ao vivo (2026-07-19, PRs #24–#33)
 
 Frente para elevar a QUALIDADE e a CONFIABILIDADE dos documentos gerados

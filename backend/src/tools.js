@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { nanoid } from 'nanoid';
 import { execInSandbox, workspaceFor, safeJoin, pcFolderMounts } from './sandbox.js';
+import { logAudit } from './audit.js';
 
 export const toolDefinitions = [
   { type: 'function', function: { name: 'run_python', description: 'Executa Python 3.12 real na sandbox Linux isolada. Use para análises, planilhas, Word, PDF, gráficos, OCR, APIs e automações. Pacotes incluem pandas, numpy, openpyxl, python-docx, odfpy (importe odf), reportlab, weasyprint, PyMuPDF/fitz, pdfplumber, camelot, ocrmypdf, pytesseract, duckdb, polars, Flask/FastAPI/Uvicorn, pytest/black/ruff, SQLAlchemy, psycopg (v3), psycopg2 e clientes MySQL/Redis/MongoDB. Para ML em CPU: scikit-learn e onnxruntime para inferência; transformers, sentencepiece e safetensors para tokenização/configuração. Sem PyTorch/TensorFlow, use modelos ONNX com onnxruntime.', parameters: { type: 'object', properties: { code: { type: 'string' } }, required: ['code'] } } },
@@ -483,8 +484,21 @@ async function readMountedPcFile(conversationId, mountedPath, sandboxOptions, ru
   }
 }
 
+// Ferramentas que saem para a REDE EXTERNA: toda chamada fica na trilha de
+// auditoria (especificação de produção, seção 5) com usuário, conversa e o
+// parâmetro relevante.
+const EXTERNAL_TOOL_DETAIL = {
+  web_search: (a) => a.query || '',
+  web_fetch: (a) => a.url || '',
+  consultar_cnpj: (a) => a.cnpj || '',
+  generate_image: (a) => a.prompt || ''
+};
+
 export async function runTool(conversationId, name, args = {}, sandboxOptions = {}, runtime = {}) {
   const signal = runtime?.signal;
+  if (EXTERNAL_TOOL_DETAIL[name]) {
+    logAudit({ userId: sandboxOptions.userId, conversationId, kind: `tool:${name}`, detail: EXTERNAL_TOOL_DETAIL[name](args) });
+  }
   if (name === 'web_search') return JSON.stringify(await webSearch(args.query || '', { signal }));
   if (name === 'web_fetch') return JSON.stringify(await webFetch(args.url || '', { signal }));
   if (name === 'consultar_cnpj') return JSON.stringify(await consultarCnpj(args.cnpj || '', { signal }));

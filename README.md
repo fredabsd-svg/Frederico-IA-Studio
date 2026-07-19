@@ -178,7 +178,11 @@ docker compose up --build -d
 | `ENCRYPTION_KEY` | — | Criptografa a chave de IA de cada usuário (BYOK) no banco |
 | `ALLOW_SHARED_KEY` | true | `false` num site público: cada usuário precisa da própria chave |
 | `RATE_MSGS_PER_DAY` | 0 (sem limite) | Máximo de mensagens por usuário por dia |
+| `RATE_TOKENS_PER_DAY` | 0 (sem limite) | Máximo de tokens (entrada+saída) por usuário por dia — controle de custo |
 | `MAX_SANDBOXES_PER_USER` | 2 | Sandboxes ativos ao mesmo tempo por usuário |
+| `MAX_SANDBOXES_GLOBAL` | 20 | Teto global de sandboxes simultâneos na VPS (recicla o mais ocioso) |
+| `SANDBOX_MAX_AGE_MS` | 43200000 (12h) | Teto absoluto de vida de um sandbox, mesmo em uso; 0 desliga |
+| `SANDBOX_NETWORK` | full | `none` bloqueia a saída de rede do contêiner (pesquisa web continua funcionando: roda no backend) |
 | `TOOL_TIMEOUT_MS` | 45000 | Tempo máximo de um comando de sandbox |
 | `AGENT_MAX_STEPS` | conforme o esforço | Limite de etapas da tarefa |
 | `SANDBOX_MEMORY / SANDBOX_CPUS` | 1024m / 1 | Recursos do sandbox |
