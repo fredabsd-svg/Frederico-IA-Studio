@@ -120,10 +120,12 @@ RUN mkdir -p "$DOTNET_ROOT" && \
     ln -s /opt/dotnet/dotnet /usr/local/bin/dotnet && \
     rm -f /tmp/dotnet-install.sh
 
-# Kit de DESIGN profissional para Word (.docx): importável como `from docpro import Relatorio`.
-# Fornece capa, títulos com barra, tabelas estilizadas, callouts, KPIs e rodapé
-# paginado prontos — o assistente "Documentos profissionais" usa este módulo.
-COPY docpro.py /usr/local/lib/python3.12/site-packages/docpro.py
+# Kits de DESIGN profissional prontos (mesma paleta): Word (docpro), Excel
+# (xlspro) e PDF (pdfpro). Importáveis como `from docpro import Relatorio`,
+# `from xlspro import Planilha`, `from pdfpro import RelatorioPDF`. Dão capa,
+# títulos, tabelas estilizadas com header colorido + zebra + TOTAL, callouts,
+# gráficos (Excel) e rodapé paginado — sem o modelo precisar reinventar o estilo.
+COPY docpro.py xlspro.py pdfpro.py /usr/local/lib/python3.12/site-packages/
 
 # Compatibilidade com modelos que tentam salvar arquivos no caminho usado por
 # outros sandboxes. Aqui ele aponta para o workspace real da conversa.
