@@ -21,10 +21,24 @@ import { runMigrations } from './migrate.js';
 import { encryptSecret, decryptSecret, maskSecret } from './crypto.js';
 import { getUserProvider } from './userProvider.js';
 import { sanitizeToolProtocolText } from './toolProtocol.js';
+import OpenAI from 'openai';
 
 const app = express();
 const port = process.env.PORT || 3001;
 const scheduleTimeZone = resolveScheduleTimeZone(process.env.APP_TIMEZONE);
+
+// ---- Segurança ----
+// Administrador: só o e-mail em ADMIN_EMAIL pode baixar o backup completo do
+// sistema. Sem ADMIN_EMAIL definido, NINGUÉM pode (padrão seguro).
+const ADMIN_EMAIL = String(process.env.ADMIN_EMAIL || '').trim().toLowerCase();
+function isAdmin(req) {
+  const email = String(req.user?.email || '').trim().toLowerCase();
+  return !!ADMIN_EMAIL && !!email && email === ADMIN_EMAIL;
+}
+// "Pastas do PC": monta caminhos do HOST no sandbox. Faz sentido apenas numa
+// instalação PESSOAL (local). Numa VPS pública é perigoso, então fica DESLIGADO
+// por padrão — habilite com ENABLE_PC_FOLDERS=true só em uso pessoal confiável.
+const PC_FOLDERS_ENABLED = process.env.ENABLE_PC_FOLDERS === 'true';
 
 // Com as rotas agora assíncronas (banco em Postgres), uma rejeição de Promise
 // num handler NÃO é encaminhada ao middleware de erro pelo Express 4 — sem isto,
@@ -71,7 +85,7 @@ app.use('/api/conversations/:id', (req, res, next) => {
   next();
 });
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024, files: 20 } });
 
 function safeParse(s, fallback) { try { return JSON.parse(s); } catch { return fallback; } }
 function looksLikeFailedAssistantReply(content) {
@@ -238,6 +252,16 @@ async function enforceDailyLimit(userId) {
 
 app.get('/api/health', (_, res) => res.json({ ok: true, name: 'Frederico AI Studio', auth: true, scheduleTimeZone }));
 
+// Dados do usuário logado + flags que a interface usa (ex.: mostrar o botão de
+// backup só para o administrador; esconder "Pastas do PC" quando desligado).
+app.get('/api/me', (req, res) => res.json({
+  id: req.userId,
+  email: req.user?.email || null,
+  name: req.user?.name || null,
+  isAdmin: isAdmin(req),
+  pcFoldersEnabled: PC_FOLDERS_ENABLED
+}));
+
 // Lista os modelos disponíveis no provedor configurado (ex.: catálogo do
 // OpenRouter). Marca quais suportam "tools" (necessário p/ gerar arquivos).
 let modelsCache = null, modelsCacheAt = 0;
@@ -294,6 +318,9 @@ app.delete('/api/assistants/:id', async (req, res) => {
 function isDangerousHostPath(raw) {
   const p = String(raw || '').trim();
   if (!p) return true;
+  // Rejeita qualquer travessia de diretório ("..") — sem isso a blocklist
+  // abaixo é burlável (ex.: /home/x/../../etc). Não há caso legítimo com "..".
+  if (/(?:^|[\\/])\.\.(?:[\\/]|$)/.test(p)) return true;
   const stripped = p.replace(/[\\/]+$/, '');
   if (stripped === '' || stripped === '.') return true;              // raiz POSIX "/" ou "\"
   if (/^[a-z]:$/i.test(stripped)) return true;                        // "C:"
@@ -305,10 +332,19 @@ function isDangerousHostPath(raw) {
   if (posixSys.test(norm)) return true;
   return false;
 }
+// Numa VPS pública o recurso fica DESLIGADO (montar caminhos do host é
+// perigoso). Habilite só em uso pessoal com ENABLE_PC_FOLDERS=true.
+function requirePcFolders(res) {
+  if (PC_FOLDERS_ENABLED) return true;
+  res.status(403).json({ error: 'O recurso "Pastas do PC" está desativado nesta instalação (uso pessoal apenas).' });
+  return false;
+}
 app.get('/api/pc-folders', async (req, res) => {
+  if (!PC_FOLDERS_ENABLED) return res.json([]);
   res.json(await db.prepare('SELECT id, label, host_path, writable FROM pc_folders WHERE user_id=? ORDER BY created_at ASC').all(req.userId));
 });
 app.post('/api/pc-folders', async (req, res) => {
+  if (!requirePcFolders(res)) return;
   const label = (req.body?.label || '').trim();
   const hostPath = (req.body?.host_path || '').trim();
   if (!label || !hostPath) return res.status(400).json({ error: 'Nome e caminho da pasta são obrigatórios.' });
@@ -320,11 +356,13 @@ app.post('/api/pc-folders', async (req, res) => {
   res.json({ id, label, host_path: hostPath, writable: req.body?.writable ? 1 : 0 });
 });
 app.put('/api/pc-folders/:id', async (req, res) => {
+  if (!requirePcFolders(res)) return;
   await db.prepare('UPDATE pc_folders SET writable=? WHERE id=? AND user_id=?').run(req.body?.writable ? 1 : 0, req.params.id, req.userId);
   await destroyAllSandboxes();
   res.json({ ok: true });
 });
 app.delete('/api/pc-folders/:id', async (req, res) => {
+  if (!requirePcFolders(res)) return;
   await db.prepare('DELETE FROM pc_folders WHERE id=? AND user_id=?').run(req.params.id, req.userId);
   await destroyAllSandboxes();
   res.json({ ok: true });
@@ -548,9 +586,19 @@ app.put('/api/provider', async (req, res) => {
 
 // POST testa a chave com uma chamada leve (lista de modelos).
 app.post('/api/provider/test', async (req, res) => {
-  const prov = await getUserProvider(req.userId);
-  if (!prov.client) return res.status(400).json({ ok: false, error: 'Nenhuma chave configurada.' });
-  try { await prov.client.models.list(); res.json({ ok: true }); }
+  const apiKey = String(req.body?.apiKey || '').trim();
+  const baseURL = String(req.body?.base_url || '').trim() || process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com';
+  let client;
+  if (apiKey) {
+    // Testa a chave que a pessoa acabou de digitar (ainda não salva).
+    client = new OpenAI({ apiKey, baseURL });
+  } else {
+    // Sem chave nova no corpo: testa a configuração já salva.
+    const prov = await getUserProvider(req.userId);
+    client = prov.client;
+  }
+  if (!client) return res.status(400).json({ ok: false, error: 'Nenhuma chave configurada.' });
+  try { await client.models.list(); res.json({ ok: true }); }
   catch (e) { res.json({ ok: false, error: friendlyApiError(e) }); }
 });
 
@@ -900,6 +948,9 @@ app.post('/api/conversations/:id/export', async (req, res) => {
 // com os workspaces. (Requer o cliente `pg_dump` no ambiente — incluído na
 // imagem do backend.)
 app.get('/api/backup', (req, res) => {
+  // Backup = banco INTEIRO + todos os workspaces (dados de TODOS os usuários).
+  // Só o administrador pode baixar.
+  if (!isAdmin(req)) return res.status(403).json({ error: 'Apenas o administrador pode baixar o backup completo.' });
   const stamp = new Date().toISOString().slice(0, 10);
   const wsRoot = path.resolve(process.env.WORKSPACE_ROOT || './workspaces');
   const dumpName = `frederico-db-${stamp}.sql`;

@@ -1,6 +1,9 @@
 // Mensagens sem assunto nao possuem sinal suficiente para recuperar contexto
 // externo. O historico da conversa atual continua sendo preservado pelo agente.
-const LOW_SIGNAL_TURN_RE = /^(?:(?:oi+|oie+|ola+|opa+|e ai|hey|hello|hi|bom dia|boa tarde|boa noite)(?:\s+(?:tudo bem|como vai|como voce esta|como voce ta|tudo certo))?|ok(?:ay)?|beleza|certo|valeu|obrigad[oa]|sim|nao|continua|pode)$/;
+// NÃO inclui confirmações/continuações como "sim", "não", "pode", "continua":
+// elas costumam responder a uma pergunta do assistente ("posso gerar?") e, se
+// tratadas como baixo sinal, o agente perderia as ferramentas e não executaria.
+const LOW_SIGNAL_TURN_RE = /^(?:(?:oi+|oie+|ola+|opa+|e ai|hey|hello|hi|bom dia|boa tarde|boa noite)(?:\s+(?:tudo bem|como vai|como voce esta|como voce ta|tudo certo))?|ok(?:ay)?|beleza|valeu|obrigad[oa])$/;
 
 function normalizeTurn(text) {
   return String(text || '')

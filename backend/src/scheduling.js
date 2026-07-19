@@ -1,7 +1,10 @@
 const WEEKDAY_INDEX = Object.freeze({ Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 });
 
 export function resolveScheduleTimeZone(value) {
-  const candidate = String(value || '').trim() || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  // Padrão Brasil (o app é pt-BR): sem APP_TIMEZONE, usa America/Sao_Paulo em
+  // vez do fuso do servidor (que numa VPS costuma ser UTC → rotinas e contadores
+  // ~3h fora do esperado). Defina APP_TIMEZONE para outro fuso, se precisar.
+  const candidate = String(value || '').trim() || 'America/Sao_Paulo';
   try {
     new Intl.DateTimeFormat('en-US', { timeZone: candidate }).format();
     return candidate;

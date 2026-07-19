@@ -13,3 +13,10 @@ test('keeps external context available for actual requests', () => {
     assert.equal(isLowSignalTurn(text), false, text);
   }
 });
+
+test('confirmations do NOT count as low-signal (senão o agente perde as ferramentas)', () => {
+  // "posso gerar o relatório?" -> "pode" precisa manter as ferramentas ligadas.
+  for (const text of ['pode', 'sim', 'não', 'nao', 'continua', 'continua por favor']) {
+    assert.equal(isLowSignalTurn(text), false, text);
+  }
+});
