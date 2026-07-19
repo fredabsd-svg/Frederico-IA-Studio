@@ -492,7 +492,7 @@ const SHELL_INVENTORY = [
   'PDF/OCR: pdftotext, ocrmypdf, tesseract/tesseract-ocr-por, qpdf.',
   'Mídia: ffmpeg para cortar, juntar, converter, extrair áudio, redimensionar e legendar vídeo/áudio.',
   'Dados/documentos: jq (JSON), xmlstarlet (XML), imagemagick/convert, Inkscape headless, rsvg-convert, potrace, zip/unzip.',
-  'Imagens (edição avançada em lote): GIMP headless via Script-Fu — gimp -i -b \'(script-fu ...)\' -b \'(gimp-quit 0)\'. Para retoque, composição, filtros e conversões que passam do imagemagick. Também Pillow/OpenCV em Python.',
+  'Imagens (edição/manipulação em lote): PREFIRA imagemagick/convert, Pillow (PIL) e OpenCV (cv2) — são rápidos e headless. O GIMP 3.0 também está instalado, mas o startup headless dele é lento (xvfb + Script-Fu) e costuma estourar o limite de tempo por comando do sandbox; só tente GIMP para um filtro que só ele tem, via: xvfb-run -a gimp-console -idf -b \'(...)\' -b \'(gimp-quit 0)\'.',
   'Compilação: gcc/g++, make, cmake, ninja, go, rustc/cargo e javac/default-jdk-headless.',
   'Qualidade/diagnóstico: shellcheck, gdb, valgrind, strace, lsof, htop, procps, iproute2, net-tools e dnsutils.',
   'Bancos e operação externa: sqlite3, psql, mysql, redis-cli, ssh, rsync, ansible e kubectl.',
