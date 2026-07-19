@@ -62,6 +62,9 @@ services:
       - "443:443"
     environment:
       - DOMAIN=${DOMAIN:-:80}
+      # Com DOMAIN definido vira "www.DOMAIN" (certificado + redirect no Caddy);
+      # sem DOMAIN vira "localhost:8099" (bloco inerte, porta não exposta).
+      - WWW_DOMAIN=${DOMAIN:+www.}${DOMAIN:-localhost:8099}
     volumes:
       - caddy_data:/data
       - caddy_config:/config

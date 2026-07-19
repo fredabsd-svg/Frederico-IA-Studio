@@ -44,6 +44,9 @@ ssh root@SEU_IP
 No painel do seu domínio (Registro.br, GoDaddy, Cloudflare...):
 
 - Crie um registro **A** com o subdomínio (ex.: `ia`) apontando para o **IP da VPS**.
+- (Opcional) Crie também um registro **A** para `www` apontando para o mesmo IP —
+  o app emite o certificado do `www` sozinho e redireciona para o endereço
+  principal.
 - Aguarde a propagação (alguns minutos, até ~1h).
 
 Teste: `ping ia.suaempresa.com.br` deve responder com o IP da VPS.

@@ -172,6 +172,10 @@ As 5 fases da transformação em SaaS estão CONCLUÍDAS e o app está NO AR:
 **PRODUÇÃO AO VIVO:**
 - URL: **https://fredericostudio.com.br** (domínio no Registro.br; registro **A**
   na raiz apontando para o IP da VPS).
+- **www com certificado próprio**: `www.fredericostudio.com.br` tem bloco no
+  Caddyfile (via `WWW_DOMAIN` no compose de produção) que emite o certificado e
+  redireciona (308) para a raiz. O DNS do `www` já apontava para a VPS; para
+  ativar, rodar `bash atualizar.sh` no servidor.
 - Hospedagem: **Contabo** Cloud VPS (Ubuntu + Docker). Sobe via
   `docker-compose.prod.yml`: serviços `postgres` + `backend` + `web` (Caddy);
   o backend não é exposto (só pelo proxy).
@@ -212,7 +216,6 @@ tom mais humano em todas as camadas mantendo os guarda-corpos (#9–#11).
   **aprovação de conta** — hoje qualquer um se cadastra (recomendado divulgar
   "por link"). O sandbox executa código com internet: manter a VPS dedicada.
 - Migration 004: `user_id` NOT NULL após confirmar todos os inserts com dono.
-- `www.fredericostudio.com.br` (registro A do `www` + host no Caddyfile), se quiser.
 
 ---
 
