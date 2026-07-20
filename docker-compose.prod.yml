@@ -30,6 +30,18 @@ services:
       timeout: 5s
       retries: 10
 
+  # Antivírus: escaneia todo arquivo enviado pelos usuários antes de o backend
+  # salvar (ClamAV, gratuito e open source). No primeiro boot ele baixa a base
+  # de assinaturas (~5 min); nesse meio-tempo os uploads seguem funcionando sem
+  # verificação (fail-open), a menos que CLAMAV_REQUIRED=true no .env.
+  # ATENÇÃO: usa ~1–1,5 GB de RAM. Em VPS de 2 GB, prefira 4 GB — ou desative
+  # colocando CLAMAV_HOST= (vazio) no .env e removendo este serviço.
+  clamav:
+    image: clamav/clamav:stable
+    restart: unless-stopped
+    volumes:
+      - clamav_db:/var/lib/clamav # assinaturas persistidas entre reinícios
+
   backend:
     build: .
     restart: unless-stopped
@@ -41,6 +53,9 @@ services:
       - HOST_WORKSPACE_ROOT=${PWD}/workspaces
       - DATA_DIR=/app/data
       - DATABASE_URL=postgres://studio:studio@postgres:5432/studio
+      # Antivírus ligado por padrão (serviço 'clamav' acima). Para desativar,
+      # defina CLAMAV_HOST= (vazio) no .env.
+      - CLAMAV_HOST=${CLAMAV_HOST-clamav}
       # Origem pública do app: base dos cookies de sessão e dos callbacks OAuth.
       # Se não estiver no .env, é derivada do DOMAIN (https://SEU_DOMINIO).
       - BETTER_AUTH_URL=${BETTER_AUTH_URL:-https://${DOMAIN}}
@@ -75,3 +90,4 @@ volumes:
   pgdata:
   caddy_data:
   caddy_config:
+  clamav_db:

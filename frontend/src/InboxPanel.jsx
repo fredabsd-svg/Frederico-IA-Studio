@@ -25,10 +25,15 @@ export function InboxPanel({ clients = [], clientId = '', showToast, onOpenConve
       const fd = new FormData();
       files.forEach(f => fd.append('files', f));
       const res = await fetch(`${API}/api/inbox/${client}/upload`, { method: 'POST', body: fd });
-      if (!res.ok) throw new Error();
-      showToast(`${files.length} documento(s) recebido(s).`, 'ok');
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || '');
+      if (d.rejected?.length) {
+        showToast(`🛡️ Antivírus: ${d.rejected.length} documento(s) recusado(s) por conter ameaça: ${d.rejected.map(r => r.name).join(', ')}`);
+      } else {
+        showToast(`${files.length} documento(s) recebido(s)${d.scanned ? ' e verificado(s) pelo antivírus ✓' : ''}.`, 'ok');
+      }
       load();
-    } catch { showToast('Falha ao enviar os documentos.'); }
+    } catch (e) { showToast(e?.message || 'Falha ao enviar os documentos.'); }
     finally { setBusy(false); }
   }
   async function remove(stored) {

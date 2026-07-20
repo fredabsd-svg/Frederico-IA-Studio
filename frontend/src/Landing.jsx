@@ -28,6 +28,7 @@ const TRUST = [
   { icon: ShieldCheck, title: 'Seus dados isolados', text: 'Cada pessoa só enxerga os próprios dados, conversas e arquivos. Nada é compartilhado entre usuários.' },
   { icon: KeyRound, title: 'Sua própria chave', text: 'Use a sua chave de IA (BYOK): você fica no controle do custo e da privacidade das suas informações.' },
   { icon: Lock, title: 'Credenciais protegidas', text: 'Suas chaves e senhas ficam guardadas com criptografia forte no servidor.' },
+  { icon: BadgeCheck, title: 'Arquivos verificados', text: 'Todo arquivo enviado passa por verificação antivírus (ClamAV) antes de ser processado.' },
 ];
 
 export default function Landing() {

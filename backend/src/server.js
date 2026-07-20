@@ -22,6 +22,7 @@ import { encryptSecret, decryptSecret, maskSecret } from './crypto.js';
 import { getUserProvider } from './userProvider.js';
 import { getGithubConnection, testGithubToken, listGithubRepos, listGithubBranches, saveGithubConnection, githubOAuthConfig, githubOAuthAuthorizeUrl, createGithubOAuthState, consumeGithubOAuthState, exchangeGithubOAuthCode } from './connectors/github.js';
 import { sanitizeToolProtocolText } from './toolProtocol.js';
+import { scanUploadBatch } from './clamav.js';
 import OpenAI from 'openai';
 
 const app = express();
@@ -87,6 +88,22 @@ app.use('/api/conversations/:id', (req, res, next) => {
 });
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024, files: 20 } });
+
+// multer/busboy entrega originalname em latin1; reconverte para UTF-8 para não
+// corromper acentos (ex.: "Razão.pdf" virava "RazÃ£o.pdf").
+function decodeUploadName(name) { return Buffer.from(name, 'latin1').toString('utf8'); }
+// Passa o lote pelo antivírus (ClamAV). Devolve null e responde ao cliente se o
+// scanner for obrigatório e estiver fora do ar; senão devolve { scanned, clean,
+// rejected: [{name, virus}] } com os nomes já decodificados para exibição.
+async function scanOrReject(res, files) {
+  try {
+    const scan = await scanUploadBatch(files);
+    return { ...scan, rejected: scan.rejected.map(r => ({ name: decodeUploadName(r.file.originalname), virus: r.virus })) };
+  } catch (err) {
+    res.status(err.status || 503).json({ error: err.message });
+    return null;
+  }
+}
 
 function safeParse(s, fallback) { try { return JSON.parse(s); } catch { return fallback; } }
 function looksLikeFailedAssistantReply(content) {
@@ -719,16 +736,18 @@ app.get('/api/inbox/:client', (req, res) => {
   }).filter(Boolean);
   res.json(files);
 });
-app.post('/api/inbox/:client/upload', upload.array('files'), (req, res) => {
+app.post('/api/inbox/:client/upload', upload.array('files'), async (req, res) => {
+  const scan = await scanOrReject(res, req.files || []);
+  if (!scan) return;
   const d = inboxDir(req.userId, req.params.client);
   let count = 0;
-  for (const file of req.files || []) {
-    const original = Buffer.from(file.originalname, 'latin1').toString('utf8');
+  for (const file of scan.clean) {
+    const original = decodeUploadName(file.originalname);
     const safe = original.replace(/[^a-zA-Z0-9._ -]/g, '_');
     fs.writeFileSync(path.join(d, `${Date.now()}_${count}_${nanoid(6)}_${safe}`), file.buffer);
     count++;
   }
-  res.json({ ok: true, count });
+  res.json({ ok: true, count, scanned: scan.scanned, rejected: scan.rejected });
 });
 app.delete('/api/inbox/:client/:stored', (req, res) => {
   const d = inboxDir(req.userId, req.params.client);
@@ -873,9 +892,12 @@ app.post('/api/memories/reindex', async (req, res) => {
 });
 
 // Inicia a importação em segundo plano; o progresso é consultado via /import-status
-app.post('/api/memories/import', upload.single('file'), (req, res) => {
+app.post('/api/memories/import', upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'Nenhum arquivo enviado.' });
-  const r = startImport(req.userId, Buffer.from(req.file.originalname, 'latin1').toString('utf8'), req.file.buffer, req.query.scope || 'global');
+  const scan = await scanOrReject(res, [req.file]);
+  if (!scan) return;
+  if (scan.rejected.length) return res.status(422).json({ error: `Arquivo recusado pelo antivírus (ameaça detectada: ${scan.rejected[0].virus}).` });
+  const r = startImport(req.userId, decodeUploadName(req.file.originalname), req.file.buffer, req.query.scope || 'global');
   if (!r.ok) return res.status(409).json({ error: r.error });
   res.json({ started: true });
 });
@@ -1131,12 +1153,12 @@ app.delete('/api/conversations/:id', async (req, res) => {
 
 app.post('/api/conversations/:id/upload', upload.array('files'), async (req, res) => {
   if (!await ensureConversation(req.userId, req.params.id)) return res.status(404).json({ error: 'Não encontrado' });
+  const scan = await scanOrReject(res, req.files || []);
+  if (!scan) return;
   const ws = workspaceFor(req.params.id);
   const saved = [];
-  for (const file of req.files || []) {
-    // multer/busboy entrega originalname em latin1; reconverte para UTF-8
-    // para não corromper acentos (ex.: "Razão.pdf" virava "RazÃ£o.pdf").
-    const original = Buffer.from(file.originalname, 'latin1').toString('utf8');
+  for (const file of scan.clean) {
+    const original = decodeUploadName(file.originalname);
     const safe = original.replace(/[^a-zA-Z0-9._ -]/g, '_');
     const name = `${Date.now()}_${nanoid(8)}_${safe}`;
     const target = path.join(ws.uploads, name);
@@ -1147,7 +1169,7 @@ app.post('/api/conversations/:id/upload', upload.array('files'), async (req, res
       .run(id, req.params.id, 'upload', original, `uploads/${name}`, file.size, now());
     saved.push({ id, name: original, path: `uploads/${name}`, size: file.size });
   }
-  res.json({ files: saved });
+  res.json({ files: saved, scanned: scan.scanned, rejected: scan.rejected });
 });
 
 app.get('/api/conversations/:id/files', async (req, res) => {
