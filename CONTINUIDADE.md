@@ -1078,7 +1078,16 @@ chat · Upload como chips · Tela responsiva (gaveta mobile) · Tema claro/escur
 7. SANDBOX_RULES no prompt: cada run_python é processo novo (sem estado);
    narrar antes de cada ferramenta; ffmpeg disponível; generate_image p/ imagens.
 8. Freio: 5 falhas consecutivas de ferramenta → interrompe com o último erro.
-9. `AGENT_MAX_STEPS=30`, `AGENT_HISTORY_LIMIT=60` (env).
+9. Orçamento de etapas do agente (`loop.js`): `AGENT_MAX_STEPS` é **PISO, não
+   teto** — `Math.max(eff.steps, envSteps)`, nunca reduz o esforço escolhido
+   ("Máx" vale ≥60 mesmo com env baixo). NUNCA voltar a `env || eff.steps` (o env
+   sobrescrevia e cortava "Máx" para 30 em silêncio — causa real de "modo
+   desenvolvedor/tarefa longa bate no limite" mesmo depois de "aumentar o número").
+   Modo desenvolvedor: `AGENT_DEV_MAX_STEPS` (padrão 200). Teto absoluto:
+   `AGENT_HARD_MAX_STEPS` (padrão 1,5x o base) — tarefa AINDA produtiva (ferramenta
+   ok há ≤2 etapas, `lastProductiveStep`) passa do base até o teto em vez de morrer
+   no meio. Mensagem de limite honesta e retomável (sem o papo antigo de CSV).
+   `AGENT_HISTORY_LIMIT=60` (env).
 10. Validação de caminhos com `insideBase()` (startsWith + separador) — nunca
     voltar ao startsWith puro (path traversal).
 11. Frontend: dependências com versões fixadas (nunca "latest").

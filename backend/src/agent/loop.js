@@ -192,7 +192,24 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
   }
 
   const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
-  const maxSteps = Number(process.env.AGENT_MAX_STEPS || eff.steps);
+  // Orçamento de etapas do loop agêntico. Cada etapa = um turno do modelo (que
+  // costuma executar UMA ferramenta), então tarefa longa/programação consome
+  // muitas etapas de trabalho legítimo.
+  // 1) AGENT_MAX_STEPS é PISO, nunca teto que reduza o esforço escolhido:
+  //    escolher "Máx" precisa valer ao menos os passos do esforço, mesmo com
+  //    AGENT_MAX_STEPS=30 no .env. (Antes o env sobrescrevia e cortava para 30 em
+  //    silêncio — por isso "aumentar o limite no código" nunca pegava.)
+  // 2) Modo desenvolvedor é programação por natureza: orçamento bem maior
+  //    (AGENT_DEV_MAX_STEPS, padrão 200).
+  const envSteps = Number(process.env.AGENT_MAX_STEPS) || 0;
+  let maxSteps = Math.max(eff.steps, envSteps);
+  if (developerContext) maxSteps = Math.max(maxSteps, Number(process.env.AGENT_DEV_MAX_STEPS) || 200);
+  // Teto absoluto de segurança contra loop infinito. Uma tarefa que AINDA está
+  // rendendo (ferramenta executada com sucesso há poucas etapas) pode passar do
+  // orçamento base até este teto, em vez de ser abortada no meio do trabalho.
+  const hardMaxSteps = Math.max(maxSteps, Number(process.env.AGENT_HARD_MAX_STEPS) || Math.round(maxSteps * 1.5));
+  const IDLE_STEP_GRACE = 2; // etapas sem progresso toleradas após o orçamento base
+  let lastProductiveStep = 0;
   const executionRequired = forceExecution || modelPlan.requirements.required;
   const requiresOutput = modelPlan.requirements.expectsOutput;
   const outputsBefore = new Map(listOutputs(conversationId).map(f => [f.path, fileSignature(f)]));
@@ -215,7 +232,12 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
   let webFetchAttempts = 0;
   let webResearchStop = '';
   let webResearchConclusionAttempted = false;
-  for (let step = 0; step < maxSteps; step++) {
+  for (let step = 0; step < hardMaxSteps; step++) {
+    // Passou do orçamento base? Só segue enquanto o trabalho ainda rende (uma
+    // ferramenta executada com sucesso há poucas etapas). Se estagnou, encerra
+    // como limite de etapas — as travas de falha (5 seguidas), repetição e
+    // pesquisa web continuam valendo à parte.
+    if (step >= maxSteps && (step - lastProductiveStep) >= IDLE_STEP_GRACE) break;
     if (await gate(control, onEvent)) { stopped = true; break; }
     onEvent({ type: 'status', content: step === 0 ? 'Pensando...' : 'Continuando...' });
     // Streaming: o texto é enviado token a token para a interface (tela viva)
@@ -560,6 +582,9 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
       if (researchReason && !webResearchStop) webResearchStop = researchReason;
     }
     if (stopped) break;
+    // Etapa produtiva: executou ferramenta(s) e a última não falhou em cadeia.
+    // Serve de sinal para permitir passar do orçamento base (ver topo do loop).
+    if (consecutiveFailures === 0) lastProductiveStep = step;
     if (webResearchStop && !webResearchConclusionAttempted) {
       webResearchConclusionAttempted = true;
       tools = tools.filter(tool => !WEB_TOOL_NAMES.has(tool.function.name));
@@ -586,9 +611,11 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
   }
   else if (!completedNaturally) {
     incomplete = true;
-    failureMessage = `A tarefa atingiu o limite de ${maxSteps} etapas antes da conclusão.`;
-    // Atingiu o limite de etapas ainda usando ferramentas: avisa o usuário
-    const note = `\n\n_⚠️ Atingi o limite de ${maxSteps} etapas de processamento nesta tarefa. Ela ficou muito longa — provavelmente pela dificuldade de extrair os dados. Sugestão: peça em partes (ex.: 1º "extraia os dados do arquivo para um CSV", depois "gere a planilha final a partir do CSV")._`;
+    failureMessage = `A tarefa atingiu o limite de ${hardMaxSteps} etapas antes da conclusão.`;
+    // Atingiu o limite de etapas ainda usando ferramentas: avisa de forma honesta
+    // e diz como retomar. NÃO presuma que era extração de dados — pode ser
+    // programação, pesquisa etc.; a mensagem antiga sugeria CSV sem cabimento.
+    const note = `\n\n_⚠️ Esta tarefa ficou longa e precisei pausá-la para não rodar sem fim. O que já consegui fazer está acima. Toque em **Reenviar** para eu continuar de onde parei; se for algo grande, ajuda dividir em etapas menores (ex.: primeiro investigar/planejar, depois executar por partes)._`;
     finalText += note;
     onEvent({ type: 'delta', content: note });
   }
