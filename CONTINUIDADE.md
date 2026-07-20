@@ -48,9 +48,43 @@ completo contra Postgres 16 real com pgvector (migrations + índice + backfill +
 SQLs de busca com vetores sintéticos), cadastro/login reais exercitando os
 validadores e o 429 do limiter de auth.
 
-Pendências da revisão que ficaram para depois (médio prazo): quebrar
-`server.js`/`agent.js`/`App.jsx` em módulos, extrair os 7 `DOCPRO_PROMPT` para
-arquivos, TypeScript gradual, logs estruturados (pino) e testes E2E.
+**Modularização (itens 4 e 7 — feita em seguida, na mesma branch/PR #53):**
+- `server.js`: **1713 → 189 linhas.** As ~50 rotas foram movidas VERBATIM para
+  15 routers por domínio em `backend/src/routes/` (account, models, assistants,
+  pcFolders, inbox, clients, templates, memories, provider, connectors,
+  analytics, conversations, tasks, schedules, backup). `routes/helpers.js`
+  concentra o compartilhado: `makeRouter()` (o mesmo shim async de sempre —
+  todo router NOVO deve usá-lo, nunca `Router()` cru), multer/antivírus,
+  `loadAssistant`, `ensureConversation`, limite diário. O server.js ficou só
+  com middlewares (segurança/auth/seed), montagem dos routers e boot. Os
+  timers das rotinas agendadas agora são armados no boot (`startSchedulers()`),
+  DEPOIS das migrations.
+- `agent.js`: **2027 → 40 linhas** — fachada que re-exporta os mesmos 33
+  símbolos; nenhum importador mudou. Código dividido em 10 módulos em
+  `backend/src/agent/`: loop (652), prompts (334), outputs (332),
+  orchestrator (293), repair (105), control (102, ÚNICO dono do estado de
+  pausar/continuar/parar), webResearch (93), provider (71), vision (60),
+  persistence (57). Extração mecânica conferida por diff multiset (zero linha
+  alterada/perdida).
+- Prompts DOCPRO (10 versões, ~430 linhas) extraídos para
+  `backend/prompts/docpro/*.txt`; o novo `backend/src/seed.js` carrega
+  `atual.txt` e usa os antigos SÓ para migrar assistentes com prompt padrão
+  antigo. Para editar o prompt do DocPro: mexa em `atual.txt` e renomeie o
+  anterior para `vN.txt` (o teste do qaFixes valida o valor carregado).
+- `App.jsx`: **1822 → 1057 linhas.** Custom hooks em `frontend/src/hooks/`
+  (useChat 248, useConversations 112, useFileUploads 103, useAssistants 91,
+  useTasks 62, useSpeech 35) e subcomponentes em `frontend/src/components/`
+  (ContextPicker, ClientPicker, MemoryTrace). O App continua dono do JSX e do
+  estado de UI; hooks recebem dependências por parâmetro.
+- Validação da modularização: 102 testes backend + 7 frontend verdes, build
+  ok, boot real contra Postgres com smoke test de TODAS as rotas dos 15
+  routers, lint no-undef zerado e verificação VISUAL com Playwright (landing,
+  login real, aceite LGPD, chat carregado, página /privacidade com a versão
+  dos termos vinda de /api/health) — sem nenhum erro de JS de página.
+
+Pendências da revisão que ficaram para depois (médio prazo): TypeScript
+gradual, logs estruturados (pino) e testes E2E permanentes no CI (a
+verificação Playwright acima foi manual, no sandbox da sessão).
 
 ## 🛡️ Antivírus nos uploads (ClamAV) + selos de segurança + hardening (2026-07-20, PR #50 — MERGEADO)
 
