@@ -49,6 +49,7 @@ você escolhe é enviado direto ao provedor, sem substituição.
 | 📁 | **Modo Desenvolvedor** | Trabalhe sobre uma pasta de projeto autorizada |
 | 🔌 | **Conector GitHub** | Conecte a sua conta (token) e a IA clona um repositório, altera o código e envia de volta — push e Pull Request direto pelo chat ou pelo modo desenvolvedor; o token fica cifrado e nunca entra no sandbox |
 | 🎙️ | **Voz e segundo plano** | Ditado por voz, tarefas em background, histórico por cliente |
+| 🛡️ | **Privacidade (LGPD)** | Consentimento registrado, Política de Privacidade e Termos publicados, e painel "Privacidade e dados": exportar tudo em JSON, apagar o histórico ou excluir a conta — hard delete, sem soft delete |
 
 ### Execução confiável
 
@@ -187,6 +188,7 @@ docker compose up --build -d
 | `MODEL_FALLBACKS` | — | Modelos de reserva (ordem) para failover automático quando o provedor cai; sem isso, cai para o modelo-base da conta |
 | `VALIDATE_RECALC` | true | Recalcula .xlsx/.xlsm com LibreOffice para detectar erros reais de fórmula (#DIV/0!, #REF!); `false` = validação parcial mais rápida |
 | `OUTPUT_RETENTION_DAYS` | 0 (desligado) | Remove arquivos de saída mais antigos que N dias (útil em uso público/soak) |
+| `CONVERSATION_RETENTION_DAYS` | 0 (desligado) | LGPD: apaga em definitivo conversas sem atividade há mais de N dias (mensagens, arquivos, memórias derivadas e workspace) |
 
 Consulte o [.env.example](.env.example) para todas as opções.
 
@@ -200,6 +202,14 @@ Consulte o [.env.example](.env.example) para todas as opções.
 - 🔐 A sandbox roda **sem privilégios** e com limites de CPU/memória, mas a rede fica habilitada para pesquisas e automações — código executado por um usuário tem acesso à internet.
 - 🌍 **Site público:** qualquer pessoa pode se cadastrar. Para uso amplo/indexado, considere adicionar confirmação de e-mail e/ou aprovação de conta; enquanto isso, prefira divulgar "por link" e mantenha os limites (`RATE_MSGS_PER_DAY`, `MAX_SANDBOXES_PER_USER`).
 - 📋 Conteúdo enviado ao modelo pode ser transmitido ao provedor configurado — avalie **LGPD** e sigilo antes de enviar dados sensíveis.
+
+### 🛡️ LGPD (Lei 13.709/2018) — conformidade embutida
+
+- **Documentos legais publicados:** Política de Privacidade em `/privacidade` e Termos de Uso em `/termos` (públicos, sem login), com links na landing, no cadastro e dentro do app. Ao alterar os textos de forma relevante, atualize a `TERMS_VERSION` em `frontend/src/LegalPages.jsx` **e** `backend/src/privacy.js` — todos os usuários verão o pedido de aceite de novo.
+- **Consentimento registrado (art. 8º):** checkbox opt-in (desmarcado por padrão) no cadastro; para login social e contas antigas, um modal bloqueante pede o aceite na primeira entrada. Cada aceite fica registrado em `user_consents` com versão, data, IP e navegador (evidência).
+- **Direitos do titular (art. 18)** no menu **Privacidade e dados**: exportar todos os dados em JSON (portabilidade), apagar todo o histórico de conversas e **excluir a conta** — tudo **hard delete** (banco + workspaces em disco), sem soft delete. Apagar o histórico remove também as memórias **e as sugestões de memória** extraídas das conversas (memórias manuais e importadas são preservadas); o diálogo de excluir conta exige digitar o e-mail **sem exibi-lo**.
+- **Minimização:** cadastro pede só nome, e-mail e senha; aviso fixo no chat lembra de não enviar dados sensíveis; retenção automática opcional (`CONVERSATION_RETENTION_DAYS`); logs do servidor não gravam o conteúdo das conversas.
+- **Segurança:** senhas com hash (Better Auth/scrypt), chaves de API e tokens cifrados (AES-256-GCM), isolamento por usuário verificado em cada consulta.
 
 ---
 

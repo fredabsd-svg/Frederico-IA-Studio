@@ -23,6 +23,7 @@ import { getUserProvider } from './userProvider.js';
 import { getGithubConnection, testGithubToken, listGithubRepos, listGithubBranches, saveGithubConnection, githubOAuthConfig, githubOAuthAuthorizeUrl, createGithubOAuthState, consumeGithubOAuthState, exchangeGithubOAuthCode } from './connectors/github.js';
 import { sanitizeToolProtocolText } from './toolProtocol.js';
 import { scanUploadBatch } from './clamav.js';
+import { TERMS_VERSION, getLatestConsent, recordConsent, exportUserData, deleteConversationDeep, deleteAllConversations, deleteAccount, sweepOldConversations, CONVERSATION_RETENTION_DAYS } from './privacy.js';
 import OpenAI from 'openai';
 
 const app = express();
@@ -610,6 +611,57 @@ app.get('/api/me', (req, res) => res.json({
   pcFoldersEnabled: PC_FOLDERS_ENABLED
 }));
 
+// ---- LGPD: consentimento e direitos do titular (ver privacy.js) ----
+
+// Situação do consentimento do usuário logado. needsConsent = ainda não aceitou
+// a VERSÃO VIGENTE dos Termos/Política (usuário novo por login social, conta
+// criada antes do recurso, ou termos atualizados).
+app.get('/api/consent', async (req, res) => {
+  const latest = await getLatestConsent(req.userId);
+  res.json({
+    requiredVersion: TERMS_VERSION,
+    acceptedVersion: latest?.version || null,
+    acceptedAt: latest?.accepted_at || null,
+    needsConsent: latest?.version !== TERMS_VERSION,
+  });
+});
+
+// Registra o aceite da versão vigente (com IP e navegador como evidência).
+app.post('/api/consent', async (req, res) => {
+  const ip = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket?.remoteAddress || null;
+  await recordConsent(req.userId, { ip, userAgent: req.headers['user-agent'] || null });
+  res.json({ ok: true, version: TERMS_VERSION });
+});
+
+// Portabilidade (art. 18, V): baixa TODOS os dados do usuário em JSON.
+app.get('/api/account/export', async (req, res) => {
+  const data = await exportUserData(req.userId, { ...req.user, createdAt: req.user?.createdAt });
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="meus-dados-frederico-ia-${new Date().toISOString().slice(0, 10)}.json"`);
+  res.send(JSON.stringify(data, null, 2));
+});
+
+// Apaga TODO o histórico de conversas (art. 18, VI) — hard delete, incluindo
+// mensagens, arquivos, memórias extraídas e workspaces em disco.
+app.delete('/api/account/conversations', async (req, res) => {
+  const { deleted, skipped } = await deleteAllConversations(req.userId);
+  if (skipped) return res.status(409).json({ error: `${deleted} conversa(s) apagada(s), mas ${skipped} ainda estava(m) respondendo. Pare o processamento e tente de novo.`, deleted, skipped });
+  res.json({ ok: true, deleted });
+});
+
+// Exclusão TOTAL da conta (art. 18, VI) — hard delete de tudo (banco + disco).
+// Exige confirmação: o corpo precisa trazer o e-mail da própria conta.
+app.delete('/api/account', async (req, res) => {
+  const confirm = String(req.body?.confirm || '').trim().toLowerCase();
+  const email = String(req.user?.email || '').trim().toLowerCase();
+  if (!confirm || confirm !== email) {
+    return res.status(400).json({ error: 'Confirmação incorreta: digite o e-mail da sua conta para excluir.' });
+  }
+  const result = await deleteAccount(req.userId);
+  if (!result.ok) return res.status(409).json({ error: result.error });
+  res.json({ ok: true });
+});
+
 // Lista os modelos disponíveis no provedor configurado (ex.: catálogo do
 // OpenRouter). Marca quais suportam "tools" (necessário p/ gerar arquivos).
 let modelsCache = null, modelsCacheAt = 0;
@@ -1143,11 +1195,9 @@ app.delete('/api/conversations/:id', async (req, res) => {
   if (isConversationActive(id)) {
     return res.status(409).json({ error: 'Esta conversa ainda está concluindo uma resposta. Aguarde terminar ou interrompa o processamento antes de apagá-la.' });
   }
-  await db.prepare('DELETE FROM conversations WHERE id=? AND user_id=?').run(id, req.userId); // cascade: messages + files
-  // Privacidade: remove o índice de memória e os fatos extraídos desta conversa
-  await db.prepare('DELETE FROM conversation_chunks WHERE conversation_id=? AND user_id=?').run(id, req.userId);
-  await db.prepare("DELETE FROM memory WHERE source_type='auto' AND source_id=? AND user_id=?").run(id, req.userId);
-  await destroyConversation(id); // remove container e pasta do workspace
+  // Hard delete em profundidade: mensagens, arquivos, índice de memória, fatos
+  // extraídos, tarefas associadas e o workspace em disco (ver privacy.js).
+  await deleteConversationDeep(req.userId, id);
   res.json({ ok: true });
 });
 
@@ -1304,6 +1354,13 @@ async function checkSchedules() {
 }
 setInterval(checkSchedules, 60 * 1000).unref();
 setTimeout(checkSchedules, 5000);
+
+// LGPD — retenção automática: com CONVERSATION_RETENTION_DAYS > 0, apaga
+// conversas paradas há mais de N dias (varredura a cada 6 h; desligada por padrão).
+if (CONVERSATION_RETENTION_DAYS > 0) {
+  setInterval(() => sweepOldConversations().catch(e => console.error('[retenção]', e.message)), 6 * 60 * 60 * 1000).unref();
+  setTimeout(() => sweepOldConversations().catch(e => console.error('[retenção]', e.message)), 60 * 1000).unref();
+}
 
 app.get('/api/schedules', async (req, res) => res.json(await db.prepare('SELECT * FROM schedules WHERE user_id=? ORDER BY created_at DESC').all(req.userId)));
 app.post('/api/schedules', async (req, res) => {

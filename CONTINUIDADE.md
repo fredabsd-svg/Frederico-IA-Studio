@@ -32,6 +32,58 @@ verificados" no bloco de confiança.
 - `VPS-DEPLOY.md` ganhou o **Passo 8** (hardening): unattended-upgrades,
   fail2ban, SSH só com chave e o guia do antivírus.
 
+## 🛡️ LGPD — consentimento, direitos do titular e retenção (2026-07-20, PRs #47–#49)
+
+O app (já em produção) ganhou a camada de conformidade com a LGPD, pedida pelo
+usuário a partir de um checklist que foi auditado contra o código real (muita
+coisa JÁ existia: chaves cifradas AES-256-GCM, senha com hash do Better Auth,
+hard delete de conversa com cascade, cadastro mínimo). Tudo MERGEADO na main:
+PR #47 (camada completa), #48 e #49 (correções após teste real do usuário no
+celular — ver bullets abaixo).
+
+**O que foi adicionado:**
+- **Documentos legais**: `frontend/src/LegalPages.jsx` → rotas públicas
+  `/privacidade` e `/termos` (roteadas em `main.jsx`; funcionam no Vite e no
+  Caddy via fallback de SPA). Links no rodapé da landing, no cadastro e no app.
+  `TERMS_VERSION` ('2026-07-20') existe em DOIS lugares que precisam andar
+  juntos: `LegalPages.jsx` e `backend/src/privacy.js` — mudar os textos de
+  forma relevante = mudar a versão nos dois → todos reaceitam.
+  ⚠️ O controlador está como "Frederico Assessoria Contábil" e o contato
+  `contabil@fredericoassessoria.com.br` — o usuário deve conferir razão social.
+- **Consentimento (art. 8º)**: checkbox opt-in no cadastro (LoginScreen, POST
+  `/api/consent` logo após o signUp); login social/contas antigas caem no
+  `ConsentGate` (modal bloqueante no App, via GET `/api/consent` →
+  `needsConsent`). Registro em `user_consents` (migration `005_lgpd.sql`) com
+  versão, IP, user-agent e data — histórico, não flag.
+- **Direitos do titular (art. 18)**: `backend/src/privacy.js` + rotas em
+  `server.js`: GET `/api/account/export` (JSON completo, SEM segredos nem
+  embeddings), DELETE `/api/account/conversations` (apaga tudo; 409 se alguma
+  conversa ainda responde), DELETE `/api/account` (hard delete total: destrói
+  workspaces/containers/inbox em disco e `DELETE FROM "user"` — as FKs ON
+  DELETE CASCADE levam o resto; exige `{confirm: email}` no corpo). UI:
+  `PrivacyPanel.jsx` (menu Administração → "Privacidade e dados").
+  Correção pós-teste (PR #48): o diálogo de excluir conta NÃO exibe o e-mail
+  cadastrado — mostrá-lo anulava a confirmação por digitação (era copiar e
+  colar); a pessoa precisa SABER o e-mail com que entra.
+- **deleteConversationDeep** unificou a exclusão profunda (rota antiga de
+  apagar conversa agora também remove TAREFAS não-running da conversa — antes
+  uma tarefa na fila RECRIAVA a conversa apagada via ensureConversation).
+  Correção pós-teste do usuário (PR #49): fatos extraídos com
+  `review_auto_memory` ligado vivem em `memory_suggestions`, não em `memory` —
+  a exclusão profunda agora limpa as DUAS tabelas, e "Apagar todo o histórico"
+  passa uma vassoura final em tudo com `source_type='auto'` (pega órfãos de
+  conversas apagadas antes da correção; memórias manuais/importadas ficam).
+  Após atualizar, o usuário deve clicar "Apagar tudo" de novo para varrer os
+  órfãos que sobraram do teste.
+- **Retenção (minimização)**: `CONVERSATION_RETENTION_DAYS` (0 = desligado;
+  varredura a cada 6 h em `sweepOldConversations`; documentado no .env.example
+  e README).
+- **Aviso no chat**: hint fixo no composer ("as mensagens vão ao provedor de
+  IA — evite dados sensíveis") com link para /privacidade.
+- **Logs**: indexer de memória não imprime mais o título da conversa.
+- Cookies: só o essencial de sessão (sem analytics) → banner de cookies NÃO é
+  necessário; a política explica isso.
+
 ## 🔌 Conector GitHub — primeiro conector do app (2026-07-19)
 
 O app ganhou **Conectores** (Configurações → Conectores), começando pelo
@@ -840,13 +892,14 @@ chat · Upload como chips · Tela responsiva (gaveta mobile) · Tema claro/escur
 
 ## 9. Estado do git
 
-- Último commit enviado ao GitHub era `0962d18` (2026-07-14). Desde então, a
-  árvore acumulou trabalho de VÁRIAS sessões sem commit (protótipo v2, modo
-  desenvolvedor, orquestrador c/ executor, catálogo de modelos, agendamento,
-  política de memória, testes, etc.). O **commit de 2026-07-16** empacota TODO
-  esse estado funcional de uma vez (backend/src + frontend/src + sandbox +
-  este CONTINUIDADE.md). Estado validado antes de commitar: `docker compose
-  build` do backend sobe limpo (health 200) e `vite build` do frontend passa.
+- **Atualizado 2026-07-20:** a `main` está em produção com a frente LGPD
+  completa mergeada (PRs #47, #48 e #49 — ver a primeira seção deste arquivo).
+  O fluxo de trabalho recente: branch `claude/*` por frente de trabalho →
+  PR → merge na main na mesma sessão. Validação usada nos PRs LGPD:
+  `node --check` no backend, testes com `node --test` (backend 29 pass /
+  frontend 7 pass) e `vite build` limpo. Obs.: no ambiente de dev remoto o
+  `npm ci` do backend precisa de `--ignore-scripts` (o binário do sharp não
+  baixa atrás do proxy — não afeta o Docker do usuário).
 - **Deixados de fora de propósito** (não commitar sem intenção clara):
   - `frontend/dist/` — saída de build (não versionar).
   - `frontend/package-lock.json` (M): só teve remoção de binários de plataforma

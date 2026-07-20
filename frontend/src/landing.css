@@ -180,3 +180,35 @@
 @media (prefers-reduced-motion: reduce) {
   .lpCard, .lpBtn { transition: none; }
 }
+
+/* ---- Páginas legais (LGPD): /privacidade e /termos ---- */
+.legalPage { min-height: 100vh; background: var(--bg); color: var(--text); }
+.legalHeader {
+  position: sticky; top: 0; z-index: 20;
+  padding: 14px clamp(16px, 5vw, 48px);
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line);
+}
+.legalBack {
+  display: inline-flex; align-items: center; gap: 6px;
+  color: var(--muted); font-size: var(--fs-sm); font-weight: 600; text-decoration: none;
+}
+.legalBack:hover { color: var(--accent); }
+.legalBody { max-width: 780px; margin: 0 auto; padding: clamp(28px, 6vw, 64px) clamp(16px, 5vw, 48px) 80px; line-height: 1.65; }
+.legalKicker {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: var(--fs-sm); font-weight: 700; color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: var(--r-full); padding: 6px 13px; margin-bottom: 16px;
+}
+.legalBody h1 { font-size: clamp(26px, 4vw, 34px); font-weight: 800; letter-spacing: -.02em; margin: 0 0 6px; }
+.legalMeta { color: var(--muted); font-size: var(--fs-sm); margin: 0 0 28px; }
+.legalBody h2 { font-size: var(--fs-xl); font-weight: 700; margin: 30px 0 8px; letter-spacing: -.01em; }
+.legalBody p, .legalBody li { color: var(--text); font-size: var(--fs-md); }
+.legalBody ul { padding-left: 22px; margin: 8px 0 14px; }
+.legalBody li { margin: 6px 0; }
+.legalBody a { color: var(--accent); text-decoration: none; font-weight: 600; }
+.legalBody a:hover { text-decoration: underline; }
+.legalFooter { margin-top: 44px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: var(--fs-sm); }
