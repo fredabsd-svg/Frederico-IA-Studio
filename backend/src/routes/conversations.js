@@ -5,6 +5,7 @@ import path from 'path';
 import { nanoid } from 'nanoid';
 import { db, now } from '../db.js';
 import { runAgent, runOrchestrator, setControl, isConversationActive, friendlyApiError } from '../agent.js';
+import { openLiveStream, getLiveStream } from '../liveStream.js';
 import { runTool } from '../tools.js';
 import { classifyTaskResult } from '../taskOutcome.js';
 import { workspaceFor, insideBase, realInside } from '../sandbox.js';
@@ -61,7 +62,10 @@ router.get('/conversations/:id', async (req, res) => {
     }
     delete m.memory_meta;
   });
-  res.json({ conversation, messages });
+  // active: há um processamento rodando AGORA nesta conversa? O front usa isso
+  // para, ao reabrir a conversa, reconectar ao stream ao vivo (GET /stream) e
+  // seguir acompanhando o andamento em vez de só mostrar o histórico parado.
+  res.json({ conversation, messages, active: isConversationActive(req.params.id) });
 });
 
 router.delete('/conversations/:id', async (req, res) => {
@@ -238,6 +242,39 @@ router.post('/conversations/:id/control', validate(schemas.control), async (req,
   res.json({ ok: true, action, paused: control.paused, stopped: control.stopped });
 });
 
+// RECONEXÃO ao processamento em andamento. Quando o usuário volta à conversa
+// (mesmo dispositivo/sessão) e ela ainda está processando, o front abre este
+// SSE: recebe primeiro o REPLAY de tudo que já aconteceu no run (para remontar a
+// resposta parcial) e depois os eventos ao vivo, até "done"/"error". Sem corpo
+// novo — não dispara outro run, só acompanha o que já roda.
+router.get('/conversations/:id/stream', async (req, res) => {
+  const conv = await db.prepare('SELECT id FROM conversations WHERE id=? AND user_id=?').get(req.params.id, req.userId);
+  if (!conv) return res.status(404).json({ error: 'Não encontrado' });
+  const live = getLiveStream(req.params.id);
+  // 204: não há (mais) nada rodando nem no buffer — o front então confia só no
+  // histórico já carregado do banco.
+  if (!live) return res.status(204).end();
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+  let gone = false;
+  const heartbeat = setInterval(() => { if (!gone && !res.writableEnded) { try { res.write(': ping\n\n'); } catch { gone = true; } } }, 15000);
+  const closeUp = () => { if (gone) return; gone = true; clearInterval(heartbeat); if (!res.writableEnded) res.end(); };
+  const write = (event) => {
+    if (gone || res.writableEnded) return;
+    try { res.write(`data: ${JSON.stringify(event)}\n\n`); } catch { gone = true; }
+    // Ao chegar o evento terminal, drenamos e fechamos — o cliente já tem tudo.
+    if (event && (event.type === 'done' || event.type === 'error')) closeUp();
+  };
+  // fromSeq permite retomar sem duplicar caso o cliente reconecte o próprio
+  // /stream; por padrão (0) reproduz o run inteiro desde o começo.
+  const fromSeq = Number.parseInt(req.query.fromSeq, 10) || 0;
+  const unsubscribe = live.subscribe((rec) => write({ ...rec.event, _seq: rec.seq }), fromSeq);
+  res.on('close', () => { clearInterval(heartbeat); unsubscribe(); gone = true; });
+});
+
 router.post('/conversations/:id/chat', validate(schemas.chat), async (req, res) => {
   // Tipo/tamanho/trim de `message` já garantidos por validate(schemas.chat).
   const text = req.body.message;
@@ -255,7 +292,13 @@ router.post('/conversations/:id/chat', validate(schemas.chat), async (req, res) 
   // clientGone: o usuário saiu da página/minimizou (conexão SSE fechada). A
   // partir daí, as escritas SSE viram no-op — mas a TAREFA continua rodando.
   let clientGone = false;
+  // Stream ao vivo desta conversa: TODO evento é publicado aqui (buffer + fan-out)
+  // antes de ir para a resposta atual. Assim, se o usuário reconectar por outra
+  // aba/depois de recarregar (GET /stream), ele recebe o replay do que já passou
+  // e segue recebendo os próximos eventos — mesmo que ESTA conexão já tenha caído.
+  const live = openLiveStream(req.params.id);
   const send = (event) => {
+    live.publish(event);
     if (clientGone || res.writableEnded) return;
     try { res.write(`data: ${JSON.stringify(event)}\n\n`); }
     catch { clientGone = true; }
@@ -322,6 +365,9 @@ router.post('/conversations/:id/chat', validate(schemas.chat), async (req, res) 
     send({ type: 'error', content: friendlyApiError(err) });
   } finally {
     clearInterval(heartbeat);
+    // Encerra o run no registro ao vivo: mantém o buffer por uma janela de
+    // carência para quem reconectar no último segundo, depois se apaga sozinho.
+    live.finish();
     res.end();
   }
 });

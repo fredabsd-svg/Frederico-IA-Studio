@@ -3,8 +3,8 @@ import { API } from '../constants.js';
 
 // Lista, seleção e CRUD de conversas + arquivos da conversa aberta.
 // Recebe as dependências do App por parâmetro e devolve { estado, ações }.
-export function useConversations({ clientId, model, showToast, blockConversationChange, askConfirm,
-                                   startNewChat, setMessages, setDeveloperSession, setMenuOpen }) {
+export function useConversations({ clientId, model, setModel, showToast, blockConversationChange, askConfirm,
+                                   startNewChat, setMessages, setDeveloperSession, setMenuOpen, followActiveRef }) {
   const [conversations, setConversations] = useState([]);
   const [allConvs, setAllConvs] = useState([]);
   const [current, setCurrent] = useState(null);
@@ -66,7 +66,20 @@ export function useConversations({ clientId, model, showToast, blockConversation
       const data = await res.json();
       setCurrent(data.conversation);
       setMessages(data.messages || []);
+      // Restaura o MODELO que estava em uso nesta conversa. Sem isto, ao reabrir
+      // (sair e voltar / recarregar) o seletor voltava ao modelo padrão e parecia
+      // que "trocou o modelo" sozinho — quebrando o "mesmo estado de antes".
+      if (data.conversation?.model && setModel) setModel(data.conversation.model);
       loadFiles(id);
+      // Se a conversa AINDA está processando (o usuário saiu e voltou), reconecta
+      // ao stream ao vivo e segue acompanhando o andamento — com pausar/parar
+      // funcionando — como se nunca tivesse saído. currentRef é atualizado por um
+      // efeito; setamos aqui também para o followActiveConversation não abortar.
+      if (data.active && followActiveRef?.current) {
+        currentRef.current = data.conversation;
+        const lastUser = [...(data.messages || [])].reverse().find(m => m.role === 'user');
+        followActiveRef.current(id, lastUser?.content || '');
+      }
     } catch {
       showToast('Não foi possível abrir a conversa.');
     } finally {

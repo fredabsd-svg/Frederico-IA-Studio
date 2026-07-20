@@ -16,7 +16,7 @@ const toolResultFailed = content => {
 export function useChat({ input, setInput, messages, setMessages, uploads, team, effectiveTeam,
                           listening, recognitionRef, current, currentRef, setCurrent,
                           ensureConversation, fetchConversations, loadFiles,
-                          developerSession, setDeveloperSession,
+                          developerSession, setDeveloperSession, followActiveRef,
                           model, assistantId, webSearch, effort, setNeedLogin, showToast }) {
   const [busy, setBusy] = useState(false);
   const [paused, setPaused] = useState(false);
@@ -110,6 +110,149 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
     }
   }
 
+  // Consome um stream SSE de chat (POST /chat ou reconexão GET /stream) e vai
+  // atualizando a mensagem do assistente apontada por keyRef.key. É a MESMA
+  // lógica para o envio normal e para a reconexão — assim, ao voltar à página,
+  // o andamento é remontado exatamente como apareceria ao vivo.
+  // Retorna { sawDone, sawError } para o chamador decidir se o run acabou.
+  async function consumeChatStream(reader, keyRef, text) {
+    const update = (fn) => {
+      const key = keyRef.key;
+      setMessages(prev => prev.map(m => m.id === key ? fn(m) : m));
+    };
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let sawDone = false, sawError = false;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (value) buffer += decoder.decode(value, { stream: true });
+      if (done) buffer += decoder.decode();
+      const parsed = takeSseEvents(buffer, { flush: done });
+      buffer = parsed.rest;
+      for (const ev of parsed.events) {
+        if (ev.type === 'status') setStatusText(ev.content || '');
+        if (ev.type === 'memory_context') update(m => ({ ...m, memory: ev.memory }));
+        if (ev.type === 'delta') update(m => {
+          const blocks = [...(m.blocks || [])];
+          const last = blocks[blocks.length - 1];
+          if (last && last.type === 'text') blocks[blocks.length - 1] = { ...last, content: last.content + ev.content };
+          else blocks.push({ type: 'text', content: ev.content });
+          return { ...m, blocks, content: (m.content || '') + ev.content };
+        });
+        if (ev.type === 'tool_start') { setStatusText(`Executando ${ev.name}...`); update(m => ({ ...m, blocks: [...(m.blocks || []), { type: 'tool', name: ev.name, preview: ev.preview, status: 'running', started: Date.now() }] })); }
+        if (ev.type === 'tool_result') update(m => {
+          const blocks = [...(m.blocks || [])];
+          const status = toolResultFailed(ev.content) ? 'error' : 'done';
+          for (let i = blocks.length - 1; i >= 0; i--) { if (blocks[i].type === 'tool' && blocks[i].status === 'running') { blocks[i] = { ...blocks[i], status, ended: Date.now(), result: ev.content }; break; } }
+          return { ...m, blocks };
+        });
+        if (ev.type === 'files') update(m => ({ ...m, files: [...(m.files || []), ...ev.files] }));
+        if (ev.type === 'file_checks') update(m => ({
+          ...m,
+          files: (m.files || []).map(file => ev.checks?.[file.path] ? { ...file, check: ev.checks[file.path] } : file)
+        }));
+        if (ev.type === 'saved') {
+          const previousKey = keyRef.key;
+          keyRef.key = ev.assistantMessageId;
+          setMessages(prev => {
+            const arr = [...prev];
+            const ai = arr.findIndex(m => m.id === previousKey);
+            if (ai > -1) { arr[ai] = { ...arr[ai], id: ev.assistantMessageId }; if (arr[ai - 1]?.role === 'user') arr[ai - 1] = { ...arr[ai - 1], id: ev.userMessageId }; }
+            return arr;
+          });
+        }
+        if (ev.type === 'execution_failed') {
+          update(m => ({ ...m, failed: true, retryText: text }));
+          if (ev.content) showToast(ev.content);
+        }
+        if (ev.type === 'error') { sawError = true; update(m => ({ ...m, failed: true, retryText: text, blocks: [...(m.blocks || []), { type: 'text', content: `\n\n**Erro:** ${ev.content}` }] })); }
+        if (ev.type === 'done') sawDone = true;
+      }
+      if (done) break;
+    }
+    return { sawDone, sawError };
+  }
+
+  // Reconecta a um processamento que continua rodando no servidor (usuário
+  // voltou à página, minimizou, ou a rede oscilou). Reproduz o run inteiro do
+  // zero sobre a mensagem-alvo — por isso zeramos o conteúdo antes, para nunca
+  // duplicar texto já aplicado. `ref` é mutável: se ainda não aponta para um
+  // balão, cria/reaproveita um (e escreve ref.key) para receber o andamento.
+  async function reconnectLiveRun(convId, ref, text = '') {
+    if (!ref.key) {
+      const placeholderId = `live-${Date.now()}`;
+      let reused = false;
+      setMessages(prev => {
+        const last = prev[prev.length - 1];
+        // Se a última já for um balão de assistente ainda em aberto, reusa.
+        if (last && last.role === 'assistant' && !String(last.content || '').trim() && (last.blocks || []).length === 0) {
+          ref.key = last.id; reused = true;
+          return prev;
+        }
+        return [...prev, { id: placeholderId, role: 'assistant', content: '', blocks: [], created_at: new Date().toISOString() }];
+      });
+      if (!reused) ref.key = placeholderId;
+    }
+    setChatBusy(true);
+    setPaused(false);
+    setStatusText('Retomando...');
+    // Remonta do zero: zera o balão-alvo antes do replay para evitar texto dobrado.
+    setMessages(prev => prev.map(m => m.id === ref.key ? { ...m, content: '', blocks: [] } : m));
+    let res;
+    try {
+      res = await fetch(`${API}/api/conversations/${convId}/stream`);
+    } catch {
+      return { attached: false, sawDone: false };
+    }
+    if (res.status === 204) return { attached: false, sawDone: false }; // nada rodando
+    if (!res.ok) return { attached: false, sawDone: false };
+    const reader = res.body?.getReader();
+    if (!reader) return { attached: false, sawDone: false };
+    try {
+      const { sawDone } = await consumeChatStream(reader, ref, text);
+      return { attached: true, sawDone };
+    } catch {
+      return { attached: true, sawDone: false };
+    }
+  }
+
+  // Ao voltar a uma conversa que AINDA processa: reconecta ao stream ao vivo e,
+  // se a conexão cair de novo, tenta religar algumas vezes (a tarefa segue no
+  // servidor). No fim, recarrega a versão canônica do banco.
+  async function followActiveConversation(convId, lastUserText) {
+    if (currentRef.current?.id !== convId) return;
+    const ref = { key: null };
+    for (let attempt = 0; attempt < 40; attempt++) {
+      if (currentRef.current?.id !== convId) return; // usuário saiu
+      const { attached, sawDone } = await reconnectLiveRun(convId, ref, lastUserText);
+      if (sawDone) break;           // run terminou de fato
+      if (!attached) break;         // 204/erro: não há mais nada rodando ao vivo
+      // Caiu antes do "done": a tarefa pode seguir no servidor. Confere se ainda
+      // está ativa; se sim, aguarda e religa.
+      if (currentRef.current?.id !== convId) return;
+      let stillActive = false;
+      try {
+        const r = await fetch(`${API}/api/conversations/${convId}`);
+        if (r.ok) { const d = await r.json(); stillActive = !!d.active; }
+      } catch {}
+      if (!stillActive) break;
+      await new Promise(r => setTimeout(r, 2000));
+    }
+    // Reconcilia com o estado final salvo (mensagem canônica + arquivos).
+    if (currentRef.current?.id === convId) {
+      try {
+        const r = await fetch(`${API}/api/conversations/${convId}`);
+        if (r.ok) { const d = await r.json(); if (currentRef.current?.id === convId) { setMessages(d.messages || []); loadFiles(convId); } }
+      } catch {}
+    }
+    setChatBusy(false);
+    setPaused(false);
+    setStatusText('');
+  }
+  // Ponte para o useConversations: openConversation dispara a reconexão sem
+  // depender da ordem de criação dos hooks (ele roda antes do useChat).
+  if (followActiveRef) followActiveRef.current = followActiveConversation;
+
   async function sendMessage(textArg) {
     const isRetry = typeof textArg === 'string';
     const typed = (isRetry ? textArg : input).trim();
@@ -135,9 +278,11 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
     // tem hora e o separador de data nao consegue agrupa-la.
     const sentAt = new Date().toISOString();
     setMessages(prev => [...prev, { role: 'user', content: text, created_at: sentAt }, { id: assistantMsgId, role: 'assistant', content: '', blocks: [], created_at: sentAt }]);
-    let assistantMessageKey = assistantMsgId;
+    // keyRef é mutável e compartilhado com consumeChatStream/reconnectLiveRun:
+    // quando o servidor manda "saved", a chave passa a apontar para o id real.
+    const keyRef = { key: assistantMsgId };
     const update = (fn) => {
-      const key = assistantMessageKey;
+      const key = keyRef.key;
       setMessages(prev => prev.map(m => m.id === key ? fn(m) : m));
     };
 
@@ -165,61 +310,21 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
       }
       const reader = res.body?.getReader();
       if (!reader) throw new Error('A resposta do servidor não pôde ser lida.');
-      const decoder = new TextDecoder();
-      let buffer = '';
-      while (true) {
-        const { done, value } = await reader.read();
-        if (value) buffer += decoder.decode(value, { stream: true });
-        if (done) buffer += decoder.decode();
-        const parsed = takeSseEvents(buffer, { flush: done });
-        buffer = parsed.rest;
-        for (const ev of parsed.events) {
-          if (ev.type === 'status') setStatusText(ev.content || '');
-          if (ev.type === 'memory_context') update(m => ({ ...m, memory: ev.memory }));
-          if (ev.type === 'delta') update(m => {
-            const blocks = [...(m.blocks || [])];
-            const last = blocks[blocks.length - 1];
-            if (last && last.type === 'text') blocks[blocks.length - 1] = { ...last, content: last.content + ev.content };
-            else blocks.push({ type: 'text', content: ev.content });
-            return { ...m, blocks, content: (m.content || '') + ev.content };
-          });
-          if (ev.type === 'tool_start') { setStatusText(`Executando ${ev.name}...`); update(m => ({ ...m, blocks: [...(m.blocks || []), { type: 'tool', name: ev.name, preview: ev.preview, status: 'running', started: Date.now() }] })); }
-          if (ev.type === 'tool_result') update(m => {
-            const blocks = [...(m.blocks || [])];
-            const status = toolResultFailed(ev.content) ? 'error' : 'done';
-            for (let i = blocks.length - 1; i >= 0; i--) { if (blocks[i].type === 'tool' && blocks[i].status === 'running') { blocks[i] = { ...blocks[i], status, ended: Date.now(), result: ev.content }; break; } }
-            return { ...m, blocks };
-          });
-          if (ev.type === 'files') update(m => ({ ...m, files: [...(m.files || []), ...ev.files] }));
-          if (ev.type === 'file_checks') update(m => ({
-            ...m,
-            files: (m.files || []).map(file => ev.checks?.[file.path] ? { ...file, check: ev.checks[file.path] } : file)
-          }));
-          if (ev.type === 'saved') {
-            const previousKey = assistantMessageKey;
-            assistantMessageKey = ev.assistantMessageId;
-            setMessages(prev => {
-              const arr = [...prev];
-              const ai = arr.findIndex(m => m.id === previousKey);
-              if (ai > -1) { arr[ai] = { ...arr[ai], id: ev.assistantMessageId }; if (arr[ai - 1]?.role === 'user') arr[ai - 1] = { ...arr[ai - 1], id: ev.userMessageId }; }
-              return arr;
-            });
-          }
-          if (ev.type === 'execution_failed') {
-            update(m => ({ ...m, failed: true, retryText: text }));
-            if (ev.content) showToast(ev.content);
-          }
-          if (ev.type === 'error') update(m => ({ ...m, failed: true, retryText: text, blocks: [...(m.blocks || []), { type: 'text', content: `\n\n**Erro:** ${ev.content}` }] }));
-        }
-        if (done) break;
-      }
+      await consumeChatStream(reader, keyRef, text);
     } catch (err) {
       // A conexão SSE caiu (trocar de aba / minimizar no celular / rede
-      // oscilando). A tarefa CONTINUA rodando no servidor e salva o resultado —
-      // então, em vez de marcar como falha, deixamos um aviso calmo e buscamos
-      // a resposta pronta em segundo plano (aparece aqui quando terminar).
-      update(m => ({ ...m, retryText: text, blocks: [...(m.blocks || []), { type: 'text', content: '\n\n_A conexão caiu, mas a tarefa continua rodando no servidor. O resultado aparece aqui assim que terminar — se preferir, é só recarregar a conversa._' }] }));
-      recoverPendingReply(conv.id);
+      // oscilando). A tarefa CONTINUA rodando no servidor — então, em vez de
+      // marcar como falha, RECONECTAMOS ao stream ao vivo e seguimos mostrando o
+      // andamento no mesmo balão. Se de fato não houver mais nada rodando (já
+      // terminou), o fallback busca a resposta pronta salva no banco.
+      setStatusText('Reconectando...');
+      const { attached, sawDone } = await reconnectLiveRun(conv.id, keyRef, text);
+      if (!attached) {
+        recoverPendingReply(conv.id);
+      } else if (!sawDone) {
+        // Reconectou mas caiu de novo antes de terminar: acompanha em segundo plano.
+        followActiveConversation(conv.id, text);
+      }
     }
     // Fecha qualquer ferramenta que tenha ficado "rodando"
     update(m => ({ ...m, blocks: (m.blocks || []).map(b => b.type === 'tool' && b.status === 'running' ? { ...b, status: 'done', ended: Date.now() } : b) }));

@@ -1,5 +1,48 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 🔄 Processamento contínuo: sair/voltar sem perder o andamento (2026-07-20 — branch `claude/chat-async-continuous-processing-un1xho`, PR #54)
+
+O chat agora é um **fluxo contínuo de verdade**: o processamento roda no servidor
+independentemente da conexão do front. Se o usuário sai da página, minimiza no
+celular, troca de aba ou perde a rede, a tarefa NÃO para — e ao voltar (mesmo
+dispositivo/sessão) ele **reconecta ao andamento ao vivo**, com os botões de
+pausar/parar funcionando, como se nunca tivesse saído. Se a tarefa terminou
+enquanto ele estava fora, a resposta completa aparece na hora.
+
+> **Nota de integração:** esta frente foi **rebaseada sobre o PR #53** (a
+> modularização grande: `server.js` → `routes/*`, `App.jsx` → `hooks/*`). Por
+> isso as mudanças vivem nos módulos novos, não no monólito antigo.
+
+**O que já existia (não regredir):** o backend já mantinha o run vivo após a
+desconexão — o `send()` do POST `/chat` vira no-op quando o cliente some
+(`clientGone`), mas `runAgent` continua e salva o resultado; heartbeat `: ping`
+a cada 15s; só cancela na desconexão se `CANCEL_ON_DISCONNECT=true`.
+
+**O que faltava e foi adicionado — reconexão ao andamento AO VIVO:**
+- `backend/src/liveStream.js` (NOVO): pub/sub + buffer de replay por conversa, em
+  memória. `openLiveStream(id)` abre no início do run; `publish(event)` guarda no
+  buffer (teto 5000 eventos / 3 MB) e faz fan-out; `subscribe(fn, fromSeq)`
+  reproduz o que já passou e assina os próximos; `finish()` segura o buffer por
+  90s (carência p/ reconexão tardia). Testes: `liveStream.test.js`.
+- `backend/src/routes/conversations.js`: o `send()` do POST `/chat` também faz
+  `live.publish(event)`; `finally` chama `live.finish()`. Nova rota SSE
+  **GET `/conversations/:id/stream`** (replay + ao vivo, sem disparar run).
+  GET `/conversations/:id` agora devolve **`active`** (`isConversationActive`).
+- `frontend/src/hooks/useChat.js`: consumo do SSE virou `consumeChatStream`
+  (reusado no envio E na reconexão). `reconnectLiveRun` **remonta o balão do
+  zero** (replay completo) para não duplicar; `followActiveConversation` religa
+  se cair e no fim recarrega a versão canônica do banco. Exposto via
+  `followActiveRef` (ponte entre hooks).
+- `frontend/src/hooks/useConversations.js`: `openConversation` reconecta quando
+  `data.active` e **restaura o modelo salvo** da conversa (antes o seletor caía
+  no padrão ao reabrir — bug relatado no teste do celular).
+- `frontend/src/App.jsx`: cria o `followActiveRef` e o passa aos dois hooks.
+
+**Desenho (por que assim):** buffer em memória por processo (um único backend).
+Se um dia houver réplicas, trocar por pub/sub compartilhado (Redis). A remontagem
+do balão é sempre do zero no replay — mais simples e à prova de duplicação; o
+`done` no fim reconcilia com o banco.
+
 ## 🏗️ Prioridades técnicas: pgvector, hardening HTTP, zod, CI e quick wins (2026-07-20, PR #53 — MERGEADO)
 
 Implementação dos itens de alta prioridade + quick wins da revisão técnica:

@@ -146,11 +146,15 @@ export default function App({ user } = {}) {
     loadAssistants, pickAssistant, openStudioNew, openStudioEdit,
     applyTemplate, toggleTool, setSlider, saveAssistant, deleteAssistant
   } = useAssistants({ model, setModel, showToast, askConfirm });
+  // Ponte entre os hooks: openConversation (useConversations) precisa disparar a
+  // reconexão ao stream ao vivo, que vive no useChat — criado DEPOIS. O ref quebra
+  // essa ordem sem acoplar os hooks.
+  const followActiveRef = useRef(null);
   const {
     conversations, allConvs, current, setCurrent, currentRef, files, setFiles, loadingConv,
     fetchConversations, loadAllConvs, ensureConversation, openConversation, deleteConversation, loadFiles
-  } = useConversations({ clientId, model, showToast, blockConversationChange, askConfirm,
-    startNewChat, setMessages, setDeveloperSession, setMenuOpen });
+  } = useConversations({ clientId, model, setModel, showToast, blockConversationChange, askConfirm,
+    startNewChat, setMessages, setDeveloperSession, setMenuOpen, followActiveRef });
   const { listening, recognitionRef, toggleMic } = useSpeech({ input, setInput, showToast });
   const {
     dragActive, uploadingFiles, scanOk, deleteFile, uploadSelectedFiles, uploadFiles,
@@ -165,7 +169,7 @@ export default function App({ user } = {}) {
     input, setInput, messages, setMessages, uploads, team, effectiveTeam,
     listening, recognitionRef, current, currentRef, setCurrent,
     ensureConversation, fetchConversations, loadFiles,
-    developerSession, setDeveloperSession,
+    developerSession, setDeveloperSession, followActiveRef,
     model, assistantId, webSearch, effort, setNeedLogin, showToast
   });
   const { tasks, tasksOpen, setTasksOpen, tasksActive, pollTasks, sendAsTask, cancelTask } = useTasks({
