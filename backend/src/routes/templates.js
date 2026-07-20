@@ -13,9 +13,8 @@ router.get('/templates', async (req, res) => {
 });
 
 router.post('/templates', validate(schemas.template), async (req, res) => {
-  const name = (req.body?.name || '').trim();
-  const content = (req.body?.content || '').trim();
-  if (!name || !content) return res.status(400).json({ error: 'Nome e conteúdo são obrigatórios.' });
+  // Presença/trim garantidos por validate(schemas.template).
+  const { name, content } = req.body;
   const id = nanoid();
   await db.prepare('INSERT INTO templates (id,user_id,name,content,created_at) VALUES (?,?,?,?,?)').run(id, req.userId, name, content, now());
   res.json({ id, name, content });

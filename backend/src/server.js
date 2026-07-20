@@ -56,8 +56,11 @@ process.on('unhandledRejection', (err) => console.error('[unhandledRejection]', 
 app.set('trust proxy', 1);
 // Helmet: X-Frame-Options, nosniff, Referrer-Policy, HSTS etc. A CSP fica
 // desligada porque este processo só serve JSON/SSE/downloads — o HTML do app
-// vem do Caddy (produção) ou do Vite (dev).
-app.use(helmet({ contentSecurityPolicy: false }));
+// vem do Caddy (produção) ou do Vite (dev). COOP também fica desligado: o
+// header (same-origin) na página de callback do OAuth do GitHub zeraria o
+// window.opener do popup e o postMessage 'fred-github-connected' nunca
+// chegaria ao painel — o popup não fecharia nem marcaria "conectado".
+app.use(helmet({ contentSecurityPolicy: false, crossOriginOpenerPolicy: false }));
 // CORS: em produção o app é servido pela MESMA origem (o Caddy faz proxy de
 // /api) e em dev o Vite idem — nenhuma origem externa é liberada por padrão.
 // (Antes, sem FRONTEND_URL o fallback era '*': qualquer site podia chamar a

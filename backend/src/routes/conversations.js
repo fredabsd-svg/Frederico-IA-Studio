@@ -230,8 +230,7 @@ router.post('/conversations/:id/truncate', async (req, res) => {
 
 // Pausar / continuar / parar o processamento em andamento
 router.post('/conversations/:id/control', validate(schemas.control), async (req, res) => {
-  const action = req.body?.action;
-  if (!['pause', 'resume', 'stop'].includes(action)) return res.status(400).json({ error: 'Ação inválida.' });
+  const action = req.body.action; // enum garantido por validate(schemas.control)
   const conv = await db.prepare('SELECT id FROM conversations WHERE id=? AND user_id=?').get(req.params.id, req.userId);
   if (!conv) return res.status(404).json({ error: 'Não encontrado' });
   const control = setControl(req.params.id, action);
@@ -240,9 +239,8 @@ router.post('/conversations/:id/control', validate(schemas.control), async (req,
 });
 
 router.post('/conversations/:id/chat', validate(schemas.chat), async (req, res) => {
-  const text = String(req.body?.message || '').trim();
-  if (!text) return res.status(400).json({ error: 'Mensagem vazia.' });
-  if (text.length > 100_000) return res.status(400).json({ error: 'A mensagem é grande demais. Envie em partes menores.' });
+  // Tipo/tamanho/trim de `message` já garantidos por validate(schemas.chat).
+  const text = req.body.message;
   if (isConversationActive(req.params.id)) {
     return res.status(409).json({ error: 'Esta conversa já está processando uma resposta. Aguarde terminar ou pare o processamento antes de enviar outra mensagem.' });
   }
@@ -282,7 +280,6 @@ router.post('/conversations/:id/chat', validate(schemas.chat), async (req, res) 
     if (cancelOnDisconnect && !res.writableEnded) setControl(req.params.id, 'stop');
   });
   try {
-    const text = String(req.body?.message || '').trim();
     // Título automático: usa o início da 1ª mensagem em vez de "Nova conversa"
     const conv = await db.prepare('SELECT title FROM conversations WHERE id=? AND user_id=?').get(req.params.id, req.userId);
     if (conv && (!conv.title?.trim() || conv.title === 'Nova conversa')) {

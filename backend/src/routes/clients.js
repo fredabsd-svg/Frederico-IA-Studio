@@ -13,8 +13,7 @@ router.get('/clients', async (req, res) => {
 });
 
 router.post('/clients', validate(schemas.client), async (req, res) => {
-  const name = (req.body?.name || '').trim();
-  if (!name) return res.status(400).json({ error: 'Nome do cliente é obrigatório.' });
+  const name = req.body.name; // presença/trim garantidos por validate(schemas.client)
   const id = nanoid();
   await db.prepare('INSERT INTO clients (id,user_id,name,created_at) VALUES (?,?,?,?)').run(id, req.userId, name, now());
   res.json({ id, name });

@@ -75,7 +75,10 @@ export function useAssistants({ model, setModel, showToast, askConfirm }) {
       await fetch(`${API}/api/assistants/${form.id}`, { method: 'DELETE' });
       setStudioOpen(false);
       const res = await fetch(`${API}/api/assistants`);
-      const rows = await res.json();
+      const data = await res.json();
+      // Mesmo guard de loadAssistants: uma resposta de erro ({error}) não pode
+      // virar estado — assistants precisa ser sempre um array (o App filtra).
+      const rows = Array.isArray(data) ? data : [];
       setAssistants(rows);
       if (assistantId === form.id) pickAssistant(rows[0]?.id || null);
     } catch {

@@ -35,7 +35,9 @@ export const schemas = {
     message: z.string({ error: 'Mensagem vazia.' }).trim().min(1, 'Mensagem vazia.').max(100_000, 'A mensagem é grande demais. Envie em partes menores.'),
     model: modelId.nullish(),
     assistantId: id.nullish(),
-    orchestrateIds: z.array(id).max(20).optional(),
+    // Modo Equipe envia por padrão TODOS os assistentes do usuário — o teto é
+    // só um freio de abuso, alto o bastante para nunca barrar uso legítimo.
+    orchestrateIds: z.array(id).max(100, 'A equipe tem assistentes demais para uma única mensagem (máximo 100).').optional(),
     effort: z.string().trim().max(30).nullish(),
   }),
 
@@ -86,7 +88,8 @@ export const schemas = {
   }),
 
   memoryCreate: z.looseObject({
-    content: shortText(20_000, 'Conteúdo vazio.'),
+    content: z.string({ error: 'Conteúdo vazio.' }).trim().min(1, 'Conteúdo vazio.')
+      .max(100_000, 'O conteúdo é grande demais para uma memória (máximo de 100 mil caracteres). Divida em partes menores.'),
     type: z.enum(['perfil', 'preferencia', 'projeto', 'fato', 'manual']).optional(),
     scope: z.string().trim().max(150).optional(),
     importance: z.coerce.number().min(1).max(5).optional(),
@@ -94,7 +97,8 @@ export const schemas = {
   }),
 
   memoryUpdate: z.looseObject({
-    content: z.string().trim().min(1, 'Conteúdo vazio.').max(20_000).optional(),
+    content: z.string().trim().min(1, 'Conteúdo vazio.')
+      .max(100_000, 'O conteúdo é grande demais para uma memória (máximo de 100 mil caracteres). Divida em partes menores.').optional(),
     type: z.enum(['perfil', 'preferencia', 'projeto', 'fato', 'manual']).optional(),
     scope: z.string().trim().max(150).optional(),
     importance: z.coerce.number().min(1).max(5).optional(),

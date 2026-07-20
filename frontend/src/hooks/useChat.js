@@ -141,25 +141,15 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
       setMessages(prev => prev.map(m => m.id === key ? fn(m) : m));
     };
 
-    const body = team
-      ? {
-          message: text,
-          model,
-          assistantId,
-          webSearch,
-          effort,
-          orchestrate: true,
-          orchestrateIds: effectiveTeam.map(a => a.id),
-          ...(activeDeveloper ? { developer: { mode: activeDeveloper.mode, projectId: activeDeveloper.projectId, github: activeDeveloper.github || null, rules: activeDeveloper.rules } } : {})
-        }
-      : {
-          message: text,
-          model,
-          assistantId,
-          webSearch,
-          effort,
-          ...(activeDeveloper ? { developer: { mode: activeDeveloper.mode, projectId: activeDeveloper.projectId, github: activeDeveloper.github || null, rules: activeDeveloper.rules } } : {})
-        };
+    const body = {
+      message: text,
+      model,
+      assistantId,
+      webSearch,
+      effort,
+      ...(team ? { orchestrate: true, orchestrateIds: effectiveTeam.map(a => a.id) } : {}),
+      ...(activeDeveloper ? { developer: { mode: activeDeveloper.mode, projectId: activeDeveloper.projectId, github: activeDeveloper.github || null, rules: activeDeveloper.rules } } : {})
+    };
     try {
       const res = await fetch(`${API}/api/conversations/${conv.id}/chat`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)

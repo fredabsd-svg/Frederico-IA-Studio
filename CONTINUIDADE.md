@@ -82,9 +82,40 @@ validadores e o 429 do limiter de auth.
   login real, aceite LGPD, chat carregado, página /privacidade com a versão
   dos termos vinda de /api/health) — sem nenhum erro de JS de página.
 
+**Rodada de code review (10 achados verificados) + correções, na mesma branch:**
+- COOP do helmet desligado (`crossOriginOpenerPolicy: false`): o header zerava
+  o `window.opener` do popup OAuth do GitHub e o postMessage
+  'fred-github-connected' nunca chegava ao painel.
+- Recall do pgvector: novo `knnCandidates()` em vectorStore.js (único dono do
+  SQL KNN) roda em transação com `SET LOCAL hnsw.ef_search` alto e
+  `hnsw.iterative_scan='relaxed_order'` quando o pgvector ≥ 0.8 suporta
+  (detectado em runtime). Se o índice devolver menos que `limit` candidatos
+  (usuário pequeno ou truncamento pós-filtro), cai na varredura JS completa; e
+  linhas SEM vetor (período degradado/backfill pendente) são varridas como
+  RESÍDUO em JS e somadas ao resultado — nada fica invisível.
+- `reindexAll()` sem userId agora reindexa TODOS os usuários (antes, o
+  `WHERE user_id=?` com undefined→null não casava nada e a troca de modelo de
+  embeddings "concluía" sem regravar um vetor sequer).
+- `toVectorLiteral` avisa (uma vez, no log) quando a dimensão do embedding ≠
+  vector(384) — a troca de EMBEDDING_MODEL não desliga mais o índice em
+  silêncio. Índices HNSW + backfill agora rodam em SEGUNDO PLANO no boot (base
+  restaurada sem índice não trava mais o app.listen).
+- Limites do zod ajustados: orchestrateIds 20→100 (o modo Equipe manda todos os
+  assistentes por padrão) e memória 20k→100k com mensagem própria em pt-BR.
+- Validações manuais mortas removidas dos 6 routers (o zod é o único dono de
+  tipo/tamanho; checagens de NEGÓCIO como isConversationId ficam no handler).
+- `updateMemory` só regrava embedding_vec quando o conteúdo mudou (editar
+  pin/importância não toca mais no índice HNSW).
+- Inbox: regex gulosa que mutilava nomes com "_" trocada por casamento de
+  comprimento fixo (`\d+_\d+_[\w-]{6}_`), na listagem e na conversão.
+- Frontend: useTermsVersion usa `${API}/api/health` (respeita VITE_API_URL);
+  deleteAssistant ganhou o guard Array.isArray de loadAssistants; payload do
+  chat unificado num literal só (team via spread condicional).
+
 Pendências da revisão que ficaram para depois (médio prazo): TypeScript
-gradual, logs estruturados (pino) e testes E2E permanentes no CI (a
-verificação Playwright acima foi manual, no sandbox da sessão).
+gradual, logs estruturados (pino), testes E2E permanentes no CI (a verificação
+Playwright foi manual, no sandbox da sessão) e o `importStatus` global único do
+indexer (um import por vez para o app inteiro, herdado do design mono-usuário).
 
 ## 🛡️ Antivírus nos uploads (ClamAV) + selos de segurança + hardening (2026-07-20, PR #50 — MERGEADO)
 

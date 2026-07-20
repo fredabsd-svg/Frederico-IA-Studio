@@ -48,10 +48,9 @@ export async function processTasks() {
 // final do arquivo, depois que as migrations garantem que as tabelas existem)
 
 router.post('/tasks', validate(schemas.task), async (req, res) => {
-  const message = (req.body?.message || '').trim();
-  const convId = req.body?.conversationId;
-  if (!message) return res.status(400).json({ error: 'Mensagem vazia.' });
-  if (!convId) return res.status(400).json({ error: 'Conversa não informada.' });
+  // Presença/tamanho/trim garantidos por validate(schemas.task).
+  const message = req.body.message;
+  const convId = req.body.conversationId;
   if (!isConversationId(convId)) return res.status(400).json({ error: 'Identificador de conversa inválido.' });
   if (isConversationActive(convId)) return res.status(409).json({ error: 'Esta conversa já está processando uma resposta. Aguarde terminar ou pare o processamento antes de criar uma tarefa nela.' });
   // Escopo por usuário: só cria a tarefa se a conversa for do próprio usuário

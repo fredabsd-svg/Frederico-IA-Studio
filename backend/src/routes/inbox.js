@@ -25,7 +25,9 @@ router.get('/inbox/:client', (req, res) => {
   const d = inboxDir(req.userId, req.params.client);
   const files = fs.readdirSync(d).map(n => {
     let size = 0; try { size = fs.statSync(path.join(d, n)).size; } catch { return null; }
-    return { stored: n, name: n.replace(/^\d+_/, ''), size };
+    // O prefixo gravado é `timestamp_contador_nanoid(6)_` — o casamento por
+    // comprimento fixo preserva nomes originais que contêm "_" ou dígitos.
+    return { stored: n, name: n.match(/^\d+_\d+_[\w-]{6}_(.*)$/)?.[1] ?? n.replace(/^\d+_/, ''), size };
   }).filter(Boolean);
   res.json(files);
 });
@@ -59,7 +61,9 @@ router.post('/inbox/:client/to-conversation', async (req, res) => {
     .run(convId, req.userId, `Documentos recebidos — ${t.slice(0, 10)}`, process.env.DEEPSEEK_MODEL || 'deepseek-chat', clientId, t, t);
   const ws = workspaceFor(convId);
   for (const n of files) {
-    const original = n.replace(/^\d+_\d+_(?:[A-Za-z0-9_-]+_)?/, '');
+    // Prefixo de comprimento fixo (nanoid(6)) — a versão antiga com `+_` guloso
+    // comia até o último "_" e mutilava nomes como "Nota_Fiscal_123.pdf".
+    const original = n.match(/^\d+_\d+_[\w-]{6}_(.*)$/)?.[1] ?? n.replace(/^\d+_\d+_/, '');
     const dest = path.join(ws.uploads, n);
     try {
       fs.copyFileSync(path.join(d, n), dest);

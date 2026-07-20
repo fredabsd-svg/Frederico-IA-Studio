@@ -8,7 +8,7 @@
 // lá; o valor abaixo é apenas o fallback exibido se a API estiver fora do ar.
 import React, { useEffect, useState } from 'react';
 import { ArrowLeft, ShieldCheck, ScrollText } from 'lucide-react';
-import { THEMES } from './constants.js';
+import { API, THEMES } from './constants.js';
 
 export const TERMS_VERSION_FALLBACK = '2026-07-20';
 
@@ -18,7 +18,7 @@ function useTermsVersion() {
   const [version, setVersion] = useState(TERMS_VERSION_FALLBACK);
   useEffect(() => {
     let ativo = true;
-    fetch('/api/health')
+    fetch(`${API}/api/health`)
       .then(r => (r.ok ? r.json() : null))
       .then(d => { if (ativo && d?.termsVersion) setVersion(d.termsVersion); })
       .catch(() => {});

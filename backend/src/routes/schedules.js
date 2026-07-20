@@ -41,9 +41,8 @@ export function startSchedulers() {
 router.get('/schedules', async (req, res) => res.json(await db.prepare('SELECT * FROM schedules WHERE user_id=? ORDER BY created_at DESC').all(req.userId)));
 router.post('/schedules', validate(schemas.scheduleCreate), async (req, res) => {
   const b = req.body || {};
-  const title = (b.title || '').trim();
-  const prompt = (b.prompt || '').trim();
-  if (!title || !prompt) return res.status(400).json({ error: 'Dê um nome e uma instrução para a rotina.' });
+  // Presença/trim garantidos por validate(schemas.scheduleCreate).
+  const { title, prompt } = b;
   const cadence = ['daily', 'weekly', 'monthly'].includes(b.cadence) ? b.cadence : 'monthly';
   const id = nanoid();
   await db.prepare('INSERT INTO schedules (id,user_id,title,prompt,assistant_id,model,client_id,web_search,cadence,day,hour,enabled,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')

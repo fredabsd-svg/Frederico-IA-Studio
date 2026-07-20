@@ -14,8 +14,7 @@ router.get('/assistants', async (req, res) => {
 });
 
 router.post('/assistants', validate(schemas.assistantCreate), async (req, res) => {
-  const b = req.body || {};
-  if (!b.name?.trim() || !b.system_prompt?.trim()) return res.status(400).json({ error: 'Nome e instruções são obrigatórios.' });
+  const b = req.body; // nome e instruções garantidos por validate(schemas.assistantCreate)
   const id = nanoid();
   const t = now();
   await db.prepare('INSERT INTO assistants (id,user_id,name,emoji,color,model,system_prompt,tools,personality,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
