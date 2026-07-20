@@ -1,6 +1,6 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
-## 🔁 Retomada de tarefa interrompida + checkpoint de extração (2026-07-20, branch `claude/frederico-ia-studio-review-d8s18h`)
+## 🔁 Retomada de tarefa interrompida + checkpoint de extração (2026-07-20, branch `claude/frederico-ia-studio-review-d8s18h`, commit `79a7387` — AGUARDANDO PR/merge)
 
 Motivado por um caso real: uma extração difícil estourou o limite de 60 etapas
 (`EFFORT.max.steps` / `AGENT_MAX_STEPS`) e o usuário recebeu só a sugestão de
@@ -936,6 +936,11 @@ chat · Upload como chips · Tela responsiva (gaveta mobile) · Tema claro/escur
 
 ## 9. Estado do git
 
+- **Frente aberta (2026-07-20):** branch `claude/frederico-ia-studio-review-d8s18h`
+  com a retomada de tarefa interrompida + checkpoint de extração (commit
+  `79a7387`, ver a primeira seção deste arquivo). Pushada para a origin;
+  falta abrir PR e mergear na main. Validação: `node --check` no backend e
+  `node --test 'src/*.test.js'` com 97 pass / 1 skip.
 - **Atualizado 2026-07-20:** a `main` está em produção com a frente LGPD
   completa mergeada (PRs #47, #48 e #49 — ver a primeira seção deste arquivo).
   O fluxo de trabalho recente: branch `claude/*` por frente de trabalho →
