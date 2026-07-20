@@ -6,9 +6,17 @@ services:
     command: ["true"]
     restart: "no"
 
-  # Banco de dados PostgreSQL (substitui o SQLite anterior)
+  # Banco de dados PostgreSQL (substitui o SQLite anterior).
+  # A imagem pgvector/pgvector inclui a extensão de busca vetorial: a busca
+  # semântica das memórias roda no banco (índice HNSW) em vez de carregar tudo
+  # na RAM do Node. Se voltar para postgres:16 puro, nada quebra — o backend
+  # detecta a ausência da extensão e usa o fallback em JS.
+  # ATENÇÃO (volume antigo do postgres:16-alpine): esta imagem é Debian (glibc);
+  # após o primeiro boot com dados existentes, rode uma vez
+  #   docker compose exec postgres psql -U studio -d studio -c 'REINDEX DATABASE studio;'
+  # para realinhar índices de texto à collation da nova libc.
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     restart: unless-stopped
     environment:
       - POSTGRES_USER=studio
@@ -59,6 +67,13 @@ services:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
+    healthcheck:
+      # node com fetch nativo (a imagem não tem curl/wget)
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3001/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
 
   frontend:
     image: node:20-alpine

@@ -1,6 +1,7 @@
 import { db, now } from '../db.js';
 import { nanoid } from 'nanoid';
 import { embed, embedOne, cosine, keywordScore, embeddingsDegraded, embeddingModelId } from './embeddings.js';
+import { vectorSearchAvailable, toVectorLiteral, saveEmbeddingVec } from './vectorStore.js';
 
 // Se o modelo de embeddings mudou desde a última execução, os vetores antigos
 // ficam incompatíveis (a busca semântica silenciosamente vira busca por
@@ -76,6 +77,7 @@ export async function addMemory(userId, { content, type = 'manual', scope = 'glo
   await db.prepare(`INSERT INTO memory (id, user_id, scope, content, type, source_type, source_id, importance, confidence, pinned, tags, created_at, updated_at, embedding)
               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run(id, userId, scope, content, type, source_type, source_id, importance, confidence, pinned ? 1 : 0, tags, t, t, vec);
+  await saveEmbeddingVec('memory', id, vec);
   return getMemory(userId, id);
 }
 
@@ -99,6 +101,7 @@ export async function updateMemory(userId, id, fields = {}) {
       fields.pinned !== undefined ? (fields.pinned ? 1 : 0) : cur.pinned,
       fields.tags !== undefined ? fields.tags : cur.tags,
       now(), vec, id, userId);
+  await saveEmbeddingVec('memory', id, vec);
   return getMemory(userId, id);
 }
 
@@ -213,36 +216,66 @@ function recencyBoost(iso) {
 
 export async function searchMemories(userId, queryText, { scopes = ['global'], excludeTypes = [], limit = 12, minScore = 0.25 } = {}) {
   const qEmb = await embedOne(queryText, 'query');
+  const qLit = toVectorLiteral(qEmb);
   const ph = scopes.map(() => '?').join(',');
-  const rows = await db.prepare(`SELECT * FROM memory WHERE scope IN (${ph}) AND user_id=?`).all(...scopes, userId);
+  let rows;
+  if (vectorSearchAvailable() && qLit) {
+    // pgvector: o índice HNSW devolve só os melhores candidatos, com folga
+    // para o re-ranking (importância/recência/fixadas) feito logo abaixo.
+    const fetchN = Math.min(200, Math.max(limit * 5, 40));
+    rows = await db.prepare(
+      `SELECT *, (1 - (embedding_vec <=> ?::vector)) AS _sim FROM memory
+       WHERE scope IN (${ph}) AND user_id=? AND embedding_vec IS NOT NULL
+       ORDER BY embedding_vec <=> ?::vector LIMIT ?`)
+      .all(qLit, ...scopes, userId, qLit, fetchN);
+  } else {
+    // Fallback (sem pgvector ou embeddings degradados): varredura em JS.
+    rows = (await db.prepare(`SELECT * FROM memory WHERE scope IN (${ph}) AND user_id=?`).all(...scopes, userId))
+      .map(r => ({ ...r, _sim: qEmb && r.embedding ? cosine(qEmb, r.embedding) : keywordScore(queryText, r.content) }));
+  }
   const scored = rows
     .filter(r => !excludeTypes.includes(r.type))
-    .map(r => {
-      const sim = qEmb && r.embedding ? cosine(qEmb, r.embedding) : keywordScore(queryText, r.content);
-      const score = 0.6 * sim + 0.15 * ((r.importance || 3) / 5) + 0.15 * recencyBoost(r.updated_at || r.created_at) + (r.pinned ? 0.15 : 0);
-      return { ...r, _sim: sim, _score: score };
-    })
+    .map(r => ({ ...r, _score: 0.6 * r._sim + 0.15 * ((r.importance || 3) / 5) + 0.15 * recencyBoost(r.updated_at || r.created_at) + (r.pinned ? 0.15 : 0) }))
     .filter(r => r._sim >= (qEmb ? minScore : 0.15))
     .sort((a, b) => b._score - a._score)
     .slice(0, limit);
-  return scored.map(({ embedding, ...r }) => r);
+  return scored.map(({ embedding, embedding_vec, ...r }) => r);
 }
 
 export async function searchChunks(userId, queryText, { excludeConversationId = null, scopes = ['global'], limit = 10, minScore = 0.3 } = {}) {
   const qEmb = await embedOne(queryText, 'query');
-  const rows = await db.prepare('SELECT * FROM conversation_chunks WHERE user_id=? ORDER BY created_at DESC LIMIT 4000').all(userId);
-  const allowed = new Set(scopes);
-  const scored = rows
-    .filter(r => allowed.has(r.scope || 'global')) // isolamento por cliente
-    .filter(r => !excludeConversationId || r.conversation_id !== excludeConversationId)
-    .map(r => {
-      const sim = qEmb && r.embedding ? cosine(qEmb, r.embedding) : keywordScore(queryText, r.content);
-      return { ...r, _sim: sim, _score: 0.8 * sim + 0.2 * recencyBoost(r.created_at) };
-    })
+  const qLit = toVectorLiteral(qEmb);
+  let scored;
+  if (vectorSearchAvailable() && qLit) {
+    // pgvector: filtro de escopo (isolamento por cliente) e de conversa já na
+    // query — nada de carregar 4000 chunks na RAM do Node.
+    const ph = scopes.map(() => '?').join(',');
+    const fetchN = Math.min(200, Math.max(limit * 5, 40));
+    const excl = excludeConversationId ? 'AND (conversation_id IS NULL OR conversation_id <> ?)' : '';
+    const params = [qLit, userId, ...scopes];
+    if (excludeConversationId) params.push(excludeConversationId);
+    params.push(qLit, fetchN);
+    const rows = await db.prepare(
+      `SELECT *, (1 - (embedding_vec <=> ?::vector)) AS _sim FROM conversation_chunks
+       WHERE user_id=? AND COALESCE(scope,'global') IN (${ph}) AND embedding_vec IS NOT NULL ${excl}
+       ORDER BY embedding_vec <=> ?::vector LIMIT ?`).all(...params);
+    scored = rows.map(r => ({ ...r, _score: 0.8 * r._sim + 0.2 * recencyBoost(r.created_at) }));
+  } else {
+    const rows = await db.prepare('SELECT * FROM conversation_chunks WHERE user_id=? ORDER BY created_at DESC LIMIT 4000').all(userId);
+    const allowed = new Set(scopes);
+    scored = rows
+      .filter(r => allowed.has(r.scope || 'global')) // isolamento por cliente
+      .filter(r => !excludeConversationId || r.conversation_id !== excludeConversationId)
+      .map(r => {
+        const sim = qEmb && r.embedding ? cosine(qEmb, r.embedding) : keywordScore(queryText, r.content);
+        return { ...r, _sim: sim, _score: 0.8 * sim + 0.2 * recencyBoost(r.created_at) };
+      });
+  }
+  return scored
     .filter(r => r._sim >= (qEmb ? minScore : 0.25))
     .sort((a, b) => b._score - a._score)
-    .slice(0, limit);
-  return scored.map(({ embedding, ...r }) => r);
+    .slice(0, limit)
+    .map(({ embedding, embedding_vec, ...r }) => r);
 }
 
 // Dedupe: encontra memória muito parecida (evita salvar o mesmo fato 2x).
@@ -251,6 +284,15 @@ export async function searchChunks(userId, queryText, { excludeConversationId = 
 // para comparar passagem-com-passagem (o mesmo usado ao gravar).
 export async function findSimilar(userId, content, threshold = 0.88, scope = null) {
   const qEmb = await embedOne(content, 'passage');
+  const qLit = toVectorLiteral(qEmb);
+  if (vectorSearchAvailable() && qLit) {
+    const row = scope
+      ? await db.prepare(`SELECT id, importance, (1 - (embedding_vec <=> ?::vector)) AS sim FROM memory
+          WHERE scope=? AND user_id=? AND embedding_vec IS NOT NULL ORDER BY embedding_vec <=> ?::vector LIMIT 1`).get(qLit, scope, userId, qLit)
+      : await db.prepare(`SELECT id, importance, (1 - (embedding_vec <=> ?::vector)) AS sim FROM memory
+          WHERE user_id=? AND embedding_vec IS NOT NULL ORDER BY embedding_vec <=> ?::vector LIMIT 1`).get(qLit, userId, qLit);
+    return row && row.sim >= threshold ? { id: row.id, sim: row.sim, importance: row.importance } : null;
+  }
   const rows = scope
     ? await db.prepare('SELECT id, content, importance, embedding FROM memory WHERE scope=? AND user_id=?').all(scope, userId)
     : await db.prepare('SELECT id, content, importance, embedding FROM memory WHERE user_id=?').all(userId);
@@ -278,12 +320,12 @@ export async function reindexAll(userId) {
   for (let i = 0; i < mems.length; i += 16) {
     const batch = mems.slice(i, i + 16);
     const vecs = await embed(batch.map(m => m.content), 'passage');
-    for (let j = 0; j < batch.length; j++) { if (vecs[j]) { await db.prepare('UPDATE memory SET embedding=? WHERE id=? AND user_id=?').run(vecs[j], batch[j].id, userId); done++; } }
+    for (let j = 0; j < batch.length; j++) { if (vecs[j]) { await db.prepare('UPDATE memory SET embedding=? WHERE id=? AND user_id=?').run(vecs[j], batch[j].id, userId); await saveEmbeddingVec('memory', batch[j].id, vecs[j]); done++; } }
   }
   for (let i = 0; i < chunks.length; i += 16) {
     const batch = chunks.slice(i, i + 16);
     const vecs = await embed(batch.map(m => m.content), 'passage');
-    for (let j = 0; j < batch.length; j++) { if (vecs[j]) { await db.prepare('UPDATE conversation_chunks SET embedding=? WHERE id=? AND user_id=?').run(vecs[j], batch[j].id, userId); done++; } }
+    for (let j = 0; j < batch.length; j++) { if (vecs[j]) { await db.prepare('UPDATE conversation_chunks SET embedding=? WHERE id=? AND user_id=?').run(vecs[j], batch[j].id, userId); await saveEmbeddingVec('conversation_chunks', batch[j].id, vecs[j]); done++; } }
   }
   return { reindexed: done, total: mems.length + chunks.length, degraded: embeddingsDegraded() };
 }

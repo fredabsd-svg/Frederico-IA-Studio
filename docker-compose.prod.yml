@@ -15,8 +15,14 @@ services:
     command: ["true"]
     restart: "no"
 
+  # A imagem pgvector/pgvector traz a extensão de busca vetorial (memórias
+  # buscadas no banco com índice HNSW, sem carregar tudo na RAM do Node).
+  # ATENÇÃO (volume antigo do postgres:16-alpine): esta imagem é Debian (glibc);
+  # após o primeiro boot com dados existentes, rode uma vez
+  #   docker compose -f docker-compose.prod.yml exec postgres psql -U studio -d studio -c 'REINDEX DATABASE studio;'
+  # para realinhar índices de texto à collation da nova libc.
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     restart: unless-stopped
     environment:
       - POSTGRES_USER=studio
@@ -68,6 +74,13 @@ services:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
+    healthcheck:
+      # node com fetch nativo (a imagem não tem curl/wget)
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3001/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
 
   web:
     build: ./frontend

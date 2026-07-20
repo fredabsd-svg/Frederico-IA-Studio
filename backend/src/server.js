@@ -1,6 +1,8 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
+import { rateLimit } from 'express-rate-limit';
 import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
@@ -13,6 +15,8 @@ import { classifyTaskResult } from './taskOutcome.js';
 import { normalizeScheduleDay, normalizeScheduleHour, resolveScheduleTimeZone, scheduleDateKey, scheduleDue } from './scheduling.js';
 import { listMemories, addMemory, updateMemory, deleteMemory, deleteAllMemories, exportAll, reindexAll, getSettings, setSettings, looksSensitive, listMemorySuggestions, updateMemorySuggestion, approveMemorySuggestion, rejectMemorySuggestion, maybeReindexOnModelChange, loadSettings } from './memory/memoryService.js';
 import { startImport, importStatus } from './memory/indexer.js';
+import { initVectorStore } from './memory/vectorStore.js';
+import { validate, schemas } from './validation.js';
 import { workspaceFor, destroyConversation, insideBase, isConversationId, realInside, destroyAllSandboxes, loadPcFolders } from './sandbox.js';
 import { auth, requireAuth, enabledSocialProviders } from './auth.js';
 import { toNodeHandler } from 'better-auth/node';
@@ -23,7 +27,7 @@ import { getUserProvider } from './userProvider.js';
 import { getGithubConnection, testGithubToken, listGithubRepos, listGithubBranches, saveGithubConnection, githubOAuthConfig, githubOAuthAuthorizeUrl, createGithubOAuthState, consumeGithubOAuthState, exchangeGithubOAuthCode } from './connectors/github.js';
 import { sanitizeToolProtocolText } from './toolProtocol.js';
 import { scanUploadBatch } from './clamav.js';
-import { TERMS_VERSION, getLatestConsent, recordConsent, exportUserData, deleteConversationDeep, deleteAllConversations, deleteAccount, sweepOldConversations, CONVERSATION_RETENTION_DAYS } from './privacy.js';
+import { TERMS_VERSION, getLatestConsent, recordConsent, exportUserData, deleteConversationDeep, deleteAllConversations, deleteAccount, sweepOldConversations, CONVERSATION_RETENTION_DAYS, sweepOldUsage, USAGE_RETENTION_DAYS } from './privacy.js';
 import OpenAI from 'openai';
 
 const app = express();
@@ -57,12 +61,46 @@ for (const method of ['get', 'post', 'put', 'delete', 'patch', 'all']) {
 // Rede de segurança final: se ainda escapar uma rejeição não tratada, registra
 // e segue — nunca derruba o servidor por causa de uma requisição.
 process.on('unhandledRejection', (err) => console.error('[unhandledRejection]', err));
-app.use(cors({ origin: process.env.FRONTEND_URL || '*' }));
+
+// ---- Cabeçalhos de segurança, CORS e rate limiting HTTP ----
+// Atrás de um proxy (Caddy em produção, Vite em dev): confia no PRIMEIRO salto
+// para req.ip refletir o cliente real — essencial para o rate limit por IP.
+app.set('trust proxy', 1);
+// Helmet: X-Frame-Options, nosniff, Referrer-Policy, HSTS etc. A CSP fica
+// desligada porque este processo só serve JSON/SSE/downloads — o HTML do app
+// vem do Caddy (produção) ou do Vite (dev).
+app.use(helmet({ contentSecurityPolicy: false }));
+// CORS: em produção o app é servido pela MESMA origem (o Caddy faz proxy de
+// /api) e em dev o Vite idem — nenhuma origem externa é liberada por padrão.
+// (Antes, sem FRONTEND_URL o fallback era '*': qualquer site podia chamar a
+// API. origin:false = sem cabeçalhos CORS = só a própria origem.)
+const corsOrigins = [process.env.FRONTEND_URL, process.env.BETTER_AUTH_URL].filter(Boolean);
+app.use(cors({ origin: corsOrigins.length ? corsOrigins : false, credentials: true }));
+// Limite geral da API por IP (RATE_API_PER_MIN=0 desliga). Protege uploads,
+// listagens e força bruta de rotas — o limite DIÁRIO de mensagens por usuário
+// (RATE_MSGS_PER_DAY) continua valendo, mais abaixo.
+const RATE_API_PER_MIN = Math.max(0, Number(process.env.RATE_API_PER_MIN ?? 600));
+if (RATE_API_PER_MIN) {
+  app.use('/api', rateLimit({
+    windowMs: 60_000, limit: RATE_API_PER_MIN, standardHeaders: true, legacyHeaders: false,
+    message: { error: 'Muitas requisições. Aguarde um instante e tente de novo.' },
+  }));
+}
+// Login/cadastro: janela própria e bem mais apertada, só para POST (o GET de
+// sessão roda a cada carregamento de página e não pode ser freado assim).
+const RATE_AUTH_PER_15MIN = Math.max(0, Number(process.env.RATE_AUTH_PER_15MIN ?? 50));
+const authLimiter = RATE_AUTH_PER_15MIN
+  ? rateLimit({
+      windowMs: 15 * 60_000, limit: RATE_AUTH_PER_15MIN, standardHeaders: true, legacyHeaders: false,
+      message: { error: 'Muitas tentativas de login. Aguarde alguns minutos e tente de novo.' },
+    })
+  : null;
+
 // ---- Autenticação (Better Auth: e-mail/senha + GitHub + Google) ----
 // O handler de /api/auth/* precisa do corpo CRU da requisição, então é montado
 // ANTES do express.json (senão o body é consumido e o login trava — armadilha
 // clássica). Ele cuida de login, cadastro, OAuth, sessão e logout.
-app.all('/api/auth/*', toNodeHandler(auth));
+app.all('/api/auth/*', (req, res, next) => (authLimiter && req.method === 'POST') ? authLimiter(req, res, next) : next(), toNodeHandler(auth));
 
 app.use(express.json({ limit: '10mb' }));
 
@@ -599,7 +637,9 @@ async function enforceDailyLimit(userId) {
   return null;
 }
 
-app.get('/api/health', (_, res) => res.json({ ok: true, name: 'Frederico AI Studio', auth: true, scheduleTimeZone, socialProviders: enabledSocialProviders }));
+// termsVersion: fonte ÚNICA da versão vigente dos Termos/Política (a página
+// legal pública do frontend lê daqui — nada de manter a data em dois lugares).
+app.get('/api/health', (_, res) => res.json({ ok: true, name: 'Frederico AI Studio', auth: true, scheduleTimeZone, socialProviders: enabledSocialProviders, termsVersion: TERMS_VERSION }));
 
 // Dados do usuário logado + flags que a interface usa (ex.: mostrar o botão de
 // backup só para o administrador; esconder "Pastas do PC" quando desligado).
@@ -651,7 +691,7 @@ app.delete('/api/account/conversations', async (req, res) => {
 
 // Exclusão TOTAL da conta (art. 18, VI) — hard delete de tudo (banco + disco).
 // Exige confirmação: o corpo precisa trazer o e-mail da própria conta.
-app.delete('/api/account', async (req, res) => {
+app.delete('/api/account', validate(schemas.accountDelete), async (req, res) => {
   const confirm = String(req.body?.confirm || '').trim().toLowerCase();
   const email = String(req.user?.email || '').trim().toLowerCase();
   if (!confirm || confirm !== email) {
@@ -686,7 +726,7 @@ app.get('/api/assistants', async (req, res) => {
     .map(a => ({ ...a, tools: safeParse(a.tools, []), personality: safeParse(a.personality, {}) })));
 });
 
-app.post('/api/assistants', async (req, res) => {
+app.post('/api/assistants', validate(schemas.assistantCreate), async (req, res) => {
   const b = req.body || {};
   if (!b.name?.trim() || !b.system_prompt?.trim()) return res.status(400).json({ error: 'Nome e instruções são obrigatórios.' });
   const id = nanoid();
@@ -696,7 +736,7 @@ app.post('/api/assistants', async (req, res) => {
   res.json(await loadAssistant(req.userId, id));
 });
 
-app.put('/api/assistants/:id', async (req, res) => {
+app.put('/api/assistants/:id', validate(schemas.assistantUpdate), async (req, res) => {
   const b = req.body || {};
   const existing = await db.prepare('SELECT id FROM assistants WHERE id=? AND user_id=?').get(req.params.id, req.userId);
   if (!existing) return res.status(404).json({ error: 'Não encontrado' });
@@ -837,7 +877,7 @@ app.get('/api/clients', async (req, res) => {
   res.json(await db.prepare('SELECT * FROM clients WHERE user_id=? ORDER BY name ASC').all(req.userId));
 });
 
-app.post('/api/clients', async (req, res) => {
+app.post('/api/clients', validate(schemas.client), async (req, res) => {
   const name = (req.body?.name || '').trim();
   if (!name) return res.status(400).json({ error: 'Nome do cliente é obrigatório.' });
   const id = nanoid();
@@ -864,7 +904,7 @@ app.get('/api/templates', async (req, res) => {
   res.json(await db.prepare('SELECT * FROM templates WHERE user_id=? ORDER BY created_at ASC').all(req.userId));
 });
 
-app.post('/api/templates', async (req, res) => {
+app.post('/api/templates', validate(schemas.template), async (req, res) => {
   const name = (req.body?.name || '').trim();
   const content = (req.body?.content || '').trim();
   if (!name || !content) return res.status(400).json({ error: 'Nome e conteúdo são obrigatórios.' });
@@ -885,7 +925,7 @@ app.get('/api/memories', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.post('/api/memories', async (req, res) => {
+app.post('/api/memories', validate(schemas.memoryCreate), async (req, res) => {
   try {
     const b = req.body || {};
     if (looksSensitive(b.content)) return res.status(400).json({ error: 'Este conteúdo parece conter senha/chave — por segurança, não é salvo na memória.' });
@@ -893,7 +933,7 @@ app.post('/api/memories', async (req, res) => {
   } catch (err) { res.status(400).json({ error: err.message }); }
 });
 
-app.put('/api/memories/:id', async (req, res) => {
+app.put('/api/memories/:id', validate(schemas.memoryUpdate), async (req, res) => {
   try {
     const m = await updateMemory(req.userId, req.params.id, req.body || {});
     if (!m) return res.status(404).json({ error: 'Não encontrado' });
@@ -912,7 +952,7 @@ app.get('/api/memory-suggestions', async (req, res) => {
   res.json(await listMemorySuggestions(req.userId, { status: req.query.status || 'pending', limit: req.query.limit || 100 }));
 });
 
-app.put('/api/memory-suggestions/:id', async (req, res) => {
+app.put('/api/memory-suggestions/:id', validate(schemas.memoryUpdate), async (req, res) => {
   try {
     const s = await updateMemorySuggestion(req.userId, req.params.id, req.body || {});
     if (!s) return res.status(404).json({ error: 'Não encontrado' });
@@ -1148,7 +1188,7 @@ app.get('/api/conversations', async (req, res) => {
   res.json(rows);
 });
 
-app.post('/api/conversations', async (req, res) => {
+app.post('/api/conversations', validate(schemas.conversationCreate), async (req, res) => {
   const id = nanoid();
   const t = now();
   const title = req.body?.title || 'Nova conversa';
@@ -1295,7 +1335,7 @@ async function processTasks() {
 // (o reenfileiramento de tarefas e o disparo do worker acontecem no boot, ao
 // final do arquivo, depois que as migrations garantem que as tabelas existem)
 
-app.post('/api/tasks', async (req, res) => {
+app.post('/api/tasks', validate(schemas.task), async (req, res) => {
   const message = (req.body?.message || '').trim();
   const convId = req.body?.conversationId;
   if (!message) return res.status(400).json({ error: 'Mensagem vazia.' });
@@ -1361,9 +1401,15 @@ if (CONVERSATION_RETENTION_DAYS > 0) {
   setInterval(() => sweepOldConversations().catch(e => console.error('[retenção]', e.message)), 6 * 60 * 60 * 1000).unref();
   setTimeout(() => sweepOldConversations().catch(e => console.error('[retenção]', e.message)), 60 * 1000).unref();
 }
+// Retenção da tabela de consumo de tokens (usage/usage_daily): sem isto ela
+// cresce para sempre. Padrão: 365 dias (USAGE_RETENTION_DAYS=0 desliga).
+if (USAGE_RETENTION_DAYS > 0) {
+  setInterval(() => sweepOldUsage().catch(e => console.error('[retenção-uso]', e.message)), 24 * 60 * 60 * 1000).unref();
+  setTimeout(() => sweepOldUsage().catch(e => console.error('[retenção-uso]', e.message)), 90 * 1000).unref();
+}
 
 app.get('/api/schedules', async (req, res) => res.json(await db.prepare('SELECT * FROM schedules WHERE user_id=? ORDER BY created_at DESC').all(req.userId)));
-app.post('/api/schedules', async (req, res) => {
+app.post('/api/schedules', validate(schemas.scheduleCreate), async (req, res) => {
   const b = req.body || {};
   const title = (b.title || '').trim();
   const prompt = (b.prompt || '').trim();
@@ -1526,7 +1572,7 @@ app.post('/api/conversations/:id/truncate', async (req, res) => {
 });
 
 // Pausar / continuar / parar o processamento em andamento
-app.post('/api/conversations/:id/control', async (req, res) => {
+app.post('/api/conversations/:id/control', validate(schemas.control), async (req, res) => {
   const action = req.body?.action;
   if (!['pause', 'resume', 'stop'].includes(action)) return res.status(400).json({ error: 'Ação inválida.' });
   const conv = await db.prepare('SELECT id FROM conversations WHERE id=? AND user_id=?').get(req.params.id, req.userId);
@@ -1536,7 +1582,7 @@ app.post('/api/conversations/:id/control', async (req, res) => {
   res.json({ ok: true, action, paused: control.paused, stopped: control.stopped });
 });
 
-app.post('/api/conversations/:id/chat', async (req, res) => {
+app.post('/api/conversations/:id/chat', validate(schemas.chat), async (req, res) => {
   const text = String(req.body?.message || '').trim();
   if (!text) return res.status(400).json({ error: 'Mensagem vazia.' });
   if (text.length > 100_000) return res.status(400).json({ error: 'A mensagem é grande demais. Envie em partes menores.' });
@@ -1649,6 +1695,9 @@ app.use((err, req, res, _next) => {
 (async () => {
   // 1) Migrations criam/atualizam o schema ANTES de qualquer query.
   await runMigrations();
+  // 1b) pgvector: habilita a busca vetorial no banco quando a extensão existir
+  //     (senão a busca semântica continua no fallback em JS, como antes).
+  await initVectorStore();
   // 2) Aquece os caches em memória (settings e pastas do PC).
   await loadSettings();
   await loadPcFolders();

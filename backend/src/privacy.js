@@ -158,3 +158,21 @@ export async function sweepOldConversations() {
   if (deleted) console.log(`[retenção] ${deleted} conversa(s) com mais de ${CONVERSATION_RETENTION_DAYS} dias removida(s).`);
   return { deleted };
 }
+
+// ---- Retenção do consumo de tokens (usage / usage_daily) ----
+// Essas tabelas alimentam o painel de análises, mas sem varredura cresceriam
+// para sempre. Padrão: manter 1 ano (USAGE_RETENTION_DAYS=0 desliga e mantém
+// tudo). Também é minimização (LGPD art. 6º, III): consumo antigo não precisa
+// viver mais do que o período em que ainda é útil na análise.
+export const USAGE_RETENTION_DAYS = Math.max(0, Number(process.env.USAGE_RETENTION_DAYS ?? 365));
+
+export async function sweepOldUsage() {
+  if (!USAGE_RETENTION_DAYS) return { deleted: 0 };
+  const cutoff = new Date(Date.now() - USAGE_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const usage = await db.prepare('DELETE FROM usage WHERE created_at < ?').run(cutoff);
+  // usage_daily guarda o dia como 'YYYY-MM-DD' — comparação lexicográfica basta.
+  const daily = await db.prepare('DELETE FROM usage_daily WHERE day < ?').run(cutoff.slice(0, 10));
+  const deleted = (usage.changes || 0) + (daily.changes || 0);
+  if (deleted) console.log(`[retenção] ${deleted} registro(s) de consumo com mais de ${USAGE_RETENTION_DAYS} dias removido(s).`);
+  return { deleted };
+}

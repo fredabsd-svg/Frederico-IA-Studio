@@ -1,5 +1,57 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 🏗️ Prioridades técnicas: pgvector, hardening HTTP, zod, CI e quick wins (2026-07-20, branch claude/tech-priorities-security-arch-gnjyye)
+
+Implementação dos itens de alta prioridade + quick wins da revisão técnica:
+
+**1. Busca semântica com pgvector (escala).** A busca de memórias/chunks
+carregava TODAS as linhas do usuário na RAM do Node e calculava cosseno em JS.
+Agora `backend/src/memory/vectorStore.js` habilita a extensão `vector`, cria
+colunas `embedding_vec vector(384)` + índices **HNSW** e a busca vira
+`ORDER BY embedding_vec <=> $query LIMIT n` no banco (searchMemories,
+searchChunks e findSimilar em `memoryService.js`). Desenho (não regredir):
+- O BYTEA `embedding` continua sendo a FONTE DA VERDADE (reindex/fallback);
+  `embedding_vec` é projeção para o índice, espelhada em cada gravação
+  (`saveEmbeddingVec`) e preenchida em segundo plano no boot (`backfillVectors`).
+- **Fallback automático:** sem a extensão (postgres puro) ou com embeddings
+  degradados, tudo segue no caminho JS antigo — nada quebra.
+- Compose (dev e prod) agora usa a imagem `pgvector/pgvector:pg16`. Volume
+  antigo do `postgres:16-alpine`: rodar `REINDEX DATABASE studio;` uma vez após
+  a troca (alpine→debian muda a libc/collation; comentário no próprio compose).
+
+**2. Hardening HTTP (server.js).** `helmet` (CSP desligada — o backend só serve
+JSON/SSE), CORS restrito (o fallback `*` foi REMOVIDO; sem `FRONTEND_URL` /
+`BETTER_AUTH_URL` nenhuma origem externa é aceita — produção e dev são
+mesma-origem via proxy), `trust proxy = 1`, rate limit geral
+(`RATE_API_PER_MIN`, padrão 600/min/IP) e limiter apertado SÓ nos POSTs de
+`/api/auth` (`RATE_AUTH_PER_15MIN`, padrão 50/15min — o GET de sessão roda a
+cada carregamento e não pode ser freado).
+
+**3. Validação estruturada com zod (`backend/src/validation.js`).** Middleware
+`validate(schema)` + schemas "loose" (campos desconhecidos passam) aplicados a
+13 rotas de escrita (chat, tasks, assistants, clients, templates, memories,
+schedules, control...). Mensagens em pt-BR (`z.config(z.locales.pt())`) no
+formato `{ error }` que o frontend já entende. Testes em `validation.test.js`.
+
+**Quick wins:** CI no GitHub Actions (`.github/workflows/ci.yml` — testes do
+backend com glob `src/**/*.test.js`, testes + build do frontend, install com
+`--ignore-scripts`); `ErrorBoundary` no frontend (tela amigável + recarregar em
+vez de tela branca); healthcheck do backend nos dois compose (via `node -e
+fetch`, a imagem não tem curl); retenção da tabela `usage`/`usage_daily`
+(`USAGE_RETENTION_DAYS`, padrão 365, varredura diária em `privacy.js`);
+`TERMS_VERSION` agora tem fonte única em `backend/src/privacy.js`, exposta em
+`/api/health` (`termsVersion`) e lida pelas páginas legais do frontend
+(o valor em `LegalPages.jsx` virou só fallback offline).
+
+Validado: 102 testes backend + 7 frontend verdes, build de produção ok, boot
+completo contra Postgres 16 real com pgvector (migrations + índice + backfill +
+SQLs de busca com vetores sintéticos), cadastro/login reais exercitando os
+validadores e o 429 do limiter de auth.
+
+Pendências da revisão que ficaram para depois (médio prazo): quebrar
+`server.js`/`agent.js`/`App.jsx` em módulos, extrair os 7 `DOCPRO_PROMPT` para
+arquivos, TypeScript gradual, logs estruturados (pino) e testes E2E.
+
 ## 🛡️ Antivírus nos uploads (ClamAV) + selos de segurança + hardening (2026-07-20, PR #50 — MERGEADO)
 
 Todo arquivo enviado pelos usuários agora passa pelo **ClamAV** antes de ser
