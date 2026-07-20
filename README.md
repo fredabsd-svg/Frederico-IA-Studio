@@ -50,6 +50,7 @@ você escolhe é enviado direto ao provedor, sem substituição.
 | 🔌 | **Conector GitHub** | Conecte a sua conta (token) e a IA clona um repositório, altera o código e envia de volta — push e Pull Request direto pelo chat ou pelo modo desenvolvedor; o token fica cifrado e nunca entra no sandbox |
 | 🎙️ | **Voz e segundo plano** | Ditado por voz, tarefas em background, histórico por cliente |
 | 🛡️ | **Privacidade (LGPD)** | Consentimento registrado, Política de Privacidade e Termos publicados, e painel "Privacidade e dados": exportar tudo em JSON, apagar o histórico ou excluir a conta — hard delete, sem soft delete |
+| 🏷️ | **Seletor de modelos com logos** | Catálogo e filtro por fornecedor com o logo oficial de cada provedor, servido localmente (sem CDN) |
 
 ### Execução confiável
 
@@ -107,6 +108,10 @@ Postgres via `pgvector` (índice HNSW), com fallback automático em JS quando a
 extensão não está disponível. **Frontend modular:** `frontend/src/App.jsx` é a
 casca de UI; a lógica de chat, conversas, tarefas e assistentes vive em
 `frontend/src/hooks/*`.
+
+Nenhum recurso visual vem de CDN: imagens e logos ficam em `frontend/public/` e
+são servidos pelo próprio app. Assim a interface não depende de um terceiro para
+carregar, e o IP de quem usa o site não é entregue a nenhuma CDN externa.
 
 ---
 

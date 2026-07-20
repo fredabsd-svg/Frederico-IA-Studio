@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Search, ChevronDown, Check, Cpu, Star, SlidersHorizontal, X, Wrench, Eye, Image as ImageIcon, Brain, Video, MessageSquare } from 'lucide-react';
+import { ProviderIcon } from './components/ProviderIcon.jsx';
+import { FamilySelect } from './components/FamilySelect.jsx';
 
 // Ids (ou prefixos) dos modelos mais confiáveis para gerar planilhas/arquivos
 const BEST_FOR_FILES = [
@@ -205,6 +207,7 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
 
   const row = model => (
     <div key={model.id} className={'mpItem ' + (model.id === value ? 'sel' : '')}>
+      <ProviderIcon id={model.id} size={28}/>
       <button className="mpPick" onClick={() => pick(model.id)}>
         <span className="mpItemName">{model.name}{model.id === value && <Check size={13} className="mpInlineCheck" aria-label="Modelo em uso"/>}</span>
         <span className="mpItemId">{model.id}</span>
@@ -243,10 +246,14 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
         <div className="mpAdvancedHead"><span>Refinar catálogo</span>{activeFilterCount > 0 && <button onClick={() => { setFam('all'); setFlags([]); setSort('none'); }}>Limpar filtros</button>}</div>
         <div className="mpAdvancedFields">
           <label>Fornecedor
-            <select value={fam} onChange={event => setFam(event.target.value)}>
-              <option value="all">Todos ({models.length})</option>
-              {families.map(key => <option key={key} value={key}>{familyLabel(key)} ({famCounts[key]})</option>)}
-            </select>
+            <FamilySelect
+              value={fam}
+              onChange={setFam}
+              options={[
+                { key: 'all', label: `Todos (${models.length})` },
+                ...families.map(key => ({ key, label: `${familyLabel(key)} (${famCounts[key]})` }))
+              ]}
+            />
           </label>
           <label>Ordenar
             <select value={sort} onChange={event => setSort(event.target.value)}>

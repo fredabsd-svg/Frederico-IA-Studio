@@ -1,5 +1,56 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 🏷️ Logos de provedor no seletor de modelos (2026-07-20) — NÃO VALIDADO LOCALMENTE
+
+Cada modelo da lista mostra o logo oficial do provedor antes do nome, e o filtro
+**Fornecedor** virou um dropdown próprio com os mesmos logos (o `<select>` nativo
+não renderiza imagem).
+
+**Arquivos:**
+- `frontend/public/providers/*.png` — 18 logos (164 KB). A pasta `public/` não
+  existia no projeto; foi criada agora. O `vite build` copia o conteúdo dela para
+  o `dist/`, então os logos entram na imagem de produção (conferido no
+  `frontend/Dockerfile`: `COPY . .` + `npm run build`, e `.dockerignore` não
+  exclui `public/`).
+- `frontend/src/components/ProviderIcon.jsx` — mapeia a família (prefixo do id
+  do modelo) → arquivo local; sem logo conhecido, cai num monograma (a inicial).
+- `frontend/src/components/FamilySelect.jsx` — dropdown de Fornecedor com logo.
+- `frontend/src/styles.css` — bloco novo no fim (`.mpProvIcon`, `.mpProvMono`,
+  `.mpFamSelect`, `.mpFamBtn`, `.mpFamPanel`, `.mpFamOpt`).
+- `frontend/src/components.jsx` — 3 edições: os 2 imports, `<ProviderIcon>` como
+  primeiro filho do `.mpItem` na `row`, e o `<select>` de Fornecedor → `<FamilySelect>`.
+
+**Decisão: os logos são LOCAIS, não CDN.** O patch original puxava de
+`https://unpkg.com/@lobehub/icons-static-png@latest/dark/<slug>.png`. Descartado:
+tag `@latest` de CDN quebra sozinha sem aviso (mesma razão do item 11 da seção 6),
+e asset de terceiro entrega o IP de cada visitante do app a quem hospeda a CDN —
+o que num site público com login e LGPD é pior do que os 164 KB economizados. Os
+PNGs saíram do protótipo `Seletor de Modelo (offline).html`; arte do conjunto
+estático da LobeHub, variante *dark* (ícone claro) — por isso o ladrilho
+`.mpProvIcon` é escuro fixo (`#161c2b`) em todos os temas, inclusive nos claros.
+
+**⚠️ NÃO VALIDADO LOCALMENTE — a seção 7 exige `vite build` antes de commitar, e
+não deu:** não há Node instalado no host (só dentro do container) e o Docker local
+está desativado desde que o app foi para a VPS. A conferência foi ESTÁTICA: JSX
+balanceado, variáveis CSS usadas existem (`--r-sm`, `--r-md`, `--panel`,
+`--panel2`, `--line`, `--fs-xs`, `--accent`, `--muted`, `--text`) e o `.mpItem` já
+é `flex-direction:row; align-items:center`, que é o que joga o ícone para a
+esquerda. **Quem validou de fato foi o `npm run build` da VPS** no deploy — se
+estiver lendo isto e o build passou, o código compila; resta o visual.
+
+**Dois pontos para olhar na tela:**
+1. **Risco de corte no dropdown de Fornecedor.** `.mpPanel` tem `overflow:hidden`
+   e `.mpPanelInline` não sobrescreve. O `<select>` nativo antigo era desenhado
+   pelo SO e escapava do clipping; o `.mpFamPanel` é absoluto DENTRO do painel,
+   então o fim da lista pode ser cortado na borda inferior. Pelas contas cabe,
+   mas só olhando para ter certeza.
+2. **Microsoft (Phi) e Nous** não têm logo no conjunto — caem no monograma.
+
+**Deploy é na VPS** (`fredericostudio.com.br`), não mais local: `bash atualizar.sh`
+lá dentro, que faz `git pull` da `main` + rebuild. Instrução de `docker restart`
+no frontend é resquício do setup antigo de desenvolvimento e NÃO se aplica —
+em produção o frontend é bundle estático servido pelo Caddy (serviço `web`).
+
 ## 🔄 Processamento contínuo: sair/voltar sem perder o andamento (2026-07-20 — branch `claude/chat-async-continuous-processing-un1xho`, PR #54)
 
 O chat agora é um **fluxo contínuo de verdade**: o processamento roda no servidor
@@ -1033,6 +1084,10 @@ chat · Upload como chips · Tela responsiva (gaveta mobile) · Tema claro/escur
 11. Frontend: dependências com versões fixadas (nunca "latest").
 12. Nome de arquivo de upload: converter latin1→utf8 (acentos).
 13. Container names sem `container_name` fixo no compose (evita conflito).
+14. Nenhum asset de CDN no frontend — logos e imagens ficam em `frontend/public/`
+    e entram no bundle pelo `vite build`. URL de CDN com `@latest` quebra sozinha
+    sem aviso (mesma razão do item 11), e asset de terceiro entrega o IP de cada
+    visitante a quem hospeda a CDN — inaceitável num site público com LGPD.
 
 ## 7. Regras de trabalho (processo)
 
