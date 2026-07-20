@@ -86,11 +86,10 @@ test('withoutSystemNotices remove o aviso de arquivo ausente', () => {
 // design (Word/Excel/PDF), não só o docpro. Sem isso o modelo importa o
 // xlspro mas escreve a tabela com openpyxl cru (sem cabeçalho colorido/zebra).
 test('DOCPRO_PROMPT ensina docpro, xlspro e pdfpro', async () => {
-  const fs = await import('node:fs');
-  const src = fs.readFileSync(new URL('./server.js', import.meta.url), 'utf8');
-  const m = src.match(/const DOCPRO_PROMPT = `([\s\S]*?)`;/);
-  assert.ok(m, 'DOCPRO_PROMPT deveria existir');
-  const prompt = m[1];
+  // O prompt agora vive em backend/prompts/docpro/atual.txt e é exposto pelo
+  // seed.js — o teste valida o VALOR carregado, não mais o fonte do server.js.
+  const { DOCPRO_PROMPT: prompt } = await import('./seed.js');
+  assert.ok(prompt, 'DOCPRO_PROMPT deveria existir');
   assert.match(prompt, /from docpro import Relatorio/, 'deve ensinar o kit Word');
   assert.match(prompt, /from xlspro import Planilha/, 'deve ensinar o kit Excel');
   assert.match(prompt, /from pdfpro import RelatorioPDF/, 'deve ensinar o kit PDF');

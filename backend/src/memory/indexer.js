@@ -3,6 +3,7 @@ import { db, now } from '../db.js';
 import { nanoid } from 'nanoid';
 import { embed } from './embeddings.js';
 import { getSettings, addMemory, addMemorySuggestion, findSimilar, looksSensitive } from './memoryService.js';
+import { saveEmbeddingVec } from './vectorStore.js';
 import { getUserProvider } from '../userProvider.js';
 import { sanitizeToolProtocolText } from '../toolProtocol.js';
 
@@ -88,8 +89,10 @@ export async function indexAfterReply(userId, conversationId) {
     const content = `Usuário: ${lastUser.content.slice(0, 1100)}\nAssistente: ${lastAsst.content.slice(0, 1100)}`;
     const [vec] = await embed([content], 'passage');
     const chunkScope = conv.client_id ? `client:${conv.client_id}` : 'global';
+    const chunkId = nanoid();
     await db.prepare('INSERT INTO conversation_chunks (id, user_id, conversation_id, source_title, scope, content, embedding, token_count, created_at) VALUES (?,?,?,?,?,?,?,?,?)')
-      .run(nanoid(), userId, conversationId, conv.title, chunkScope, content, vec, estimateTokens(content), now());
+      .run(chunkId, userId, conversationId, conv.title, chunkScope, content, vec, estimateTokens(content), now());
+    await saveEmbeddingVec('conversation_chunks', chunkId, vec);
   }
 
   // 2) Resumo + extração de fatos (uma chamada de LLM). No modo economia, roda
@@ -234,8 +237,10 @@ export async function importConversations(userId, fileName, buffer, scope = 'glo
       const batch = pieces.slice(i, i + 16);
       const vecs = await embed(batch, 'passage');
       for (let j = 0; j < batch.length; j++) {
+        const chunkId = nanoid();
         await db.prepare('INSERT INTO conversation_chunks (id, user_id, conversation_id, source_title, scope, content, embedding, token_count, created_at) VALUES (?,?,?,?,?,?,?,?,?)')
-          .run(nanoid(), userId, null, title, targetScope, batch[j], vecs[j], estimateTokens(batch[j]), now());
+          .run(chunkId, userId, null, title, targetScope, batch[j], vecs[j], estimateTokens(batch[j]), now());
+        await saveEmbeddingVec('conversation_chunks', chunkId, vecs[j]);
         chunks++;
       }
     }

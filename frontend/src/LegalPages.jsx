@@ -3,14 +3,29 @@
 // da landing, a tela de cadastro e o app apontam para cá) e funcionam tanto no
 // Vite (fallback de SPA) quanto no Caddy (try_files -> index.html).
 //
-// IMPORTANTE: ao alterar o conteúdo de forma relevante, atualize TERMS_VERSION
-// aqui E em backend/src/privacy.js — todos os usuários verão o pedido de
-// aceite novamente.
-import React, { useEffect } from 'react';
+// A versão vigente dos termos vive num lugar SÓ: backend/src/privacy.js
+// (TERMS_VERSION), exposta publicamente em /api/health. Estas páginas leem de
+// lá; o valor abaixo é apenas o fallback exibido se a API estiver fora do ar.
+import React, { useEffect, useState } from 'react';
 import { ArrowLeft, ShieldCheck, ScrollText } from 'lucide-react';
-import { THEMES } from './constants.js';
+import { API, THEMES } from './constants.js';
 
-export const TERMS_VERSION = '2026-07-20';
+export const TERMS_VERSION_FALLBACK = '2026-07-20';
+
+// Busca a versão vigente no backend (fonte única); mantém o fallback enquanto
+// carrega ou se a API não responder (página legal continua funcionando).
+function useTermsVersion() {
+  const [version, setVersion] = useState(TERMS_VERSION_FALLBACK);
+  useEffect(() => {
+    let ativo = true;
+    fetch(`${API}/api/health`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (ativo && d?.termsVersion) setVersion(d.termsVersion); })
+      .catch(() => {});
+    return () => { ativo = false; };
+  }, []);
+  return version;
+}
 
 // Identificação do controlador (LGPD, art. 5º, VI). Centralizada aqui para
 // facilitar ajustes de razão social/contato sem caçar no texto.
@@ -18,6 +33,7 @@ const CONTROLADOR = 'Frederico Assessoria Contábil';
 const CONTATO = 'contabil@fredericoassessoria.com.br';
 
 function LegalShell({ icon, title, children }) {
+  const termsVersion = useTermsVersion();
   // Páginas públicas: aplica o tema salvo (ou o padrão) como o AuthGate faz,
   // senão a página abre sem as cores do app.
   useEffect(() => {
@@ -33,7 +49,7 @@ function LegalShell({ icon, title, children }) {
       <main className="legalBody">
         <span className="legalKicker">{icon} Documento legal</span>
         <h1>{title}</h1>
-        <p className="legalMeta">Versão de {formatVersion(TERMS_VERSION)} · {CONTROLADOR}</p>
+        <p className="legalMeta">Versão de {formatVersion(termsVersion)} · {CONTROLADOR}</p>
         {children}
         <footer className="legalFooter">
           <a href="/privacidade">Política de Privacidade</a> · <a href="/termos">Termos de Uso</a> · Contato: <a href={`mailto:${CONTATO}`}>{CONTATO}</a>

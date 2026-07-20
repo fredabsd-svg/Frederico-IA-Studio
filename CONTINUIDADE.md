@@ -1,5 +1,122 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 🏗️ Prioridades técnicas: pgvector, hardening HTTP, zod, CI e quick wins (2026-07-20, branch claude/tech-priorities-security-arch-gnjyye)
+
+Implementação dos itens de alta prioridade + quick wins da revisão técnica:
+
+**1. Busca semântica com pgvector (escala).** A busca de memórias/chunks
+carregava TODAS as linhas do usuário na RAM do Node e calculava cosseno em JS.
+Agora `backend/src/memory/vectorStore.js` habilita a extensão `vector`, cria
+colunas `embedding_vec vector(384)` + índices **HNSW** e a busca vira
+`ORDER BY embedding_vec <=> $query LIMIT n` no banco (searchMemories,
+searchChunks e findSimilar em `memoryService.js`). Desenho (não regredir):
+- O BYTEA `embedding` continua sendo a FONTE DA VERDADE (reindex/fallback);
+  `embedding_vec` é projeção para o índice, espelhada em cada gravação
+  (`saveEmbeddingVec`) e preenchida em segundo plano no boot (`backfillVectors`).
+- **Fallback automático:** sem a extensão (postgres puro) ou com embeddings
+  degradados, tudo segue no caminho JS antigo — nada quebra.
+- Compose (dev e prod) agora usa a imagem `pgvector/pgvector:pg16`. Volume
+  antigo do `postgres:16-alpine`: rodar `REINDEX DATABASE studio;` uma vez após
+  a troca (alpine→debian muda a libc/collation; comentário no próprio compose).
+
+**2. Hardening HTTP (server.js).** `helmet` (CSP desligada — o backend só serve
+JSON/SSE), CORS restrito (o fallback `*` foi REMOVIDO; sem `FRONTEND_URL` /
+`BETTER_AUTH_URL` nenhuma origem externa é aceita — produção e dev são
+mesma-origem via proxy), `trust proxy = 1`, rate limit geral
+(`RATE_API_PER_MIN`, padrão 600/min/IP) e limiter apertado SÓ nos POSTs de
+`/api/auth` (`RATE_AUTH_PER_15MIN`, padrão 50/15min — o GET de sessão roda a
+cada carregamento e não pode ser freado).
+
+**3. Validação estruturada com zod (`backend/src/validation.js`).** Middleware
+`validate(schema)` + schemas "loose" (campos desconhecidos passam) aplicados a
+13 rotas de escrita (chat, tasks, assistants, clients, templates, memories,
+schedules, control...). Mensagens em pt-BR (`z.config(z.locales.pt())`) no
+formato `{ error }` que o frontend já entende. Testes em `validation.test.js`.
+
+**Quick wins:** CI no GitHub Actions (`.github/workflows/ci.yml` — testes do
+backend com glob `src/**/*.test.js`, testes + build do frontend, install com
+`--ignore-scripts`); `ErrorBoundary` no frontend (tela amigável + recarregar em
+vez de tela branca); healthcheck do backend nos dois compose (via `node -e
+fetch`, a imagem não tem curl); retenção da tabela `usage`/`usage_daily`
+(`USAGE_RETENTION_DAYS`, padrão 365, varredura diária em `privacy.js`);
+`TERMS_VERSION` agora tem fonte única em `backend/src/privacy.js`, exposta em
+`/api/health` (`termsVersion`) e lida pelas páginas legais do frontend
+(o valor em `LegalPages.jsx` virou só fallback offline).
+
+Validado: 102 testes backend + 7 frontend verdes, build de produção ok, boot
+completo contra Postgres 16 real com pgvector (migrations + índice + backfill +
+SQLs de busca com vetores sintéticos), cadastro/login reais exercitando os
+validadores e o 429 do limiter de auth.
+
+**Modularização (itens 4 e 7 — feita em seguida, na mesma branch/PR #53):**
+- `server.js`: **1713 → 189 linhas.** As ~50 rotas foram movidas VERBATIM para
+  15 routers por domínio em `backend/src/routes/` (account, models, assistants,
+  pcFolders, inbox, clients, templates, memories, provider, connectors,
+  analytics, conversations, tasks, schedules, backup). `routes/helpers.js`
+  concentra o compartilhado: `makeRouter()` (o mesmo shim async de sempre —
+  todo router NOVO deve usá-lo, nunca `Router()` cru), multer/antivírus,
+  `loadAssistant`, `ensureConversation`, limite diário. O server.js ficou só
+  com middlewares (segurança/auth/seed), montagem dos routers e boot. Os
+  timers das rotinas agendadas agora são armados no boot (`startSchedulers()`),
+  DEPOIS das migrations.
+- `agent.js`: **2027 → 40 linhas** — fachada que re-exporta os mesmos 33
+  símbolos; nenhum importador mudou. Código dividido em 10 módulos em
+  `backend/src/agent/`: loop (652), prompts (334), outputs (332),
+  orchestrator (293), repair (105), control (102, ÚNICO dono do estado de
+  pausar/continuar/parar), webResearch (93), provider (71), vision (60),
+  persistence (57). Extração mecânica conferida por diff multiset (zero linha
+  alterada/perdida).
+- Prompts DOCPRO (10 versões, ~430 linhas) extraídos para
+  `backend/prompts/docpro/*.txt`; o novo `backend/src/seed.js` carrega
+  `atual.txt` e usa os antigos SÓ para migrar assistentes com prompt padrão
+  antigo. Para editar o prompt do DocPro: mexa em `atual.txt` e renomeie o
+  anterior para `vN.txt` (o teste do qaFixes valida o valor carregado).
+- `App.jsx`: **1822 → 1057 linhas.** Custom hooks em `frontend/src/hooks/`
+  (useChat 248, useConversations 112, useFileUploads 103, useAssistants 91,
+  useTasks 62, useSpeech 35) e subcomponentes em `frontend/src/components/`
+  (ContextPicker, ClientPicker, MemoryTrace). O App continua dono do JSX e do
+  estado de UI; hooks recebem dependências por parâmetro.
+- Validação da modularização: 102 testes backend + 7 frontend verdes, build
+  ok, boot real contra Postgres com smoke test de TODAS as rotas dos 15
+  routers, lint no-undef zerado e verificação VISUAL com Playwright (landing,
+  login real, aceite LGPD, chat carregado, página /privacidade com a versão
+  dos termos vinda de /api/health) — sem nenhum erro de JS de página.
+
+**Rodada de code review (10 achados verificados) + correções, na mesma branch:**
+- COOP do helmet desligado (`crossOriginOpenerPolicy: false`): o header zerava
+  o `window.opener` do popup OAuth do GitHub e o postMessage
+  'fred-github-connected' nunca chegava ao painel.
+- Recall do pgvector: novo `knnCandidates()` em vectorStore.js (único dono do
+  SQL KNN) roda em transação com `SET LOCAL hnsw.ef_search` alto e
+  `hnsw.iterative_scan='relaxed_order'` quando o pgvector ≥ 0.8 suporta
+  (detectado em runtime). Se o índice devolver menos que `limit` candidatos
+  (usuário pequeno ou truncamento pós-filtro), cai na varredura JS completa; e
+  linhas SEM vetor (período degradado/backfill pendente) são varridas como
+  RESÍDUO em JS e somadas ao resultado — nada fica invisível.
+- `reindexAll()` sem userId agora reindexa TODOS os usuários (antes, o
+  `WHERE user_id=?` com undefined→null não casava nada e a troca de modelo de
+  embeddings "concluía" sem regravar um vetor sequer).
+- `toVectorLiteral` avisa (uma vez, no log) quando a dimensão do embedding ≠
+  vector(384) — a troca de EMBEDDING_MODEL não desliga mais o índice em
+  silêncio. Índices HNSW + backfill agora rodam em SEGUNDO PLANO no boot (base
+  restaurada sem índice não trava mais o app.listen).
+- Limites do zod ajustados: orchestrateIds 20→100 (o modo Equipe manda todos os
+  assistentes por padrão) e memória 20k→100k com mensagem própria em pt-BR.
+- Validações manuais mortas removidas dos 6 routers (o zod é o único dono de
+  tipo/tamanho; checagens de NEGÓCIO como isConversationId ficam no handler).
+- `updateMemory` só regrava embedding_vec quando o conteúdo mudou (editar
+  pin/importância não toca mais no índice HNSW).
+- Inbox: regex gulosa que mutilava nomes com "_" trocada por casamento de
+  comprimento fixo (`\d+_\d+_[\w-]{6}_`), na listagem e na conversão.
+- Frontend: useTermsVersion usa `${API}/api/health` (respeita VITE_API_URL);
+  deleteAssistant ganhou o guard Array.isArray de loadAssistants; payload do
+  chat unificado num literal só (team via spread condicional).
+
+Pendências da revisão que ficaram para depois (médio prazo): TypeScript
+gradual, logs estruturados (pino), testes E2E permanentes no CI (a verificação
+Playwright foi manual, no sandbox da sessão) e o `importStatus` global único do
+indexer (um import por vez para o app inteiro, herdado do design mono-usuário).
+
 ## 🛡️ Antivírus nos uploads (ClamAV) + selos de segurança + hardening (2026-07-20, PR #50 — MERGEADO)
 
 Todo arquivo enviado pelos usuários agora passa pelo **ClamAV** antes de ser

@@ -1,6 +1,7 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import AuthGate from './AuthGate.jsx';
+import ErrorBoundary from './ErrorBoundary.jsx';
 import { PrivacyPolicy, TermsOfUse } from './LegalPages.jsx';
 import './styles.css';
 import './v2.css';
@@ -14,4 +15,4 @@ const route = window.location.pathname.replace(/\/+$/, '');
 const page = route === '/privacidade' ? <PrivacyPolicy />
   : route === '/termos' ? <TermsOfUse />
   : <AuthGate />;
-createRoot(document.getElementById('root')).render(page);
+createRoot(document.getElementById('root')).render(<ErrorBoundary>{page}</ErrorBoundary>);

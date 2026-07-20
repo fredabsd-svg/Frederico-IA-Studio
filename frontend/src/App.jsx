@@ -2,10 +2,10 @@ import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Download, FileText, FileSpreadsheet, FilePenLine, Plus, ArrowUp, Upload, Moon, Sun, Trash2, Settings, Bot, Brain, X, BarChart3, Users, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench, CalendarClock, Inbox, Palette, Gauge, SlidersHorizontal, Paperclip, MoreHorizontal, FolderOpen, Code2, Cpu, ChevronDown, ChevronRight, ChevronsUpDown, Calculator, Telescope, Scale, Briefcase, Receipt, Landmark, Megaphone, Lightbulb, ShieldCheck, GraduationCap, Stethoscope, Hammer, Leaf, LogOut, KeyRound, Camera, Cable } from 'lucide-react';
-import { API, FALLBACK_MODELS, TOOL_INFO, TEMPLATES, QUICK_ACTIONS, THEMES, WORKSPACES, EFFORTS, EFFORT_DESC, emptyForm, ASSISTANT_ICONS, ASSISTANT_COLORS, isAssistantIcon } from './constants.js';
+import { Download, FileText, FileSpreadsheet, FilePenLine, Plus, ArrowUp, Upload, Trash2, Bot, Brain, X, BarChart3, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench, CalendarClock, Inbox, Palette, Gauge, SlidersHorizontal, Paperclip, MoreHorizontal, FolderOpen, Code2, ChevronRight, ShieldCheck, LogOut, KeyRound, Camera, Cable } from 'lucide-react';
+import { API, FALLBACK_MODELS, TOOL_INFO, TEMPLATES, QUICK_ACTIONS, THEMES, WORKSPACES, EFFORTS, EFFORT_DESC, ASSISTANT_ICONS, ASSISTANT_COLORS, isAssistantIcon } from './constants.js';
 import { signOut } from './authClient.js';
-import { ToolStep, Slider, Modal, Drawer, ModelPicker, Collapsible, useAppDialog } from './components.jsx';
+import { ToolStep, Slider, Modal, Drawer, Collapsible, useAppDialog } from './components.jsx';
 import { MemoryPanel } from './MemoryPanel.jsx';
 import { PcFoldersPanel } from './PcFoldersPanel.jsx';
 import { ToolsPanel } from './ToolsPanel.jsx';
@@ -16,7 +16,15 @@ import { ProviderPanel } from './ProviderPanel.jsx';
 import { ConnectorsPanel } from './ConnectorsPanel.jsx';
 import { PrivacyPanel, ConsentGate } from './PrivacyPanel.jsx';
 import { CameraCapture } from './CameraCapture.jsx';
-import { takeSseEvents } from './sse.js';
+import { ContextPicker, AssistantGlyph, AssistantTile, ASSISTANT_ICON, modelHasTools } from './components/ContextPicker.jsx';
+import { ClientPicker } from './components/ClientPicker.jsx';
+import { MemoryTrace } from './components/MemoryTrace.jsx';
+import { useAssistants } from './hooks/useAssistants.js';
+import { useConversations } from './hooks/useConversations.js';
+import { useSpeech } from './hooks/useSpeech.js';
+import { useFileUploads } from './hooks/useFileUploads.js';
+import { useChat } from './hooks/useChat.js';
+import { useTasks } from './hooks/useTasks.js';
 
 const QUICK_ACTION_ICON = {
   document: FileText,
@@ -35,31 +43,6 @@ const WORKSPACE_ICON = {
   focus: Sparkles,
   developer: Code2
 };
-
-// Mapa explícito em vez de Lucide[nome] sobre `import * as Lucide`: o import
-// estrela puxaria os ~1500 ícones da biblioteca para o bundle, porque mata o
-// tree-shaking. As chaves espelham ASSISTANT_ICONS em constants.js.
-const ASSISTANT_ICON = {
-  'bot': Bot,
-  'calculator': Calculator,
-  'file-pen-line': FilePenLine,
-  'code-2': Code2,
-  'telescope': Telescope,
-  'scale': Scale,
-  'briefcase': Briefcase,
-  'bar-chart-3': BarChart3,
-  'receipt': Receipt,
-  'landmark': Landmark,
-  'megaphone': Megaphone,
-  'lightbulb': Lightbulb,
-  'shield-check': ShieldCheck,
-  'graduation-cap': GraduationCap,
-  'stethoscope': Stethoscope,
-  'hammer': Hammer,
-  'leaf': Leaf
-};
-
-const assistantColor = (a, i = 0) => a?.color || ASSISTANT_COLORS[i % ASSISTANT_COLORS.length];
 
 // ---- Data e hora das mensagens ----
 const parseDate = (v) => { if (!v) return null; const d = new Date(v); return isNaN(d.getTime()) ? null : d; };
@@ -83,76 +66,6 @@ function dayLabel(v) {
   });
 }
 
-// Desenha o ícone do assistente. Se o valor não for um nome de ícone conhecido,
-// é um emoji de um assistente criado antes da migração: imprime como texto.
-function AssistantGlyph({ value, size = 14 }) {
-  const Icon = ASSISTANT_ICON[value];
-  if (Icon) return <Icon size={size}/>;
-  return <span className="glyphEmoji" style={{ fontSize: size }}>{value || '🤖'}</span>;
-}
-
-// Ladrilho colorido do assistente (ContextPicker e cabeçalho das mensagens).
-function AssistantTile({ assistant, index = 0, size = 26, icon = 14 }) {
-  const color = assistantColor(assistant, index);
-  return <span className="asstTile" style={{
-    width: size, height: size, color,
-    background: `color-mix(in srgb, ${color} 16%, transparent)`
-  }}>
-    <AssistantGlyph value={assistant?.emoji} size={icon}/>
-  </span>;
-}
-
-// "Construtora Marília" -> "CM"
-const initials = (name) => (name || '').split(/\s+/).filter(Boolean).slice(0, 2)
-  .map(w => w[0]).join('').toUpperCase() || '?';
-
-// Substitui o <select> nativo de cliente. Mesmo padrão de abertura/fechamento
-// do ContextPicker (mousedown fora + Escape), para os dois se comportarem igual.
-function ClientPicker({ clients, clientId, onPick, onAdd, onRemove }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef(null);
-  useEffect(() => {
-    function onDoc(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
-    function onKey(e) { if (e.key === 'Escape') setOpen(false); }
-    document.addEventListener('mousedown', onDoc);
-    document.addEventListener('keydown', onKey);
-    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey); };
-  }, []);
-
-  const active = clients.find(c => c.id === clientId);
-  return <div className="clientPicker" ref={ref}>
-    <button className={`clientBtn ${open ? 'on' : ''}`} onClick={() => setOpen(o => !o)}
-            aria-expanded={open} aria-haspopup="listbox" title="Cliente / Projeto ativo">
-      <span className="clientTile" aria-hidden="true">{active ? initials(active.name) : <FolderOpen size={13}/>}</span>
-      <span className="clientName">{active?.name || 'Geral (sem cliente)'}</span>
-      <ChevronsUpDown size={14} className="clientChev"/>
-    </button>
-    {open && <div className="clientPanel" role="listbox">
-      <div className="clientOpts">
-        <button role="option" aria-selected={!clientId} className={`clientOpt ${!clientId ? 'sel' : ''}`}
-                onClick={() => { onPick(''); setOpen(false); }}>
-          <span className="clientTile" aria-hidden="true"><FolderOpen size={13}/></span>
-          <span className="clientName">Geral (sem cliente)</span>
-          {!clientId && <Check size={14}/>}
-        </button>
-        {clients.map(c => (
-          <button key={c.id} role="option" aria-selected={c.id === clientId}
-                  className={`clientOpt ${c.id === clientId ? 'sel' : ''}`}
-                  onClick={() => { onPick(c.id); setOpen(false); }}>
-            <span className="clientTile" aria-hidden="true">{initials(c.name)}</span>
-            <span className="clientName">{c.name}</span>
-            {c.id === clientId && <Check size={14}/>}
-          </button>
-        ))}
-      </div>
-      <div className="clientFoot">
-        <button onClick={() => { onAdd(); setOpen(false); }}><Plus size={13}/> Novo cliente</button>
-        {clientId && <button className="clientRemove" onClick={() => { onRemove(); setOpen(false); }}><Trash2 size={13}/> Remover</button>}
-      </div>
-    </div>}
-  </div>;
-}
-
 const DEVELOPER_QUICK_ACTIONS = [
   { icon: 'plan', label: 'Planejar uma mudança', desc: 'Entenda o projeto antes de editar', mode: 'plan' },
   { icon: 'build', label: 'Construir com segurança', desc: 'Aplique alterações no projeto escolhido', mode: 'build' },
@@ -160,158 +73,11 @@ const DEVELOPER_QUICK_ACTIONS = [
   { icon: 'folder', label: 'Conectar um projeto', desc: 'Escolha as pastas liberadas no computador', action: 'folders' }
 ];
 
-const modelCapability = (model, key) => {
-  const declared = model?.capabilities;
-  if (declared && Object.prototype.hasOwnProperty.call(declared, key)) return declared[key];
-  return model?.[key];
-};
-const modelHasTools = model => modelCapability(model, 'tools') !== false;
-const toolResultFailed = content => {
-  try {
-    const result = JSON.parse(content);
-    return Boolean(result?.error) || (typeof result?.exitCode === 'number' && result.exitCode !== 0);
-  } catch {
-    return false;
-  }
-};
-const modelCompatibilityLabel = (model) => {
-  if (modelCapability(model, 'text') === false) return 'sem chat em texto';
-  if (modelCapability(model, 'tools') === false) return 'somente texto';
-  if (modelCapability(model, 'tools') === true) return 'com ferramentas';
-  return 'texto';
-};
-
-// Controle único de contexto da barra superior.
-//
-// Antes: rótulo do espaço de trabalho + ModelPicker + botão Equipe + <select> de
-// assistente + engrenagem de editar — quatro controles lado a lado para a mesma
-// pergunta ("quem responde?"), sendo que ligar a Equipe desabilitava os vizinhos
-// sem explicar por quê.
-//
-// Agora: um botão, três abas. A aba É o modo — abrir "Equipe" liga a equipe,
-// abrir "Assistente" desliga. Nada é desabilitado, porque nada compete.
-function ContextPicker({ models, model, onModel, assistants, assistantId, onPickAssistant,
-                         currentAssistant, team, onTeam, teamIds, onToggleMember,
-                         effectiveTeam, onEditAssistant }) {
-  const [open, setOpen] = useState(false);
-  const [tab, setTab] = useState(team ? 'team' : 'assistant');
-  const ref = useRef(null);
-
-  useEffect(() => {
-    function onDoc(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
-    function onKey(e) { if (e.key === 'Escape') setOpen(false); }
-    document.addEventListener('mousedown', onDoc);
-    document.addEventListener('keydown', onKey);
-    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey); };
-  }, []);
-  useEffect(() => { setTab(t => (team && t === 'assistant') ? 'team' : (!team && t === 'team') ? 'assistant' : t); }, [team]);
-
-  const currentModel = models.find(m => m.id === model);
-  const who = team
-    ? `Equipe (${effectiveTeam.length})`
-    : (currentAssistant?.name || 'Assistente');
-
-  function goTab(id) {
-    setTab(id);
-    if (id === 'team') onTeam(true);
-    if (id === 'assistant') onTeam(false);
-  }
-
-  return <div className="ctxPicker" ref={ref}>
-    <button className={`ctxBtn ${open ? 'on' : ''}`} onClick={() => setOpen(o => !o)} aria-expanded={open}
-            title="Quem responde e com qual modelo de IA">
-      {team ? <Users size={15}/> : <AssistantGlyph value={currentAssistant?.emoji} size={15}/>}
-      <span className="ctxBtnText">
-        <b>{who}</b>
-        <small>{currentModel?.name || model}{currentModel && ` · ${modelCompatibilityLabel(currentModel)}`}</small>
-      </span>
-      <ChevronDown size={14}/>
-    </button>
-    {open && <div className="ctxPanel">
-      <div className="ctxTabs" role="tablist" aria-label="Contexto da conversa">
-        <button role="tab" aria-selected={tab === 'assistant'} className={tab === 'assistant' ? 'on' : ''} onClick={() => goTab('assistant')}><Bot size={14}/> Assistente</button>
-        <button role="tab" aria-selected={tab === 'team'} className={tab === 'team' ? 'on' : ''} onClick={() => goTab('team')}><Users size={14}/> Equipe</button>
-        <button role="tab" aria-selected={tab === 'model'} className={tab === 'model' ? 'on' : ''} onClick={() => setTab('model')}><Cpu size={14}/> Modelo</button>
-      </div>
-
-      {tab === 'assistant' && <div className="ctxBody" role="tabpanel">
-        <p className="ctxHint">Um assistente responde sozinho, com a memória e as ferramentas dele.</p>
-        <div className="ctxList">
-          {assistants.map((a, i) => (
-            <button key={a.id} className={`ctxItem ${!team && a.id === assistantId ? 'sel' : ''}`}
-                    onClick={() => { onPickAssistant(a.id); onTeam(false); }}>
-              <AssistantTile assistant={a} index={i}/>
-              <span className="ctxItemName">{a.name}</span>
-              {!team && a.id === assistantId && <Check size={14} className="ctxItemChk"/>}
-            </button>
-          ))}
-        </div>
-        <button className="ctxFoot" onClick={onEditAssistant}><Settings size={14}/> Editar este assistente</button>
-      </div>}
-
-      {tab === 'team' && <div className="ctxBody" role="tabpanel">
-        <p className="ctxHint">Vários assistentes respondem à <b>1ª mensagem</b> e um coordenador junta as perspectivas. Depois ele segue sozinho, para reduzir custo e tempo.</p>
-        <div className="ctxList">
-          {assistants.map((a, i) => {
-            const on = !teamIds || teamIds.includes(a.id);
-            return <label key={a.id} className={`ctxItem ctxCheck ${on ? 'sel' : ''}`}>
-              <input type="checkbox" checked={on} onChange={() => onToggleMember(a.id)}/>
-              <AssistantTile assistant={a} index={i}/>
-              <span className="ctxItemName">{a.name}</span>
-            </label>;
-          })}
-        </div>
-        {effectiveTeam.length === 0 && <p className="ctxWarn">Selecione ao menos um assistente.</p>}
-      </div>}
-
-      {tab === 'model' && <div className="ctxBody ctxBodyModel" role="tabpanel">
-        <ModelPicker models={models} value={model} onChange={onModel} inline/>
-      </div>}
-    </div>}
-  </div>;
-}
-
-function MemoryTrace({ memory, onOpenMemory }) {
-  if (!memory?.enabled) return null;
-  const stats = memory.stats || {};
-  const memories = stats.memoriesUsed ?? memory.memories?.length ?? 0;
-  const chunks = stats.chunksUsed ?? memory.chunks?.length ?? 0;
-  const summaries = stats.summariesUsed ?? memory.summaries ?? 0;
-  const used = stats.contextTokens || memory.usedTokens || 0;
-  const budget = stats.contextBudget || memory.budget || 0;
-  if (memory.retrievalSkipped === 'low_signal') return <div className="memoryTrace compact"><Brain size={13}/> Memória não foi consultada nesta saudação.</div>;
-  const hasSignal = memories || chunks || summaries || memory.history?.clipped;
-  if (!hasSignal) return <div className="memoryTrace compact"><Brain size={13}/> Memoria ativa: nada relevante foi adicionado nesta resposta.</div>;
-  return <details className="memoryTrace">
-    <summary><Brain size={13}/><span>Usei {memories} memoria(s), {chunks} conversa(s) antiga(s){summaries ? ` e ${summaries} resumo(s)` : ''}.</span></summary>
-    <div className="memoryTraceBody">
-      <div className="memoryTraceMeta">Contexto: {used.toLocaleString('pt-BR')} / {budget.toLocaleString('pt-BR')} tokens{memory.truncated ? ' (encurtado)' : ''}. Historico: {memory.history?.included || 0} mensagens.</div>
-      {memory.memories?.length > 0 && <div className="memoryTraceList">
-        <b>Memorias usadas</b>
-        {memory.memories.slice(0, 8).map((m, i) => <span key={`${m.id || i}-${i}`}>{m.scopeLabel || 'Memoria'} · {m.type || 'nota'} · {m.preview}</span>)}
-      </div>}
-      {memory.chunks?.length > 0 && <div className="memoryTraceList">
-        <b>Conversas antigas</b>
-        {memory.chunks.slice(0, 5).map((c, i) => <span key={`${c.title || i}-${i}`}>{c.scopeLabel || 'Escopo'} · {c.title}{c.date ? ` · ${c.date}` : ''}</span>)}
-      </div>}
-      <button type="button" onClick={(e) => { e.preventDefault(); onOpenMemory?.(); }}>Abrir memoria</button>
-    </div>
-  </details>;
-}
-
 export default function App({ user } = {}) {
-  const [conversations, setConversations] = useState([]);
-  const [allConvs, setAllConvs] = useState([]);
-  const [current, setCurrent] = useState(null);
   const [messages, setMessages] = useState([]);
-  const [files, setFiles] = useState([]);
   const [input, setInput] = useState('');
   const [allModels, setAllModels] = useState(FALLBACK_MODELS);
   const [model, setModel] = useState(FALLBACK_MODELS[0].id);
-  const [assistants, setAssistants] = useState([]);
-  const [assistantId, setAssistantId] = useState(null);
-  const [studioOpen, setStudioOpen] = useState(false);
-  const [form, setForm] = useState(emptyForm());
   const [memoryOpen, setMemoryOpen] = useState(false);
   const [pcOpen, setPcOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
@@ -331,18 +97,12 @@ export default function App({ user } = {}) {
   const [teamIds, setTeamIds] = useState(() => { try { return JSON.parse(localStorage.getItem('fred_team') || 'null'); } catch { return null; } });
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
   const [analytics, setAnalytics] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [paused, setPaused] = useState(false);
-  const [controlPending, setControlPending] = useState(false);
-  const [statusText, setStatusText] = useState('');
-  const [nowTick, setNowTick] = useState(0);
   const [theme, setTheme] = useState(() => localStorage.getItem('fred_theme') || 'dark');
   const [workspace, setWorkspace] = useState(() => {
     const saved = localStorage.getItem('fred_workspace');
     return WORKSPACES.some(item => item.id === saved) ? saved : 'studio';
   });
   const [themeOpen, setThemeOpen] = useState(false);
-  const [listening, setListening] = useState(false);
   const [webSearch, setWebSearch] = useState(false);
   const [effort, setEffort] = useState(() => { const s = localStorage.getItem('fred_effort'); return EFFORTS.some(e => e.id === s) ? s : 'medio'; });
   const [composerMenuOpen, setComposerMenuOpen] = useState(false);
@@ -351,12 +111,8 @@ export default function App({ user } = {}) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [sideHidden, setSideHidden] = useState(() => localStorage.getItem('fred_workspace') === 'focus' || localStorage.getItem('fred_side_hidden') === '1');
   const [convFilter, setConvFilter] = useState('');
-  const [dragActive, setDragActive] = useState(false);
-  const [uploadingFiles, setUploadingFiles] = useState(false);
-  const [scanOk, setScanOk] = useState(false); // "✓ verificado pelo antivírus" após upload escaneado
   const [cameraOpen, setCameraOpen] = useState(false);
   const [me, setMe] = useState(null); // { email, isAdmin, pcFoldersEnabled }
-  const [loadingConv, setLoadingConv] = useState(false);
   const [connError, setConnError] = useState(false);
   const [needLogin, setNeedLogin] = useState(false);
   const [unprotected, setUnprotected] = useState(false);
@@ -373,26 +129,56 @@ export default function App({ user } = {}) {
   const [exporting, setExporting] = useState(false);
   const [filesDrawerOpen, setFilesDrawerOpen] = useState(false);
   const [topActionsOpen, setTopActionsOpen] = useState(false);
-  const [tasks, setTasks] = useState([]);
-  const [tasksOpen, setTasksOpen] = useState(false);
-  const prevTasksRef = useRef([]);
   const endRef = useRef(null);
   const inputRef = useRef(null);
-  const recognitionRef = useRef(null);
   const topActionsRef = useRef(null);
   const sideScrollRef = useRef(null);
   const toastTimer = useRef(null);
   const copyTimer = useRef(null);
-  const dragDepth = useRef(0);
-  const busyRef = useRef(false);
-  const creatingConvRef = useRef(null);
-  const currentRef = useRef(null);
   const { askConfirm, askPrompt, dialog: appDialog } = useAppDialog();
-  useEffect(() => { busyRef.current = busy; }, [busy]);
-  useEffect(() => { currentRef.current = current; }, [current]);
-  function setChatBusy(next) {
-    busyRef.current = next;
-    setBusy(next);
+
+  // ---- Hooks extraídos (App.jsx modularizado): cada um recebe as dependências
+  // por parâmetro e devolve { estado, ações }. showToast, blockConversationChange
+  // e startNewChat são declarações de função (içadas), por isso podem ser
+  // passadas aqui mesmo sendo definidas mais abaixo — só rodam em eventos. ----
+  const {
+    assistants, assistantId, studioOpen, setStudioOpen, form, setForm,
+    loadAssistants, pickAssistant, openStudioNew, openStudioEdit,
+    applyTemplate, toggleTool, setSlider, saveAssistant, deleteAssistant
+  } = useAssistants({ model, setModel, showToast, askConfirm });
+  const {
+    conversations, allConvs, current, setCurrent, currentRef, files, setFiles, loadingConv,
+    fetchConversations, loadAllConvs, ensureConversation, openConversation, deleteConversation, loadFiles
+  } = useConversations({ clientId, model, showToast, blockConversationChange, askConfirm,
+    startNewChat, setMessages, setDeveloperSession, setMenuOpen });
+  const { listening, recognitionRef, toggleMic } = useSpeech({ input, setInput, showToast });
+  const {
+    dragActive, uploadingFiles, scanOk, deleteFile, uploadSelectedFiles, uploadFiles,
+    onDragEnter, onDragOver, onDragLeave, onDrop, onPasteFiles
+  } = useFileUploads({ current, ensureConversation, loadFiles, showToast, askConfirm });
+  // Membros ativos da equipe (null = todos)
+  const effectiveTeam = assistants.filter(a => !teamIds || teamIds.includes(a.id));
+  const uploads = files.filter(f => f.kind === 'upload');
+  const {
+    busy, busyRef, paused, statusText, controlPending, nowTick, sendMessage, retrySend, control
+  } = useChat({
+    input, setInput, messages, setMessages, uploads, team, effectiveTeam,
+    listening, recognitionRef, current, currentRef, setCurrent,
+    ensureConversation, fetchConversations, loadFiles,
+    developerSession, setDeveloperSession,
+    model, assistantId, webSearch, effort, setNeedLogin, showToast
+  });
+  const { tasks, tasksOpen, setTasksOpen, tasksActive, pollTasks, sendAsTask, cancelTask } = useTasks({
+    current, busyRef, openConversation, ensureConversation,
+    input, setInput, listening, recognitionRef,
+    model, assistantId, webSearch, showToast
+  });
+
+  function toggleTeamMember(id) {
+    const cur = teamIds || assistants.map(a => a.id);
+    const next = cur.includes(id) ? cur.filter(x => x !== id) : [...cur, id];
+    setTeamIds(next);
+    localStorage.setItem('fred_team', JSON.stringify(next));
   }
   function blockConversationChange() {
     if (!busyRef.current) return false;
@@ -443,12 +229,6 @@ export default function App({ user } = {}) {
     return () => window.cancelAnimationFrame(frame);
   }, [workspace]);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
-  // Enquanto processa, "bate um relógio" a cada segundo para os contadores vivos
-  useEffect(() => {
-    if (!busy) return;
-    const t = setInterval(() => setNowTick(n => n + 1), 1000);
-    return () => clearInterval(t);
-  }, [busy]);
   // Fecha o painel da equipe ao clicar fora
   useEffect(() => {
     function onDoc(e) { if (topActionsRef.current && !topActionsRef.current.contains(e.target)) setTopActionsOpen(false); }
@@ -456,68 +236,10 @@ export default function App({ user } = {}) {
     return () => document.removeEventListener('mousedown', onDoc);
   }, []);
 
-  // Membros ativos da equipe (null = todos)
-  const effectiveTeam = assistants.filter(a => !teamIds || teamIds.includes(a.id));
-  function toggleTeamMember(id) {
-    const cur = teamIds || assistants.map(a => a.id);
-    const next = cur.includes(id) ? cur.filter(x => x !== id) : [...cur, id];
-    setTeamIds(next);
-    localStorage.setItem('fred_team', JSON.stringify(next));
-  }
-
   function showToast(text, kind = 'err') {
     clearTimeout(toastTimer.current);
     setToast({ text, kind });
     toastTimer.current = setTimeout(() => setToast(null), 6000);
-  }
-
-  // ---- Fila de tarefas ----
-  const tasksActive = tasks.some(t => t.status === 'queued' || t.status === 'running');
-  useEffect(() => {
-    if (!tasksActive && !tasksOpen) return;
-    const iv = setInterval(pollTasks, 4000);
-    return () => clearInterval(iv);
-  }, [tasksActive, tasksOpen, current?.id]);
-
-  async function pollTasks() {
-    try {
-      const rows = await (await fetch(`${API}/api/tasks`)).json();
-      for (const r of rows) {
-        const old = prevTasksRef.current.find(p => p.id === r.id);
-        if (old && (old.status === 'queued' || old.status === 'running')) {
-          if (r.status === 'done') {
-            showToast(`✅ Tarefa concluída: ${r.prompt.slice(0, 60)}`, 'ok');
-            // Só recarrega se NÃO estiver com uma resposta em andamento na tela,
-            // senão o setMessages substituiria o stream ao vivo e ele "sumiria".
-            if (r.conversation_id === current?.id && !busyRef.current) { openConversation(current.id); }
-          }
-          if (r.status === 'error') showToast(`⚠️ Tarefa falhou: ${(r.error || '').slice(0, 100)}`);
-        }
-      }
-      prevTasksRef.current = rows;
-      setTasks(rows);
-    } catch {}
-  }
-
-  async function sendAsTask() {
-    const text = input.trim();
-    if (!text) return;
-    if (busyRef.current) { showToast('Aguarde a resposta atual terminar antes de enviar uma tarefa em segundo plano.'); return; }
-    let conv = current;
-    if (!conv) { conv = await ensureConversation(); if (!conv) return; }
-    if (listening) recognitionRef.current?.stop();
-    setInput('');
-    try {
-      const res = await fetch(`${API}/api/tasks`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId: conv.id, message: text, model, assistantId, webSearch }) });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || 'Não foi possível criar a tarefa.');
-      showToast('⏳ Tarefa adicionada à fila — acompanhe no botão "Tarefas".', 'ok');
-      await pollTasks();
-    } catch (err) { showToast(err.message || 'Não foi possível criar a tarefa.'); }
-  }
-
-  async function cancelTask(id) {
-    try { await fetch(`${API}/api/tasks/${id}/cancel`, { method: 'POST' }); await pollTasks(); } catch {}
   }
 
   async function copyMessage(m, idx) {
@@ -761,287 +483,10 @@ export default function App({ user } = {}) {
     } catch {}
   }
 
-  async function loadAssistants() {
-    try {
-      const res = await fetch(`${API}/api/assistants`);
-      const data = await res.json();
-      const rows = Array.isArray(data) ? data : [];
-      setAssistants(rows);
-      setAssistantId(prev => (prev && rows.some(a => a.id === prev)) ? prev : (rows[0]?.id || null));
-      const chosen = rows.find(a => a.id === assistantId) || rows[0];
-      if (chosen?.model) setModel(chosen.model);
-    } catch {}
-  }
-
-  async function fetchConversations(cid = clientId) {
-    const res = await fetch(`${API}/api/conversations${cid ? `?client=${encodeURIComponent(cid)}` : ''}`);
-    if (res.status === 401) { const e = new Error('auth'); e.auth = true; throw e; }
-    if (!res.ok) throw new Error('Falha ao listar conversas.');
-    const data = await res.json();
-    const rows = Array.isArray(data) ? data : []; // nunca deixa um objeto de erro quebrar o render
-    setConversations(rows);
-    loadAllConvs(); // mantém a lista global (todos os clientes) para a busca
-    return rows;
-  }
-
-  // Todas as conversas, de qualquer cliente — usado pela busca da barra lateral
-  async function loadAllConvs() {
-    try { const d = await (await fetch(`${API}/api/conversations?all=1`)).json(); setAllConvs(Array.isArray(d) ? d : []); } catch {}
-  }
-
-  // Cria o registro da conversa só quando ele é realmente necessário (1ª
-  // mensagem, anexo ou tarefa). Evita acumular conversas vazias no histórico.
-  async function ensureConversation(cid = clientId) {
-    if (current) return current;
-    // Single-flight: se duas ações "primeiras" (ex.: anexar + enviar) dispararem
-    // quase juntas, ambas veem current=null; sem isso, criariam 2 conversas.
-    if (creatingConvRef.current) return creatingConvRef.current;
-    const p = (async () => {
-      try {
-        const res = await fetch(`${API}/api/conversations`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'Nova conversa', model, clientId: cid || null }) });
-        if (!res.ok) throw new Error();
-        const c = await res.json();
-        setConversations(prev => [c, ...prev]);
-        setCurrent(c);
-        setFiles([]);
-        return c;
-      } catch {
-        showToast('Não foi possível criar a conversa. O servidor está no ar?');
-        return null;
-      }
-    })();
-    creatingConvRef.current = p;
-    try { return await p; }
-    finally { creatingConvRef.current = null; }
-  }
-
-  async function openConversation(id) {
-    if (blockConversationChange()) return;
-    setDeveloperSession(null);
-    setLoadingConv(true);
-    setMenuOpen(false);
-    try {
-      const res = await fetch(`${API}/api/conversations/${id}`);
-      const data = await res.json();
-      setCurrent(data.conversation);
-      setMessages(data.messages || []);
-      loadFiles(id);
-    } catch {
-      showToast('Não foi possível abrir a conversa.');
-    } finally {
-      setLoadingConv(false);
-    }
-  }
-
-  async function deleteConversation(id, e) {
-    e.stopPropagation();
-    const confirmed = await askConfirm({
-      title: 'Apagar conversa?',
-      message: 'A conversa e todos os arquivos dela serão apagados. Essa ação não pode ser desfeita.',
-      confirmLabel: 'Apagar conversa',
-      destructive: true
-    });
-    if (!confirmed) return;
-    try {
-      const res = await fetch(`${API}/api/conversations/${id}`, { method: 'DELETE' });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || 'Não foi possível apagar a conversa.');
-      }
-      await fetchConversations();
-      if (current?.id === id) startNewChat();
-    } catch (err) {
-      showToast(err.message || 'Não foi possível apagar a conversa.');
-    }
-  }
-
-  async function loadFiles(id = current?.id) {
-    if (!id) return;
-    try {
-      const res = await fetch(`${API}/api/conversations/${id}/files`);
-      const d = await res.json();
-      setFiles(Array.isArray(d) ? d : []);
-    } catch {}
-  }
-
   async function openFilesDrawer() {
     if (!current?.id) { showToast('Abra uma conversa para ver os arquivos dela.'); return; }
     await loadFiles(current.id);
     setFilesDrawerOpen(true);
-  }
-
-  // ---- Ditado por voz (Web Speech API) ----
-  function toggleMic() {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) { showToast('Seu navegador não suporta ditado por voz. Use o Google Chrome ou o Microsoft Edge.'); return; }
-    if (listening) { recognitionRef.current?.stop(); return; }
-    const rec = new SR();
-    rec.lang = 'pt-BR';
-    rec.interimResults = true;
-    rec.continuous = true;
-    let base = input;
-    rec.onresult = (e) => {
-      let finalT = '', interim = '';
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        const t = e.results[i][0].transcript;
-        if (e.results[i].isFinal) finalT += t; else interim += t;
-      }
-      if (finalT) base = (base ? base + ' ' : '') + finalT.trim();
-      setInput((base + (interim ? ' ' + interim : '')).trim());
-    };
-    rec.onend = () => setListening(false);
-    rec.onerror = () => setListening(false);
-    recognitionRef.current = rec;
-    rec.start();
-    setListening(true);
-  }
-
-  async function deleteFile(f) {
-    if (!current) return;
-    const confirmed = await askConfirm({
-      title: 'Excluir arquivo?',
-      message: `"${f.name}" será removido desta conversa.`,
-      confirmLabel: 'Excluir arquivo',
-      destructive: true
-    });
-    if (!confirmed) return;
-    try {
-      const encoded = f.path.split('/').map(encodeURIComponent).join('/');
-      await fetch(`${API}/api/conversations/${current.id}/files/${encoded}`, { method: 'DELETE' });
-      await loadFiles();
-    } catch {
-      showToast('Não foi possível excluir o arquivo.');
-    }
-  }
-
-  async function uploadSelectedFiles(selected, source = 'input') {
-    const filesToUpload = [...(selected || [])].filter(Boolean);
-    if (!filesToUpload.length) return;
-    let conv = current;
-    if (!conv) { conv = await ensureConversation(); if (!conv) return; }
-    setUploadingFiles(true);
-    try {
-      const fd = new FormData();
-      filesToUpload.forEach(f => fd.append('files', f));
-      const res = await fetch(`${API}/api/conversations/${conv.id}/upload`, { method: 'POST', body: fd });
-      const d = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(d.error || '');
-      await loadFiles(conv.id);
-      if (d.rejected?.length) {
-        showToast(`🛡️ Antivírus: ${d.rejected.length} arquivo(s) recusado(s) por conter ameaça: ${d.rejected.map(r => r.name).join(', ')}`);
-      } else if (source !== 'input') {
-        showToast(`${filesToUpload.length} arquivo(s) anexado(s)${d.scanned ? ' e verificado(s) pelo antivírus ✓' : ''}.`, 'ok');
-      }
-      if (d.scanned && !d.rejected?.length) {
-        setScanOk(true);
-        setTimeout(() => setScanOk(false), 5000);
-      }
-    } catch (err) {
-      showToast(err?.message || 'Falha no envio do arquivo. Verifique o tamanho (máx. 50 MB) e tente de novo.');
-    } finally {
-      setUploadingFiles(false);
-    }
-  }
-
-  async function uploadFiles(e) {
-    await uploadSelectedFiles(e.target.files, 'input');
-    e.target.value = '';
-  }
-
-  function hasDraggedFiles(e) {
-    return Array.from(e.dataTransfer?.types || []).includes('Files');
-  }
-  function onDragEnter(e) {
-    if (!hasDraggedFiles(e)) return;
-    e.preventDefault();
-    dragDepth.current += 1;
-    setDragActive(true);
-  }
-  function onDragOver(e) {
-    if (!hasDraggedFiles(e)) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'copy';
-  }
-  function onDragLeave(e) {
-    if (!hasDraggedFiles(e)) return;
-    e.preventDefault();
-    dragDepth.current = Math.max(0, dragDepth.current - 1);
-    if (dragDepth.current === 0) setDragActive(false);
-  }
-  async function onDrop(e) {
-    if (!hasDraggedFiles(e)) return;
-    e.preventDefault();
-    dragDepth.current = 0;
-    setDragActive(false);
-    await uploadSelectedFiles(e.dataTransfer.files, 'drop');
-  }
-  async function onPasteFiles(e) {
-    const pasted = Array.from(e.clipboardData?.files || []);
-    if (!pasted.length) return;
-    e.preventDefault();
-    await uploadSelectedFiles(pasted, 'paste');
-  }
-
-  function pickAssistant(id) {
-    setAssistantId(id);
-    const a = assistants.find(x => x.id === id);
-    if (a?.model) setModel(a.model);
-  }
-
-  // ---- Assistant Studio ----
-  function openStudioNew() { setForm(emptyForm()); setStudioOpen(true); }
-  function openStudioEdit(a) {
-    setForm({ id: a.id, name: a.name, emoji: a.emoji || 'bot', color: a.color || '', model: a.model || model, system_prompt: a.system_prompt || '', template: '', tools: a.tools?.length ? a.tools : TOOL_INFO.map(t => t.name), personality: { form: 50, det: 50, criat: 20, ...(a.personality || {}) } });
-    setStudioOpen(true);
-  }
-  function applyTemplate(key) {
-    const t = TEMPLATES.find(x => x.key === key);
-    if (!t) { setForm(f => ({ ...f, template: '' })); return; }
-    // Só herda o ícone do template se a pessoa ainda não escolheu um: 'bot' é
-    // o padrão de emptyForm(), e '🤖' era o padrão antes da migração.
-    const untouched = f => f.emoji === 'bot' || f.emoji === '🤖';
-    setForm(f => ({ ...f, template: key, system_prompt: t.prompt, emoji: untouched(f) ? t.emoji : f.emoji, name: f.name || t.label }));
-  }
-  function toggleTool(name) {
-    setForm(f => ({ ...f, tools: f.tools.includes(name) ? f.tools.filter(t => t !== name) : [...f.tools, name] }));
-  }
-  function setSlider(key, val) { setForm(f => ({ ...f, personality: { ...f.personality, [key]: Number(val) } })); }
-
-  async function saveAssistant() {
-    if (!form.name.trim() || !form.system_prompt.trim()) { showToast('Preencha o nome e as instruções do assistente.'); return; }
-    try {
-      const payload = { name: form.name, emoji: form.emoji, color: form.color || null, model: form.model || model, system_prompt: form.system_prompt, tools: form.tools, personality: form.personality };
-      const url = form.id ? `${API}/api/assistants/${form.id}` : `${API}/api/assistants`;
-      const res = await fetch(url, { method: form.id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      if (!res.ok) throw new Error();
-      const saved = await res.json();
-      await loadAssistants();
-      if (saved?.id) pickAssistant(saved.id);
-      setStudioOpen(false);
-    } catch {
-      showToast('Não foi possível salvar o assistente.');
-    }
-  }
-
-  async function deleteAssistant() {
-    if (!form.id) return;
-    const confirmed = await askConfirm({
-      title: 'Excluir assistente?',
-      message: 'O assistente será removido. As conversas existentes continuarão preservadas.',
-      confirmLabel: 'Excluir assistente',
-      destructive: true
-    });
-    if (!confirmed) return;
-    try {
-      await fetch(`${API}/api/assistants/${form.id}`, { method: 'DELETE' });
-      setStudioOpen(false);
-      const res = await fetch(`${API}/api/assistants`);
-      const rows = await res.json();
-      setAssistants(rows);
-      if (assistantId === form.id) pickAssistant(rows[0]?.id || null);
-    } catch {
-      showToast('Não foi possível excluir o assistente.');
-    }
   }
 
   // ---- Analytics ----
@@ -1052,216 +497,7 @@ export default function App({ user } = {}) {
     catch { showToast('Não foi possível carregar as análises.'); }
   }
 
-  // ---- Controle: pausar / continuar / parar ----
-  async function control(action) {
-    if (!current || !busyRef.current || controlPending) return;
-    const conversationId = current.id;
-    setControlPending(true);
-    if (action === 'pause') setStatusText('Pausando...');
-    if (action === 'resume') setStatusText('Retomando...');
-    if (action === 'stop') setStatusText('Interrompendo...');
-    try {
-      const response = await fetch(`${API}/api/conversations/${conversationId}/control`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action })
-      });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result?.error || 'Não foi possível controlar o processamento.');
-      if (action === 'pause') setPaused(Boolean(result.paused));
-      if (action === 'resume' || action === 'stop') setPaused(false);
-    } catch (err) {
-      setStatusText('');
-      showToast(err?.message || 'Não foi possível controlar o processamento.');
-    } finally {
-      setControlPending(false);
-    }
-  }
-
-  // Reenvia uma mensagem que falhou: remove o balão de erro (e o balão do
-  // usuário) e dispara o envio de novo com o mesmo texto.
-  async function retrySend(idx, text) {
-    if (busy || !text) return;
-    const userMessage = messages[idx - 1];
-    const savedUserMessage = userMessage?.role === 'user'
-      && userMessage.id
-      && !String(userMessage.id).startsWith('local-');
-    if (savedUserMessage && current?.id) {
-      try {
-        const res = await fetch(`${API}/api/conversations/${current.id}/truncate`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messageId: userMessage.id })
-        });
-        if (!res.ok) throw new Error();
-      } catch {
-        showToast('Não foi possível preparar a nova tentativa. A conversa foi preservada.');
-        return;
-      }
-    }
-    setMessages(prev => prev.slice(0, Math.max(0, idx - 1)));
-    await loadFiles();
-    await sendMessage(text);
-  }
-
-  // Recuperação após queda de conexão: a tarefa CONTINUA no servidor e o
-  // resultado é salvo, então buscamos a resposta pronta recarregando a conversa
-  // (em vez de mostrar "Conexão interrompida"). Roda em segundo plano; quando o
-  // último item da conversa for a resposta do assistente já salva, exibe-a.
-  async function recoverPendingReply(convId) {
-    for (let i = 0; i < 60; i++) {
-      await new Promise(r => setTimeout(r, 4000)); // verifica a cada 4s (até ~4 min)
-      if (currentRef.current?.id !== convId) return; // usuário saiu desta conversa
-      try {
-        const res = await fetch(`${API}/api/conversations/${convId}`);
-        if (!res.ok) continue;
-        const data = await res.json();
-        const msgs = data.messages || [];
-        const last = msgs[msgs.length - 1];
-        if (last && last.role === 'assistant' && String(last.content || '').trim()) {
-          if (currentRef.current?.id === convId) { setMessages(msgs); loadFiles(convId); }
-          return;
-        }
-      } catch {}
-    }
-  }
-
-  async function sendMessage(textArg) {
-    const isRetry = typeof textArg === 'string';
-    const typed = (isRetry ? textArg : input).trim();
-    // "Zero atrito": se o usuário anexou algo (ex.: uma foto) e não escreveu
-    // nada, usamos um pedido padrão para a IA ler/analisar o anexo sozinha.
-    const text = typed || (!isRetry && uploads.length > 0
-      ? 'Leia e analise o(s) arquivo(s)/foto que enviei e me responda com base no conteúdo.'
-      : '');
-    if (!text || busyRef.current) return;
-    if (team && effectiveTeam.length === 0) { showToast('Selecione ao menos 1 assistente no painel da Equipe.'); return; }
-    if (listening) recognitionRef.current?.stop();
-    setChatBusy(true);
-    let conv = current;
-    if (!conv) { conv = await ensureConversation(); if (!conv) { setChatBusy(false); return; } }
-    if (!isRetry) setInput('');
-    const activeDeveloper = developerSession && (!developerSession.conversationId || developerSession.conversationId === conv.id) ? developerSession : null;
-    if (activeDeveloper && !activeDeveloper.conversationId) setDeveloperSession({ ...activeDeveloper, conversationId: conv.id });
-    setPaused(false);
-    setStatusText('Pensando...');
-    const assistantMsgId = `local-${Date.now()}`;
-    // created_at aqui e' o horario local do envio; ao recarregar, o valor do
-    // servidor (server.js) substitui. Sem isto, a mensagem recem-enviada nao
-    // tem hora e o separador de data nao consegue agrupa-la.
-    const sentAt = new Date().toISOString();
-    setMessages(prev => [...prev, { role: 'user', content: text, created_at: sentAt }, { id: assistantMsgId, role: 'assistant', content: '', blocks: [], created_at: sentAt }]);
-    let assistantMessageKey = assistantMsgId;
-    const update = (fn) => {
-      const key = assistantMessageKey;
-      setMessages(prev => prev.map(m => m.id === key ? fn(m) : m));
-    };
-
-    const body = team
-      ? {
-          message: text,
-          model,
-          assistantId,
-          webSearch,
-          effort,
-          orchestrate: true,
-          orchestrateIds: effectiveTeam.map(a => a.id),
-          ...(activeDeveloper ? { developer: { mode: activeDeveloper.mode, projectId: activeDeveloper.projectId, github: activeDeveloper.github || null, rules: activeDeveloper.rules } } : {})
-        }
-      : {
-          message: text,
-          model,
-          assistantId,
-          webSearch,
-          effort,
-          ...(activeDeveloper ? { developer: { mode: activeDeveloper.mode, projectId: activeDeveloper.projectId, github: activeDeveloper.github || null, rules: activeDeveloper.rules } } : {})
-        };
-    try {
-      const res = await fetch(`${API}/api/conversations/${conv.id}/chat`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
-      });
-      if (res.status === 401) { setChatBusy(false); setStatusText(''); setNeedLogin(true); return; }
-      if (!res.ok) {
-        let msg = `O servidor respondeu com erro (${res.status}).`;
-        try { const j = await res.json(); if (j?.error) msg = j.error; } catch {}
-        update(m => ({ ...m, failed: true, retryText: text, blocks: [...(m.blocks || []), { type: 'text', content: `\n\n**Erro:** ${msg}` }] }));
-        showToast(msg);
-        setChatBusy(false); setPaused(false); setStatusText('');
-        return;
-      }
-      const reader = res.body?.getReader();
-      if (!reader) throw new Error('A resposta do servidor não pôde ser lida.');
-      const decoder = new TextDecoder();
-      let buffer = '';
-      while (true) {
-        const { done, value } = await reader.read();
-        if (value) buffer += decoder.decode(value, { stream: true });
-        if (done) buffer += decoder.decode();
-        const parsed = takeSseEvents(buffer, { flush: done });
-        buffer = parsed.rest;
-        for (const ev of parsed.events) {
-          if (ev.type === 'status') setStatusText(ev.content || '');
-          if (ev.type === 'memory_context') update(m => ({ ...m, memory: ev.memory }));
-          if (ev.type === 'delta') update(m => {
-            const blocks = [...(m.blocks || [])];
-            const last = blocks[blocks.length - 1];
-            if (last && last.type === 'text') blocks[blocks.length - 1] = { ...last, content: last.content + ev.content };
-            else blocks.push({ type: 'text', content: ev.content });
-            return { ...m, blocks, content: (m.content || '') + ev.content };
-          });
-          if (ev.type === 'tool_start') { setStatusText(`Executando ${ev.name}...`); update(m => ({ ...m, blocks: [...(m.blocks || []), { type: 'tool', name: ev.name, preview: ev.preview, status: 'running', started: Date.now() }] })); }
-          if (ev.type === 'tool_result') update(m => {
-            const blocks = [...(m.blocks || [])];
-            const status = toolResultFailed(ev.content) ? 'error' : 'done';
-            for (let i = blocks.length - 1; i >= 0; i--) { if (blocks[i].type === 'tool' && blocks[i].status === 'running') { blocks[i] = { ...blocks[i], status, ended: Date.now(), result: ev.content }; break; } }
-            return { ...m, blocks };
-          });
-          if (ev.type === 'files') update(m => ({ ...m, files: [...(m.files || []), ...ev.files] }));
-          if (ev.type === 'file_checks') update(m => ({
-            ...m,
-            files: (m.files || []).map(file => ev.checks?.[file.path] ? { ...file, check: ev.checks[file.path] } : file)
-          }));
-          if (ev.type === 'saved') {
-            const previousKey = assistantMessageKey;
-            assistantMessageKey = ev.assistantMessageId;
-            setMessages(prev => {
-              const arr = [...prev];
-              const ai = arr.findIndex(m => m.id === previousKey);
-              if (ai > -1) { arr[ai] = { ...arr[ai], id: ev.assistantMessageId }; if (arr[ai - 1]?.role === 'user') arr[ai - 1] = { ...arr[ai - 1], id: ev.userMessageId }; }
-              return arr;
-            });
-          }
-          if (ev.type === 'execution_failed') {
-            update(m => ({ ...m, failed: true, retryText: text }));
-            if (ev.content) showToast(ev.content);
-          }
-          if (ev.type === 'error') update(m => ({ ...m, failed: true, retryText: text, blocks: [...(m.blocks || []), { type: 'text', content: `\n\n**Erro:** ${ev.content}` }] }));
-        }
-        if (done) break;
-      }
-    } catch (err) {
-      // A conexão SSE caiu (trocar de aba / minimizar no celular / rede
-      // oscilando). A tarefa CONTINUA rodando no servidor e salva o resultado —
-      // então, em vez de marcar como falha, deixamos um aviso calmo e buscamos
-      // a resposta pronta em segundo plano (aparece aqui quando terminar).
-      update(m => ({ ...m, retryText: text, blocks: [...(m.blocks || []), { type: 'text', content: '\n\n_A conexão caiu, mas a tarefa continua rodando no servidor. O resultado aparece aqui assim que terminar — se preferir, é só recarregar a conversa._' }] }));
-      recoverPendingReply(conv.id);
-    }
-    // Fecha qualquer ferramenta que tenha ficado "rodando"
-    update(m => ({ ...m, blocks: (m.blocks || []).map(b => b.type === 'tool' && b.status === 'running' ? { ...b, status: 'done', ended: Date.now() } : b) }));
-    setChatBusy(false);
-    setPaused(false);
-    setStatusText('');
-    await loadFiles(conv.id);
-    try {
-      const rows = await fetchConversations();
-      const updated = rows.find(c => c.id === conv.id);
-      if (updated) setCurrent(updated);
-    } catch {}
-  }
-
   const currentAssistant = assistants.find(a => a.id === assistantId);
-  const uploads = files.filter(f => f.kind === 'upload');
 
   // Sessão expirada durante o uso: leva de volta ao login.
   if (needLogin) {

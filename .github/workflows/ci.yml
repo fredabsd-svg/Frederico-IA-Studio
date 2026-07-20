@@ -1,0 +1,44 @@
+# CI: roda os testes do backend e os testes + build do frontend a cada push/PR.
+# Os testes são unitários e não precisam de Postgres nem de Docker; o install
+# usa --ignore-scripts (pula binários nativos do sharp/transformers, que os
+# testes não exercitam — os embeddings entram em modo degradado nos testes).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    name: Backend (testes)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci --ignore-scripts
+      - run: node --test 'src/**/*.test.js'
+
+  frontend:
+    name: Frontend (testes + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --ignore-scripts
+      - run: node --test src/authUrls.test.js src/sse.test.js
+      - run: npm run build
