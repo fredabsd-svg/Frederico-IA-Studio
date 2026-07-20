@@ -91,13 +91,22 @@ automático para um modelo de reserva sem perder o trabalho.
 flowchart TD
     A[🌍 Navegador] --> B[⚛️ React + Vite<br/>porta 5173]
     B -->|/api + SSE| C[🚀 Express + SSE<br/>porta 3001<br/>agente · ferramentas · tarefas]
-    C --> D[(🗄️ PostgreSQL<br/>conversas, memória e auth)]
+    C --> D[(🗄️ PostgreSQL + pgvector<br/>conversas, memória e auth)]
     C --> E[🐳 Sandbox Docker<br/>um por conversa · workspaces/]
     C --> F[🧠 API de IA<br/>OpenRouter · DeepSeek · compatíveis]
 ```
 
 O frontend usa a mesma origem e o Vite repassa `/api` para o backend — o chat e o
 streaming SSE funcionam também atrás de Tailscale ou de um proxy HTTPS.
+
+**Backend modular:** `backend/src/server.js` só cuida de middlewares e boot; as
+rotas vivem em `backend/src/routes/*` (um arquivo por domínio — conversas,
+memória, tarefas, rotinas etc.) e o loop do agente em `backend/src/agent/*`
+(orquestrador, ferramentas, reparos, visão). A busca semântica roda no próprio
+Postgres via `pgvector` (índice HNSW), com fallback automático em JS quando a
+extensão não está disponível. **Frontend modular:** `frontend/src/App.jsx` é a
+casca de UI; a lógica de chat, conversas, tarefas e assistentes vive em
+`frontend/src/hooks/*`.
 
 ---
 

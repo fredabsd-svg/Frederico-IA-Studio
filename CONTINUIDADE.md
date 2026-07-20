@@ -1,6 +1,6 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
-## 🏗️ Prioridades técnicas: pgvector, hardening HTTP, zod, CI e quick wins (2026-07-20, branch claude/tech-priorities-security-arch-gnjyye)
+## 🏗️ Prioridades técnicas: pgvector, hardening HTTP, zod, CI e quick wins (2026-07-20, PR #53 — MERGEADO)
 
 Implementação dos itens de alta prioridade + quick wins da revisão técnica:
 
