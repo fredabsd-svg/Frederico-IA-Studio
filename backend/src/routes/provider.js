@@ -1,6 +1,6 @@
 // Rotas de provider — movidas do server.js na modularização (mesma lógica,
 // mesmo comportamento). Montado em /api pelo server.js.
-import OpenAI from 'openai';
+import { createAiClient } from '../aiClient.js';
 import { db, now } from '../db.js';
 import { encryptSecret, decryptSecret, maskSecret } from '../crypto.js';
 import { getUserProvider } from '../userProvider.js';
@@ -46,7 +46,7 @@ router.post('/provider/test', async (req, res) => {
   let client;
   if (apiKey) {
     // Testa a chave que a pessoa acabou de digitar (ainda não salva).
-    client = new OpenAI({ apiKey, baseURL });
+    client = createAiClient({ apiKey, baseURL });
   } else {
     // Sem chave nova no corpo: testa a configuração já salva.
     const prov = await getUserProvider(req.userId);
