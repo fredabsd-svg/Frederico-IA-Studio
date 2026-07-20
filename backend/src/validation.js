@@ -5,7 +5,7 @@
 // que o backend realmente usa (e mensagens de erro consistentes), não travar a
 // evolução do frontend. Checagens de NEGÓCIO (posse, duplicidade, limites por
 // plano) continuam nos handlers.
-import { z } from 'zod';
+import { z } from 'zod/v4';
 
 // Mensagens de erro do zod em português (o app inteiro fala pt-BR).
 z.config(z.locales.pt());
