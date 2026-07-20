@@ -2,7 +2,7 @@
 // Visual alinhado ao app (cartão central sobre o fundo). Ao concluir, a sessão
 // é criada e o AuthGate troca automaticamente para o app.
 import React, { useEffect, useState } from 'react';
-import { RefreshCw, ArrowLeft } from 'lucide-react';
+import { RefreshCw, ArrowLeft, ShieldCheck, Lock, Scale } from 'lucide-react';
 import { signIn, signUp, traduzErroAuth } from './authClient.js';
 import { callbackURLForOrigin } from './authUrls.js';
 
@@ -121,6 +121,14 @@ export function LoginScreen({ initialMode = 'login', onBack = null }) {
             {isSignup ? 'Entrar' : 'Criar conta'}
           </button>
         </p>
+      </div>
+
+      {/* Selos de segurança — o usuário vê ANTES de entrar que o ambiente é
+          protegido: antivírus nos arquivos, conexão cifrada e LGPD. */}
+      <div className="loginTrust">
+        <span><ShieldCheck size={13} /> Arquivos verificados por antivírus</span>
+        <span><Lock size={13} /> Conexão criptografada</span>
+        <span><Scale size={13} /> Compromisso com a LGPD</span>
       </div>
     </div>
   );

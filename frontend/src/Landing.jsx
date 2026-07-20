@@ -5,7 +5,8 @@
 import React, { useState } from 'react';
 import {
   Sparkles, Bot, FileSpreadsheet, FileText, Building2, Search, Brain,
-  ArrowRight, Check, ShieldCheck, KeyRound, Lock, Download, Cpu, BadgeCheck
+  ArrowRight, Check, ShieldCheck, KeyRound, Lock, Download, Cpu, BadgeCheck,
+  Globe, Scale
 } from 'lucide-react';
 import { LoginScreen } from './LoginScreen.jsx';
 
@@ -29,6 +30,8 @@ const TRUST = [
   { icon: KeyRound, title: 'Sua própria chave', text: 'Use a sua chave de IA (BYOK): você fica no controle do custo e da privacidade das suas informações.' },
   { icon: Lock, title: 'Credenciais protegidas', text: 'Suas chaves e senhas ficam guardadas com criptografia forte no servidor.' },
   { icon: BadgeCheck, title: 'Arquivos verificados', text: 'Todo arquivo enviado passa por verificação antivírus (ClamAV) antes de ser processado.' },
+  { icon: Globe, title: 'Conexão segura', text: 'Todo o acesso é criptografado com HTTPS — do login ao download dos seus documentos.' },
+  { icon: Scale, title: 'Compromisso com a LGPD', text: 'Seus dados são usados apenas para operar o serviço, nunca vendidos. Você pode apagar suas conversas quando quiser.' },
 ];
 
 export default function Landing() {
