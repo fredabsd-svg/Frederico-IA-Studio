@@ -44,6 +44,10 @@ export async function deleteConversationDeep(userId, conversationId) {
   await db.prepare('DELETE FROM conversations WHERE id=? AND user_id=?').run(conversationId, userId); // cascade: messages + files
   await db.prepare('DELETE FROM conversation_chunks WHERE conversation_id=? AND user_id=?').run(conversationId, userId);
   await db.prepare("DELETE FROM memory WHERE source_type='auto' AND source_id=? AND user_id=?").run(conversationId, userId);
+  // Fatos extraídos podem estar AGUARDANDO REVISÃO (review_auto_memory ligado):
+  // vivem em memory_suggestions, não em memory — sem esta linha eles sobravam
+  // no painel de memória depois de apagar a conversa.
+  await db.prepare("DELETE FROM memory_suggestions WHERE source_type='auto' AND source_id=? AND user_id=?").run(conversationId, userId);
   // Sem isto, uma tarefa na fila recriaria a conversa apagada ao ser executada.
   await db.prepare("DELETE FROM tasks WHERE conversation_id=? AND user_id=? AND status<>'running'").run(conversationId, userId);
   await destroyConversation(conversationId); // remove container e pasta do workspace
@@ -59,6 +63,15 @@ export async function deleteAllConversations(userId) {
     if (isConversationActive(id)) { skipped++; continue; }
     await deleteConversationDeep(userId, id);
     deleted++;
+  }
+  // Vassoura final: TUDO que foi extraído automaticamente de conversas
+  // (memórias e sugestões) sai junto com o histórico — inclusive órfãos de
+  // conversas apagadas antes desta correção. Memórias manuais e importadas
+  // ficam (não são "histórico"). Só quando nada foi pulado: se sobrou conversa
+  // ativa, as memórias dela não podem ser varridas.
+  if (!skipped) {
+    await db.prepare("DELETE FROM memory WHERE source_type='auto' AND user_id=?").run(userId);
+    await db.prepare("DELETE FROM memory_suggestions WHERE source_type='auto' AND user_id=?").run(userId);
   }
   return { deleted, skipped };
 }
