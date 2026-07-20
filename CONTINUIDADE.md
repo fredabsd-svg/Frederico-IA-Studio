@@ -1,14 +1,29 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
-## 🛡️ Antivírus nos uploads (ClamAV) + guia de hardening da VPS (2026-07-20)
+## 🛡️ Antivírus nos uploads (ClamAV) + selos de segurança + hardening (2026-07-20, PR #50 — MERGEADO)
 
 Todo arquivo enviado pelos usuários agora passa pelo **ClamAV** antes de ser
 salvo — anexos do chat (`/api/conversations/:id/upload`), caixa de entrada
 (`/api/inbox/:client/upload`) e importação de memória (`/api/memories/import`).
 Arquivo infectado é recusado com o nome da ameaça; quando a varredura acontece,
 a resposta traz `scanned:true` e o frontend mostra "✓ Arquivos verificados pelo
-antivírus" (App.jsx/InboxPanel.jsx). A landing ganhou o cartão "Arquivos
-verificados" no bloco de confiança.
+antivírus" (App.jsx/InboxPanel.jsx).
+
+**Divulgação da segurança (pedido do usuário):**
+- Tela de login (`LoginScreen.jsx` + `auth.css`, classe `loginTrust`): faixa de
+  selos abaixo do cartão — "Arquivos verificados por antivírus", "Conexão
+  criptografada" e "Compromisso com a LGPD" (este linka para `/privacidade`,
+  página criada pela frente LGPD).
+- Landing (`Landing.jsx`, bloco TRUST): 6 cartões em grade 3×2 — dados
+  isolados, chave própria (BYOK), credenciais protegidas, **arquivos
+  verificados (ClamAV)**, **conexão segura (HTTPS)** e **LGPD**.
+- Regra de honestidade: só anunciar o que está ativo. Desativou o ClamAV?
+  Remova o selo do login e o cartão da landing.
+
+O PR #50 foi mesclado na main em 2026-07-20, já com a resolução do conflito
+contra a frente LGPD (#47–#49) — as duas conviveram no mesmo dia e mexeram em
+`server.js`, `LoginScreen.jsx`, `Landing.jsx` e neste arquivo. Deploy na VPS:
+`bash atualizar.sh`; primeiro boot do clamav baixa assinaturas (~5 min).
 
 **Desenho (não regredir):**
 - `backend/src/clamav.js` fala o protocolo **INSTREAM** do clamd direto por TCP
