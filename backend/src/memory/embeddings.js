@@ -1,4 +1,6 @@
 import path from 'path';
+import crypto from 'crypto';
+import { createCache } from '../cache.js';
 
 // Serviço de embeddings LOCAL (transformers.js): gratuito, privado e sem chave.
 // Modelo multilíngue pequeno (~112 MB, baixado uma vez para ./data/models).
@@ -6,6 +8,24 @@ import path from 'path';
 // entra em modo degradado e a busca semântica vira busca por palavras.
 
 const MODEL = process.env.EMBEDDING_MODEL || 'Xenova/multilingual-e5-small';
+
+// Cache de vetores: embeddings são DETERMINÍSTICOS (mesmo texto → mesmo vetor),
+// então recomputá-los é puro desperdício de CPU no caminho da resposta. A mesma
+// pergunta do usuário é embedada várias vezes por mensagem (busca de memórias +
+// busca de trechos + dedupe), e perguntas repetidas entre mensagens são comuns.
+// Guardamos por hash de (kind, texto). Cada vetor ocupa ~1,5 KB (384 floats), so
+// EMBED_CACHE_MAX=4000 ⇒ ~6 MB de teto. TTL 0 = nunca expira (o modelo é fixo;
+// uma troca de modelo dispara reindexação em memoryService).
+const EMBED_CACHE_MAX = Math.max(0, Number(process.env.EMBED_CACHE_MAX ?? 4000));
+const embedCache = EMBED_CACHE_MAX > 0
+  ? createCache({ name: 'embeddings', max: EMBED_CACHE_MAX, ttl: 0 })
+  : null;
+
+function embedCacheKey(kind, text) {
+  // Hash em vez do texto cru: chave curta e de tamanho fixo mesmo para passagens
+  // longas, sem manter cópias do conteúdo original como chave do Map.
+  return `${kind}:${crypto.createHash('sha1').update(text).digest('base64')}`;
+}
 export const embeddingModelId = MODEL;
 let pipePromise = null;
 let degraded = false;
@@ -34,20 +54,36 @@ export function embeddingsDegraded() { return degraded; }
 // Retorna Buffers (Float32) ou null por item quando indisponível.
 export async function embed(texts, kind = 'passage') {
   const list = texts.map(t => String(t || '').slice(0, 2000));
+  // Resolve o que já está em cache; só recomputa os textos faltantes (mantém o
+  // batch do modelo, que é mais eficiente do que uma chamada por item).
+  const res = new Array(list.length);
+  const missIdx = [];
+  const missTexts = [];
+  for (let i = 0; i < list.length; i++) {
+    const hit = embedCache?.get(embedCacheKey(kind, list[i]));
+    if (hit !== undefined) res[i] = hit;
+    else { missIdx.push(i); missTexts.push(list[i]); }
+  }
+  if (!missIdx.length) return res;
   const pipe = await getPipe();
-  if (!pipe) return list.map(() => null);
+  if (!pipe) { for (const i of missIdx) res[i] = null; return res; } // degradado: não cacheia
   try {
-    const out = await pipe(list.map(t => `${kind}: ${t}`), { pooling: 'mean', normalize: true });
+    const out = await pipe(missTexts.map(t => `${kind}: ${t}`), { pooling: 'mean', normalize: true });
     const [n, d] = out.dims;
-    const res = [];
-    for (let i = 0; i < n; i++) {
-      const vec = out.data.slice(i * d, (i + 1) * d); // cópia (novo ArrayBuffer)
-      res.push(Buffer.from(vec.buffer, 0, vec.byteLength));
+    for (let j = 0; j < n; j++) {
+      const vec = out.data.slice(j * d, (j + 1) * d); // cópia (novo ArrayBuffer)
+      const buf = Buffer.from(vec.buffer, 0, vec.byteLength);
+      res[missIdx[j]] = buf;
+      embedCache?.set(embedCacheKey(kind, missTexts[j]), buf); // só guarda sucesso
     }
+    // Salvaguarda: se o modelo devolver menos vetores que o esperado, preenche
+    // o resto com null (mesma semântica do modo degradado, por item).
+    for (const i of missIdx) if (res[i] === undefined) res[i] = null;
     return res;
   } catch (err) {
     console.error('[memória] falha ao gerar embedding:', err.message);
-    return list.map(() => null);
+    for (const i of missIdx) res[i] = null;
+    return res;
   }
 }
 

@@ -113,6 +113,23 @@ Nenhum recurso visual vem de CDN: imagens e logos ficam em `frontend/public/` e
 são servidos pelo próprio app. Assim a interface não depende de um terceiro para
 carregar, e o IP de quem usa o site não é entregue a nenhuma CDN externa.
 
+**Memória + cache.** A **memória de longo prazo** (perfil, notas, fatos e
+recuperação semântica de conversas antigas) preserva o contexto entre mensagens:
+o `contextBuilder` monta, a cada resposta, um contexto por modelo com perfil,
+notas, resumo do início da conversa (quando ela sai da janela) e os trechos
+relevantes — com isolamento por cliente. Sobre isso, uma **camada de cache**
+(`backend/src/cache.js`, TTL + LRU, sem dependências) reduz custo de tokens e
+latência em quatro frentes: **(1) prompt caching** do LLM — o preâmbulo estável
+(prompt-base, contrato de qualidade, notas de sistema) é marcado com
+`cache_control` e reaproveitado pelo provedor entre mensagens/etapas (via
+OpenRouter para Anthropic/Gemini; a DeepSeek direta já cacheia sozinha); **(2)
+embeddings** — vetores determinísticos memoizados por hash, evitando recomputar a
+mesma pergunta a cada mensagem; **(3) consultas de CNPJ** — TTL longo, pois
+dados cadastrais mudam raramente e a base grátis é limitada; **(4) busca web** —
+TTL curto contra a repetição imediata. A economia é observável em
+`GET /api/cache/stats` e em `usage.cached_tokens` das respostas. Tudo é
+configurável/desligável por variáveis de ambiente (ver `.env.example`).
+
 ---
 
 ## 🚀 Começar

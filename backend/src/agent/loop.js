@@ -16,7 +16,7 @@ import { listOutputs, mentionsOutputPath, recoverAlternateOutputs, referencedOut
 import { OUTPUT_DELIVERY_REPAIR_NOTE, MISSING_OUTPUT_NOTICE, EXECUTION_COMPLETION_REPAIR_NOTE, EXECUTION_INCOMPLETE_NOTICE, TOOL_PROTOCOL_REPAIR_NOTE, TOOL_PROTOCOL_FAILURE_NOTICE, RESPONSE_TRUNCATED_REPAIR_NOTE, RESPONSE_TRUNCATED_NOTICE, EXECUTION_CONTRACT_NOTE, MACRO_REQUEST_RE, MACRO_LIMITATION_NOTE, DEGEN_CHECK_STEP, looksDegenerate, shouldRepairOutputDelivery, shouldRepairExecution, shouldContinueAfterTruncation, materializeTextOutput } from './repair.js';
 import { normalizeWebFetchUrl, classifyToolOutcome, webResearchStopReason, planToolCallBatch, WEB_TOOL_NAMES, webResearchFinalizationNote, WEB_RESEARCH_FETCH_LIMIT, TOOL_CALLS_PER_STEP_LIMIT } from './webResearch.js';
 import { imageUploadParts, attachImagesToLastUserMessage, stripImagePartsFromMessages } from './vision.js';
-import { STREAM_RECOVERY_LIMIT, STREAM_RESUME_NOTE, STREAM_PAUSE_RESUME_NOTE, PROVIDER_TIMEOUT_NOTICE, isRetryableStreamError, openRouterRouting, retryDelay, addUsage } from './provider.js';
+import { STREAM_RECOVERY_LIMIT, STREAM_RESUME_NOTE, STREAM_PAUSE_RESUME_NOTE, PROVIDER_TIMEOUT_NOTICE, isRetryableStreamError, openRouterRouting, retryDelay, addUsage, applyPromptCache } from './provider.js';
 import { acquireConversationControl, releaseConversationControl, beginProviderRequest, releaseProviderRequest, beginToolRequest, releaseToolRequest, controlInterruptReason, gate } from './control.js';
 import { clientScopeFor, memoryNote, saveMessage, persistAssistantReply } from './persistence.js';
 
@@ -145,6 +145,10 @@ Ao trazer o que encontrou:
 - Varie a forma de apresentar: evite começar sempre com "De acordo com a pesquisa…".
 
 O sandbox Python também tem internet: use requests/urllib ou uma API quando precisar de dados estruturados (para CNPJ, use a ferramenta consultar_cnpj). Use web_search/web_fetch para procurar e ler páginas.` });
+  // Fim do preâmbulo ESTÁVEL (prompt-base + notas de sistema): tudo daqui pra
+  // frente (memória, uploads, histórico) muda a cada turno. É o ponto natural
+  // para o breakpoint de prompt caching.
+  const staticPrefixEnd = messages.length;
   let memoryMeta = null;
   // Memória de longo prazo: perfil, notas, resumos e recuperação semântica
   try {
@@ -191,7 +195,12 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
     if (visionApplied) onEvent({ type: 'status', content: 'Enviando a imagem para o modelo analisar...' });
   }
 
-  const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+  // Prompt caching: marca o prefixo estável para o provedor reaproveitá-lo nos
+  // próximos passos/mensagens (economia de tokens de entrada + latência). No-op
+  // quando o modelo/rota não suporta (ex.: DeepSeek direto já cacheia sozinho).
+  applyPromptCache(messages, chosenModel, staticPrefixEnd);
+
+  const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, cached_tokens: 0 };
   const maxSteps = Number(process.env.AGENT_MAX_STEPS || eff.steps);
   const executionRequired = forceExecution || modelPlan.requirements.required;
   const requiresOutput = modelPlan.requirements.expectsOutput;

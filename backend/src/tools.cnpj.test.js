@@ -3,6 +3,9 @@ import test from 'node:test';
 
 process.env.DB_PATH = ':memory:';
 process.env.WORKSPACE_ROOT = '/tmp/frederico-cnpj-tests';
+// Desliga o cache de ferramentas: estes casos reusam o MESMO CNPJ com respostas
+// mockadas diferentes, então o cache mascararia o comportamento sob teste.
+process.env.TOOL_CACHE = '0';
 
 const { consultarCnpj, normalizeCnpj } = await import('./tools.js');
 
