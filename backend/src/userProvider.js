@@ -7,7 +7,7 @@
 // quem não cadastrou a própria, sem quebrar nada). Numa SaaS pública, ponha
 // ALLOW_SHARED_KEY=false para que o servidor NÃO pague a conta de ninguém —
 // aí cada usuário PRECISA cadastrar a própria chave em Configurações.
-import OpenAI from 'openai';
+import { createAiClient } from './aiClient.js';
 import { db } from './db.js';
 import { decryptSecret } from './crypto.js';
 
@@ -35,6 +35,6 @@ export async function getUserProvider(userId) {
     source,          // 'user' | 'server' | 'none'
     baseURL,
     model,
-    client: apiKey ? new OpenAI({ apiKey, baseURL }) : null,
+    client: apiKey ? createAiClient({ apiKey, baseURL }) : null,
   };
 }
