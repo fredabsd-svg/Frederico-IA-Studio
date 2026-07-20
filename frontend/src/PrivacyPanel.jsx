@@ -37,9 +37,11 @@ export function PrivacyPanel({ user, showToast, askConfirm, askPrompt, onHistory
 
   async function deleteAccount() {
     const email = String(user?.email || '');
+    // O diálogo NÃO exibe o e-mail de propósito: a confirmação só faz sentido
+    // se exigir que a pessoa SAIBA o e-mail da conta, não que o copie dali.
     const typed = await askPrompt({
       title: 'Excluir a conta em definitivo?',
-      label: `Isto apaga TUDO — conta, conversas, arquivos, memórias e chaves — sem volta. Para confirmar, digite o e-mail da conta (${email}):`,
+      label: 'Isto apaga TUDO — conta, conversas, arquivos, memórias e chaves — sem volta. Para confirmar, digite o e-mail com o qual você entra nesta conta:',
       confirmLabel: 'Excluir minha conta',
     });
     if (typed == null) return;
