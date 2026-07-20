@@ -1,5 +1,34 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 🔁 Retomada de tarefa interrompida + checkpoint de extração (2026-07-20, branch `claude/frederico-ia-studio-review-d8s18h`)
+
+Motivado por um caso real: uma extração difícil estourou o limite de 60 etapas
+(`EFFORT.max.steps` / `AGENT_MAX_STEPS`) e o usuário recebeu só a sugestão de
+"pedir em partes", perdendo o progresso. Agora o progresso não se perde:
+
+- **Marcador de retomada** (`agent.js`): toda execução que termina `incomplete`
+  (limite de etapas, falhas seguidas, arquivo não gerado) grava
+  `.tarefa-incompleta.json` na BASE do workspace da conversa (fora de
+  `outputs/`, então não vira download) com motivo + pedido original (até 300
+  chars) + timestamp. Uma conclusão limpa (`completedNaturally` sem
+  `incomplete`) remove o marcador. Helpers exportados: `writeResumeMarker`,
+  `readResumeMarker`, `clearResumeMarker`, `resumeTaskNote`.
+- **Nota de retomada**: na resposta seguinte (se houver ferramentas e não for
+  turno de baixo sinal), uma nota de sistema avisa o modelo que a execução
+  anterior ficou incompleta e manda listar `/workspace` e REAPROVEITAR o que já
+  existe (CSVs parciais, scripts que funcionaram) em vez de refazer do zero —
+  e ignorar a nota se o usuário mudar de assunto.
+- **Mensagem de limite reescrita**: o aviso de "atingi o limite de N etapas"
+  agora diz que o trabalho parcial continua salvo e que basta dizer
+  **continuar** para retomar (a sugestão de pedir em partes permanece).
+- **Checkpoint incremental** (`uploadsNote`): nova instrução manda salvar os
+  dados extraídos IMEDIATAMENTE num CSV em `/workspace/outputs` ANTES de montar
+  o arquivo final, e preferir UM script robusto a vários pequenos — mesmo
+  estourando o limite, o usuário recebe o CSV parcial (a detecção de arquivos
+  novos em execução incompleta já existia).
+- Testes: `backend/src/agent.resume.test.js` (7 casos). Suíte completa do
+  backend: 97 pass / 1 skip (o que exige Postgres).
+
 ## 🛡️ Antivírus nos uploads (ClamAV) + selos de segurança + hardening (2026-07-20, PR #50 — MERGEADO)
 
 Todo arquivo enviado pelos usuários agora passa pelo **ClamAV** antes de ser

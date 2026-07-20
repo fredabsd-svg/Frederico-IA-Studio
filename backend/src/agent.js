@@ -329,7 +329,53 @@ Não peça para o usuário reenviar. Para lê-los, use as ferramentas:
   - Se a foto estiver BORRADA, escura ou ILEGÍVEL a ponto de não dar para ler com confiança, NÃO invente o conteúdo: diga com gentileza que não deu para ler direito e peça uma nova foto com mais luz, foco e o documento reto/enquadrado.
 - Conversão de formatos (quando a leitura direta falhar ou o usuário pedir outro formato): o LibreOffice ESTÁ INSTALADO — use bash: soffice --headless --convert-to xlsx|pdf|docx --outdir /workspace/outputs "arquivo". Funciona para .xls, .doc, .odt, .pptx e para gerar PDF fiel de docx/xlsx.
 - Texto simples: read_file.
+- EXTRAÇÃO LONGA — SALVE CHECKPOINTS: em arquivos difíceis (muitas páginas, OCR, tabelas bagunçadas), grave os dados extraídos IMEDIATAMENTE num CSV em /workspace/outputs (ex.: outputs/dados_extraidos.csv), ANTES de montar o arquivo final. Se a tarefa for interrompida no meio, esse CSV preserva o progresso e permite retomar sem repetir a extração. Prefira UM script robusto que percorra o arquivo inteiro com tratamento de erros a vários scripts pequenos de tentativa.
 Sempre comece analisando o arquivo antes de responder.`;
+}
+
+// --- Retomada de tarefa interrompida ----------------------------------------
+// Quando uma execução termina incompleta (limite de etapas, falhas seguidas,
+// arquivo não gerado), o workspace da conversa continua existindo — com CSVs
+// parciais, dados já extraídos e scripts que funcionaram. Um marcador gravado
+// na BASE do workspace (fora de outputs, para não virar download) registra a
+// interrupção; a próxima resposta injeta uma nota de sistema orientando o
+// modelo a reaproveitar o que já existe em vez de refazer a extração do zero.
+const RESUME_MARKER_FILE = '.tarefa-incompleta.json';
+const RESUME_TASK_CLIP = 300;
+
+function resumeMarkerPath(conversationId) {
+  return path.join(workspaceFor(conversationId).base, RESUME_MARKER_FILE);
+}
+
+export function writeResumeMarker(conversationId, { reason, task } = {}) {
+  const data = {
+    reason: String(reason || '').trim(),
+    task: String(task || '').trim().slice(0, RESUME_TASK_CLIP),
+    at: now()
+  };
+  try { fs.writeFileSync(resumeMarkerPath(conversationId), JSON.stringify(data)); } catch {}
+}
+
+export function readResumeMarker(conversationId) {
+  try {
+    const data = JSON.parse(fs.readFileSync(resumeMarkerPath(conversationId), 'utf8'));
+    return data && typeof data === 'object' && !Array.isArray(data) ? data : null;
+  } catch { return null; }
+}
+
+export function clearResumeMarker(conversationId) {
+  try { fs.unlinkSync(resumeMarkerPath(conversationId)); } catch {}
+}
+
+export function resumeTaskNote(marker) {
+  const reason = String(marker?.reason || '').trim();
+  const task = String(marker?.task || '').trim();
+  return `RETOMADA DE TAREFA INTERROMPIDA: a última execução desta conversa terminou SEM concluir${reason ? ` (${reason})` : ''}${task ? ` — pedido original: "${task}"` : ''}. O workspace é o MESMO de antes: uploads, outputs e arquivos intermediários continuam em /workspace.
+Se a mensagem do usuário pedir para continuar, terminar ou refazer essa tarefa:
+1. Antes de qualquer coisa, veja o que já existe (bash: find /workspace -type f | head -50).
+2. REAPROVEITE o que estiver pronto — CSVs de checkpoint, dados já extraídos, scripts que funcionaram. Não refaça do zero uma etapa que já deu certo.
+3. Continue do ponto em que parou e finalize a entrega em /workspace/outputs.
+Se o usuário mudar de assunto, ignore esta nota e responda normalmente.`;
 }
 
 const IMAGE_UPLOAD_RE = /\.(png|jpe?g|webp|gif|bmp)$/i;
@@ -1241,6 +1287,10 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
   if (note) messages.push({ role: 'system', content: note });
   const pcNote = pcFoldersNote(sandboxOptions);
   if (pcNote) messages.push({ role: 'system', content: pcNote });
+  // Execução anterior interrompida: orienta o modelo a retomar aproveitando o
+  // que já existe no workspace (só faz sentido quando há ferramentas ativas).
+  const resumeMarker = !lowSignalTurn && tools.length ? readResumeMarker(conversationId) : null;
+  if (resumeMarker) messages.push({ role: 'system', content: resumeTaskNote(resumeMarker) });
   const historyPlan = await selectHistoryForContext({
     conversationId,
     limit: historyLimit,
@@ -1664,7 +1714,7 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
     incomplete = true;
     failureMessage = `A tarefa atingiu o limite de ${maxSteps} etapas antes da conclusão.`;
     // Atingiu o limite de etapas ainda usando ferramentas: avisa o usuário
-    const note = `\n\n_⚠️ Atingi o limite de ${maxSteps} etapas de processamento nesta tarefa. Ela ficou muito longa — provavelmente pela dificuldade de extrair os dados. Sugestão: peça em partes (ex.: 1º "extraia os dados do arquivo para um CSV", depois "gere a planilha final a partir do CSV")._`;
+    const note = `\n\n_⚠️ Atingi o limite de ${maxSteps} etapas de processamento antes de terminar. O que já foi feito continua salvo nesta conversa — diga **continuar** que eu retomo de onde parei, aproveitando os arquivos parciais. Se preferir, peça em partes (ex.: 1º "extraia os dados do arquivo para um CSV", depois "gere a planilha final a partir do CSV")._`;
     finalText += note;
     onEvent({ type: 'delta', content: note });
   }
@@ -1718,6 +1768,11 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
   }
   // Memória: indexa a troca e extrai fatos em segundo plano (não bloqueia)
   if (!stopped) indexAfterReply(userId, conversationId).catch(() => {});
+  // Marcador de retomada: uma execução incompleta deixa registrado o motivo e o
+  // pedido para a próxima resposta reaproveitar o workspace; uma conclusão
+  // limpa remove o marcador de interrupções anteriores.
+  if (incomplete && !stopped) writeResumeMarker(conversationId, { reason: failureMessage, task: userText });
+  else if (completedNaturally && !incomplete) clearResumeMarker(conversationId);
   return { text: finalText, usage, model: chosenModel, stopped, providerFailure, incomplete, failureMessage };
   } finally {
     // Mantém a conversa marcada como ativa até o card de download ter sido
