@@ -31,6 +31,11 @@ hard delete de conversa com cascade, cadastro mínimo).
 - **deleteConversationDeep** unificou a exclusão profunda (rota antiga de
   apagar conversa agora também remove TAREFAS não-running da conversa — antes
   uma tarefa na fila RECRIAVA a conversa apagada via ensureConversation).
+  Correção pós-teste do usuário (2026-07-20): fatos extraídos com
+  `review_auto_memory` ligado vivem em `memory_suggestions`, não em `memory` —
+  a exclusão profunda agora limpa as DUAS tabelas, e "Apagar todo o histórico"
+  passa uma vassoura final em tudo com `source_type='auto'` (pega órfãos de
+  conversas apagadas antes da correção; memórias manuais/importadas ficam).
 - **Retenção (minimização)**: `CONVERSATION_RETENTION_DAYS` (0 = desligado;
   varredura a cada 6 h em `sweepOldConversations`; documentado no .env.example
   e README).
