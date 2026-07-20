@@ -38,12 +38,18 @@ balanceado, variáveis CSS usadas existem (`--r-sm`, `--r-md`, `--panel`,
 esquerda. **Quem validou de fato foi o `npm run build` da VPS** no deploy — se
 estiver lendo isto e o build passou, o código compila; resta o visual.
 
-**Dois pontos para olhar na tela:**
-1. **Risco de corte no dropdown de Fornecedor.** `.mpPanel` tem `overflow:hidden`
-   e `.mpPanelInline` não sobrescreve. O `<select>` nativo antigo era desenhado
-   pelo SO e escapava do clipping; o `.mpFamPanel` é absoluto DENTRO do painel,
-   então o fim da lista pode ser cortado na borda inferior. Pelas contas cabe,
-   mas só olhando para ter certeza.
+**Pontos observados na tela:**
+1. **Risco de corte no dropdown de Fornecedor — RESOLVIDO (2026-07-20).** O
+   `.mpFamPanel` deixou de ser `position:absolute` dentro do `.mpPanel`
+   (`overflow:hidden`) e passou a `position:fixed` ancorado ao botão via
+   `getBoundingClientRect()`, com estilo inline calculado em `FamilySelect.jsx`.
+   Agora ele **escapa do clipping** do painel e **vira para cima** quando falta
+   espaço embaixo (`maxHeight` ajustado ao espaço disponível), então a lista
+   nunca é cortada na borda do painel nem sai da viewport. Fecha em
+   scroll/resize (o menu fixo se soltaria do botão que rola junto); o
+   `scroll` é capturado (`true`) para pegar também contêineres internos. O CSS
+   mantém um fallback `absolute` caso o cálculo de posição não rode. Validado
+   com `vite build` (passa).
 2. **Microsoft (Phi) e Nous** não têm logo no conjunto — caem no monograma.
 
 **Deploy é na VPS** (`fredericostudio.com.br`), não mais local: `bash atualizar.sh`

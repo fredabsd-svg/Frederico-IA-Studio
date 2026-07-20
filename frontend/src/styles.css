@@ -755,7 +755,10 @@ input[type=checkbox]:focus-visible,input[type=radio]:focus-visible{outline-offse
 .mpFamBtn:hover,.mpFamBtn.on{border-color:var(--accent)}
 .mpFamBtnText{flex:1;min-width:0;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
 .mpFamBtn svg{flex:none;color:var(--muted)}
-.mpFamPanel{position:absolute;top:calc(100% + 5px);left:0;right:0;z-index:70;max-height:320px;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);box-shadow:0 16px 42px rgba(0,0,0,.4);padding:5px}
+/* position/left/top/width/max-height vêm do estilo inline (fixed, ancorado ao
+   botão) para escapar do overflow:hidden do .mpPanel e virar para cima quando
+   faltar espaço embaixo. Fallback absoluto caso o JS de posição não rode. */
+.mpFamPanel{position:absolute;top:calc(100% + 5px);left:0;right:0;z-index:9000;max-height:320px;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);box-shadow:0 16px 42px rgba(0,0,0,.4);padding:5px}
 .mpFamOpt{width:100%;display:flex;align-items:center;gap:9px;border:none;background:transparent;color:var(--text);border-radius:var(--r-sm);padding:7px 9px;font:inherit;font-size:var(--fs-xs);cursor:pointer;text-align:left}
 .mpFamOpt:hover{background:var(--panel2)}
 .mpFamOpt.sel{background:rgba(79,140,255,.14)}
