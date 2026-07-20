@@ -15,21 +15,49 @@ export function GitHubIcon({ size = 18 }) {
 // Conectores de serviços externos. O primeiro é o GitHub: com a conta
 // conectada, o assistente consegue clonar repositórios, fazer alterações e
 // enviá-las de volta (push/Pull Request) — tudo pelo chat ou pelo modo
-// desenvolvedor. O token fica criptografado no servidor e nunca é exibido.
+// desenvolvedor. A conexão preferida é em 1 clique (OAuth): o botão leva ao
+// site do GitHub, a pessoa autoriza e volta conectada. O token colado à mão
+// fica como alternativa (ou como único caminho quando o servidor não tem o
+// OAuth App configurado). O acesso fica criptografado e nunca é exibido.
 export function ConnectorsPanel({ showToast, onClose }) {
-  const [github, setGithub] = useState(null); // { connected, login, name }
+  const [github, setGithub] = useState(null); // { connected, login, name, oauth }
   const [token, setToken] = useState('');
   const [busy, setBusy] = useState(false);
+  const [waitingOauth, setWaitingOauth] = useState(false);
   const [testing, setTesting] = useState(false);
   const [test, setTest] = useState(null);
 
   useEffect(() => { load(); }, []);
+  // O popup do OAuth avisa quando termina (postMessage) — aí recarregamos o estado.
+  useEffect(() => {
+    function onMessage(event) {
+      if (event.origin !== window.location.origin) return;
+      if (event.data?.type !== 'fred-github-connected') return;
+      setWaitingOauth(false);
+      if (event.data.ok) { showToast('GitHub conectado!', 'ok'); load(); }
+      else showToast('A conexão com o GitHub não foi concluída.');
+    }
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, []);
+
   async function load() {
     setGithub(null);
     try {
       const list = await (await fetch(`${API}/api/connectors`)).json();
       setGithub((Array.isArray(list) ? list : []).find(c => c.provider === 'github') || { connected: false });
     } catch { setGithub({ connected: false }); }
+  }
+
+  function connectOauth() {
+    setWaitingOauth(true);
+    const url = `${API}/api/connectors/github/start`;
+    const popup = window.open(url, 'fred-github-oauth', 'width=980,height=780');
+    if (!popup) { window.location.href = url; return; } // popup bloqueado: segue na mesma aba
+    // Se a pessoa fechar o popup sem terminar, destrava o botão.
+    const watch = setInterval(() => {
+      if (popup.closed) { clearInterval(watch); setWaitingOauth(false); load(); }
+    }, 800);
   }
 
   async function runTest() {
@@ -44,7 +72,7 @@ export function ConnectorsPanel({ showToast, onClose }) {
     finally { setTesting(false); }
   }
 
-  async function save() {
+  async function saveToken() {
     if (!token.trim()) { showToast('Cole o token do GitHub antes de salvar.'); return; }
     setBusy(true);
     try {
@@ -82,25 +110,44 @@ export function ConnectorsPanel({ showToast, onClose }) {
         : <span className="muted small">não conectado</span>)}
     </div>
 
-    <label>Token de acesso do GitHub
-      <input type="password" value={token} onChange={e => { setToken(e.target.value); setTest(null); }} placeholder="ghp_... ou github_pat_..." autoComplete="off"/>
-    </label>
-    <p className="muted small" style={{ margin: '-8px 0 0' }}>
-      Crie em <code>github.com → Settings → Developer settings → Personal access tokens</code>. No token clássico, marque o escopo <code>repo</code>; no refinado (fine-grained), dê acesso de leitura e escrita a <b>Contents</b> e <b>Pull requests</b> dos repositórios desejados.
-    </p>
+    {github?.oauth && !github?.connected && <>
+      <button className="primary" onClick={connectOauth} disabled={waitingOauth} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%', padding: '12px 16px' }}>
+        {waitingOauth ? <><span className="spin sm"/> Aguardando o GitHub...</> : <><GitHubIcon size={17}/> Conectar com GitHub</>}
+      </button>
+      <p className="muted small" style={{ margin: '-4px 0 0' }}>Abre o site do GitHub para você autorizar; ao confirmar, a conta fica conectada sozinha — sem copiar nada.</p>
+    </>}
 
-    {test && (test.ok
-      ? <div className="pcHint" style={{ color: 'var(--ok)' }}><Check size={14}/> Token válido{test.login ? <> — conta <code>@{test.login}</code></> : null}</div>
+    {github && !github.oauth && !github.connected && <div className="pcWarn">A conexão em 1 clique ainda não foi configurada neste servidor. Dá para conectar com um token (abaixo) — ou, se você administra o servidor, configure <code>GITHUB_CONNECTOR_CLIENT_ID/SECRET</code> no <code>.env</code> (veja o .env.example).</div>}
+
+    {github && !github.connected && <details className="devRules">
+      <summary>Conectar com token (alternativa)</summary>
+      <label style={{ marginTop: 8 }}>Token de acesso do GitHub
+        <input type="password" value={token} onChange={e => { setToken(e.target.value); setTest(null); }} placeholder="ghp_... ou github_pat_..." autoComplete="off"/>
+      </label>
+      <p className="muted small">
+        Crie em <code>github.com → Settings → Developer settings → Personal access tokens</code>. No token clássico, marque o escopo <code>repo</code>; no refinado (fine-grained), dê acesso de leitura e escrita a <b>Contents</b> e <b>Pull requests</b> dos repositórios desejados.
+      </p>
+      {test && (test.ok
+        ? <div className="pcHint" style={{ color: 'var(--ok)' }}><Check size={14}/> Token válido{test.login ? <> — conta <code>@{test.login}</code></> : null}</div>
+        : <div className="pcHint" style={{ color: 'var(--danger)' }}><X size={14}/> {test.error}</div>
+      )}
+      <div className="modalActions">
+        <button onClick={runTest} disabled={testing || busy || !token}>{testing ? <><span className="spin sm"/> Testando...</> : <><RefreshCw size={15}/> Testar</>}</button>
+        <div className="spacer"/>
+        <button className="primary" onClick={saveToken} disabled={busy || !token.trim()}>{busy ? 'Salvando...' : 'Conectar'}</button>
+      </div>
+    </details>}
+
+    {github?.connected && <div className="modalActions">
+      <button onClick={runTest} disabled={testing || busy}>{testing ? <><span className="spin sm"/> Testando...</> : <><RefreshCw size={15}/> Testar conexão</>}</button>
+      <div className="spacer"/>
+      <button className="danger" onClick={disconnect} disabled={busy}>Desconectar</button>
+    </div>}
+    {github?.connected && test && (test.ok
+      ? <div className="pcHint" style={{ color: 'var(--ok)' }}><Check size={14}/> Conexão funcionando{test.login ? <> — conta <code>@{test.login}</code></> : null}</div>
       : <div className="pcHint" style={{ color: 'var(--danger)' }}><X size={14}/> {test.error}</div>
     )}
 
-    <div className="modalActions">
-      <button onClick={runTest} disabled={testing || busy || (!token && !github?.connected)}>{testing ? <><span className="spin sm"/> Testando...</> : <><RefreshCw size={15}/> Testar</>}</button>
-      <div className="spacer"/>
-      {github?.connected && <button className="danger" onClick={disconnect} disabled={busy}>Desconectar</button>}
-      <button className="primary" onClick={save} disabled={busy || !token.trim()}>{busy ? 'Salvando...' : 'Conectar'}</button>
-    </div>
-
-    <div className="pcHint">🔒 O token fica criptografado no servidor e nunca aparece por completo — nem para a IA: as operações autenticadas (clonar, enviar) rodam fora do sandbox. Depois de conectar, escolha um repositório como projeto no <b>Modo desenvolvedor</b>, ou peça direto no chat (ex.: "clone o repositório fulano/meu-app e corrija o erro X").</div>
+    <div className="pcHint">🔒 O acesso fica criptografado no servidor e nunca aparece por completo — nem para a IA: as operações autenticadas (clonar, enviar) rodam fora do sandbox. Depois de conectar, escolha um repositório como projeto no <b>Modo desenvolvedor</b>, ou peça direto no chat (ex.: "clone o repositório fulano/meu-app e corrija o erro X").</div>
   </Drawer>;
 }

@@ -20,7 +20,7 @@ import { registerModelCatalog } from './modelCapabilities.js';
 import { runMigrations } from './migrate.js';
 import { encryptSecret, decryptSecret, maskSecret } from './crypto.js';
 import { getUserProvider } from './userProvider.js';
-import { getGithubConnection, testGithubToken, listGithubRepos, listGithubBranches } from './connectors/github.js';
+import { getGithubConnection, testGithubToken, listGithubRepos, listGithubBranches, saveGithubConnection, githubOAuthConfig, githubOAuthAuthorizeUrl, createGithubOAuthState, consumeGithubOAuthState, exchangeGithubOAuthCode } from './connectors/github.js';
 import { sanitizeToolProtocolText } from './toolProtocol.js';
 import OpenAI from 'openai';
 
@@ -938,7 +938,7 @@ app.post('/api/provider/test', async (req, res) => {
 // claro — o GET devolve só o estado e a conta conectada.
 app.get('/api/connectors', async (req, res) => {
   const conn = await getGithubConnection(req.userId);
-  res.json([{ provider: 'github', connected: !!conn, login: conn?.login || '', name: conn?.name || '' }]);
+  res.json([{ provider: 'github', connected: !!conn, login: conn?.login || '', name: conn?.name || '', oauth: !!githubOAuthConfig() }]);
 });
 
 // PUT valida o token no GitHub antes de salvar; token '' desconecta.
@@ -949,16 +949,54 @@ app.put('/api/connectors/github', async (req, res) => {
       await db.prepare("DELETE FROM user_connectors WHERE user_id=? AND provider='github'").run(req.userId);
       return res.json({ ok: true, connected: false });
     }
-    const test = await testGithubToken(token);
-    if (!test.ok) return res.status(400).json({ ok: false, error: test.error });
-    const t = now();
-    await db.prepare(`INSERT INTO user_connectors (user_id, provider, token_enc, account_login, account_name, created_at, updated_at)
-      VALUES (?,?,?,?,?,?,?)
-      ON CONFLICT (user_id, provider) DO UPDATE SET token_enc=excluded.token_enc, account_login=excluded.account_login, account_name=excluded.account_name, updated_at=excluded.updated_at`)
-      .run(req.userId, 'github', encryptSecret(token), test.login, test.name, t, t);
-    res.json({ ok: true, connected: true, login: test.login, name: test.name });
+    const saved = await saveGithubConnection(req.userId, token);
+    if (!saved.ok) return res.status(400).json({ ok: false, error: saved.error });
+    res.json({ ok: true, connected: true, login: saved.login, name: saved.name });
   } catch (e) {
     res.status(500).json({ ok: false, error: 'Não foi possível salvar. Verifique se a ENCRYPTION_KEY está configurada no servidor.' });
+  }
+});
+
+// ---- Conexão em 1 clique (OAuth): botão → GitHub → autorizar → conectado ----
+// Página curta devolvida ao navegador no fim do fluxo (popup ou aba inteira).
+function githubOAuthResultPage(ok, message) {
+  const title = ok ? 'GitHub conectado!' : 'Não deu para conectar o GitHub';
+  return `<!doctype html><html lang="pt-BR"><meta charset="utf-8"><title>${title}</title>
+<body style="margin:0;height:100vh;display:grid;place-items:center;font-family:system-ui,sans-serif;background:#0f1115;color:#e6e8ee">
+<div style="text-align:center;max-width:420px;padding:24px">
+<div style="font-size:42px">${ok ? '✅' : '⚠️'}</div>
+<h2 style="margin:12px 0 8px">${title}</h2>
+<p style="margin:0 0 16px;color:#9aa1ad">${message}</p>
+<a href="/" style="color:#7ab7ff">Voltar ao Frederico AI Studio</a>
+</div>
+<script>try{if(window.opener){window.opener.postMessage({type:'fred-github-connected',ok:${ok ? 'true' : 'false'}},window.location.origin);setTimeout(function(){window.close()},900);}}catch(e){}</script>
+</body></html>`;
+}
+
+app.get('/api/connectors/github/start', (req, res) => {
+  if (!githubOAuthConfig()) {
+    return res.status(400).json({ error: 'A conexão em 1 clique não está configurada neste servidor (GITHUB_CONNECTOR_CLIENT_ID/SECRET). Use a conexão por token.' });
+  }
+  const url = githubOAuthAuthorizeUrl(createGithubOAuthState(req.userId));
+  res.redirect(url);
+});
+
+app.get('/api/connectors/github/callback', async (req, res) => {
+  const finish = (ok, message) => res.status(ok ? 200 : 400).type('html').send(githubOAuthResultPage(ok, message));
+  try {
+    if (!consumeGithubOAuthState(req.query.state, req.userId)) {
+      return finish(false, 'A autorização expirou ou veio de outra sessão. Volte ao app e clique em "Conectar com GitHub" de novo.');
+    }
+    if (!req.query.code) {
+      return finish(false, String(req.query.error_description || 'A autorização foi cancelada no GitHub.'));
+    }
+    const exchanged = await exchangeGithubOAuthCode(String(req.query.code));
+    if (!exchanged.ok) return finish(false, exchanged.error);
+    const saved = await saveGithubConnection(req.userId, exchanged.token);
+    if (!saved.ok) return finish(false, saved.error);
+    return finish(true, `Conta @${saved.login} conectada. Pode fechar esta janela e voltar ao app.`);
+  } catch {
+    return finish(false, 'Algo deu errado ao concluir a conexão. Tente de novo em instantes.');
   }
 });
 

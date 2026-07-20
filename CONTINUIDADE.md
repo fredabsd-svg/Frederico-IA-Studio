@@ -39,6 +39,21 @@ chat ou pelo modo desenvolvedor.
   branch, aviso "conecte a sua conta"), `App.jsx` (botão Conectores no menu,
   `developer.github` no corpo do chat, repo na barra do modo desenvolvedor).
 - Envs opcionais: `GITHUB_CLONE_TIMEOUT_MS` (300s), `GITHUB_GIT_TIMEOUT_MS` (120s).
+- **Conexão em 1 clique (OAuth)** — pedido do usuário após o PR #45 ("não quero
+  colar chave; quero clicar, logar no GitHub e conectar sozinho"): botão
+  "Conectar com GitHub" → popup → autorização → conectado. Fluxo próprio (NÃO
+  usa o Better Auth): `GET /api/connectors/github/start` (redireciona ao
+  authorize com `state` anti-CSRF em memória, uso único, 10 min, amarrado ao
+  userId logado) → `GET /api/connectors/github/callback` (troca o code pelo
+  token `gho_...`, salva pelo MESMO `saveGithubConnection` cifrado e devolve
+  uma página que faz `postMessage` + fecha o popup; o painel escuta e
+  recarrega). Requer um **OAuth App dedicado** (o do login não serve — o GitHub
+  só aceita um callback por app): `GITHUB_CONNECTOR_CLIENT_ID/SECRET` no `.env`,
+  callback `<BETTER_AUTH_URL>/api/connectors/github/callback` (instruções no
+  .env.example). Sem essas envs, o painel cai no modo token (em `<details>`
+  "alternativa") e avisa o admin. `GET /api/connectors` devolve `oauth:true`
+  quando configurado. Cookie de sessão viaja no redirect (SameSite=Lax +
+  navegação top-level), então o callback sabe quem é o usuário.
 - Testes: `connectors.github.test.js` (validações puras + scrub). Suíte 86/88
   (2 pulados sem Postgres); build Vite ok.
 - Próximos conectores sugeridos: Google Drive, Notion — seguir o mesmo padrão

@@ -13,10 +13,11 @@
 //   diretório é re-chownado para uid 1000 — regra da casa: o exec do sandbox
 //   roda como uid 1000 e escrita de root quebraria o git de dentro do sandbox.
 import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { db } from '../db.js';
-import { decryptSecret } from '../crypto.js';
+import { db, now } from '../db.js';
+import { decryptSecret, encryptSecret } from '../crypto.js';
 import { workspaceFor } from '../sandbox.js';
 
 const GITHUB_API = 'https://api.github.com';
@@ -80,6 +81,84 @@ export async function getGithubConnection(userId) {
 
 export async function hasGithubConnection(userId) {
   return Boolean(await getGithubConnection(userId));
+}
+
+// Valida o token no GitHub e salva a conexão cifrada (usado pelo fluxo OAuth
+// e pelo cadastro manual de token).
+export async function saveGithubConnection(userId, token) {
+  const test = await testGithubToken(token);
+  if (!test.ok) return test;
+  const t = now();
+  await db.prepare(`INSERT INTO user_connectors (user_id, provider, token_enc, account_login, account_name, created_at, updated_at)
+    VALUES (?,?,?,?,?,?,?)
+    ON CONFLICT (user_id, provider) DO UPDATE SET token_enc=excluded.token_enc, account_login=excluded.account_login, account_name=excluded.account_name, updated_at=excluded.updated_at`)
+    .run(userId, 'github', encryptSecret(token), test.login, test.name, t, t);
+  return { ok: true, login: test.login, name: test.name };
+}
+
+// ---- OAuth do GitHub (conexão em 1 clique, sem copiar token) ----
+// Usa um OAuth App do GitHub dedicado ao conector (callback
+// <BETTER_AUTH_URL>/api/connectors/github/callback). O "state" anti-CSRF fica
+// em memória, amarrado ao usuário logado, com validade curta.
+
+export function githubOAuthConfig() {
+  const clientId = process.env.GITHUB_CONNECTOR_CLIENT_ID || '';
+  const clientSecret = process.env.GITHUB_CONNECTOR_CLIENT_SECRET || '';
+  return clientId && clientSecret ? { clientId, clientSecret } : null;
+}
+
+export function githubOAuthRedirectUri() {
+  const base = (process.env.BETTER_AUTH_URL || 'http://localhost:5173').replace(/\/$/, '');
+  return `${base}/api/connectors/github/callback`;
+}
+
+const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
+const oauthStates = new Map(); // state -> { userId, exp }
+
+export function createGithubOAuthState(userId) {
+  for (const [key, value] of oauthStates) if (value.exp < Date.now()) oauthStates.delete(key);
+  const state = crypto.randomBytes(24).toString('hex');
+  oauthStates.set(state, { userId: String(userId), exp: Date.now() + OAUTH_STATE_TTL_MS });
+  return state;
+}
+
+// Consome (uso único) e valida o state: precisa existir, estar no prazo e
+// pertencer ao MESMO usuário logado que iniciou o fluxo.
+export function consumeGithubOAuthState(state, userId) {
+  const entry = oauthStates.get(String(state || ''));
+  if (entry) oauthStates.delete(String(state));
+  return Boolean(entry && entry.exp >= Date.now() && entry.userId === String(userId));
+}
+
+export function githubOAuthAuthorizeUrl(state) {
+  const cfg = githubOAuthConfig();
+  if (!cfg) return null;
+  const params = new URLSearchParams({
+    client_id: cfg.clientId,
+    redirect_uri: githubOAuthRedirectUri(),
+    scope: 'repo',
+    state
+  });
+  return `https://github.com/login/oauth/authorize?${params}`;
+}
+
+export async function exchangeGithubOAuthCode(code) {
+  const cfg = githubOAuthConfig();
+  if (!cfg) return { ok: false, error: 'A conexão em 1 clique não está configurada neste servidor.' };
+  try {
+    const r = await fetch('https://github.com/login/oauth/access_token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'User-Agent': 'FredericoAIStudio/1.0' },
+      body: JSON.stringify({ client_id: cfg.clientId, client_secret: cfg.clientSecret, code, redirect_uri: githubOAuthRedirectUri() })
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!data.access_token) {
+      return { ok: false, error: data.error_description || data.error || 'O GitHub não devolveu a autorização. Tente conectar de novo.' };
+    }
+    return { ok: true, token: data.access_token };
+  } catch {
+    return { ok: false, error: 'Não foi possível falar com o GitHub agora. Tente novamente em instantes.' };
+  }
 }
 
 // ---- API REST do GitHub (roda no backend, com o token do usuário) ----
