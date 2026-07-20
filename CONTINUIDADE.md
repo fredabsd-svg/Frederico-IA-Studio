@@ -1,5 +1,39 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 🛠️ Modo desenvolvedor / tarefa longa parava no "limite de etapas" (2026-07-20 — branch `claude/dev-mode-long-tasks-issue-dkjnfp`)
+
+**Sintoma:** toda tarefa longa (e todo uso do modo desenvolvedor) morria com
+_"Atingi o limite de 60 etapas… dificuldade de extrair os dados… peça em CSV"_,
+independente do esforço escolhido. Correções anteriores (aumentar o número) não
+resolviam.
+
+**Causa real (2 problemas somados):**
+1. `loop.js` calculava `maxSteps = Number(process.env.AGENT_MAX_STEPS || eff.steps)`.
+   Como o `.env` tinha `AGENT_MAX_STEPS=30` (vindo do `.env.example`), o **env
+   sobrescrevia e cortava em silêncio** o esforço do menu — escolher "Máx" (=60 no
+   código) virava 30, e mexer no número do código não tinha efeito. Esse era o "pode
+   ser outro problema" que o usuário intuiu.
+2. Cada etapa = um turno do modelo (≈uma ferramenta). 60 é pouco para programação
+   (clonar → ler dezenas de arquivos → escrever migration/routers/componentes). Ao
+   bater o limite, tudo era abortado com uma mensagem **errada** (falava de CSV numa
+   tarefa de código) e sem dizer como retomar.
+
+**Correção (`backend/src/agent/loop.js`, `.env.example`):**
+- `AGENT_MAX_STEPS` vira **PISO, não teto**: `Math.max(eff.steps, envSteps)`. "Máx"
+  vale ≥60 mesmo com env baixo. **NUNCA** voltar a `env || eff.steps`.
+- Modo desenvolvedor: orçamento maior via `AGENT_DEV_MAX_STEPS` (padrão 200).
+- Teto absoluto `AGENT_HARD_MAX_STEPS` (padrão 1,5× o base): tarefa que **ainda
+  rende** (ferramenta ok há ≤2 etapas, rastreado por `lastProductiveStep`/`IDLE_STEP_GRACE`)
+  passa do orçamento base até o teto em vez de morrer no meio; se estagnar, encerra.
+  Travas de falha (5 seguidas), repetição e pesquisa web **inalteradas**.
+- Mensagem de limite honesta e retomável (**Reenviar**), sem o texto de CSV.
+- `.env.example`: `AGENT_MAX_STEPS=` em branco (esforço manda), `AGENT_DEV_MAX_STEPS=200`,
+  `AGENT_HARD_MAX_STEPS=` documentados.
+
+**Ação de deploy:** conferir o `.env` da VPS — se tiver `AGENT_MAX_STEPS=30`, deixar
+em branco para o esforço do menu mandar (agora é inofensivo, mas confunde). Backend-only,
+validado com `node --check`.
+
 ## 🏷️ Logos de provedor no seletor de modelos (2026-07-20) — NÃO VALIDADO LOCALMENTE
 
 Cada modelo da lista mostra o logo oficial do provedor antes do nome, e o filtro
