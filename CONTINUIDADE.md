@@ -1,5 +1,45 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 🛡️ LGPD — consentimento, direitos do titular e retenção (2026-07-20)
+
+O app (já em produção) ganhou a camada de conformidade com a LGPD, pedida pelo
+usuário a partir de um checklist que foi auditado contra o código real (muita
+coisa JÁ existia: chaves cifradas AES-256-GCM, senha com hash do Better Auth,
+hard delete de conversa com cascade, cadastro mínimo).
+
+**O que foi adicionado:**
+- **Documentos legais**: `frontend/src/LegalPages.jsx` → rotas públicas
+  `/privacidade` e `/termos` (roteadas em `main.jsx`; funcionam no Vite e no
+  Caddy via fallback de SPA). Links no rodapé da landing, no cadastro e no app.
+  `TERMS_VERSION` ('2026-07-20') existe em DOIS lugares que precisam andar
+  juntos: `LegalPages.jsx` e `backend/src/privacy.js` — mudar os textos de
+  forma relevante = mudar a versão nos dois → todos reaceitam.
+  ⚠️ O controlador está como "Frederico Assessoria Contábil" e o contato
+  `contabil@fredericoassessoria.com.br` — o usuário deve conferir razão social.
+- **Consentimento (art. 8º)**: checkbox opt-in no cadastro (LoginScreen, POST
+  `/api/consent` logo após o signUp); login social/contas antigas caem no
+  `ConsentGate` (modal bloqueante no App, via GET `/api/consent` →
+  `needsConsent`). Registro em `user_consents` (migration `005_lgpd.sql`) com
+  versão, IP, user-agent e data — histórico, não flag.
+- **Direitos do titular (art. 18)**: `backend/src/privacy.js` + rotas em
+  `server.js`: GET `/api/account/export` (JSON completo, SEM segredos nem
+  embeddings), DELETE `/api/account/conversations` (apaga tudo; 409 se alguma
+  conversa ainda responde), DELETE `/api/account` (hard delete total: destrói
+  workspaces/containers/inbox em disco e `DELETE FROM "user"` — as FKs ON
+  DELETE CASCADE levam o resto; exige `{confirm: email}` no corpo). UI:
+  `PrivacyPanel.jsx` (menu Administração → "Privacidade e dados").
+- **deleteConversationDeep** unificou a exclusão profunda (rota antiga de
+  apagar conversa agora também remove TAREFAS não-running da conversa — antes
+  uma tarefa na fila RECRIAVA a conversa apagada via ensureConversation).
+- **Retenção (minimização)**: `CONVERSATION_RETENTION_DAYS` (0 = desligado;
+  varredura a cada 6 h em `sweepOldConversations`; documentado no .env.example
+  e README).
+- **Aviso no chat**: hint fixo no composer ("as mensagens vão ao provedor de
+  IA — evite dados sensíveis") com link para /privacidade.
+- **Logs**: indexer de memória não imprime mais o título da conversa.
+- Cookies: só o essencial de sessão (sem analytics) → banner de cookies NÃO é
+  necessário; a política explica isso.
+
 ## 🔌 Conector GitHub — primeiro conector do app (2026-07-19)
 
 O app ganhou **Conectores** (Configurações → Conectores), começando pelo

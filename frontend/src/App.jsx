@@ -14,6 +14,7 @@ import { RoutinesPanel } from './RoutinesPanel.jsx';
 import { InboxPanel } from './InboxPanel.jsx';
 import { ProviderPanel } from './ProviderPanel.jsx';
 import { ConnectorsPanel } from './ConnectorsPanel.jsx';
+import { PrivacyPanel, ConsentGate } from './PrivacyPanel.jsx';
 import { CameraCapture } from './CameraCapture.jsx';
 import { takeSseEvents } from './sse.js';
 
@@ -321,6 +322,11 @@ export default function App({ user } = {}) {
   const [inboxOpen, setInboxOpen] = useState(false);
   const [providerOpen, setProviderOpen] = useState(false);
   const [connectorsOpen, setConnectorsOpen] = useState(false);
+  const [privacyOpen, setPrivacyOpen] = useState(false);
+  // LGPD: true quando o usuário ainda não aceitou a versão vigente dos
+  // Termos/Política (login social, conta antiga ou termos atualizados) —
+  // nesse caso um modal bloqueante pede o aceite antes de liberar o app.
+  const [needsConsent, setNeedsConsent] = useState(false);
   const [team, setTeam] = useState(false);
   const [teamIds, setTeamIds] = useState(() => { try { return JSON.parse(localStorage.getItem('fred_team') || 'null'); } catch { return null; } });
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
@@ -412,6 +418,15 @@ export default function App({ user } = {}) {
   }, [input]);
 
   useEffect(() => { init(); }, []);
+  // LGPD: verifica se o aceite da versão vigente dos termos já foi registrado.
+  useEffect(() => {
+    let ativo = true;
+    fetch(`${API}/api/consent`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (ativo && d) setNeedsConsent(!!d.needsConsent); })
+      .catch(() => {});
+    return () => { ativo = false; };
+  }, []);
   useEffect(() => {
     const t = THEMES.find(x => x.id === theme) || THEMES[0];
     document.body.className = `${t.mode} t-${t.id}`;
@@ -1338,6 +1353,7 @@ export default function App({ user } = {}) {
           {me?.isAdmin && <button className="studio" onClick={() => window.open(`${API}/api/backup`, '_blank')} title="Baixa um arquivo com o banco e todos os workspaces (somente administrador)"><HardDriveDownload size={16}/> Backup</button>}
           <button className="studio" onClick={() => setProviderOpen(true)} title="Cadastre a sua própria chave de API"><KeyRound size={16}/> Provedor de IA</button>
           <button className="studio" onClick={() => setConnectorsOpen(true)} title="Conecte serviços externos, como o GitHub"><Cable size={16}/> Conectores</button>
+          <button className="studio" onClick={() => setPrivacyOpen(true)} title="Exportar dados, apagar histórico ou excluir a conta (LGPD)"><ShieldCheck size={16}/> Privacidade e dados</button>
           <button className="studio" onClick={() => setThemeOpen(true)} title="Trocar a paleta e o espaço de trabalho"><Palette size={16}/> Aparência</button>
         </div>
       </nav>
@@ -1559,7 +1575,9 @@ export default function App({ user } = {}) {
         </div>
         <div className="composerHints">
           <span>Enter envia · Shift+Enter quebra linha</span>
-          <span>Arquivos gerados aparecem como cartões no chat</span>
+          <span className="composerLgpd" title="O conteúdo da conversa é enviado ao provedor de IA para gerar a resposta. Evite incluir dados sensíveis, sigilosos ou desnecessários — saiba mais na Política de Privacidade.">
+            As mensagens vão ao provedor de IA — evite dados sensíveis ou sigilosos · <a href="/privacidade" target="_blank" rel="noreferrer">Privacidade</a>
+          </span>
         </div>
       </footer>
     </main>
@@ -1674,6 +1692,9 @@ export default function App({ user } = {}) {
     {inboxOpen && <InboxPanel clients={clients} clientId={clientId} showToast={showToast} askConfirm={askConfirm} onOpenConversation={(id) => { fetchConversations(); openConversation(id); }} onClose={() => setInboxOpen(false)}/>}
     {providerOpen && <ProviderPanel showToast={showToast} onClose={() => setProviderOpen(false)}/>}
     {connectorsOpen && <ConnectorsPanel showToast={showToast} onClose={() => setConnectorsOpen(false)}/>}
+    {privacyOpen && <PrivacyPanel user={user} showToast={showToast} askConfirm={askConfirm} askPrompt={askPrompt}
+      onHistoryCleared={() => { startNewChat(); fetchConversations(); }} onClose={() => setPrivacyOpen(false)}/>}
+    {needsConsent && <ConsentGate onAccepted={() => setNeedsConsent(false)}/>}
     {cameraOpen && <CameraCapture
       onClose={() => setCameraOpen(false)}
       onCapture={async (file) => { setCameraOpen(false); await uploadSelectedFiles([file], 'camera'); }}

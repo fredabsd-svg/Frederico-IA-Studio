@@ -222,7 +222,8 @@ export async function importConversations(userId, fileName, buffer, scope = 'glo
     importStatus.processed++;
     importStatus.chunks = chunks;
     importStatus.facts = facts;
-    console.log(`[memória] importando ${importStatus.processed}/${convs.length}: ${String(conv.title).slice(0, 60)}`);
+    // LGPD: o log NÃO imprime o título (conteúdo do usuário) — só o progresso.
+    console.log(`[memória] importando ${importStatus.processed}/${convs.length}`);
     const title = `Importada: ${String(conv.title).slice(0, 80)}`;
     // divide em janelas de ~1400 caracteres
     const body = String(conv.text || '').trim();
