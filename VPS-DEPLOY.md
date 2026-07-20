@@ -27,7 +27,9 @@ Como o app usa IA paga, decida **quem paga a conta da IA**:
 
 1. **Uma VPS** (servidor Linux). Boas opções: Hetzner (CX22, ~€4/mês),
    DigitalOcean (~US$6/mês), Contabo, Oracle Cloud (nível gratuito).
-   Escolha **Ubuntu 22.04 ou 24.04**, mínimo **2 GB de RAM** (4 GB recomendado).
+   Escolha **Ubuntu 22.04 ou 24.04**, mínimo **2 GB de RAM** — **4 GB
+   recomendado**, principalmente com o antivírus dos uploads ligado (ClamAV,
+   que vem ativado por padrão e usa ~1–1,5 GB; veja o Passo 8.4).
 2. **Um domínio ou subdomínio** (ex.: `ia.suaempresa.com.br`).
 3. (Opcional) Sua **chave do OpenRouter/DeepSeek**, se for a do servidor.
 
@@ -135,6 +137,89 @@ Quando terminar, acesse **https://ia.suaempresa.com.br** — o certificado HTTPS
 é emitido automaticamente. Você verá a **página de apresentação**; clique em
 **Criar conta** e pronto. 🎉
 
+## Passo 8 — Reforçar a segurança do servidor (recomendado)
+
+O firewall do Passo 6 é o mínimo. Estes reforços custam ~10 minutos, não custam
+nada em dinheiro e bloqueiam a grande maioria dos ataques reais contra uma VPS
+(força bruta no SSH e software desatualizado). Rode tudo na VPS, como root.
+
+### 8.1 — Atualizações de segurança automáticas
+
+O Ubuntu passa a instalar sozinho as correções de segurança:
+
+```bash
+apt update && apt install -y unattended-upgrades
+dpkg-reconfigure -plow unattended-upgrades   # responda "Yes"
+```
+
+### 8.2 — Bloquear tentativas de invasão (Fail2ban)
+
+Bane automaticamente IPs que ficam tentando adivinhar a senha do SSH:
+
+```bash
+apt install -y fail2ban
+systemctl enable --now fail2ban
+```
+
+Para ver quem já foi bloqueado: `fail2ban-client status sshd`.
+
+### 8.3 — Entrar só com chave SSH (sem senha)
+
+Chave SSH não dá para "adivinhar" como uma senha. **No seu PC** (PowerShell):
+
+```powershell
+ssh-keygen -t ed25519        # Enter em tudo (ou defina uma frase-senha)
+type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh root@SEU_IP "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys"
+```
+
+Teste `ssh root@SEU_IP` — deve entrar **sem pedir senha**. Só depois de
+confirmar isso, desative o login por senha (**na VPS**):
+
+```bash
+sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
+systemctl restart ssh
+```
+
+> ⚠️ Não desative o login por senha antes de testar a chave, senão você fica
+> trancado para fora da VPS.
+
+### 8.4 — Antivírus nos arquivos enviados (ClamAV) — já vem ligado
+
+O `docker-compose.prod.yml` já sobe um serviço **clamav** (antivírus gratuito e
+de código aberto, padrão em servidores Linux). Como funciona:
+
+- **Todo arquivo enviado** pelos usuários (anexos do chat, caixa de entrada,
+  importação de memória) é **escaneado antes de ser salvo**. Arquivo infectado
+  é recusado na hora, com aviso dizendo qual foi a ameaça.
+- Quando a verificação acontece, o usuário vê **"✓ Arquivos verificados pelo
+  antivírus"** no chat — e a página de apresentação anuncia o recurso.
+- **Primeiro boot**: o ClamAV baixa a base de assinaturas (~5 min). Nesse
+  meio-tempo os uploads seguem funcionando **sem** verificação, para o app não
+  parar. Se preferir recusar uploads enquanto o antivírus estiver fora do ar,
+  coloque `CLAMAV_REQUIRED=true` no `.env`.
+- **Memória**: o ClamAV usa ~1–1,5 GB de RAM. Com ele ligado, prefira uma VPS
+  de **4 GB**. Para desativar: coloque `CLAMAV_HOST=` (vazio) no `.env`,
+  remova o serviço `clamav` do compose — e retire o cartão "Arquivos
+  verificados" da página de apresentação (`frontend/src/Landing.jsx`), para
+  não anunciar algo que não existe mais.
+
+Conferir se está no ar e testar de verdade:
+
+```bash
+docker compose -f docker-compose.prod.yml ps clamav        # deve estar "healthy"
+docker compose -f docker-compose.prod.yml logs clamav | tail
+```
+
+Para uma demonstração segura, use o **EICAR** — um arquivo de teste inofensivo
+que todo antivírus reconhece de propósito (padrão da indústria). Crie um `.txt`
+com exatamente este conteúdo e anexe numa conversa:
+
+```
+X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*
+```
+
+O app deve **recusar o arquivo** e mostrar o aviso do antivírus. 🛡️
+
 ---
 
 ## Operação do dia a dia
@@ -182,6 +267,8 @@ scp root@SEU_IP:~/Frederico-IA-Studio/workspaces-*.tar.gz ./
 - O **backend não é exposto** à internet — só o proxy fala com ele.
 - **Cada usuário** tem login próprio e só enxerga os próprios dados (multi-tenant).
 - **PostgreSQL** roda num contêiner interno, sem porta exposta.
+- **ClamAV** (serviço `clamav`) escaneia os uploads dos usuários por dentro da
+  rede do Docker, também sem porta exposta (veja o Passo 8.4).
 
 ## Avisos importantes
 

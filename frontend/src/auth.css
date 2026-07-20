@@ -3,11 +3,27 @@
 .loginWrap {
   min-height: 100vh;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 16px;
   padding: 24px 16px;
   background: var(--bg);
 }
+/* Selos de segurança abaixo do cartão de login */
+.loginTrust {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px 18px;
+  max-width: 440px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+.loginTrust span, .loginTrust a { display: inline-flex; align-items: center; gap: 6px; }
+.loginTrust a { color: inherit; text-decoration: none; }
+.loginTrust a:hover { color: var(--text); text-decoration: underline; }
+.loginTrust svg { color: var(--ok); flex: none; }
 .loginCard {
   width: 100%;
   max-width: 400px;

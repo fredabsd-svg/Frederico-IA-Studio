@@ -1,5 +1,37 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 🛡️ Antivírus nos uploads (ClamAV) + guia de hardening da VPS (2026-07-20)
+
+Todo arquivo enviado pelos usuários agora passa pelo **ClamAV** antes de ser
+salvo — anexos do chat (`/api/conversations/:id/upload`), caixa de entrada
+(`/api/inbox/:client/upload`) e importação de memória (`/api/memories/import`).
+Arquivo infectado é recusado com o nome da ameaça; quando a varredura acontece,
+a resposta traz `scanned:true` e o frontend mostra "✓ Arquivos verificados pelo
+antivírus" (App.jsx/InboxPanel.jsx). A landing ganhou o cartão "Arquivos
+verificados" no bloco de confiança.
+
+**Desenho (não regredir):**
+- `backend/src/clamav.js` fala o protocolo **INSTREAM** do clamd direto por TCP
+  (sem dependência nova). Config por env: `CLAMAV_HOST` (vazio = desligado),
+  `CLAMAV_PORT` (3310), `CLAMAV_TIMEOUT_MS`, `CLAMAV_REQUIRED`.
+- **Fail-open de propósito:** se o clamd estiver fora do ar (ex.: baixando
+  assinaturas no primeiro boot, ~5 min), o upload passa SEM verificação e com
+  `scanned:false` — o app nunca trava por causa do antivírus. Quem quiser
+  fail-closed usa `CLAMAV_REQUIRED=true` (recusa com 503).
+- Produção: serviço `clamav` no `docker-compose.prod.yml`, ligado por padrão
+  (`CLAMAV_HOST=${CLAMAV_HOST-clamav}` — a sintaxe `-` sem `:` permite
+  desativar com `CLAMAV_HOST=` vazio no `.env`). Volume `clamav_db` persiste as
+  assinaturas. RAM: ~1–1,5 GB (docs recomendam VPS de 4 GB).
+- Dev: mesmo serviço sob `profiles: ["antivirus"]` — só sobe com
+  `docker compose --profile antivirus up` + `CLAMAV_HOST=clamav` no `.env`.
+- Se desativar o antivírus, retirar o cartão "Arquivos verificados" de
+  `frontend/src/Landing.jsx` (não anunciar o que não existe).
+- Testes: `backend/src/clamav.test.js` (clamd falso em TCP; roda com
+  `node --test src/clamav.test.js`). Teste manual: arquivo EICAR (VPS-DEPLOY.md
+  Passo 8.4).
+- `VPS-DEPLOY.md` ganhou o **Passo 8** (hardening): unattended-upgrades,
+  fail2ban, SSH só com chave e o guia do antivírus.
+
 ## 🛡️ LGPD — consentimento, direitos do titular e retenção (2026-07-20, PRs #47–#49)
 
 O app (já em produção) ganhou a camada de conformidade com a LGPD, pedida pelo

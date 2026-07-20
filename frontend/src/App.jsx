@@ -353,6 +353,7 @@ export default function App({ user } = {}) {
   const [convFilter, setConvFilter] = useState('');
   const [dragActive, setDragActive] = useState(false);
   const [uploadingFiles, setUploadingFiles] = useState(false);
+  const [scanOk, setScanOk] = useState(false); // "✓ verificado pelo antivírus" após upload escaneado
   const [cameraOpen, setCameraOpen] = useState(false);
   const [me, setMe] = useState(null); // { email, isAdmin, pcFoldersEnabled }
   const [loadingConv, setLoadingConv] = useState(false);
@@ -923,11 +924,20 @@ export default function App({ user } = {}) {
       const fd = new FormData();
       filesToUpload.forEach(f => fd.append('files', f));
       const res = await fetch(`${API}/api/conversations/${conv.id}/upload`, { method: 'POST', body: fd });
-      if (!res.ok) throw new Error();
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || '');
       await loadFiles(conv.id);
-      if (source !== 'input') showToast(`${filesToUpload.length} arquivo(s) anexado(s).`, 'ok');
-    } catch {
-      showToast('Falha no envio do arquivo. Verifique o tamanho (máx. 50 MB) e tente de novo.');
+      if (d.rejected?.length) {
+        showToast(`🛡️ Antivírus: ${d.rejected.length} arquivo(s) recusado(s) por conter ameaça: ${d.rejected.map(r => r.name).join(', ')}`);
+      } else if (source !== 'input') {
+        showToast(`${filesToUpload.length} arquivo(s) anexado(s)${d.scanned ? ' e verificado(s) pelo antivírus ✓' : ''}.`, 'ok');
+      }
+      if (d.scanned && !d.rejected?.length) {
+        setScanOk(true);
+        setTimeout(() => setScanOk(false), 5000);
+      }
+    } catch (err) {
+      showToast(err?.message || 'Falha no envio do arquivo. Verifique o tamanho (máx. 50 MB) e tente de novo.');
     } finally {
       setUploadingFiles(false);
     }
@@ -1533,6 +1543,7 @@ export default function App({ user } = {}) {
           </span>)}
         </div>}
         {uploadingFiles && <div className="attachStatus"><span className="spin sm"/><span>Anexando arquivo...</span></div>}
+        {!uploadingFiles && scanOk && <div className="attachStatus scanOk"><ShieldCheck size={13}/><span>Arquivos verificados pelo antivírus</span></div>}
         <div className="composerChips" ref={cmpChipsRef}>
           <button type="button" className={`cmpChip ${webSearch ? 'on' : ''}`} aria-pressed={webSearch}
             onClick={() => setWebSearch(w => !w)}
