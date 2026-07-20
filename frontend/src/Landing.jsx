@@ -168,7 +168,12 @@ export default function Landing() {
       <footer>
         <div className="lpFooter">
           <div className="lpBrand">Frederico <span>AI Studio</span></div>
-          <span>Feito no Brasil · <button className="lpFootLink" onClick={() => openLogin('login')}>Entrar</button></span>
+          <span>
+            <a className="lpFootLink" href="/privacidade">Política de Privacidade</a>
+            {' · '}
+            <a className="lpFootLink" href="/termos">Termos de Uso</a>
+            {' · '}Feito no Brasil · <button className="lpFootLink" onClick={() => openLogin('login')}>Entrar</button>
+          </span>
         </div>
       </footer>
     </div>

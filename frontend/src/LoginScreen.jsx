@@ -11,6 +11,8 @@ export function LoginScreen({ initialMode = 'login', onBack = null }) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  // LGPD: aceite dos Termos/Política no cadastro — desmarcado por padrão (opt-in).
+  const [consent, setConsent] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [social, setSocial] = useState('');
@@ -33,8 +35,12 @@ export function LoginScreen({ initialMode = 'login', onBack = null }) {
     setBusy(true);
     try {
       if (mode === 'signup') {
+        if (!consent) { setError('Para criar a conta, é preciso ler e concordar com os Termos de Uso e a Política de Privacidade.'); return; }
         const { error } = await signUp.email({ email, password, name: name.trim() || email.split('@')[0] });
         if (error) { setError(traduzErroAuth(error)); return; }
+        // Registra o aceite no servidor (evidência LGPD) — a sessão já existe.
+        // Se falhar, o app pede o aceite de novo na primeira entrada.
+        try { await fetch('/api/consent', { method: 'POST' }); } catch {}
       } else {
         const { error } = await signIn.email({ email, password });
         if (error) { setError(traduzErroAuth(error)); return; }
@@ -109,11 +115,25 @@ export function LoginScreen({ initialMode = 'login', onBack = null }) {
           <input className="loginInput" type="password" value={password} onChange={e => setPassword(e.target.value)}
             placeholder={isSignup ? 'Crie uma senha (mín. 8 caracteres)' : 'Senha'}
             autoComplete={isSignup ? 'new-password' : 'current-password'} required minLength={8} />
+          {isSignup && (
+            <label className="loginConsent">
+              <input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} />
+              <span>
+                Li e concordo com os <a href="/termos" target="_blank" rel="noreferrer">Termos de Uso</a> e
+                a <a href="/privacidade" target="_blank" rel="noreferrer">Política de Privacidade</a>.
+              </span>
+            </label>
+          )}
           {error && <p className="loginError">{error}</p>}
-          <button className="primary" type="submit" disabled={busy || !!social}>
+          <button className="primary" type="submit" disabled={busy || !!social || (isSignup && !consent)}>
             {busy && <RefreshCw size={18} className="spinIcon" />} {isSignup ? 'Criar conta' : 'Entrar'}
           </button>
         </form>
+        <p className="loginLegal">
+          Ao continuar (inclusive com Google ou GitHub), você concorda com os{' '}
+          <a href="/termos" target="_blank" rel="noreferrer">Termos de Uso</a> e a{' '}
+          <a href="/privacidade" target="_blank" rel="noreferrer">Política de Privacidade</a>.
+        </p>
 
         <p className="loginToggle">
           {isSignup ? 'Já tem conta?' : 'Ainda não tem conta?'}{' '}
