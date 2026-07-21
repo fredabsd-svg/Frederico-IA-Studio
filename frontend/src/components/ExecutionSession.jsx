@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Terminal, FolderOpen, Globe, Search, Image as ImageIcon, FileCog,
-  X, Maximize2, CheckCircle2, AlertCircle, Circle, Cpu,
-  Loader
+  X, Maximize2, CheckCircle2, AlertCircle, Circle, Cpu, Loader, ExternalLink
 } from 'lucide-react';
+import { API } from '../constants.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Ambiente de Trabalho da IA
@@ -12,7 +12,8 @@ import {
 // ferramenta de uma resposta são agrupadas numa ÚNICA sessão de execução. Ela
 // aparece como um cartão compacto na conversa e pode ser expandida para uma
 // janela ao vivo (terminal, arquivos, código, pesquisa, navegador) onde o
-// usuário acompanha o que a IA está fazendo, com as etapas humanizadas.
+// usuário acompanha o que a IA está fazendo, com as etapas humanizadas e o
+// detalhe (entrada e resultado) de cada ação.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Cada ferramenta do backend vira uma "etapa" com nome humano e categoria.
@@ -56,6 +57,14 @@ const fmtDuration = ms => {
   return s ? `${m}min ${s}s` : `${m}min`;
 };
 
+const tryParse = raw => { try { return JSON.parse(raw); } catch { return null; } };
+
+const fileUrl = (conversationId, filePath) => {
+  const id = encodeURIComponent(String(conversationId || ''));
+  const p = String(filePath || '').split('/').filter(Boolean).map(encodeURIComponent).join('/');
+  return `${API}/api/conversations/${id}/download/${p}`;
+};
+
 // Contagens usadas no cartão compacto e no resumo final.
 function summarize(steps, now) {
   const count = name => steps.filter(s => s.name === name).length;
@@ -89,21 +98,88 @@ function statusIcon(status) {
   return <CheckCircle2 size={15} className="esOk" />;
 }
 
+// ─── Painel de detalhe: formata o resultado conforme a categoria da etapa ────
+function ResultView({ step, conversationId }) {
+  if (step.status === 'running') return <div className="esWaiting"><Loader size={14} className="esSpin" /> Executando…</div>;
+
+  const parsed = tryParse(step.result);
+  const cat = metaOf(step.name).cat;
+
+  if (parsed?.error) return <pre className="esOutput err">{parsed.error}</pre>;
+
+  // Imagens geradas: miniatura clicável do que foi produzido.
+  if (step.name === 'generate_image' && Array.isArray(parsed?.saved) && parsed.saved.length) {
+    return <div className="esThumbs">
+      {parsed.saved.map(p => (
+        <a key={p} className="esThumb" href={fileUrl(conversationId, p)} target="_blank" rel="noreferrer" title={`${p} — abrir`}>
+          <img src={fileUrl(conversationId, p)} alt={p} loading="lazy" />
+          <span>{p.split('/').pop()}</span>
+        </a>
+      ))}
+    </div>;
+  }
+
+  // Pesquisa na internet: lista de resultados (título, resumo, link).
+  if (cat === 'search' && Array.isArray(parsed?.results) && parsed.results.length) {
+    return <ul className="esResults">
+      {parsed.results.map((r, i) => (
+        <li key={i}>
+          <a href={r.url} target="_blank" rel="noreferrer">{r.title || r.url} <ExternalLink size={11} /></a>
+          {r.snippet && <p>{r.snippet}</p>}
+          {r.url && <small>{r.url}</small>}
+        </li>
+      ))}
+    </ul>;
+  }
+
+  // Página aberta no navegador: cabeçalho com o endereço + prévia do conteúdo.
+  if (cat === 'browser' && parsed?.content) {
+    return <div className="esPage">
+      {parsed.url && <a className="esPageUrl" href={parsed.url} target="_blank" rel="noreferrer">{parsed.url} <ExternalLink size={11} /></a>}
+      <pre className="esOutput">{String(parsed.content).slice(0, 4000)}</pre>
+    </div>;
+  }
+
+  // Terminal / Python: mostra a saída como um console.
+  if (cat === 'terminal' && parsed && ('output' in parsed || 'exitCode' in parsed)) {
+    const failed = typeof parsed.exitCode === 'number' && parsed.exitCode !== 0;
+    return <pre className={`esOutput ${failed ? 'err' : ''}`}>{parsed.output || '(sem saída)'}</pre>;
+  }
+
+  // Leitura de arquivo: mostra o conteúdo do arquivo.
+  if (step.name === 'read_file' && parsed?.content != null) return <pre className="esOutput">{parsed.content || '(arquivo vazio)'}</pre>;
+
+  // Lista de arquivos.
+  if (step.name === 'list_files' && Array.isArray(parsed?.files)) {
+    return parsed.files.length
+      ? <ul className="esFileList">{parsed.files.map(f => <li key={f}>{f}</li>)}</ul>
+      : <div className="esEmpty">Nenhum arquivo encontrado.</div>;
+  }
+
+  // Gravação de arquivo: já mostramos o conteúdo escrito acima; aqui, confirmação.
+  if (step.name === 'write_file' && parsed?.ok) {
+    return <pre className="esOutput">Arquivo salvo: {parsed.path}{parsed.size != null ? ` · ${parsed.size} bytes` : ''}</pre>;
+  }
+
+  return <pre className="esOutput">{step.result ? (parsed ? JSON.stringify(parsed, null, 2) : step.result) : '(sem saída)'}</pre>;
+}
+
 // ─── Janela ao vivo (overlay em tela cheia) ─────────────────────────────────
-function WorkspaceOverlay({ steps, live, sum, onClose }) {
+function WorkspaceOverlay({ steps, live, sum, conversationId, onClose }) {
   const [filter, setFilter] = useState('all');
-  const [selected, setSelected] = useState(null);
+  const [selected, setSelected] = useState(steps.length - 1);
   const [follow, setFollow] = useState(true);
   const listRef = useRef(null);
 
-  // Enquanto a IA trabalha, acompanha automaticamente a última etapa —
-  // até o usuário clicar em alguma, quando o acompanhamento é pausado.
+  const runningIdx = steps.findIndex(s => s.status === 'running');
+
+  // Enquanto acompanha, seleciona a etapa em execução (ou a última). Depende de
+  // valores primitivos — não da identidade do array, que muda a cada render e
+  // faria o efeito disparar sem parar.
   useEffect(() => {
     if (!follow) return;
-    const runningIdx = steps.findIndex(s => s.status === 'running');
-    const idx = runningIdx > -1 ? runningIdx : steps.length - 1;
-    setSelected(idx);
-  }, [steps, follow]);
+    setSelected(runningIdx > -1 ? runningIdx : steps.length - 1);
+  }, [follow, runningIdx, steps.length]);
 
   useEffect(() => {
     if (follow && listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
@@ -160,14 +236,11 @@ function WorkspaceOverlay({ steps, live, sum, onClose }) {
 
         {cats.length > 2 && (
           <div className="esFilters" role="tablist" aria-label="Filtrar etapas por tipo">
-            {cats.map(c => {
-              const label = c === 'all' ? 'Tudo' : CAT_META[c].label;
-              return (
-                <button key={c} role="tab" aria-selected={filter === c} className={filter === c ? 'on' : ''} onClick={() => setFilter(c)}>
-                  {label}
-                </button>
-              );
-            })}
+            {cats.map(c => (
+              <button key={c} role="tab" aria-selected={filter === c} className={filter === c ? 'on' : ''} onClick={() => setFilter(c)}>
+                {c === 'all' ? 'Tudo' : CAT_META[c].label}
+              </button>
+            ))}
           </div>
         )}
 
@@ -177,7 +250,7 @@ function WorkspaceOverlay({ steps, live, sum, onClose }) {
               const info = describe(s);
               const CatIcon = info.catMeta.Icon;
               return (
-                <li key={i}>
+                <li key={i} className="esStepIn">
                   <button className={`esStep ${s.status} ${selected === i ? 'sel' : ''}`} onClick={() => pick(i)}>
                     <span className="esStepStat">{statusIcon(s.status)}</span>
                     <span className="esStepCat"><CatIcon size={14} /></span>
@@ -210,11 +283,15 @@ function WorkspaceOverlay({ steps, live, sum, onClose }) {
                     <pre className="esInput">{activeInfo.detail}</pre>
                   </div>
                 )}
+                {active.name === 'write_file' && active.detail && (
+                  <div className="esBlock">
+                    <span className="esBlockLabel">Conteúdo salvo</span>
+                    <pre className="esOutput">{active.detail}</pre>
+                  </div>
+                )}
                 <div className="esBlock">
                   <span className="esBlockLabel">Resultado</span>
-                  {active.status === 'running'
-                    ? <div className="esWaiting"><Loader size={14} className="esSpin" /> Executando…</div>
-                    : <pre className={`esOutput ${active.status === 'error' ? 'err' : ''}`}>{active.result || '(sem saída)'}</pre>}
+                  <ResultView step={active} conversationId={conversationId} />
                 </div>
               </>
             ) : (
@@ -228,18 +305,19 @@ function WorkspaceOverlay({ steps, live, sum, onClose }) {
 }
 
 // ─── Cartão compacto no chat ────────────────────────────────────────────────
-export function ExecutionSession({ steps, live, nowTick }) {
+function ExecutionSessionInner({ steps, live, conversationId }) {
   const [open, setOpen] = useState(false);
-  // Relógio próprio: mantém o tempo "vivo" mesmo quando o pai não re-renderiza.
-  const [, tick] = useState(0);
+  // Relógio próprio, só enquanto a sessão está viva: mantém o tempo correndo de
+  // forma suave sem depender de re-renders do chat.
+  const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!live) return;
-    const t = setInterval(() => tick(n => n + 1), 1000);
+    setNow(Date.now());
+    const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, [live]);
 
-  const now = Date.now();
-  const sum = useMemo(() => summarize(steps, now), [steps, now, nowTick]);
+  const sum = useMemo(() => summarize(steps, now), [steps, now]);
   if (!steps.length) return null;
 
   const running = steps.find(s => s.status === 'running');
@@ -278,7 +356,24 @@ export function ExecutionSession({ steps, live, nowTick }) {
         <Maximize2 size={14} />
         {live ? 'Abrir ambiente de trabalho' : 'Ver detalhes'}
       </button>
-      {open && <WorkspaceOverlay steps={steps} live={live} sum={sum} onClose={() => setOpen(false)} />}
+      {open && <WorkspaceOverlay steps={steps} live={live} sum={sum} conversationId={conversationId} onClose={() => setOpen(false)} />}
     </div>
   );
 }
+
+// O array `steps` é recriado (novo .filter()) a cada render do chat, então
+// comparar por identidade não adiantaria. Comparamos pelo CONTEÚDO relevante:
+// quantidade de etapas e, em cada uma, status/fim/resultado. Assim, enquanto a
+// resposta em texto vai fluindo (deltas) ou o relógio bate, um cartão de sessão
+// já pronto acima NÃO é re-renderizado — que é o que engasgava a tela.
+function sameSteps(a, b) {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].status !== b[i].status || a[i].ended !== b[i].ended || a[i].result !== b[i].result) return false;
+  }
+  return true;
+}
+
+export const ExecutionSession = React.memo(ExecutionSessionInner, (a, b) =>
+  a.live === b.live && a.conversationId === b.conversationId && sameSteps(a.steps, b.steps));

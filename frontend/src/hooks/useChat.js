@@ -139,7 +139,7 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
           else blocks.push({ type: 'text', content: ev.content });
           return { ...m, blocks, content: (m.content || '') + ev.content };
         });
-        if (ev.type === 'tool_start') { setStatusText(`Executando ${ev.name}...`); update(m => ({ ...m, blocks: [...(m.blocks || []), { type: 'tool', name: ev.name, preview: ev.preview, status: 'running', started: Date.now() }] })); }
+        if (ev.type === 'tool_start') { setStatusText(`Executando ${ev.name}...`); update(m => ({ ...m, blocks: [...(m.blocks || []), { type: 'tool', name: ev.name, preview: ev.preview, detail: ev.detail || '', status: 'running', started: Date.now() }] })); }
         if (ev.type === 'tool_result') update(m => {
           const blocks = [...(m.blocks || [])];
           const status = toolResultFailed(ev.content) ? 'error' : 'done';

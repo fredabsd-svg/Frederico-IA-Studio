@@ -548,7 +548,11 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
       try { args = JSON.parse(call.function.arguments || '{}'); } catch {}
       // Prévia do que a ferramenta vai executar (exibida na interface)
       const preview = String(args.code || args.command || args.prompt || args.path || args.query || args.url || '').slice(0, 400);
-      onEvent({ type: 'tool_start', name, preview });
+      // Prévia rica p/ o Ambiente de Trabalho: ao gravar arquivo, manda também o
+      // conteúdo escrito (o resultado só traz o caminho) para o painel de detalhe
+      // mostrar o que a IA de fato salvou. Limitado para não pesar no stream.
+      const detail = name === 'write_file' ? String(args.content || '').slice(0, 4000) : '';
+      onEvent({ type: 'tool_start', name, preview, ...(detail ? { detail } : {}) });
       let result;
       const isWebTool = name === 'web_search' || name === 'web_fetch';
       const fetchUrl = name === 'web_fetch' ? normalizeWebFetchUrl(args.url) : '';

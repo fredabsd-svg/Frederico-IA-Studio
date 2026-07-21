@@ -1,5 +1,62 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## ⚡ Ambiente de Trabalho da IA: fluidez + prévia de arquivo/imagem/página (2026-07-21 — branch `claude/unified-ai-execution-session-25rm4h`, follow-up do PR #59)
+
+Continuação do #59 (que já está na `main`). Dois pedidos: **(1)** a interface
+estava "travando / demorando a atualizar" — não parecia orgânica; **(2)** faltava
+a prévia do conteúdo do arquivo / miniatura da imagem / prévia da página no painel
+de detalhe. Como o #59 já foi mesclado, este trabalho recomeçou do `origin/main`
+no mesmo nome de branch (abre um PR novo).
+
+**(1) Fluidez — o que travava e o que mudou:**
+- **Causa raiz:** enquanto a IA responde, o app re-renderiza a cada token (delta)
+  e a cada 1s (relógio de `useChat`). Sem memo, TODA mensagem — incluindo o
+  `ReactMarkdown` com `rehype-highlight` (recolore blocos de código) de mensagens
+  antigas — era re-parseada a cada tique. Era isso que engasgava, sobretudo no
+  celular.
+- **Correções (`frontend/src/App.jsx`):** novo componente `MessageText` embrulhado
+  em `React.memo` (compara pelo texto) — o markdown só reprocessa o que mudou de
+  fato. Toda renderização de markdown do chat passou a usá-lo.
+- **`frontend/src/components/ExecutionSession.jsx`:** `ExecutionSession` agora é
+  `React.memo` com comparador `sameSteps` (compara nº de etapas + status/ended/
+  result de cada uma). Como `toolSteps` é recriado a cada render (`.filter`),
+  comparar por identidade não bastava — por isso o comparador por conteúdo.
+  O relógio virou estado interno (`now`) que só corre quando `live`, em vez de
+  depender do `nowTick` do pai (prop `nowTick` removida). No overlay, os
+  `useEffect` de auto-seguir/rolar passaram a depender de primitivos
+  (`runningIdx`, `steps.length`, `follow`) e não da identidade do array — antes
+  disparavam a cada render.
+- **CSS (`frontend/src/styles.css`):** transições suaves no cartão/etapas, pulse
+  discreto no cartão "ao vivo", fade/rise no overlay, com guarda
+  `prefers-reduced-motion`.
+
+**(2) Prévia rica no painel de detalhe:**
+- **Backend (`backend/src/agent/loop.js`):** o `write_file` só devolvia `{ok,path,
+  size}` (sem conteúdo). Agora o `tool_start` leva também `detail` = conteúdo
+  escrito (até 4000 chars) — única mudança de backend, aditiva. `useChat.js`
+  guarda `detail` no bloco da ferramenta.
+- **Frontend (`ExecutionSession.jsx`, novo `ResultView`):** o resultado é
+  parseado e formatado por categoria — **imagem** (`generate_image.saved`) vira
+  miniatura clicável (usa `API` + `/download/`); **pesquisa** vira lista de
+  resultados (título/resumo/link); **navegador** (`web_fetch`) mostra o endereço
+  clicável + prévia do texto da página; **terminal** (`bash`/`run_python`) mostra
+  a saída como console (erro se `exitCode≠0`); **leitura**/**lista** mostram
+  conteúdo/arquivos; **gravação** mostra o conteúdo salvo + confirmação.
+- **Miniatura real de página (screenshot) NÃO foi feita:** `web_fetch` retorna só
+  texto; um thumbnail exigiria um navegador headless no backend. Em vez disso, a
+  "prévia da página" é endereço + excerto do texto. Fica como possível evolução.
+
+**Persistência:** os `blocks` (etapas) NÃO são salvos no banco — só existem ao
+vivo e no replay do stream (reconexão). Ao recarregar do zero, a mensagem mostra
+só o texto final (conversa limpa). Comportamento intencional, mantido.
+
+**Validação:** `npm run build` (vite) OK; `node --test src/*.test.js` do frontend
+passa (7). Backend: `node --check src/agent/loop.js` OK e o diff é aditivo; os
+testes que importam `openai` não rodam NESTE ambiente (proxy bloqueia instalar
+`openai`/`sharp` com 403) — quem valida de fato é o build da VPS. Detalhe visual
+(pesquisa, terminal, código, navegador, cartões) conferido em preview antes do
+commit.
+
 ## 🔄 Catálogo de modelos por usuário — OpenRouter voltando a aparecer (2026-07-20 — branch `claude/openrouter-models-sync-wp1krw`)
 
 **Sintoma relatado:** "modelos do OpenRouter que não aparecem no app" — dúvida se
