@@ -266,6 +266,29 @@ export function developerContextFor(request, userId) {
   };
 }
 
+// Nota do modo desenvolvedor para os ESPECIALISTAS do Modo Equipe, que analisam
+// e aconselham mas NÃO executam ferramentas nesta etapa. Diferente da nota de
+// execução (developerContextFor), aqui não mandamos clonar nem damos passo a
+// passo de ferramenta — só situamos o projeto/repositório selecionado para o
+// parecer sair ancorado no código real (que o EXECUTOR do time clona e lê na
+// fase de execução), em vez de o modelo pedir "me mande o link do repositório"
+// ou dizer que não tem acesso ao GitHub.
+export function developerTeamContextFor(request, userId) {
+  const ctx = developerContextFor(request, userId);
+  if (!ctx) return null;
+  const { mode, github } = ctx;
+  const alvo = github
+    ? `repositório GitHub "${github.repo}"${github.branch ? ` (branch "${github.branch}")` : ''}, já conectado à conta do usuário neste app`
+    : 'projeto selecionado no painel do modo desenvolvedor';
+  const intent = { plan: 'planejar as mudanças', build: 'implementar as mudanças', review: 'revisar o código' }[mode] || 'analisar o projeto';
+  const rules = String(request?.rules || '').trim().slice(0, 6000);
+  return [
+    `MODO DESENVOLVEDOR ATIVO — a tarefa é ${intent} no ${alvo}.`,
+    'O app TEM acesso a esse projeto: o executor do time vai clonar e ler o código de fato na execução. Portanto NÃO peça o link nem o nome do repositório e NÃO diga que não tem acesso ao GitHub. Dê seu parecer já ancorado nesse projeto (UX/usabilidade, arquitetura, riscos, arquivos e caminhos prováveis), deixando claro o que precisa ser confirmado lendo o código na execução — sem inventar detalhes específicos que você ainda não viu.',
+    rules ? `REGRAS DO PROJETO:\n${rules}` : null
+  ].filter(Boolean).join('\n\n');
+}
+
 export function toolAvailabilityNote(tools, { includeInventory = false } = {}) {
   const names = new Set(tools.map(t => t.function.name));
   const lines = ['FERRAMENTAS E AMBIENTE DISPONÍVEIS NESTA CHAMADA:'];
