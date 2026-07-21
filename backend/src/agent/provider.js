@@ -21,13 +21,17 @@ export const STREAM_PAUSE_RESUME_NOTE = 'A resposta anterior foi pausada pelo us
 export const PROVIDER_TIMEOUT_NOTICE = '\n\n_Nota: o provedor do modelo ficou indisponivel enquanto esta etapa era gerada. O aplicativo tentou retomar automaticamente, mas nao recebeu uma resposta completa. Reenvie esta mesma tarefa para continuar a partir do trabalho ja salvo._';
 
 export function isRetryableStreamError(error) {
+  // Watchdog de stream parado (streamGuard.js): o provedor deixou de mandar
+  // dados sem fechar a conexão. É retryável por definição — o objetivo do
+  // watchdog é justamente acionar esta recuperação em vez de travar p/ sempre.
+  if (error?.code === 'STREAM_STALLED') return true;
   const status = Number(error?.status ?? error?.code ?? error?.error?.code);
   const detail = [error?.message, error?.error?.message, error?.error?.metadata?.error_type]
     .filter(Boolean)
     .join(' ')
     .toLowerCase();
   return [408, 429, 500, 502, 503, 504].includes(status)
-    || /upstream idle timeout|gateway timeout|temporar(?:y|ily)|provider.*(?:overload|timeout)|econnreset|fetch failed/.test(detail);
+    || /upstream idle timeout|gateway timeout|temporar(?:y|ily)|provider.*(?:overload|timeout)|econnreset|fetch failed|stream stalled|request timed out/.test(detail);
 }
 
 export function openRouterRouting(hasTools = false) {
@@ -48,6 +52,54 @@ export function addUsage(acc, u) {
   acc.prompt_tokens += u.prompt_tokens || 0;
   acc.completion_tokens += u.completion_tokens || 0;
   acc.total_tokens += u.total_tokens || 0;
+  // Tokens servidos pelo cache de prompt do provedor (Anthropic/DeepSeek/OpenRouter
+  // expõem em `prompt_tokens_details.cached_tokens`). Contabilizar deixa medir o
+  // quanto o prompt caching está economizando. `|| 0` mantém o campo opcional.
+  const cached = u.prompt_tokens_details?.cached_tokens ?? u.cached_tokens ?? 0;
+  acc.cached_tokens = (acc.cached_tokens || 0) + (cached || 0);
+}
+
+// ---- Prompt caching (cache_control) ----
+// Reenviamos os MESMOS blocos `system` gigantes (prompt-base, contrato de
+// qualidade, notas de ferramentas, memória) a cada passo do loop e a cada
+// mensagem da conversa. Marcar o prefixo estável com cache_control faz o
+// provedor reaproveitar esse prefixo: menos tokens de ENTRADA cobrados e menor
+// latência (o modelo não reprocessa o preâmbulo).
+//
+// Habilitado só onde é suportado E seguro: roteando pelo OpenRouter para as
+// famílias que aceitam cache_control (Anthropic/Claude e Google/Gemini). Para a
+// API direta da DeepSeek o cache é AUTOMÁTICO (não precisa e não aceita
+// cache_control), então NÃO tocamos nas mensagens nesse caso. Desligável com
+// PROMPT_CACHE=0.
+const PROMPT_CACHE_ENABLED = process.env.PROMPT_CACHE !== '0';
+
+export function providerSupportsPromptCache(model) {
+  if (!PROMPT_CACHE_ENABLED) return false;
+  if (!/openrouter\.ai/i.test(modelApiBaseUrl)) return false;
+  return /(anthropic|claude|google|gemini)/i.test(String(model || ''));
+}
+
+// Converte o conteúdo (string) de uma mensagem num bloco único com cache_control.
+// Idempotente: se já for array (já marcado, ou multimodal), não faz nada.
+function markMessageCached(message) {
+  if (!message || typeof message.content !== 'string' || !message.content) return false;
+  message.content = [{ type: 'text', text: message.content, cache_control: { type: 'ephemeral' } }];
+  return true;
+}
+
+// Aplica os breakpoints de cache no array de mensagens (mutação in place):
+//   1) fim do prompt-base (system[0]) — idêntico em toda a conversa;
+//   2) fim do preâmbulo estático (antes de memória/histórico), quando houver mais
+//      de uma mensagem estável — o provedor usa o MAIOR prefixo que casar, então
+//      esse 2º ponto rende nos turnos em que o preâmbulo não mudou.
+// Chamar mais de uma vez é seguro (idempotente). Se o modelo não suportar, é um
+// no-op — nada é adicionado.
+export function applyPromptCache(messages, model, staticPrefixEnd = 0) {
+  if (!Array.isArray(messages) || !providerSupportsPromptCache(model)) return messages;
+  if (messages[0]?.role === 'system') markMessageCached(messages[0]);
+  const end = Math.min(staticPrefixEnd, messages.length) - 1;
+  if (end > 0 && messages[end]?.role === 'system') markMessageCached(messages[end]);
+  return messages;
 }
 
 // Traduz erros comuns da API do provedor em mensagens claras em português

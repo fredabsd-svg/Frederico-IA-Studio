@@ -2,6 +2,7 @@
 // ferramentas, reparos, failover de modelo e entrega de arquivos.
 // Extraído de agent.js (refatoração mecânica, sem mudança de comportamento).
 import { getUserProvider } from '../userProvider.js';
+import { freeTierConfigured } from '../freeTier.js';
 import { nanoid } from 'nanoid';
 import { webToolDefinitions, runTool } from '../tools.js';
 import { buildContext, historyBudgetForModel, selectHistoryForContext } from '../memory/contextBuilder.js';
@@ -13,27 +14,46 @@ import { createToolProtocolStreamGuard, parseTextToolCalls, sanitizeToolProtocol
 import { githubToolDefinitions, GITHUB_WRITE_TOOLS, hasGithubConnection } from '../connectors/github.js';
 import { effortCfg, promptFor, toolsFor, temperatureFor, developerContextFor, toolAvailabilityNote, ENVIRONMENT_QUERY_RE, verifiedEnvironmentNote, pcFoldersNote, uploadsNote, clipForBriefing, BRIEFING_CHAR_LIMIT, QUALITY_BAR } from './prompts.js';
 import { listOutputs, mentionsOutputPath, recoverAlternateOutputs, referencedOutputFiles, fileSignature, validateOutputs } from './outputs.js';
-import { OUTPUT_DELIVERY_REPAIR_NOTE, MISSING_OUTPUT_NOTICE, EXECUTION_COMPLETION_REPAIR_NOTE, EXECUTION_INCOMPLETE_NOTICE, TOOL_PROTOCOL_REPAIR_NOTE, TOOL_PROTOCOL_FAILURE_NOTICE, RESPONSE_TRUNCATED_REPAIR_NOTE, RESPONSE_TRUNCATED_NOTICE, EXECUTION_CONTRACT_NOTE, MACRO_REQUEST_RE, MACRO_LIMITATION_NOTE, DEGEN_CHECK_STEP, looksDegenerate, shouldRepairOutputDelivery, shouldRepairExecution, shouldContinueAfterTruncation, materializeTextOutput } from './repair.js';
+import { OUTPUT_DELIVERY_REPAIR_NOTE, MISSING_OUTPUT_NOTICE, EXECUTION_COMPLETION_REPAIR_NOTE, EXECUTION_INCOMPLETE_NOTICE, TOOL_PROTOCOL_REPAIR_NOTE, TOOL_PROTOCOL_FAILURE_NOTICE, RESPONSE_TRUNCATED_REPAIR_NOTE, RESPONSE_TRUNCATED_NOTICE, EXECUTION_CONTRACT_NOTE, MACRO_REQUEST_RE, MACRO_LIMITATION_NOTE, DEGEN_CHECK_STEP, looksDegenerate, shouldRepairOutputDelivery, shouldRepairExecution, shouldContinueAfterTruncation, materializeTextOutput, endsAwaitingUserReply } from './repair.js';
 import { normalizeWebFetchUrl, classifyToolOutcome, webResearchStopReason, planToolCallBatch, WEB_TOOL_NAMES, webResearchFinalizationNote, WEB_RESEARCH_FETCH_LIMIT, TOOL_CALLS_PER_STEP_LIMIT } from './webResearch.js';
 import { imageUploadParts, attachImagesToLastUserMessage, stripImagePartsFromMessages } from './vision.js';
-import { STREAM_RECOVERY_LIMIT, STREAM_RESUME_NOTE, STREAM_PAUSE_RESUME_NOTE, PROVIDER_TIMEOUT_NOTICE, isRetryableStreamError, openRouterRouting, retryDelay, addUsage } from './provider.js';
+import { STREAM_RECOVERY_LIMIT, STREAM_RESUME_NOTE, STREAM_PAUSE_RESUME_NOTE, PROVIDER_TIMEOUT_NOTICE, isRetryableStreamError, openRouterRouting, retryDelay, addUsage, applyPromptCache } from './provider.js';
+import { guardStreamStall, PROVIDER_CONNECT_TIMEOUT_MS } from './streamGuard.js';
 import { acquireConversationControl, releaseConversationControl, beginProviderRequest, releaseProviderRequest, beginToolRequest, releaseToolRequest, controlInterruptReason, gate } from './control.js';
 import { clientScopeFor, memoryNote, saveMessage, persistAssistantReply } from './persistence.js';
+import { saveCheckpoint, clearCheckpoint, isResumableReason, buildResumeMessages, leadingSystemCount } from './checkpoint.js';
 
-export async function runAgent({ userId, conversationId, userText, model, assistant, webSearch, effort, developer, onEvent, saveUserMessage = true, existingUserMessageId = null, executionBriefing = null, forceExecution = false, control: inheritedControl = null }) {
+// RETOMADA REAL (checkpoint): `resume` (quando presente) traz o estado salvo de
+// um run interrompido — array de mensagens do agente, modelo ativo, cadeia de
+// failover já tentada e o objetivo. Com ele, o loop CONTINUA de onde parou (com
+// orçamento de ciclos NOVO), em vez de recomeçar do zero. Ver checkpoint.js.
+export async function runAgent({ userId, conversationId, userText, model, assistant, webSearch, effort, developer, onEvent, saveUserMessage = true, existingUserMessageId = null, executionBriefing = null, forceExecution = false, control: inheritedControl = null, resume = null }) {
   const provider = await getUserProvider(userId);          // BYOK: chave do usuário
   const client = provider.client;                          // sombreia o cliente global
-  let chosenModel = model || assistant?.model || provider.model;
+  const runId = resume?.runId || nanoid();
+  // No resume, o modelo ativo é o que estava rodando quando parou (pode ser um
+  // de reserva já acionado) — não voltamos ao modelo original.
+  let chosenModel = resume?.model || model || assistant?.model || provider.model;
+  // MODO GRATUITO: o modelo precisa estar na allowlist gratuita — a chave da
+  // plataforma nunca atende um modelo pago escolhido no seletor. Fora da lista,
+  // cai no modelo gratuito padrão.
+  if (provider.source === 'free' && !(provider.freeModels || []).includes(chosenModel)) {
+    chosenModel = provider.model;
+  }
   // FAILOVER (MM-04): se o provedor cair no meio da tarefa, antes o app só
   // repetia o MESMO modelo e desistia. Agora há uma cadeia de reserva — os
-  // modelos de MODEL_FALLBACKS (env) e, por padrão, o modelo-base da conta —
-  // acionada só quando o modelo escolhido falha de forma recuperável, sem
-  // perder o trabalho já feito (as mensagens/ferramentas já executadas ficam).
+  // modelos de MODEL_FALLBACKS (env), os modelos gratuitos alternativos (modo
+  // gratuito) e, por padrão, o modelo-base da conta — acionada só quando o
+  // modelo escolhido falha de forma recuperável, sem perder o trabalho já feito
+  // (as mensagens/ferramentas já executadas ficam).
   const fallbackChain = [
-    ...String(process.env.MODEL_FALLBACKS || '').split(',').map(s => s.trim()).filter(Boolean),
+    ...(provider.source === 'free' ? [] : String(process.env.MODEL_FALLBACKS || '').split(',').map(s => s.trim()).filter(Boolean)),
+    ...(provider.fallbackModels || []),
     ...(provider.model && provider.model !== chosenModel ? [provider.model] : [])
   ];
-  const triedModels = new Set([chosenModel]);
+  // No resume, preserva a cadeia de failover já tentada (não retenta modelos
+  // que já falharam nesta tarefa).
+  const triedModels = new Set(resume?.triedModels?.length ? resume.triedModels : [chosenModel]);
   const nextFallbackModel = () => {
     for (const m of fallbackChain) if (m && !triedModels.has(m)) { triedModels.add(m); return m; }
     return null;
@@ -53,7 +73,9 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   // a conta (Configurações → Conectores). Em plan/review, as de escrita
   // (push/PR) ficam de fora — esses modos não alteram nada.
   if (!lowSignalTurn && await hasGithubConnection(userId)) {
-    const githubTools = developerContext && developerContext.mode !== 'build'
+    // Em modo desenvolvedor de leitura (ask/plan/review), as ferramentas de
+    // escrita do GitHub (push/PR) ficam de fora — esses modos não alteram nada.
+    const githubTools = developerContext && !developerContext.canWrite
       ? githubToolDefinitions.filter(tool => !GITHUB_WRITE_TOOLS.has(tool.function.name))
       : githubToolDefinitions;
     requestedTools = [...requestedTools, ...githubTools];
@@ -72,16 +94,22 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   let tools = modelPlan.tools;
   const reasoningEffort = modelPlan.reasoning;
   const temperature = temperatureFor(assistant?.personality);
-  const control = inheritedControl || acquireConversationControl(conversationId);
+  const control = inheritedControl || acquireConversationControl(conversationId, userId);
   const ownsControl = !inheritedControl;
   try {
-  const userMsgId = saveUserMessage || !existingUserMessageId
-    ? await saveMessage(userId, conversationId, 'user', userText)
-    : existingUserMessageId;
+  // No resume NÃO gravamos uma nova mensagem de usuário — o objetivo já está na
+  // conversa e no checkpoint (evita duplicar o pedido e criar execução nova).
+  const userMsgId = resume
+    ? (existingUserMessageId || null)
+    : (saveUserMessage || !existingUserMessageId
+        ? await saveMessage(userId, conversationId, 'user', userText)
+        : existingUserMessageId);
 
   // BYOK: sem chave de API configurada, orienta a cadastrar e encerra.
   if (!provider.hasKey) {
-    const finalText = 'Nenhuma chave de API configurada. Vá em **Configurações → Provedor de IA** e cadastre a sua chave (OpenRouter/DeepSeek) para começar a conversar.';
+    const finalText = freeTierConfigured()
+      ? 'Nenhuma chave de API configurada. Você pode **começar gratuitamente** (Configurações → Provedor de IA → "Começar gratuitamente") ou cadastrar a sua própria chave (OpenRouter/DeepSeek) para conversar.'
+      : 'Nenhuma chave de API configurada. Vá em **Configurações → Provedor de IA** e cadastre a sua chave (OpenRouter/DeepSeek) para começar a conversar.';
     onEvent({ type: 'status', content: 'Chave de API não configurada' });
     onEvent({ type: 'delta', content: finalText });
     const assistantMessageId = await saveMessage(userId, conversationId, 'assistant', finalText);
@@ -145,6 +173,10 @@ Ao trazer o que encontrou:
 - Varie a forma de apresentar: evite começar sempre com "De acordo com a pesquisa…".
 
 O sandbox Python também tem internet: use requests/urllib ou uma API quando precisar de dados estruturados (para CNPJ, use a ferramenta consultar_cnpj). Use web_search/web_fetch para procurar e ler páginas.` });
+  // Fim do preâmbulo ESTÁVEL (prompt-base + notas de sistema): tudo daqui pra
+  // frente (memória, uploads, histórico) muda a cada turno. É o ponto natural
+  // para o breakpoint de prompt caching.
+  const staticPrefixEnd = messages.length;
   let memoryMeta = null;
   // Memória de longo prazo: perfil, notas, resumos e recuperação semântica
   try {
@@ -182,20 +214,67 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
     }))
     .filter(m => String(m.content || '').trim()));
 
+  // RETOMADA: descarta o contexto recém-montado e usa o ESTADO SALVO do run
+  // interrompido. O array do checkpoint já traz objetivo, plano, tool_calls,
+  // resultados de ferramenta, erros e texto parcial — o modelo continua da
+  // próxima etapa pendente, sem repetir o trabalho já feito.
+  let resumePrefixEnd = staticPrefixEnd;
+  if (resume) {
+    const seeded = buildResumeMessages(resume.messages, { streamResumeNote: STREAM_RESUME_NOTE });
+    messages.length = 0;
+    for (const m of seeded) messages.push(m);
+    resumePrefixEnd = leadingSystemCount(messages);
+  }
+
   // VISÃO MULTIMODAL: se o modelo escolhido tem visão e há imagens anexadas,
   // envia as imagens direto para o modelo (ele enxerga). Modelos SEM visão não
-  // recebem as imagens aqui — continuam lendo por OCR no sandbox.
+  // recebem as imagens aqui — continuam lendo por OCR no sandbox. No resume as
+  // imagens já estão no array do checkpoint (não reanexar).
   let visionApplied = false;
-  if (modelPlan.capabilities?.vision === true) {
+  if (!resume && modelPlan.capabilities?.vision === true) {
     visionApplied = attachImagesToLastUserMessage(messages, imageUploadParts(conversationId));
     if (visionApplied) onEvent({ type: 'status', content: 'Enviando a imagem para o modelo analisar...' });
   }
 
-  const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
-  const maxSteps = Number(process.env.AGENT_MAX_STEPS || eff.steps);
+  // Prompt caching: marca o prefixo estável para o provedor reaproveitá-lo nos
+  // próximos passos/mensagens (economia de tokens de entrada + latência). No-op
+  // quando o modelo/rota não suporta (ex.: DeepSeek direto já cacheia sozinho).
+  applyPromptCache(messages, chosenModel, resumePrefixEnd);
+
+  // Usage: no resume, soma sobre o que já foi consumido no run anterior.
+  const usage = {
+    prompt_tokens: resume?.usage?.prompt_tokens || 0,
+    completion_tokens: resume?.usage?.completion_tokens || 0,
+    total_tokens: resume?.usage?.total_tokens || 0,
+    cached_tokens: resume?.usage?.cached_tokens || 0
+  };
+  // Orçamento de etapas do loop agêntico. Cada etapa = um turno do modelo (que
+  // costuma executar UMA ferramenta), então tarefa longa/programação consome
+  // muitas etapas de trabalho legítimo.
+  // 1) AGENT_MAX_STEPS é PISO, nunca teto que reduza o esforço escolhido:
+  //    escolher "Máx" precisa valer ao menos os passos do esforço, mesmo com
+  //    AGENT_MAX_STEPS=30 no .env. (Antes o env sobrescrevia e cortava para 30 em
+  //    silêncio — por isso "aumentar o limite no código" nunca pegava.)
+  // 2) Modo desenvolvedor é programação por natureza: orçamento bem maior
+  //    (AGENT_DEV_MAX_STEPS, padrão 200).
+  const envSteps = Number(process.env.AGENT_MAX_STEPS) || 0;
+  let maxSteps = Math.max(eff.steps, envSteps);
+  if (developerContext) maxSteps = Math.max(maxSteps, Number(process.env.AGENT_DEV_MAX_STEPS) || 200);
+  // Teto absoluto de segurança contra loop infinito. Uma tarefa que AINDA está
+  // rendendo (ferramenta executada com sucesso há poucas etapas) pode passar do
+  // orçamento base até este teto, em vez de ser abortada no meio do trabalho.
+  const hardMaxSteps = Math.max(maxSteps, Number(process.env.AGENT_HARD_MAX_STEPS) || Math.round(maxSteps * 1.5));
+  const IDLE_STEP_GRACE = 2; // etapas sem progresso toleradas após o orçamento base
+  let lastProductiveStep = 0;
   const executionRequired = forceExecution || modelPlan.requirements.required;
   const requiresOutput = modelPlan.requirements.expectsOutput;
-  const outputsBefore = new Map(listOutputs(conversationId).map(f => [f.path, fileSignature(f)]));
+  // No resume, tratamos os arquivos que JÁ existem (criados no run anterior)
+  // como "entregáveis desta conclusão": assim eles reaparecem como download na
+  // resposta final e não disparam o falso alarme de "arquivo não gerado" quando
+  // a retomada só finaliza sem recriar o que já estava pronto.
+  const outputsBefore = resume
+    ? new Map()
+    : new Map(listOutputs(conversationId).map(f => [f.path, fileSignature(f)]));
   let finalText = '';
   let stopped = false;
   let completedNaturally = false;
@@ -215,7 +294,20 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
   let webFetchAttempts = 0;
   let webResearchStop = '';
   let webResearchConclusionAttempted = false;
-  for (let step = 0; step < maxSteps; step++) {
+  let awaitingUserReply = false;
+  // Checkpoint: motivo da interrupção que JUSTIFICA salvar estado p/ retomar
+  // (limite de ciclos, falha de provedor/stall exaurido, parada do usuário).
+  // Falhas de QUALIDADE (degeneração, protocolo) NÃO viram checkpoint — ali o
+  // certo é reenviar do zero, não continuar o mesmo array problemático.
+  let checkpointReason = null;
+  let reachedStep = 0;
+  for (let step = 0; step < hardMaxSteps; step++) {
+    // Passou do orçamento base? Só segue enquanto o trabalho ainda rende (uma
+    // ferramenta executada com sucesso há poucas etapas). Se estagnou, encerra
+    // como limite de etapas — as travas de falha (5 seguidas), repetição e
+    // pesquisa web continuam valendo à parte.
+    if (step >= maxSteps && (step - lastProductiveStep) >= IDLE_STEP_GRACE) break;
+    reachedStep = step;
     if (await gate(control, onEvent)) { stopped = true; break; }
     onEvent({ type: 'status', content: step === 0 ? 'Pensando...' : 'Continuando...' });
     // Streaming: o texto é enviado token a token para a interface (tela viva)
@@ -239,7 +331,7 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
         ...openRouterRouting(tools.length > 0),
         stream: true,
         stream_options: { include_usage: true }
-      }, { signal: activeRequest.signal });
+      }, { signal: activeRequest.signal, timeout: PROVIDER_CONNECT_TIMEOUT_MS });
     } catch (err) {
       const interrupted = controlInterruptReason(control, activeRequest);
       releaseProviderRequest(control, activeRequest);
@@ -280,6 +372,7 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
             continue;
           }
           providerFailure = true;
+          checkpointReason = 'provider_failure';
           failureMessage = 'O provedor do modelo ficou indisponível antes de concluir a tarefa.';
           finalText += PROVIDER_TIMEOUT_NOTICE;
           onEvent({ type: 'delta', content: PROVIDER_TIMEOUT_NOTICE });
@@ -307,7 +400,10 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
     let reasoningNotified = false;
     let pausedDuringStream = false;
     try {
-    for await (const chunk of stream) {
+    // Watchdog: se o provedor parar de mandar dados sem fechar a conexão,
+    // aborta e cai na recuperação (retomar de onde parou / modelo de reserva)
+    // em vez de deixar a resposta pendurada em "Raciocinando..." para sempre.
+    for await (const chunk of guardStreamStall(stream, { onStall: () => activeRequest.abort('stall') })) {
       if (await gate(control, onEvent)) { stopped = true; break; }
       if (chunk.usage) addUsage(usage, chunk.usage);
       const choice = chunk.choices?.[0];
@@ -381,6 +477,7 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
         }
         finalText += PROVIDER_TIMEOUT_NOTICE;
         providerFailure = true;
+        checkpointReason = 'provider_failure';
         failureMessage = 'O provedor do modelo interrompeu a resposta antes de concluir a tarefa.';
         onEvent({ type: 'delta', content: PROVIDER_TIMEOUT_NOTICE });
         completedNaturally = true;
@@ -481,7 +578,14 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
         continue;
       }
       const missingClaimedOutput = shouldRepairOutputDelivery(content, outputsBefore, outputsSoFar);
-      const incompleteExecution = shouldRepairExecution({
+      // O modelo terminou PERGUNTANDO algo ao usuário (escopo, opção, permissão):
+      // o turno acabou — entregar a pergunta e aguardar a resposta. Forçar a
+      // execução aqui (reparo com tool_choice='required') fazia o modelo
+      // "responder a própria pergunta" e decidir sozinho, sem o usuário conseguir
+      // intervir. Em tarefas de segundo plano (forceExecution) não há usuário
+      // presente para responder — lá o comportamento antigo continua valendo.
+      awaitingUserReply = !forceExecution && !missingClaimedOutput && endsAwaitingUserReply(content);
+      const incompleteExecution = !awaitingUserReply && shouldRepairExecution({
         requiresExecution: executionRequired,
         requiresOutput,
         toolsAvailable: tools.length > 0,
@@ -517,7 +621,11 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
       try { args = JSON.parse(call.function.arguments || '{}'); } catch {}
       // Prévia do que a ferramenta vai executar (exibida na interface)
       const preview = String(args.code || args.command || args.prompt || args.path || args.query || args.url || '').slice(0, 400);
-      onEvent({ type: 'tool_start', name, preview });
+      // Prévia rica p/ o Ambiente de Trabalho: ao gravar arquivo, manda também o
+      // conteúdo escrito (o resultado só traz o caminho) para o painel de detalhe
+      // mostrar o que a IA de fato salvou. Limitado para não pesar no stream.
+      const detail = name === 'write_file' ? String(args.content || '').slice(0, 4000) : '';
+      onEvent({ type: 'tool_start', name, preview, ...(detail ? { detail } : {}) });
       let result;
       const isWebTool = name === 'web_search' || name === 'web_fetch';
       const fetchUrl = name === 'web_fetch' ? normalizeWebFetchUrl(args.url) : '';
@@ -546,7 +654,11 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
         }
       }
       executedToolCalls += 1;
-      onEvent({ type: 'tool_result', name, content: result.slice(0, 2000) });
+      // A miniatura da página (web_fetch) vai num campo SEPARADO do stream: o
+      // `content` é cortado em 2000 chars e o caminho poderia ficar de fora.
+      let thumb = '';
+      if (name === 'web_fetch') { try { thumb = JSON.parse(result).thumb || ''; } catch {} }
+      onEvent({ type: 'tool_result', name, content: result.slice(0, 2000), ...(thumb ? { thumb } : {}) });
       messages.push({ role: 'tool', tool_call_id: call.id, content: result });
       // Freio de loop: conta falhas consecutivas das ferramentas
       const outcome = classifyToolOutcome(name, result);
@@ -560,6 +672,9 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
       if (researchReason && !webResearchStop) webResearchStop = researchReason;
     }
     if (stopped) break;
+    // Etapa produtiva: executou ferramenta(s) e a última não falhou em cadeia.
+    // Serve de sinal para permitir passar do orçamento base (ver topo do loop).
+    if (consecutiveFailures === 0) lastProductiveStep = step;
     if (webResearchStop && !webResearchConclusionAttempted) {
       webResearchConclusionAttempted = true;
       tools = tools.filter(tool => !WEB_TOOL_NAMES.has(tool.function.name));
@@ -583,12 +698,18 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
   if (stopped) {
     onEvent({ type: 'status', content: 'Interrompido pelo usuário' });
     if (!finalText.trim()) { finalText = '_Processamento interrompido pelo usuário._'; onEvent({ type: 'delta', content: finalText }); }
+    // Só oferece retomada se houve progresso real (ferramenta executada) — assim
+    // o usuário pode continuar uma tarefa que ele mesmo pausou.
+    if (executedToolCalls > 0) checkpointReason = 'stopped';
   }
   else if (!completedNaturally) {
     incomplete = true;
-    failureMessage = `A tarefa atingiu o limite de ${maxSteps} etapas antes da conclusão.`;
-    // Atingiu o limite de etapas ainda usando ferramentas: avisa o usuário
-    const note = `\n\n_⚠️ Atingi o limite de ${maxSteps} etapas de processamento nesta tarefa. Ela ficou muito longa — provavelmente pela dificuldade de extrair os dados. Sugestão: peça em partes (ex.: 1º "extraia os dados do arquivo para um CSV", depois "gere a planilha final a partir do CSV")._`;
+    checkpointReason = 'step_limit';
+    failureMessage = `A tarefa atingiu o limite de ${hardMaxSteps} etapas antes da conclusão.`;
+    // Atingiu o limite de etapas ainda usando ferramentas: avisa de forma honesta
+    // e diz como retomar. O progresso é salvo num checkpoint (backend), então a
+    // retomada CONTINUA de onde parou — não recomeça.
+    const note = `\n\n_⚠️ Esta tarefa ficou longa e precisei pausá-la para não rodar sem fim. **O progresso foi salvo.** Toque em **Continuar** para eu retomar exatamente de onde parei (sem refazer o que já fiz); se for algo grande, ajuda dividir em etapas menores._`;
     finalText += note;
     onEvent({ type: 'delta', content: note });
   }
@@ -605,7 +726,9 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
     outputsAfter = listOutputs(conversationId);
     newFiles = outputsAfter.filter(f => outputsBefore.get(f.path) !== fileSignature(f));
   }
-  if (!newFiles.length && (requiresOutput || mentionsOutputPath(finalText))) {
+  // Turno encerrado numa pergunta ao usuário: não é execução incompleta — o
+  // arquivo/trabalho virá depois que ele responder.
+  if (!newFiles.length && !awaitingUserReply && (requiresOutput || mentionsOutputPath(finalText))) {
     incomplete = true;
     failureMessage ||= 'A tarefa solicitou um arquivo, mas nenhum arquivo foi criado.';
     const alreadyExplained = /\*\*(?:Não consegui|O arquivo não foi gerado)/i.test(finalText);
@@ -642,7 +765,31 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
   }
   // Memória: indexa a troca e extrai fatos em segundo plano (não bloqueia)
   if (!stopped) indexAfterReply(userId, conversationId).catch(() => {});
-  return { text: finalText, usage, model: chosenModel, stopped, providerFailure, incomplete, failureMessage };
+  // CHECKPOINT: interrompida por limite/infra/parada com progresso real → salva
+  // o estado (mesmo mecanismo p/ limite de ciclos E watchdog/provedor). Caso
+  // contrário (conclusão limpa, ou falha de qualidade), limpa qualquer
+  // checkpoint antigo — não há o que retomar. `messages.length > 3` evita salvar
+  // um checkpoint que seja só o preâmbulo, sem trabalho de verdade.
+  let resumable = false;
+  if (isResumableReason(checkpointReason) && messages.length > 3) {
+    resumable = await saveCheckpoint({
+      userId, conversationId, runId,
+      objective: resume?.objective || userText,
+      reason: checkpointReason,
+      model: chosenModel,
+      triedModels: [...triedModels],
+      step: (resume?.step || 0) + reachedStep,
+      messages,
+      usage,
+      meta: { webSearch: Boolean(webSearch), effort: effort || null, developer: developer || null, assistantId: assistant?.id || null }
+    });
+    // Avisa a interface AO VIVO que dá para retomar (sem esperar um reload):
+    // o botão "Continuar" aparece na mensagem interrompida.
+    if (resumable) onEvent({ type: 'resumable', value: true });
+  } else {
+    await clearCheckpoint(conversationId);
+  }
+  return { text: finalText, usage, model: chosenModel, stopped, providerFailure, incomplete, failureMessage, resumable };
   } finally {
     // Mantém a conversa marcada como ativa até o card de download ter sido
     // persistido e emitido. Isso impede uma exclusão concorrente de apagar o

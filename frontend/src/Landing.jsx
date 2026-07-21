@@ -27,7 +27,7 @@ const STEPS = [
 
 const TRUST = [
   { icon: ShieldCheck, title: 'Seus dados isolados', text: 'Cada pessoa só enxerga os próprios dados, conversas e arquivos. Nada é compartilhado entre usuários.' },
-  { icon: KeyRound, title: 'Sua própria chave', text: 'Use a sua chave de IA (BYOK): você fica no controle do custo e da privacidade das suas informações.' },
+  { icon: KeyRound, title: 'Sua chave, se quiser', text: 'Comece grátis sem configurar nada, ou use a sua própria chave de IA (BYOK) para ficar no controle do custo e da privacidade.' },
   { icon: Lock, title: 'Credenciais protegidas', text: 'Suas chaves e senhas ficam guardadas com criptografia forte no servidor.' },
   { icon: BadgeCheck, title: 'Arquivos verificados', text: 'Todo arquivo enviado passa por verificação antivírus (ClamAV) antes de ser processado.' },
   { icon: Globe, title: 'Conexão segura', text: 'Todo o acesso é criptografado com HTTPS — do login ao download dos seus documentos.' },
@@ -67,7 +67,7 @@ export default function Landing() {
             </button>
             <button className="lpBtn lpBtnGhost" onClick={() => openLogin('login')}>Já tenho conta</button>
           </div>
-          <p className="lpReassure"><Check size={15} /> Grátis para começar · e-mail, GitHub ou Google</p>
+          <p className="lpReassure"><Check size={15} /> Grátis para começar, sem cartão e sem configurar chave · e-mail, GitHub ou Google</p>
         </div>
 
         {/* Mockup de conversa (mostra o produto sem imagem externa) */}

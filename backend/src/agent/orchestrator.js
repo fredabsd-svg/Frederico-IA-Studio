@@ -9,23 +9,34 @@ import { isLowSignalTurn, LOW_SIGNAL_TURN_NOTE } from '../memory/retrievalPolicy
 import { detectToolRequirement } from '../modelCapabilities.js';
 import { runAgent } from './loop.js';
 import { AGENTS, QUALITY_BAR, clipForBriefing, PERSPECTIVE_CHAR_LIMIT, BRIEFING_CHAR_LIMIT, uploadsNote, developerTeamContextFor } from './prompts.js';
-import { STREAM_RECOVERY_LIMIT, STREAM_RESUME_NOTE, STREAM_PAUSE_RESUME_NOTE, isRetryableStreamError, openRouterRouting, retryDelay, addUsage, friendlyApiError } from './provider.js';
+import { STREAM_RECOVERY_LIMIT, STREAM_RESUME_NOTE, STREAM_PAUSE_RESUME_NOTE, isRetryableStreamError, openRouterRouting, retryDelay, addUsage, friendlyApiError, applyPromptCache } from './provider.js';
+import { guardStreamStall, PROVIDER_CONNECT_TIMEOUT_MS } from './streamGuard.js';
 import { acquireConversationControl, releaseConversationControl, beginProviderRequest, releaseProviderRequest, controlInterruptReason, gate } from './control.js';
 import { clientScopeFor, memoryNote, saveMessage } from './persistence.js';
 
 const TEAM_TOOL_AWARENESS = `CAPACIDADES DO APP:
-O Frederico AI Studio tem sandbox com Python 3.12, bash, LibreOffice/soffice, ffmpeg, OCR/PDF, vetores headless, Chromium/Playwright/Xvfb, toolchains C/C++/Go/Rust/Java/.NET/Kotlin, ML leve em CPU, qualidade e diagnóstico, bancos/clients remotos, Node com toolchain frontend, geração de arquivos e ferramentas de imagem/web quando habilitadas. Docker/Compose, GPU e builds nativos Android/iOS continuam deliberadamente fora do sandbox.
+O Frederico AI Studio tem sandbox com Python 3, bash, LibreOffice/soffice, ffmpeg, OCR/PDF, vetores headless, Chromium/Playwright/Xvfb, toolchains C/C++/Go/Rust/Java/.NET/Kotlin, ML leve em CPU, qualidade e diagnóstico, bancos/clients remotos, Node com toolchain frontend, geração de arquivos e ferramentas de imagem/web quando habilitadas. Docker/Compose, GPU e builds nativos Android/iOS continuam deliberadamente fora do sandbox.
 No Modo Equipe, os especialistas individuais desta etapa NÃO executam ferramentas diretamente; eles analisam e orientam. Se a resposta final exigir arquivo, cálculo, conversão ou validação, indique claramente que isso deve ser executado pelas ferramentas do assistente principal.`;
 
 // Orquestrador: aciona vários assistentes e um coordenador une as respostas
 export async function runOrchestrator({ userId, conversationId, userText, model, assistants = [], executor = null, webSearch = false, effort, developer, onEvent }) {
   const provider = await getUserProvider(userId);            // BYOK
   const client = provider.client;                            // sombreia o cliente global
-  const control = acquireConversationControl(conversationId);
+  const control = acquireConversationControl(conversationId, userId);
   try {
   const userMsgId = await saveMessage(userId, conversationId, 'user', userText);
   const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
-  const coordModel = model || provider.model;
+  // MODO GRATUITO: o coordenador (e os membros, que herdam via member.model ||
+  // coordModel) fica restrito à allowlist gratuita da plataforma.
+  let coordModel = model || provider.model;
+  if (provider.source === 'free') {
+    const allowed = provider.freeModels || [];
+    if (!allowed.includes(coordModel)) coordModel = provider.model;
+    // Assistentes/executor com modelo próprio fora da allowlist herdam o
+    // coordenador (member.model || coordModel) em vez de gastar modelo pago.
+    assistants = assistants.map(a => allowed.includes(a.model) ? a : { ...a, model: null });
+    if (executor && !allowed.includes(executor.model)) executor = { ...executor, model: null };
+  }
   if (!provider.hasKey) {
     const finalText = 'Nenhuma chave de API configurada. Vá em **Configurações → Provedor de IA** e cadastre a sua chave para usar o Modo Equipe.';
     onEvent({ type: 'delta', content: finalText });
@@ -75,8 +86,8 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
       let activeRequest;
       try {
         activeRequest = beginProviderRequest(control);
-        const stream = await client.chat.completions.create({ model: coordModel, messages: msgs, temperature: 0.3, ...openRouterRouting(), stream: true, stream_options: { include_usage: true } }, { signal: activeRequest.signal });
-        for await (const chunk of stream) {
+        const stream = await client.chat.completions.create({ model: coordModel, messages: msgs, temperature: 0.3, ...openRouterRouting(), stream: true, stream_options: { include_usage: true } }, { signal: activeRequest.signal, timeout: PROVIDER_CONNECT_TIMEOUT_MS });
+        for await (const chunk of guardStreamStall(stream, { onStall: () => activeRequest.abort('stall') })) {
           if (await gate(control, onEvent)) { stopped = true; return text; }
           if (chunk.usage) addUsage(usage, chunk.usage);
           const d = chunk.choices?.[0]?.delta?.content || '';
@@ -212,9 +223,11 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
     directMsgs.push({ role: 'system', content: QUALITY_BAR });
     directMsgs.push({ role: 'system', content: TEAM_TOOL_AWARENESS });
     if (developerTeamNote) directMsgs.push({ role: 'system', content: developerTeamNote });
+    const directPrefixEnd = directMsgs.length; // antes de memória/histórico
     if (memory) directMsgs.push({ role: 'system', content: memory });
     for (const m of histRows) directMsgs.push({ role: m.role, content: String(m.content).slice(0, 2000) });
     directMsgs.push({ role: 'user', content: userText });
+    applyPromptCache(directMsgs, coordModel, directPrefixEnd);
     try { finalText = await streamCoordinator(directMsgs); }
     catch (err) { finalText = `Não foi possível responder: ${friendlyApiError(err)}`; onEvent({ type: 'delta', content: finalText }); }
   } else {
@@ -231,8 +244,10 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
         const sys = `${a.system_prompt}\n\n${TEAM_TOOL_AWARENESS}\n\nVocê faz parte de um time que já está conversando com a pessoa. Olhe o histórico e traga só a sua visão de especialista sobre a nova mensagem, direto ao ponto — sem se apresentar e sem repetir o que o time já disse. Nesta etapa você não gera arquivos nem roda código.`;
         const msgs = [{ role: 'system', content: sys }];
         if (developerTeamNote) msgs.push({ role: 'system', content: developerTeamNote });
+        const memberPrefixEnd = msgs.length; // antes de memória/histórico
         if (memory) msgs.push({ role: 'system', content: memory });
         msgs.push({ role: 'user', content: historyText ? `Histórico recente da conversa:\n${historyText}\n\nNOVA mensagem do usuário:\n${userText}` : userText });
+        applyPromptCache(msgs, coordModel, memberPrefixEnd);
         return { a, memberResult: await askTeamMember(a, msgs) };
       }));
       for (const { a, memberResult } of results) {
@@ -274,6 +289,7 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
       ...(developerTeamNote ? [{ role: 'system', content: developerTeamNote }] : []),
       { role: 'user', content: `${historyText ? `Histórico recente:\n${historyText}\n\n` : ''}NOVA mensagem do usuário:\n${userText}\n\nPerspectivas da equipe:\n${combined}` }
     ];
+    applyPromptCache(synthMsgs, coordModel, 3); // 3 blocos system estáveis antes do user
     try { finalText = await streamCoordinator(synthMsgs); }
     catch (err) { finalText = `Não foi possível compilar a resposta final: ${friendlyApiError(err)}`; onEvent({ type: 'delta', content: finalText }); }
   }

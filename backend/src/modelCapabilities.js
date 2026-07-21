@@ -107,6 +107,9 @@ export function modelProfileFromProvider(model = {}) {
     created: Number(model.created || 0),
     context: Number(model.context_length || model.top_provider?.context_length || model.context || 0),
     price: Number.isFinite(promptPrice) ? promptPrice : 0,
+    // Preço por token de SAÍDA (completion) — usado na estimativa e no custo
+    // real das execuções multimodelo. `price` acima é o de entrada (prompt).
+    priceOut: Number.isFinite(completionPrice) ? completionPrice : 0,
     free: typeof model.free === 'boolean'
       ? model.free
       : id.endsWith(':free') || (hasPricing && promptPrice === 0 && completionPrice === 0)

@@ -24,12 +24,15 @@ import clientsRouter from './routes/clients.js';
 import templatesRouter from './routes/templates.js';
 import memoriesRouter from './routes/memories.js';
 import providerRouter from './routes/provider.js';
+import freeTierRouter from './routes/freeTier.js';
 import connectorsRouter from './routes/connectors.js';
 import analyticsRouter from './routes/analytics.js';
 import conversationsRouter from './routes/conversations.js';
 import tasksRouter, { processTasks } from './routes/tasks.js';
 import schedulesRouter, { startSchedulers } from './routes/schedules.js';
 import backupRouter from './routes/backup.js';
+import cacheRouter from './routes/cache.js';
+import modelTeamsRouter from './routes/modelTeams.js';
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -127,12 +130,15 @@ app.use('/api', clientsRouter);
 app.use('/api', templatesRouter);
 app.use('/api', memoriesRouter);
 app.use('/api', providerRouter);
+app.use('/api', freeTierRouter);
 app.use('/api', connectorsRouter);
 app.use('/api', analyticsRouter);
 app.use('/api', conversationsRouter);
 app.use('/api', tasksRouter);
 app.use('/api', schedulesRouter);
 app.use('/api', backupRouter);
+app.use('/api', cacheRouter);
+app.use('/api', modelTeamsRouter);
 
 // LGPD — retenção automática: com CONVERSATION_RETENTION_DAYS > 0, apaga
 // conversas paradas há mais de N dias (varredura a cada 6 h; desligada por padrão).

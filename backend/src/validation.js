@@ -30,6 +30,24 @@ const id = z.string().trim().max(120);
 const modelId = z.string().trim().max(200);
 const shortText = (max, msg) => z.string({ error: msg }).trim().min(1, msg).max(max);
 
+// Configuração de uma execução MULTIMODELO (2+ modelos na mesma mensagem).
+// A normalização fina (papéis válidos, tetos de rodadas/orçamento) acontece em
+// agent/multiModel.js — aqui garantimos apenas tipo e tamanho.
+const multiModelConfig = z.looseObject({
+  mode: z.enum(['compare', 'council', 'debate', 'pipeline']).optional(),
+  models: z.array(z.looseObject({
+    id: modelId,
+    role: z.string().trim().max(40).nullish(),
+    label: z.string().trim().max(80).nullish(),
+    prompt: z.string().max(4000).nullish(),
+  })).max(12, 'Modelos demais para uma única execução.'),
+  coordinator: modelId.nullish(),
+  rounds: z.coerce.number().optional(),
+  maxTokensPerModel: z.coerce.number().nullish(),
+  budgetUsd: z.coerce.number().nullish(),
+  context: z.enum(['full', 'recent', 'summary', 'none']).optional(),
+});
+
 export const schemas = {
   chat: z.looseObject({
     message: z.string({ error: 'Mensagem vazia.' }).trim().min(1, 'Mensagem vazia.').max(100_000, 'A mensagem é grande demais. Envie em partes menores.'),
@@ -39,6 +57,16 @@ export const schemas = {
     // só um freio de abuso, alto o bastante para nunca barrar uso legítimo.
     orchestrateIds: z.array(id).max(100, 'A equipe tem assistentes demais para uma única mensagem (máximo 100).').optional(),
     effort: z.string().trim().max(30).nullish(),
+    multiModel: multiModelConfig.nullish(),
+  }),
+
+  multiModelCancelSlot: z.looseObject({
+    slot: z.coerce.number().int().min(0).max(11),
+  }),
+
+  modelTeamCreate: z.looseObject({
+    name: shortText(120, 'Dê um nome para a equipe de modelos.'),
+    config: multiModelConfig,
   }),
 
   task: z.looseObject({

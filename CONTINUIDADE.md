@@ -1,5 +1,846 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 🧹 Varredura de PRs antigos abertos + remoção dos pins de versão do prompt (2026-07-21 — branch `claude/version-pins-cleanup`)
+
+**Pedido:** buscar PRs abertos esquecidos no repositório e mesclar.
+
+Achados 2 PRs de 2026-07-19 (#40 e #43), ambos com conflito contra o `main`
+atual — natural, dado o tanto que mudou desde então (checkpoint/resume,
+multiconversa, modo gratuito, LGPD, antivírus, redesign do Modo Desenvolvedor).
+
+- **PR #40 (correção de SSRF no `web_fetch`)** — conferido: a vulnerabilidade
+  ainda estava presente no `tools.js` atual (bypass por IPv6 entre colchetes +
+  falta de defesa contra DNS rebinding). Fiz `git rebase` da branch sobre o
+  `main` atual — o código aplicou limpo (só o texto do CONTINUIDADE.md teve
+  conflito, resolvido mantendo as duas entradas). Suíte completa: 166 testes,
+  164 passam, 2 pulados (Postgres). **Mesclado.**
+- **PR #43 (consolidação do system prompt)** — este **não deu para simplesmente
+  rebasear**: o `backend/src/agent.js` que ele editava (113 linhas mudadas)
+  virou, depois de 2026-07-19, uma FACHADA de 43 linhas que só reexporta de
+  `backend/src/agent/*.js` (loop, prompts, orchestrator...). Reaplicar o diff
+  original não faz sentido — a estrutura mudou por completo. Da lista de 4
+  melhorias do PR, conferi cada uma contra o código de hoje:
+  1. Mensagem system única — ainda não está assim hoje (`agent/loop.js` monta
+     várias mensagens `system`); precisaria ser refeito do zero contra a
+     arquitetura atual (loop.js + checkpoint/resume), não é um ajuste pequeno.
+  2. Deduplicação de regras — mesma situação.
+  3. Precedência de estilo dos sliders — idem.
+  4. **Pins de versão no prompt** (`Python 3.12`, `kotlinc 2.3.21`) — ainda
+     presentes, e o motivo do PR continua válido: a versão real já é conferida
+     AO VIVO pelo audit de ambiente (`verifiedEnvironmentNote`, ainda existe em
+     `agent/prompts.js`), então o pin é só informação que pode ficar desatualizada
+     silenciosamente. Esta parte É pequena e segura, então apliquei de novo à
+     mão nos arquivos atuais (`agent/prompts.js`, `agent/orchestrator.js`,
+     `tools.js`): "Python 3.12" → "Python 3", "kotlinc 2.3.21" → "kotlinc".
+     Testado: suíte completa (166, 164 passam, 2 pulados) + `prompts.dev.test.js`.
+
+  **PR #43 fechado** como superado pela reorganização do backend, com o pedaço
+  seguro (pins de versão) reaplicado nesta branch. Os itens 1–3 (mensagem
+  system única, dedup de regras, precedência de sliders) ficam como
+  **pendência real** para quem quiser reabrir essa frente — exigem entender a
+  fundo `agent/loop.js` atual (que já ganhou checkpoint/resume no meio) antes
+  de mexer, para não regredir nada.
+
+## 🏆 Classificação de referência dos modelos no seletor (2026-07-21 — branch `claude/antivirus-vps-42tstn`)
+
+**Pedido:** o usuário tem um ranking pessoal dos 100 melhores modelos (Tier
+S+/S/A+/A/B+/B) e queria essa informação disponível no seletor de modelo, sem
+"bagunçar o layout" nem complicar a visualização.
+
+**Decisão de design:** nada de seção nova, coluna nova ou painel novo — só um
+**selo discreto** (`S+`/`S`/`A+`/.../`B`) colado ao nome do modelo, e mais UMA
+opção no `<select>` "Ordenar" que já existia (Nome/Lançamentos/Menor custo →
++ "Classificação de referência"). Modelo sem correspondência no ranking não
+ganha selo nenhum — o app nunca inventa uma posição.
+
+**`frontend/src/modelRanking.js`** (novo): os 100 nomes na ordem informada
+(posição no array = rank), faixas de tier fixas (1–10 S+, 11–25 S, 26–50 A+,
+51–75 A, 76–90 B+, 91–100 B) e `findRanking(model)`. O casamento é por NOME
+normalizado contra o catálogo real (que vem do OpenRouter/DeepSeek em tempo de
+execução) — não por id, porque os nomes na lista ("Claude Opus 4.8 Thinking")
+raramente batem exatamente com o slug do catálogo
+(`anthropic/claude-opus-4.8`). Normalização: minúsculas, travessão usado como
+separador vira espaço (mas hífen colado numa palavra como `gpt-5.6` ou `x-ai`
+não é tocado), pontuação removida sem quebrar número de versão (`5.6` → `56`,
+não `5 6`). Se não bate exato, tenta bater pela versão "sem ruído" (remove
+palavras como thinking/high/preview/turbo/instant/beta N) — assim "Claude Opus
+4.8" (nome simples do catálogo) encontra a entrada "Claude Opus 4.8 Thinking"
+da lista quando não existe uma entrada sem qualificador. **Sem match nenhum →
+`null` → sem selo.** Nunca chuta.
+
+**`components.jsx` (`ModelPicker`)**: `row(model)` calcula `findRanking(model)`
+uma vez e, se existir, insere `<span class="mpRank tier{X}">{tier}</span>`
+logo depois do nome, com `title` explicando a posição exata (ex.: "#22 de 100
+· Tier S"). Novo `sort==='rank'` no `sortFn` existente + `<option
+value="rank">` no select "Ordenar" (mesmo padrão de "Lançamentos"/"Menor
+custo" — nada de UI nova).
+
+**CSS (`styles.css`)**: `.mpRank` é uma pastilha pequena, cor **derivada de
+`var(--accent)`** por `color-mix` (mais forte em S+/S, neutra em B+/B) — não
+hex fixo, mantém a regra das 7 paletas. Um bloco de 8 linhas, sem novo layout.
+
+**Honestidade sobre o rótulo:** o app é multiusuário (SaaS). Chamei de
+"Classificação de referência" em vez de "Sua classificação"/"Minha
+classificação" no texto visível, porque é uma curadoria do dono do app
+embutida como dado estático — não é a opinião de quem está logado no momento
+(mesmo cuidado já aplicado noutras partes do produto, ex.: seção de segurança
+da landing só anuncia o que está de fato ativo).
+
+**Teste:** dataset com 100 entradas confirmado (contagem por tier bate:
+10/15/25/25/15/10), casamento verificado com nomes reais plausíveis do
+catálogo (`Claude Sonnet 5`→#22, `Claude Opus 4.8`→#11 exato, `GPT-5.6
+Sol`→#2 via fallback sem "xHigh", nome desconhecido→`null`), e render real
+(`renderToStaticMarkup`) do `ModelPicker` confirmando que o HTML gerado tem o
+selo certo (`tierS`, tooltip com #22) no lugar certo.
+
+## 🖥️ Redesign do Modo Desenvolvedor a partir de handoff de design (2026-07-21 — branch `claude/antivirus-vps-42tstn`)
+
+**Pedido:** aplicar no app um handoff de design (`.dc.html` + README, protótipo
+Codex/Claude-Code-style) para o Modo Desenvolvedor — sidebar de projetos/tarefas,
+centro com stage-driven timeline, gaveta direita com abas Atividade/Arquivos/
+Alterações/Memória.
+
+**Descoberta antes de codar (mudou o plano):** o repositório já tinha avançado
+~49 commits desde a última vez que essa área foi tocada nesta sessão. O que o
+handoff descrevia como "a ser construído" **já existia, mais avançado**: 6
+modos de trabalho ponta a ponta (`DEV_WORK_MODES`/`DEV_MODES` no backend),
+projetos persistentes (`useDevProjects.js`, localStorage: nome, descrição,
+techs, vínculo pasta/GitHub, regras, memória em 6 categorias, histórico de
+conversas), layout de 4 colunas (`workspace-developer`: sidebar + `DevProjectRail`
++ chat + `DevActivityRail`), e um `ExecutionSession` rico (cartão + overlay em
+tela cheia, categorização por ferramenta, miniaturas reais de página via
+`pageShot.js`). Reconstruir do zero teria REGREDIDO checkpoint/resume,
+multiconversa e o `ExecutionSession` — todos maduros e testados. Decisão:
+**redesenhar visual/interação em cima do que já existe**, não substituir.
+
+**O que foi feito (só frontend):**
+- `components/ExecutionSession.jsx`: exporta `metaOf`/`describe`/`CAT_META`/
+  `statusIcon`/`tryParse` (antes privados do módulo) — o painel de Atividade
+  reaproveita a MESMA categorização/rótulo por ferramenta que o "Ambiente de
+  Trabalho da IA" já usa, em vez de duplicar/divergir.
+- `components/DevActivityRail.jsx`: virou painel com 4 abas.
+  - **Atividade**: além do cartão de status (mantido), lista cronológica dos
+    passos da última resposta, com chamadas CONSECUTIVAS da mesma ferramenta
+    agrupadas ("2× Comando no terminal", expansível) em vez de um item por
+    chamada.
+  - **Arquivos**: `read_file`/`list_files` da resposta (analisados).
+  - **Alterações**: `write_file` com path/tamanho REAIS (do JSON que a
+    ferramenta devolve) e selo A/M — M se o mesmo caminho já apareceu numa
+    leitura antes na mesma resposta, A caso contrário. **Não inventa contagem
+    de linhas/diff** — o backend não devolve isso.
+  - **Memória**: o editor de 6 campos que já existia, só migrado para aba.
+- `components/DevProjectRail.jsx`: a seção "Conversas do projeto" (só uma
+  contagem, sem lista) virou **"Tarefas recentes"** clicável de verdade —
+  resolve `project.conversationIds` para título real via `allConvs` (não
+  mostra nada se a conversa não existir mais).
+- `App.jsx`: pill de status no cabeçalho do workspace dev — **honesto**, 3-5
+  estados derivados de sinais reais (`busy`/`paused`/`statusText`/
+  `message.failed`/`message.resumable`), SEM fingir o pipeline de 5 etapas do
+  protótipo (Analisando/Planejando/.../Revisando) que o backend não expõe
+  (modos são um seletor de tipo de tarefa, não estágios sequenciais — confirmado
+  por leitura de `backend/src/agent/prompts.js`/`loop.js`). Novo chip
+  **Permissões** no composer (mesmo padrão do chip Esforço): popover só-leitura
+  mostrando o modo ativo (edita/não edita) e o vínculo do projeto — dado real,
+  não um toggle fictício. Cores decorativas dos 4 cartões de modo na tela vazia
+  (azul/verde/âmbar/violeta) seguindo o MESMO precedente já usado nos
+  `QUICK_ACTIONS` (`:nth-child` escopado, `v2.css`) — não um tema fixo.
+- **Removido**: `ToolStep` (componente + CSS `.toolstep/.toolwrap/.tchev/
+  .tooldetail`) — zero usos em todo o frontend, órfão desde que
+  `ExecutionSession` assumiu esse papel.
+
+**Decisão deliberada de NÃO seguir o handoff ao pé da letra (paletas):** o
+protótipo define uma paleta escura fixa em hex. Este projeto tem uma regra já
+documentada e reforçada por sessões anteriores — "Regra das 7 paletas: cores
+saem de `var(--accent/--muted/--line)` ou `color-mix`, nunca hex fixo, senão
+Claro/Sépia herdam azul" (`v2.css`, cabeçalho). Forçar o tema escuro do
+protótipo ignoraria essa regra e quebraria a experiência de quem usa Claro/
+Sépia/Slate/etc. no Modo Desenvolvedor. Em vez disso, o redesign usa os MESMOS
+tokens semânticos (`--accent`, `--ok`, `--warn`, `--danger`) para computar os
+mesmos papéis de cor do handoff (azul=ação, verde=sucesso/edita, âmbar=atenção/
+corrigir, roxo=revisar — fixo, mesmo precedente decorativo do `QUICK_ACTIONS`),
+então o resultado se adapta às 7 paletas em vez de fixar uma só.
+**Também fora do escopo, por honestidade**: a barra de "Protótipo · estados"/
+toggle desktop-mobile/overlay "Mudanças de arquitetura" do topo do `.dc.html`
+— o próprio README do handoff diz que é chrome da ferramenta de design, não
+parte do produto.
+
+**Gaps conhecidos que ficam para depois (não bloqueiam este redesign):**
+- `POST /tasks` (fila em segundo plano) não aceita contexto `developer` nem
+  `effort` hoje — confirmado lendo `backend/src/routes/tasks.js`. O chip
+  "Executar em segundo plano" já existia e continua funcionando, mas uma
+  tarefa de dev enviada em 2º plano perde o modo/projeto/regras (só o texto
+  vai). Se algum dia isso incomodar, dá para persistir `developer`/`effort` na
+  tabela `tasks` e repassar em `processTasks()`.
+- "Tarefas recentes" e a memória do projeto continuam só em `localStorage`
+  (`useDevProjects.js`) — não sincronizam entre navegadores/dispositivos. Virar
+  persistência no servidor é um projeto à parte (tabela nova + rotas CRUD).
+
+**Verificação:** sem acesso a Postgres/chave de IA real neste ambiente, então
+sem E2E ao vivo. Feito: `npx esbuild` em todo arquivo tocado, `npm run build`
+do frontend (limpo), suíte `authUrls.test.js`+`sse.test.js` (7/7), e um teste
+de fumaça server-side (`renderToStaticMarkup`) dos dois componentes novos com
+dados realistas (chamadas de ferramenta consecutivas/erros/list_files/
+write_file com JSON real do backend) confirmando que o agrupamento "2×", os
+selos A/M, a categorização e a lista de tarefas recentes renderizam como
+esperado — não só que compilam.
+
+## ⏭️ Retomada REAL de tarefa interrompida — checkpoint persistente (2026-07-21 — branch `claude/modelo-travando-execucao-uwatco`)
+
+**Pedido:** o app prometia "Reenviar para continuar de onde parei" quando a
+tarefa batia no limite de ciclos (~90), mas ao reenviar a execução **começava do
+zero** — todo o progresso, contexto operacional e estado se perdiam. O usuário
+pediu uma retomada estrutural (não só aumentar o limite ou reenviar o texto),
+preservando objetivo, plano, etapas/ferramentas já usadas, arquivos criados,
+comandos executados, resultados, erros, ciclo em que parou, texto parcial,
+decisões, modelo principal/reserva e o que falta — com checkpoint persistente e
+cenários separados (limite / watchdog / desconexão / falha de modelo / reinício
+do backend). É problema DIFERENTE do watchdog (PR #63): watchdog é o stream
+travar; este é a retomada não existir de verdade.
+
+**Causa raiz (confirmada no código):** o array `messages` do agente — que É o
+estado operacional completo (objetivo = msg do usuário; plano/texto parcial =
+conteúdo do assistente; etapas/ferramentas = `assistant.tool_calls`; resultados/
+erros = mensagens `role:'tool'`; decisões = conteúdo) — vivia **só na RAM** e era
+descartado quando o `runAgent` retornava. No limite de ciclos só o `finalText`
+(texto visível parcial) era salvo. E o "Reenviar" (`retrySend`) chamava
+`/truncate` com o id da mensagem do USUÁRIO, **apagando** a msg do usuário + a
+resposta parcial, e reenviava o texto → run NOVO cujo contexto (via
+`selectHistoryForContext`) não tinha nada do turno interrompido. Duas falhas
+somadas: (A) estado nunca persistido; (B) "Reenviar" era restart destrutivo.
+
+**Correção estrutural — o array `messages` VIRA o checkpoint, persistido no
+Postgres:**
+- **`backend/migrations/007_execution_checkpoints.sql`** — tabela
+  `execution_checkpoints` (1 por conversa, PK `conversation_id`, ON DELETE
+  CASCADE): `run_id`, `objective`, `reason`, `model`, `tried_models` (cadeia de
+  failover), `step`, `messages` (JSONB — o estado), `usage`, `meta`. **Postgres →
+  sobrevive a reinício do backend** (não é só RAM).
+- **`backend/src/agent/checkpoint.js`** (novo): `saveCheckpoint`/`loadCheckpoint`/
+  `hasCheckpoint`/`clearCheckpoint`. Partes PURAS (testáveis sem DB/LLM):
+  `trimCheckpointMessages` (apara por tamanho preservando preâmbulo + cauda
+  recente e NUNCA deixando `tool` órfã — pareamento tool_call/tool_result
+  válido), `buildResumeMessages` (semeia o run de retomada: estado + nota de
+  "continue, não repita"), `isResumableReason` (mesmo mecanismo central p/
+  limite E watchdog), `leadingSystemCount`.
+- **`backend/src/agent/loop.js`** — `runAgent` aceita `resume`:
+  - restaura `chosenModel` e `triedModels` do checkpoint (o **modelo de reserva
+    herda o contexto**: continua no modelo ativo e não retenta os que já
+    falharam);
+  - substitui o contexto recém-montado pelo array salvo + notas de continuidade
+    (não regrava mensagem de usuário, não reanexa imagens);
+  - **orçamento de ciclos NOVO** (a retomada avança de verdade em vez de morrer
+    no limite de novo);
+  - `usage` soma sobre o run anterior; `outputsBefore` vazio no resume (arquivos
+    já prontos contam como entrega e não disparam falso "arquivo não gerado");
+  - ao terminar interrompida por `step_limit`/`provider_failure`/`stopped` (com
+    progresso), **salva o checkpoint**; ao concluir limpo, **limpa**. Emite
+    evento `resumable` ao vivo. Mensagem de limite reescrita: "**Continuar**"
+    (não mais "Reenviar").
+- **`backend/src/routes/conversations.js`** — `POST /conversations/:id/resume`
+  (SSE igual ao /chat, mesmo `openLiveStream`, **sem gravar msg de usuário**,
+  carrega o checkpoint e passa `resume` ao runAgent → mesmo `conversationId`, sem
+  execução nova). `GET /:id` devolve `resumable` e marca a última msg do
+  assistente. 409 se já ativo / sem checkpoint; 429 respeita o teto multiconversa.
+- **Frontend** (`useChat.js`, `App.jsx`): `resumeRun(convId)` faz stream do
+  `/resume` reusando `consumeChatStream` (multiconversa-aware: mesma época/gate
+  por conversa, sem duplicar). Botão **"Continuar de onde parei"** (verde,
+  distinto do "Reenviar") aparece na msg quando `resumable` (evento ao vivo OU
+  flag do GET após reload). `.resumeBtn` no styles.css.
+
+**Cenários separados (como pedido):**
+- **Limite de ciclos** → checkpoint `step_limit`, continuação real.
+- **Watchdog/stream travado** → o stall exaurido vira `provider_failure` (retryável)
+  → checkpoint, retomada a partir do conteúdo já recebido.
+- **Frontend desconectado** → reconecta à execução existente (multiconversa,
+  PR #65) — não cria tarefa nova.
+- **Falha do modelo** → failover herda `messages`+`triedModels` do ponto de parada.
+- **Reinício do servidor** → checkpoint no Postgres; `loadCheckpoint` numa
+  requisição nova reidrata o estado.
+
+**Anti-duplicidade:** resume checa `isConversationActive` (409), não grava msg de
+usuário, usa o mesmo `conversationId`; no front, época por conversa descarta
+consumidor duplo (herdado do PR #65).
+
+**Testes:** `backend/src/agent/checkpoint.test.js` (7, PUROS — sem DB/LLM):
+objetivo+ferramentas+resultados+texto parcial preservados; aparo mantém
+pareamento e cauda recente sem tool órfã; toda `tool` tem seu `assistant` antes;
+`buildResumeMessages` adiciona a orientação de continuar (e não a adiciona quando
+parou após ferramenta); `isResumableReason` cobre requisito 8 (watchdog+limite no
+mesmo mecanismo; falhas de qualidade fora). Suíte backend: **151 passam, 0
+falham, 2 skips**. Frontend build OK + 7/7.
+
+**Limitações que permanecem (honestidade):**
+- O checkpoint guarda o estado do MODELO (array de mensagens), não um snapshot do
+  filesystem do sandbox. Arquivos em `/workspace/outputs` persistem em disco por
+  conversa, então continuam disponíveis; mas se o sandbox for reciclado, artefatos
+  FORA de outputs (ex.: venv, estado intermediário) não voltam — o modelo relê/
+  refaz o que precisar a partir dos resultados registrados.
+- Interrupção EXATAMENTE no meio de uma ferramenta longa (ex.: um `bash` a meio
+  de rodar): a ferramenta não é retomada no meio; o resume parte do último
+  resultado COMPLETO registrado. Sem efeito colateral duplicado (a ferramenta
+  incompleta não deixou resultado no array).
+- Os testes puros provam o mecanismo (trim/seed/reason). A continuação
+  ponta-a-ponta (ciclo 90 → 91 sem repetir, com LLM+Postgres reais) precisa ser
+  exercitada em produção — este ambiente não tem provedor nem banco para o E2E.
+- Só o agente de conversa única tem checkpoint. Multimodelo/Equipe ainda não
+  (cada um teria seu próprio estado por participante) — fica como evolução.
+
+## 🔀 Multiconversa — várias conversas processando ao mesmo tempo (2026-07-21 — branch `claude/modelo-travando-execucao-uwatco`)
+
+**Pedido:** ter 3–5 conversas processando simultaneamente, com um indicador
+girando na barra lateral mostrando quais estão ativas — e com MUITO cuidado:
+trocar de conversa não pode parar, misturar nem confundir os andamentos.
+
+**O que já existia:** o backend SEMPRE suportou execuções paralelas em
+conversas diferentes (o controle pausar/parar e o liveStream são POR conversa;
+`ConversationBusyError` só bloqueia a MESMA conversa). As travas eram todas do
+frontend: um único estado global `busy/paused/statusText` no `useChat`, o
+`blockConversationChange` do App impedia trocar de conversa durante um run, e
+o consumo do SSE escrevia em `messages` sem checar qual conversa estava aberta.
+
+**Frontend (`useChat.js` — o núcleo da mudança):**
+- Estado de execução POR CONVERSA: `runs` (`convId → {busy, paused, status}`)
+  + `runsRef` (fonte síncrona). `busy/paused/statusText` viraram PROJEÇÃO da
+  conversa aberta — a API consumida pelo App não mudou (só ganhou
+  `runs`/`anyBusy`). `busyRef` continua = conversa aberta (o `useTasks` usa).
+- **ÉPOCAS de stream (anti-duplicação — o "não pode se misturar"):**
+  `streamEpochsRef` conta uma época por conversa; todo consumidor (envio OU
+  replay de reconexão) registra a época em que nasceu. Quem reconecta avança a
+  época; o consumidor antigo detecta (`isLiveEpoch`) e se descarta cancelando o
+  reader. Sem isso, voltar a uma conversa ativa criaria DOIS consumidores
+  aplicando os mesmos eventos (texto dobrado).
+- **Gates por conversa:** TODO update visual do stream (`update()`, `saved`)
+  só aplica se `currentRef.current?.id === convId`. Status vai para o `runs` da
+  conversa do stream, nunca para um global. Trocar de conversa no meio → os
+  eventos da outra viram no-ops visuais (a tarefa segue no servidor).
+- **1ª mensagem de conversa nova:** `currentRef` é sincronizado por efeito
+  (roda depois do render); o sendMessage agora escreve `currentRef.current =
+  conv` na hora (mesmo truque do openConversation) — sem isso os gates
+  descartariam os primeiros eventos do stream.
+- **Sair e voltar:** sair não interrompe (consumidor original segue lendo com
+  updates em no-op e limpa o estado no `done`); voltar dispara o replay
+  (`followActiveConversation`), que avança a época e reassume. Se o SSE cair
+  com o usuário em OUTRA conversa, `watchDetachedRun` vigia por polling (5s,
+  ~30 min) e apaga o "girando" quando o servidor terminar — a menos que alguém
+  reconecte antes (época avança → vigia se retira).
+- **Limpezas com dono único:** quem assume o acompanhamento (follow) é quem
+  limpa (`endRun`); resultados `stale` NUNCA fazem cleanup (o novo consumidor é
+  o dono). `loadFiles`/`setCurrent` pós-run só se a conversa ainda é a aberta.
+- `App.jsx`: `blockConversationChange` virou no-op (trocar de conversa/cliente/
+  nova conversa é livre); indicador `.spin.sm.convSpin` no item da barra
+  lateral (`runs[c.id] ? runs[c.id].busy : c.active` — estado local vence, flag
+  do servidor cobre reload/outro dispositivo); polling da lista a cada 10s
+  ENQUANTO houver atividade (apaga/acende sozinho). CSS em styles.css.
+
+**Backend (aditivo):**
+- `GET /conversations` (todas as variantes) devolve `active` por linha
+  (`isConversationActive`) — alimenta o indicador após reload/outro aparelho.
+- `control.js`: `acquireConversationControl(conversationId, userId)` marca o
+  dono; novo `countActiveRunsForUser(userId)`. `loop.js`/`multiModel.js`/
+  `orchestrator.js` passam o userId (aditivo, sem mudança de comportamento).
+- `POST /chat`: teto `MAX_ACTIVE_RUNS_PER_USER` (padrão 5, piso 1) → 429 com
+  mensagem clara. Protege a VPS; tarefas de segundo plano não são bloqueadas
+  pelo teto (só contam), e o 409 da MESMA conversa continua igual.
+- `.env.example`/`README.md`: variável nova + linha na tabela de recursos.
+  **Atenção:** conversas paralelas que EXECUTAM código disputam
+  `MAX_SANDBOXES_PER_USER` (padrão 2) — subir os dois juntos se necessário.
+
+**Validação:** backend **144 testes, 0 falhas** (2 novos em
+`agent.control.test.js`: contagem por usuário e independência de stop/pause
+entre conversas do mesmo dono). Frontend: build Vite OK + 7/7 (`dist/`
+recompilado e commitado). NÃO houve teste de UI ao vivo multiconversa (sem
+Docker/Postgres aqui) — validar em produção: enviar em 2–3 conversas, trocar
+entre elas durante o processamento, conferir indicador girando, voltar e ver o
+replay reconectar sem duplicar texto.
+
+## ❓ Pergunta ao usuário encerra o turno — a IA não "responde a si mesma" (2026-07-21 — branch `claude/modelo-travando-execucao-uwatco`, follow-up do PR #63)
+
+**Sintoma (print do usuário):** no Modo Desenvolvedor, o modelo terminou a
+resposta com 3 perguntas ("Quais itens quer que eu ataque? Branch separado com
+PR ou commit direto na main? Algo específico a incluir?") e, em vez de PARAR
+para o usuário responder, a execução CONTINUOU — clonou o repositório e decidiu
+tudo sozinha. O usuário não conseguia responder (o composer fica bloqueado
+enquanto o run está ativo).
+
+**Causa raiz:** quando o modelo para de chamar ferramentas para perguntar, o
+`shouldRepairExecution` (repair.js) interpretava como "execução incompleta" e o
+loop injetava `EXECUTION_COMPLETION_REPAIR_NOTE` com `tool_choice='required'` —
+FORÇANDO o modelo a chamar ferramenta em vez de deixar a pergunta chegar ao
+usuário. Os prompts (EXECUTION_CONTRACT_NOTE: "nada de ficar no plano") ainda
+empurravam na mesma direção. Ou seja: o app tratava "perguntar" como falha.
+
+**Correção:**
+- `backend/src/agent/repair.js` — novo `endsAwaitingUserReply(text)`:
+  detecta que a resposta TERMINA com "?" (após remover avisos padronizados do
+  sistema e enfeites de markdown/aspas/parênteses do fechamento). Conservador:
+  pergunta retórica no meio seguida de conclusão NÃO conta.
+  `EXECUTION_CONTRACT_NOTE` ganhou a exceção explícita: faltou decisão do
+  usuário → pergunte e PARE.
+- `backend/src/agent/loop.js` — no ramo sem tool calls: se
+  `endsAwaitingUserReply(content)` (e NÃO for `forceExecution` — tarefa de
+  segundo plano não tem usuário presente para responder; lá o comportamento
+  antigo continua), o turno completa naturalmente: sem reparo forçado, sem
+  `MISSING_OUTPUT_NOTICE`/`EXECUTION_INCOMPLETE_NOTICE`, sem marcar
+  `incomplete`. A pergunta é entregue e o composer libera. A checagem de
+  `missingClaimedOutput` (texto afirma download que não existe) continua
+  valendo MESMO com pergunta no final — mentir sobre arquivo é pior.
+- `backend/src/agent/prompts.js` — QUALITY_BAR ganhou a regra: pergunta que
+  depende de decisão da pessoa é o FIM da resposta; nunca continuar executando
+  nem responder a própria pergunta no mesmo turno.
+
+**Validação:** `repair.awaiting.test.js` (7 testes novos, incluindo o texto
+REAL do bug com lista numerada de perguntas). Suíte backend completa: **142
+passam, 0 falham, 2 skips pré-existentes**. Sem mudança de frontend (o
+composer já libera quando o run termina — o problema era o run não terminar).
+
+**Comportamento esperado após o deploy:** modelo pergunta → run termina →
+usuário responde → a tarefa continua na mensagem seguinte com o contexto da
+conversa. No modo `auto` o prompt já orienta a só perguntar diante de ação
+destrutiva/fora de escopo — perguntas continuam raras lá.
+
+## 🧊 Modelo "travando na execução" — watchdog contra stream parado (2026-07-21 — branch `claude/modelo-travando-execucao-uwatco`)
+
+**Sintoma (recorrente, relatado com prints + .mht):** no meio de uma resposta
+longa (Z.ai GLM 5.2, esforço Máx, ~42 etapas de ferramenta), o texto PARA no
+meio de uma frase e a interface fica em "Raciocinando..." para sempre. O app
+nunca entrega a resposta nem mostra erro — falha grave: "o básico é responder".
+
+**Causa raiz (diferente das anteriores):** nenhuma das 3 vias de streaming do
+backend (`loop.js`, `multiModel.js`, `orchestrator.js`) tinha proteção contra
+um provedor que PARA de enviar dados SEM fechar a conexão (upstream congelado,
+proxy que engoliu a resposta, rede móvel). O `for await (chunk of stream)`
+fica pendurado indefinidamente: nenhum erro é lançado, então TODA a máquina de
+recuperação que já existia (retry com STREAM_RESUME_NOTE, fallback de modelo,
+PROVIDER_TIMEOUT_NOTICE) nunca é acionada. O heartbeat `: ping` de 15s mantém
+o SSE "vivo", então o frontend também não percebe nada. NÃO confundir com os
+bugs anteriores: limite de etapas (PR #58, outro sintoma — mensagem de limite)
+e re-render travando a UI (PR #60, a resposta chegava mas a tela engasgava).
+
+**Correção:**
+- `backend/src/agent/streamGuard.js` — **novo, puro (não importa openai =
+  testável em qualquer ambiente)**. `guardStreamStall(stream, {timeoutMs,
+  onStall})`: repassa os chunks; se NENHUM chegar em `STREAM_STALL_TIMEOUT_MS`
+  (padrão 180s, piso 30s — generoso porque modelos de raciocínio podem ficar
+  minutos "pensando" sem emitir texto), chama `onStall()` (aborta a requisição
+  com reason `'stall'`) e lança `StreamStalledError` (code `STREAM_STALLED`).
+  O timer só corre ENQUANTO se espera o próximo chunk (pausa do usuário e
+  processamento do corpo do loop não contam). No `finally`, fecha o iterator
+  subjacente (break/stop não vaza conexão) e faz catch da promise pendente
+  (sem unhandled rejection). Também exporta `PROVIDER_CONNECT_TIMEOUT_MS`
+  (padrão 180s): passado como `timeout` nas chamadas de streaming `create()`
+  — o padrão do SDK é 10 min até os headers, longo demais.
+- `backend/src/agent/provider.js` — `isRetryableStreamError` reconhece
+  `code==='STREAM_STALLED'` e as mensagens "stream stalled"/"request timed
+  out". Assim o stall cai na recuperação NORMAL: retomar de onde parou (até
+  STREAM_RECOVERY_LIMIT), depois modelo de reserva, depois aviso honesto — a
+  resposta parcial é SEMPRE salva e entregue.
+- `backend/src/agent/loop.js`, `multiModel.js` (participante + coordenador),
+  `orchestrator.js` (coordenador) — os 4 `for await` de streaming embrulhados
+  no guard, com `onStall: () => activeRequest.abort('stall')`; `timeout` de
+  conexão nos `create()` de streaming. O abort com reason `'stall'` NÃO é
+  confundido com pause/stop do usuário (`controlInterruptReason` devolve
+  'abort' → caminho retryável).
+- `frontend/src/hooks/useChat.js` — watchdog espelho no SSE: o servidor manda
+  `: ping` a cada 15s; se NADA chegar por 60s (`SSE_STALL_MS`), a conexão
+  morreu em silêncio → `reader.cancel()` + throw, e o fluxo cai na reconexão
+  automática já existente (`reconnectLiveRun`/`followActiveConversation`), que
+  remonta o balão pelo replay. Antes, um SSE morto sem FIN deixava a tela
+  travada mesmo com o backend saudável.
+- `.env.example` — documenta `STREAM_STALL_TIMEOUT_MS` e
+  `PROVIDER_CONNECT_TIMEOUT_MS`.
+
+**Validação:** `backend/src/agent/streamGuard.test.js` (6 testes: repassa
+chunks, stall lança e chama onStall preservando o texto já recebido, timer não
+corre durante o processamento do chunk, break fecha o stream, erro do provedor
+propaga intacto, pisos de config). Suíte backend completa: **135 passam, 0
+falham, 2 skips pré-existentes** (com `npm install --ignore-scripts`; sharp
+segue bloqueado pelo proxy deste ambiente). Frontend: `node --test` 7/7 +
+`npm run build` OK (dist/ recompilado e commitado — é versionado). NÃO deu para
+reproduzir um stall real de provedor neste ambiente; validar em produção
+deixando uma tarefa longa rodar (o pior caso agora é: 3 min de silêncio →
+retomada automática; se o provedor seguir mudo → modelo de reserva → aviso
+honesto com o parcial salvo, nunca mais "Raciocinando..." infinito).
+
+## 📸 Miniatura real de página: navegador headless no backend (2026-07-21 — branch `claude/unified-ai-execution-session-25rm4h`, PR #60)
+
+Pedido: "instale um navegador headless" para gerar a MINIATURA real da página
+(o item que ficou de fora no PR #60 inicial, que só mostrava endereço + texto).
+Agora, quando a IA abre uma página com `web_fetch`, o backend renderiza a página
+num Chromium headless e salva um screenshot, exibido no painel de detalhe do
+Ambiente de Trabalho.
+
+**Arquivos:**
+- `Dockerfile` (raiz) — instala `chromium` + `fonts-liberation` via apt e define
+  `ENV CHROMIUM_PATH=/usr/bin/chromium`. **A imagem fica ~alguns 100 MB maior.**
+- `backend/package.json` — adiciona `puppeteer-core` (usa o Chromium do sistema;
+  NÃO baixa navegador). **⚠️ `package-lock.json` não foi regenerado** (sem rede
+  neste ambiente); o Dockerfile usa `npm install` (não `npm ci`), então resolve
+  na build. Rodar `npm install` na VPS/local atualiza o lock.
+- `backend/src/agent/pageShot.js` — **novo**. Navegador compartilhado (singleton
+  com auto-close após 1 min ocioso), `captureThumbnail(url, destPath)`. É
+  **best-effort**: import dinâmico do puppeteer-core em try/catch, checa
+  `CHROMIUM_PATH` existe; qualquer falha/timeout → retorna false e o `web_fetch`
+  segue só com o texto. **SSRF:** interceptação de requisições aborta QUALQUER
+  host bloqueado por `isBlockedHost` (mesma regra do web_fetch), inclusive em
+  redirecionamentos/JS da página. Viewport 1024×640, JPEG q55, timeout 9s.
+- `backend/src/tools.js` — no `runTool`, o `web_fetch` chama `captureThumbnail`
+  após o fetch (URL final já validada) e grava em `<ws>/.thumbs/<id>.jpg`,
+  devolvendo `thumb` (caminho relativo) no resultado. Import de `captureThumbnail`
+  (import circular com pageShot.js → OK, uso só em runtime; testado isolado).
+- `backend/src/agent/loop.js` — extrai `thumb` do resultado do web_fetch e manda
+  num campo SEPARADO no evento `tool_result` (o `content` é cortado em 2000 chars
+  e o caminho poderia se perder).
+- `frontend/src/hooks/useChat.js` — guarda `ev.thumb` no bloco da ferramenta.
+- `frontend/src/components/ExecutionSession.jsx` — `ResultView` do navegador
+  mostra a miniatura clicável (abre em tamanho real) acima do endereço/texto.
+- `frontend/src/styles.css` — `.esShot`.
+- `.env.example` — documenta `CHROMIUM_PATH`, `WEB_FETCH_SCREENSHOTS` (0 desliga),
+  `SCREENSHOT_TIMEOUT_MS`.
+- `README.md` — nova linha na tabela de recursos (Ambiente de Trabalho da IA),
+  nota de arquitetura sobre o Chromium headless e as 3 variáveis novas na tabela
+  de variáveis.
+
+**Decisões:**
+- **puppeteer-core + Chromium do apt** (não playwright, não puppeteer completo):
+  mais leve e é o caminho clássico p/ "screenshot com Chromium do sistema" em
+  Docker. `--no-sandbox --disable-dev-shm-usage` (sem /dev/shm grande no
+  container). Navegador reaproveitado entre capturas e fechado no ócio p/ poupar
+  RAM da VPS.
+- **Miniatura por página, não por pesquisa:** só o `web_fetch` (abrir página)
+  gera screenshot; `web_search` (lista de links) não.
+- **Custo:** cada `web_fetch` passa a renderizar a página (fetch de texto + render
+  no browser). Timeout curto e best-effort limitam o impacto; `WEB_FETCH_SCREENSHOTS=0`
+  desliga tudo se a VPS ficar apertada.
+
+**Validação:** `node --check` nos 3 arquivos backend + repro isolado do import
+circular e do guard SSRF (público passa, localhost bloqueia). Frontend: `build`
+OK + `node --test` (7). **Não** dá p/ testar a captura real aqui (backend sem
+deps — proxy bloqueia `npm install` de `openai`/`sharp` com 403). Quem valida de
+fato é a build da VPS; conferir na tela após o deploy que a miniatura aparece.
+
+## ⚡ Ambiente de Trabalho da IA: fluidez + prévia de arquivo/imagem/página (2026-07-21 — branch `claude/unified-ai-execution-session-25rm4h`, follow-up do PR #59)
+
+Continuação do #59 (que já está na `main`). Dois pedidos: **(1)** a interface
+estava "travando / demorando a atualizar" — não parecia orgânica; **(2)** faltava
+a prévia do conteúdo do arquivo / miniatura da imagem / prévia da página no painel
+de detalhe. Como o #59 já foi mesclado, este trabalho recomeçou do `origin/main`
+no mesmo nome de branch (abre um PR novo).
+
+**(1) Fluidez — o que travava e o que mudou:**
+- **Causa raiz:** enquanto a IA responde, o app re-renderiza a cada token (delta)
+  e a cada 1s (relógio de `useChat`). Sem memo, TODA mensagem — incluindo o
+  `ReactMarkdown` com `rehype-highlight` (recolore blocos de código) de mensagens
+  antigas — era re-parseada a cada tique. Era isso que engasgava, sobretudo no
+  celular.
+- **Correções (`frontend/src/App.jsx`):** novo componente `MessageText` embrulhado
+  em `React.memo` (compara pelo texto) — o markdown só reprocessa o que mudou de
+  fato. Toda renderização de markdown do chat passou a usá-lo.
+- **`frontend/src/components/ExecutionSession.jsx`:** `ExecutionSession` agora é
+  `React.memo` com comparador `sameSteps` (compara nº de etapas + status/ended/
+  result de cada uma). Como `toolSteps` é recriado a cada render (`.filter`),
+  comparar por identidade não bastava — por isso o comparador por conteúdo.
+  O relógio virou estado interno (`now`) que só corre quando `live`, em vez de
+  depender do `nowTick` do pai (prop `nowTick` removida). No overlay, os
+  `useEffect` de auto-seguir/rolar passaram a depender de primitivos
+  (`runningIdx`, `steps.length`, `follow`) e não da identidade do array — antes
+  disparavam a cada render.
+- **CSS (`frontend/src/styles.css`):** transições suaves no cartão/etapas, pulse
+  discreto no cartão "ao vivo", fade/rise no overlay, com guarda
+  `prefers-reduced-motion`.
+
+**(2) Prévia rica no painel de detalhe:**
+- **Backend (`backend/src/agent/loop.js`):** o `write_file` só devolvia `{ok,path,
+  size}` (sem conteúdo). Agora o `tool_start` leva também `detail` = conteúdo
+  escrito (até 4000 chars) — única mudança de backend, aditiva. `useChat.js`
+  guarda `detail` no bloco da ferramenta.
+- **Frontend (`ExecutionSession.jsx`, novo `ResultView`):** o resultado é
+  parseado e formatado por categoria — **imagem** (`generate_image.saved`) vira
+  miniatura clicável (usa `API` + `/download/`); **pesquisa** vira lista de
+  resultados (título/resumo/link); **navegador** (`web_fetch`) mostra o endereço
+  clicável + prévia do texto da página; **terminal** (`bash`/`run_python`) mostra
+  a saída como console (erro se `exitCode≠0`); **leitura**/**lista** mostram
+  conteúdo/arquivos; **gravação** mostra o conteúdo salvo + confirmação.
+- **Miniatura real de página (screenshot) NÃO foi feita:** `web_fetch` retorna só
+  texto; um thumbnail exigiria um navegador headless no backend. Em vez disso, a
+  "prévia da página" é endereço + excerto do texto. Fica como possível evolução.
+
+**Persistência:** os `blocks` (etapas) NÃO são salvos no banco — só existem ao
+vivo e no replay do stream (reconexão). Ao recarregar do zero, a mensagem mostra
+só o texto final (conversa limpa). Comportamento intencional, mantido.
+
+**Validação:** `npm run build` (vite) OK; `node --test src/*.test.js` do frontend
+passa (7). Backend: `node --check src/agent/loop.js` OK e o diff é aditivo; os
+testes que importam `openai` não rodam NESTE ambiente (proxy bloqueia instalar
+`openai`/`sharp` com 403) — quem valida de fato é o build da VPS. Detalhe visual
+(pesquisa, terminal, código, navegador, cartões) conferido em preview antes do
+commit.
+## 🧑‍💻 Reformulação do Modo Desenvolvedor — ambiente dedicado, 6 modos e memória por projeto (2026-07-21 — branch `claude/developer-mode-redesign-b41nz8`)
+
+**Motivação:** o Modo Desenvolvedor parecia amador — "só uma opção que
+redirecionava o pedido para uma conversa comum", sem ambiente próprio. O pedido
+era aproximá-lo de Codex/Claude Code (área independente, projetos, ferramentas,
+memória e fluxo próprios), mantendo compatibilidade com os modelos do OpenRouter.
+
+**O que mudou (backend):**
+- `backend/src/agent/prompts.js` — `developerContextFor` passou de 3 para **6
+  modos**: `ask` (Perguntar), `plan` (Planejar), `build` (Implementar), `fix`
+  (Corrigir erro), `review` (Revisar) e `auto` (Agente autônomo). Exporta
+  `DEV_MODES` e `DEV_WRITE_MODES`. Só `build/fix/auto` escrevem (retorna
+  `canWrite`); `ask/plan/review` são leitura (`readOnlyProject`). Modos que
+  executam agora exigem **plano antes de editar** (`PLAN_BEFORE`: entendimento,
+  arquivos, mudanças, riscos, validação) e **resumo profissional ao final**
+  (`FINAL_SUMMARY`: alterações, arquivos, testes/resultados, problemas,
+  pendências, próximos passos). O modo `fix` orienta buscar a **causa raiz**.
+- `backend/src/agent/loop.js` — o gating das ferramentas de escrita do GitHub
+  (`github_push`/`github_create_pr`) deixou de olhar `mode !== 'build'` e passou
+  a usar `!developerContext.canWrite` (cobre `fix`/`auto`). Regra do `write_file`
+  segue por `readOnlyProject` (respeita a permissão da pasta do PC).
+- `backend/src/agent/prompts.dev.test.js` — novo teste dos 6 modos, permissões e
+  presença de plano/resumo. **Suíte backend: 122 passam, 0 falham, 2 skips
+  pré-existentes.**
+
+**O que mudou (frontend):**
+- Novo hook `frontend/src/hooks/useDevProjects.js` — **projetos** persistidos no
+  navegador (`fred_dev_projects_v1`): nome, descrição, tecnologias, vínculo
+  (pasta do PC ou repositório GitHub), regras e **memória permanente**
+  categorizada (`MEMORY_FIELDS`: arquitetura, decisões, padrões, problemas
+  corrigidos, preferências, próximas etapas). `projectContextText()` compõe
+  regras + memória e envia pela via `rules` (que já chega ao system prompt), então
+  a IA "lembra" do projeto sem o usuário reexplicar. O contexto do projeto não se
+  mistura com conversas comuns.
+- Duas colunas recolhíveis no espaço "Desenvolvedor", ao redor do chat (sem
+  reescrever o motor de chat): `components/DevProjectRail.jsx` (**Explorador** —
+  projeto ativo, vínculo/permissão e arquivos da tarefa via
+  `/api/conversations/:id/files`) e `components/DevActivityRail.jsx`
+  (**Atividade** em tempo real reaproveitando o "Ambiente de Trabalho da IA" +
+  editor da **memória do projeto**).
+- `frontend/src/DeveloperPanel.jsx` redesenhado como **lançador**: seleção/criação
+  de projeto, campos do projeto, vínculo (pasta/GitHub + branch), seletor visual
+  dos 6 modos com selo leitura/escrita e o fluxo de cada modo. Exporta
+  `DEV_MODE_ICON`.
+- `frontend/src/constants.js` — `DEV_WORK_MODES` (espelha o backend).
+- `frontend/src/App.jsx` — hook de projetos, render das colunas no workspace
+  `developer`, barra superior ciente do projeto/modo, `startDeveloperTask` compõe
+  regras+memória e mapeia o vínculo para `projectId`/`github`, e vincula a
+  conversa ao projeto no 1º envio.
+- `frontend/src/styles.css` — grid de 4 colunas do ambiente
+  (`barra lateral · explorador · chat · atividade`), estilos das colunas,
+  explorador, atividade, memória e cartões de modo; colunas somem em telas
+  ≤1180px (a entrada continua pelo painel). Tudo por variáveis de tema.
+
+**Verificação:** `npm run build` (frontend) OK; testes backend 122/122 e
+frontend 7/7 verdes. **Não** houve teste de UI ao vivo (sem Docker/servidor
+neste ambiente).
+
+**Escopo consciente (para as próximas iterações):** editor de código e terminal
+como painéis "de verdade" precisariam de endpoints novos para servir/gravar
+arquivos do host (hoje a execução é num sandbox Docker por conversa) — por isso o
+trabalho real da IA aparece no painel de Atividade e no "Ambiente de Trabalho",
+não num editor que não gravaria nada. Memória por projeto é persistida no
+cliente e injetada em toda tarefa; uma indexação semântica por projeto no backend
+é o passo natural. Ainda em aberto: pontos de restauração/desfazer, permissões
+por ação com toggles e repasse do contexto de desenvolvedor às tarefas em
+segundo plano.
+## 🧩 Sistema Multimodelo — 2+ IAs na mesma mensagem (2026-07-21 — branch `claude/multimodelo-system-h8t0tb`)
+
+**Pedido:** usar dois ou mais modelos de IA simultaneamente na mesma conversa —
+não só duplicar a pergunta, mas colaborar/comparar/revisar/sintetizar — com
+função por modelo, controle de custos e presets de equipes (spec completa do
+usuário em 16 seções).
+
+**O que foi implementado (funcional de ponta a ponta):**
+- **Motor novo** `backend/src/agent/multiModel.js` (`runMultiModel`): cada
+  participante é uma chamada INDEPENDENTE ao provedor (modelo distinto), com
+  streaming individual (eventos SSE `mm_start`/`mm_status`/`mm_delta`/
+  `mm_reset`/`mm_round`/`mm_done`), status por modelo (aguardando → analisando →
+  respondendo/revisando → concluído/interrompido/erro), tokens, custo e tempo.
+  NÃO confundir com o Modo Equipe (`orchestrator.js` = vários ASSISTENTES no
+  mesmo modelo) nem com fallback (disponibilidade) — são recursos separados.
+- **4 modos:** `compare` (paralelo, lado a lado; a mensagem salva é a junção em
+  seções), `council` (paralelo + coordenador consolida concordâncias/
+  divergências/erros; síntese streamada como texto principal), `debate` (até 3
+  rodadas: cada modelo lê os outros, critica e REESCREVE a própria resposta;
+  coordenador fecha) e `pipeline` (sequencial: cada etapa recebe o que as
+  anteriores produziram; no Modo Desenvolvedor a 1ª etapa com papel
+  implementador/código executa DE VERDADE via `runAgent` com ferramentas, e as
+  etapas seguintes revisam — a revisão vira um 2º balão salvo).
+- **12 papéis prontos** (`MULTI_ROLES`): principal, revisor, pesquisador,
+  código, arquiteto, implementador, segurança, testador, tributário, contábil,
+  jurídico, livre — cada um com system prompt próprio; o usuário pode
+  sobrescrever com prompt customizado por participante.
+- **Custos:** estimativa ANTES do envio no frontend (`estimateMultiCost`, usa
+  `price`/`priceOut` do catálogo — `priceOut` é campo NOVO em
+  `modelCapabilities.js`), orçamento máximo em US$ com interrupção automática
+  (`budgetUsd` → `budgetExceeded`), teto de tokens por modelo (`max_tokens`),
+  teto de 6 modelos e 3 rodadas (env `MULTI_MAX_MODELS`/`MULTI_MAX_ROUNDS`),
+  alerta $$$ para modelos caros. Custo REAL por modelo gravado no meta.
+- **Contexto por política** (`context`): `recent` (padrão, ~8 msgs), `full`
+  (~30 msgs), `summary` (usa `conversations.summary_long/short`; sem resumo cai
+  para recent) e `none` — o orquestrador decide o que cada modelo recebe, nunca
+  o histórico inteiro por padrão.
+- **Cancelar UM modelo só:** `POST /conversations/:id/multimodel/cancel {slot}`
+  (registro `slotRegistries` por conversa aborta só os AbortControllers daquele
+  slot); pausar/continuar/parar geral continuam valendo para tudo (mesmo
+  `control` de sempre).
+- **Persistência:** coluna nova `messages.multi_meta` (migração
+  `006_multimodel.sql`) guarda o JSON por modelo (status/texto/usage/custo/
+  tempo) — o GET da conversa devolve como `m.multi` e a interface remonta os
+  cartões ao reabrir. Se o JSON passar de 200k, regrava com textos encurtados
+  (nunca `.slice()` cego que quebraria o JSON).
+- **Presets ("equipes"):** tabela `model_teams` + rotas `GET/POST/DELETE
+  /api/model-teams` (máx. 30 por usuário; config re-normalizada no POST).
+- **Frontend:** `MultiModelPicker.jsx` (botão na topbar ao lado do
+  ContextPicker: modo, modelos+funções, coordenador, rodadas, contexto,
+  orçamento, estimativa, equipes salvas; estado em `localStorage
+  fred_multimodel`; ligar multimodelo DESLIGA o Modo Equipe — o backend dá
+  prioridade ao multimodelo) e `MultiModelBoard.jsx` (cartões por modelo nas
+  mensagens com ações: copiar uma resposta, "continuar com este" (troca o
+  modelo principal e desliga o multi), "pedir revisão" (pré-preenche o campo),
+  "combinar respostas", parar um modelo). No render, modos `compare`/`pipeline`
+  NÃO repetem o `content` (o quadro já mostra tudo); `council`/`debate` mostram
+  quadro + síntese.
+- **Validação:** schema zod `multiModel` no `chat` (validation.js) +
+  normalização de verdade em `normalizeMultiModelConfig` (menos de 2 modelos
+  válidos → null → fluxo normal de 1 modelo segue intacto).
+
+**Testes/validação:** `backend/src/multiModel.test.js` (7 testes: normalização
+e custo); 125 testes de backend passando; build do Vite OK. NÃO houve teste de
+UI ao vivo (sem Docker/Postgres nesta sessão) — validar em produção o fluxo
+completo com chave OpenRouter real.
+
+**Fora do escopo desta entrega:** "escolher automaticamente o melhor modelo"
+(seção 6 da spec) — exigiria um classificador/roteador próprio; o restante da
+spec está coberto.
+
+## 🔄 Catálogo de modelos por usuário — OpenRouter voltando a aparecer (2026-07-20 — branch `claude/openrouter-models-sync-wp1krw`)
+
+**Sintoma relatado:** "modelos do OpenRouter que não aparecem no app" — dúvida se
+era falta de sincronização.
+
+**Causa-raiz (não era sincronização):** a rota `GET /api/models`
+(`backend/src/routes/models.js`) buscava o catálogo SEMPRE com a `base_url` e a
+chave do **servidor** (`DEEPSEEK_BASE_URL`/`DEEPSEEK_API_KEY` do `.env`),
+ignorando o provedor **BYOK de cada usuário**. Como a produção roda
+`ALLOW_SHARED_KEY=false` (sem chave de servidor) e o default da base é o DeepSeek,
+um usuário com chave própria do OpenRouter recebia um catálogo que NÃO era o dele
+(no pior caso, pouquíssimos modelos). Havia ainda um **cache global único**
+(`modelsCache`/`modelsCacheAt`) compartilhado entre todos os usuários,
+independentemente do provedor de cada um.
+
+**Correção:**
+- `backend/src/routes/models.js`: a rota agora resolve
+  `getUserProvider(req.userId)` e busca o catálogo na MESMA `base_url`/chave que o
+  usuário usa para conversar (o mesmo provider do chat). O cache virou um `Map`
+  por chave: `u:<userId>` para quem tem chave própria (o catálogo pode variar por
+  conta) e `s:<base>` para quem usa a chave compartilhada do servidor. TTL de 10
+  min mantido. Fetch cru preservado (não usa `client.models.list()`) para garantir
+  que os campos extras do OpenRouter — `architecture`, `pricing`,
+  `supported_parameters` — cheguem intactos ao `registerModelCatalog`
+  (é deles que sai a detecção de ferramentas/visão/raciocínio).
+- `backend/src/userProvider.js`: `getUserProvider` passou a expor `apiKey` (chave
+  crua) no objeto de retorno — uso interno no servidor, para a rota autenticar a
+  listagem no provedor do usuário. Aditivo; nenhum consumidor existente muda.
+
+**Verificação:** endpoint real do OpenRouter retorna **339 modelos**; o backend
+não descarta nenhum (só exige `id`) e `registerModelCatalog` produz os 339
+perfis. `node --check` OK nos dois arquivos; nenhum teste dependia da rota antiga.
+NÃO houve teste de UI ao vivo (sem Node/Docker no host desta sessão).
+
+**Não era bug do app (para triagem futura):** cache de 10 min atrasa modelos
+recém-adicionados; a aba "Recomendados" do seletor mostra só ~6 (catálogo inteiro
+fica na aba "Catálogo"); o "modelo padrão do assistente" e o objetivo "Trabalho
+geral" escondem de propósito os ~71 modelos SEM ferramentas (geradores de
+imagem/áudio, safety); e a política de dados/provedores da própria conta OpenRouter
+pode bloquear modelos na hora de usar ("No endpoints found").
+
+## 🛠️ Modo desenvolvedor / tarefa longa parava no "limite de etapas" (2026-07-20 — branch `claude/dev-mode-long-tasks-issue-dkjnfp`)
+
+**Sintoma:** toda tarefa longa (e todo uso do modo desenvolvedor) morria com
+_"Atingi o limite de 60 etapas… dificuldade de extrair os dados… peça em CSV"_,
+independente do esforço escolhido. Correções anteriores (aumentar o número) não
+resolviam.
+
+**Causa real (2 problemas somados):**
+1. `loop.js` calculava `maxSteps = Number(process.env.AGENT_MAX_STEPS || eff.steps)`.
+   Como o `.env` tinha `AGENT_MAX_STEPS=30` (vindo do `.env.example`), o **env
+   sobrescrevia e cortava em silêncio** o esforço do menu — escolher "Máx" (=60 no
+   código) virava 30, e mexer no número do código não tinha efeito. Esse era o "pode
+   ser outro problema" que o usuário intuiu.
+2. Cada etapa = um turno do modelo (≈uma ferramenta). 60 é pouco para programação
+   (clonar → ler dezenas de arquivos → escrever migration/routers/componentes). Ao
+   bater o limite, tudo era abortado com uma mensagem **errada** (falava de CSV numa
+   tarefa de código) e sem dizer como retomar.
+
+**Correção (`backend/src/agent/loop.js`, `.env.example`):**
+- `AGENT_MAX_STEPS` vira **PISO, não teto**: `Math.max(eff.steps, envSteps)`. "Máx"
+  vale ≥60 mesmo com env baixo. **NUNCA** voltar a `env || eff.steps`.
+- Modo desenvolvedor: orçamento maior via `AGENT_DEV_MAX_STEPS` (padrão 200).
+- Teto absoluto `AGENT_HARD_MAX_STEPS` (padrão 1,5× o base): tarefa que **ainda
+  rende** (ferramenta ok há ≤2 etapas, rastreado por `lastProductiveStep`/`IDLE_STEP_GRACE`)
+  passa do orçamento base até o teto em vez de morrer no meio; se estagnar, encerra.
+  Travas de falha (5 seguidas), repetição e pesquisa web **inalteradas**.
+- Mensagem de limite honesta e retomável (**Reenviar**), sem o texto de CSV.
+- `.env.example`: `AGENT_MAX_STEPS=` em branco (esforço manda), `AGENT_DEV_MAX_STEPS=200`,
+  `AGENT_HARD_MAX_STEPS=` documentados.
+
+**Ação de deploy:** conferir o `.env` da VPS — se tiver `AGENT_MAX_STEPS=30`, deixar
+em branco para o esforço do menu mandar (agora é inofensivo, mas confunde). Backend-only,
+validado com `node --check`.
+
+## 🖥️ Ambiente de Trabalho da IA: execução agrupada em uma sessão (2026-07-20 — branch `claude/unified-ai-execution-session-25rm4h`, PR #59)
+
+Antes, cada chamada de ferramenta virava um cartão solto **"bash 0s"** no chat.
+Numa tarefa real, dezenas empilhavam — poluíam a conversa, ocupavam a tela toda
+(pior no celular) e não diziam o que a IA fazia (todos com o mesmo nome, sem
+contexto). Agora **todas as ferramentas de uma resposta são agrupadas numa única
+sessão de execução** (o *Ambiente de Trabalho da IA*).
+
+**Como fica:**
+- **Cartão compacto no chat** — enquanto trabalha: "IA trabalhando no projeto" +
+  etapa atual + `N etapas · N arquivos · tempo` + botão **Abrir ambiente de
+  trabalho**. Ao terminar: "Tarefa concluída" + resumo (`N arquivos · N comandos ·
+  nenhum erro · tempo`) + botão **Ver detalhes**.
+- **Janela expandida** (overlay em tela cheia) — barra de estatísticas; filtros
+  por tipo (Terminal · Código · Arquivos · Pesquisa · Navegador); lista de etapas
+  humanizadas com ícone por categoria e status (concluída/executando/erro); etapa
+  em execução destacada e acompanhada ao vivo; painel de detalhe com a entrada
+  (comando/arquivo/consulta/URL) e o resultado de cada ação. Fechar (X) minimiza
+  de volta ao cartão.
+
+**Arquivos:**
+- `frontend/src/components/ExecutionSession.jsx` — **novo**. `ExecutionSession`
+  (cartão compacto) + `WorkspaceOverlay` (janela ao vivo). Mapa `TOOL_META`
+  traduz cada ferramenta (`bash`, `run_python`, `write_file`, `read_file`,
+  `list_files`, `zip_outputs`, `web_search`, `web_fetch`, `generate_image`,
+  `consultar_cnpj`) → categoria + rótulo humano; fallback genérico para nomes
+  desconhecidos.
+- `frontend/src/App.jsx` — no render das mensagens, os blocos `type:'tool'` são
+  agrupados numa só `<ExecutionSession>` (posicionada no 1º bloco de ferramenta);
+  o texto continua inline. Removido o `import { ToolStep }` (agora só o
+  `ExecutionSession`). `live = busy && última mensagem` OU alguma etapa `running`.
+- `frontend/src/styles.css` — bloco novo no fim (`.esCard*`, `.esOverlay`,
+  `.esWindow`, `.esSteps`, `.esStep*`, `.esDetail*`, `.esFilters`, etc.), com
+  media query `max-width:640px` (janela em tela cheia; lista vira faixa superior).
+
+**Decisões:**
+- **`ToolStep` (em `components.jsx`) foi mantido** como export, só deixou de ser
+  usado — remover era risco desnecessário. Se ninguém mais consumir, pode sair
+  depois.
+- A janela **reconstrói** terminal/arquivos/pesquisa/navegador a partir dos
+  eventos que o backend JÁ emite por ferramenta (`tool_start` com `preview` e
+  `tool_result` com `content` até 2000 chars, ver `backend/src/agent/loop.js`).
+  **Não** é streaming byte-a-byte de terminal real. Nenhuma mudança de backend
+  foi necessária — só apresentação. Evolução futura: o backend mandar preview do
+  conteúdo do arquivo editado / miniatura da página aberta para enriquecer o
+  painel de detalhe.
+- Mostra só ações **operacionais observáveis** — nunca o raciocínio interno do
+  modelo, conforme pedido.
+
+**Validação:** `npm run build` (vite) compila sem erros e `node --test src/*.test.js`
+passa (7 testes). Layout dos três estados conferido em preview visual (dark) antes
+do commit. O `dist/` é versionado neste repo, então foi recompilado e commitado
+junto. Falta a conferência visual em produção após o deploy da VPS.
+
 ## 🏷️ Logos de provedor no seletor de modelos (2026-07-20) — NÃO VALIDADO LOCALMENTE
 
 Cada modelo da lista mostra o logo oficial do provedor antes do nome, e o filtro
@@ -38,12 +879,18 @@ balanceado, variáveis CSS usadas existem (`--r-sm`, `--r-md`, `--panel`,
 esquerda. **Quem validou de fato foi o `npm run build` da VPS** no deploy — se
 estiver lendo isto e o build passou, o código compila; resta o visual.
 
-**Dois pontos para olhar na tela:**
-1. **Risco de corte no dropdown de Fornecedor.** `.mpPanel` tem `overflow:hidden`
-   e `.mpPanelInline` não sobrescreve. O `<select>` nativo antigo era desenhado
-   pelo SO e escapava do clipping; o `.mpFamPanel` é absoluto DENTRO do painel,
-   então o fim da lista pode ser cortado na borda inferior. Pelas contas cabe,
-   mas só olhando para ter certeza.
+**Pontos observados na tela:**
+1. **Risco de corte no dropdown de Fornecedor — RESOLVIDO (2026-07-20).** O
+   `.mpFamPanel` deixou de ser `position:absolute` dentro do `.mpPanel`
+   (`overflow:hidden`) e passou a `position:fixed` ancorado ao botão via
+   `getBoundingClientRect()`, com estilo inline calculado em `FamilySelect.jsx`.
+   Agora ele **escapa do clipping** do painel e **vira para cima** quando falta
+   espaço embaixo (`maxHeight` ajustado ao espaço disponível), então a lista
+   nunca é cortada na borda do painel nem sai da viewport. Fecha em
+   scroll/resize (o menu fixo se soltaria do botão que rola junto); o
+   `scroll` é capturado (`true`) para pegar também contêineres internos. O CSS
+   mantém um fallback `absolute` caso o cálculo de posição não rode. Validado
+   com `vite build` (passa).
 2. **Microsoft (Phi) e Nous** não têm logo no conjunto — caem no monograma.
 
 **Deploy é na VPS** (`fredericostudio.com.br`), não mais local: `bash atualizar.sh`
@@ -386,6 +1233,45 @@ Instalamos o GIMP a pedido e testamos a fundo (13 baterias ao vivo). Conclusão:
   lote, o caminho é **imagemagick / Pillow / OpenCV** (headless, rápidos,
   testados — o ImageMagick fez blur gaussiano perfeito no teste). NÃO reinstalar
   o GIMP sem uma necessidade que só ele atenda e um plano para o timeout de 45s.
+
+## 🛡️ Correção do SSRF residual no `web_fetch` (2026-07-19, mesclado em 2026-07-21 — PR #40)
+
+Fecha a **pendência §0** (SSRF residual, aberta desde a revisão de 2026-07-16).
+Uma análise crítica do repositório levantou vários pontos de segurança; ao
+conferir cada alegação contra o código, a maioria já estava mitigada (o
+`isBlockedHost` já cobria faixas privadas IPv4/IPv6, e o `web_fetch` já revalida
+cada redirect com `redirect: 'manual'`). Os formatos numéricos decimal/octal/hex
+citados como vetores **já eram neutralizados** pelo parser WHATWG de URL (ele
+normaliza `http://2130706433/` para `127.0.0.1` antes do filtro). Mas dois furos
+reais foram encontrados e corrigidos em `backend/src/tools.js`:
+
+1. **Bypass por IPv6 entre colchetes** (não visto pela análise): o hostname de
+   uma URL IPv6 chega **com colchetes** (`[::1]`), e o filtro comparava com
+   `::1` sem colchetes — então TODO literal IPv6 (loopback, ULA, link-local e a
+   forma IPv4-mapeada `[::ffff:127.0.0.1]`, que o parser normaliza para
+   `[::ffff:7f00:1]`) escapava e alcançava a rede interna. Correção: remover os
+   colchetes antes de comparar (`stripIpv6Brackets`), tratar IPv4 mapeado nas
+   formas pontilhada e hexadecimal (`mappedIpv4`), cobrir toda a faixa
+   link-local `fe80::/10` (antes só `fe80` literal) e somar multicast/reservado
+   (`224/4`, `240/4`) ao bloqueio IPv4 (`isBlockedIpv4`).
+2. **DNS rebinding**: filtro por texto não basta — um domínio público pode
+   resolver para IP interno. Novo `assertHostResolvesPublic` resolve o hostname
+   via DNS e valida CADA IP retornado antes de conectar, a cada redirect. O
+   `AbortSignal` é respeitado também durante a resolução (cancelamento
+   continua funcionando). Resta uma janela TOCTOU mínima entre resolver e
+   conectar — é a mitigação padrão; um pinning de IP na conexão fica como
+   trabalho futuro, se necessário.
+
+**Testes:** novo `backend/src/tools.ssrf.test.js` (8 casos: bypasses corrigidos
++ regressão de endereços públicos que devem seguir liberados). O teste de
+cancelamento (`tools.pathResolution.test.js`) passou a usar IP literal, que pula
+o DNS via `net.isIP` e exercita o repasse do sinal de forma determinística.
+Suíte do backend: 88 passam, 0 falham (2 pulados exigem PostgreSQL).
+
+**NÃO alterado de propósito:** a senha `studio` do Postgres nos `docker-compose*`
+é fixa; trocá-la no repositório quebraria o deploy em produção em execução — é
+mudança de operação (variável `POSTGRES_PASSWORD` + atualização do banco) a
+cargo do operador.
 
 ## 🎨 Kits de design de documentos + endurecimento por QA ao vivo (2026-07-19, PRs #24–#35)
 
@@ -1078,7 +1964,16 @@ chat · Upload como chips · Tela responsiva (gaveta mobile) · Tema claro/escur
 7. SANDBOX_RULES no prompt: cada run_python é processo novo (sem estado);
    narrar antes de cada ferramenta; ffmpeg disponível; generate_image p/ imagens.
 8. Freio: 5 falhas consecutivas de ferramenta → interrompe com o último erro.
-9. `AGENT_MAX_STEPS=30`, `AGENT_HISTORY_LIMIT=60` (env).
+9. Orçamento de etapas do agente (`loop.js`): `AGENT_MAX_STEPS` é **PISO, não
+   teto** — `Math.max(eff.steps, envSteps)`, nunca reduz o esforço escolhido
+   ("Máx" vale ≥60 mesmo com env baixo). NUNCA voltar a `env || eff.steps` (o env
+   sobrescrevia e cortava "Máx" para 30 em silêncio — causa real de "modo
+   desenvolvedor/tarefa longa bate no limite" mesmo depois de "aumentar o número").
+   Modo desenvolvedor: `AGENT_DEV_MAX_STEPS` (padrão 200). Teto absoluto:
+   `AGENT_HARD_MAX_STEPS` (padrão 1,5x o base) — tarefa AINDA produtiva (ferramenta
+   ok há ≤2 etapas, `lastProductiveStep`) passa do base até o teto em vez de morrer
+   no meio. Mensagem de limite honesta e retomável (sem o papo antigo de CSV).
+   `AGENT_HISTORY_LIMIT=60` (env).
 10. Validação de caminhos com `insideBase()` (startsWith + separador) — nunca
     voltar ao startsWith puro (path traversal).
 11. Frontend: dependências com versões fixadas (nunca "latest").
@@ -1104,15 +1999,16 @@ chat · Upload como chips · Tela responsiva (gaveta mobile) · Tema claro/escur
 
 ## 8. Pendências / próximos passos sugeridos
 
-0. **[Segurança, revisão 2026-07-16] SSRF residual no `web_fetch`** (`tools.js`,
-   `isBlockedHost`): o bloqueio filtra por **texto do hostname**, então deixa passar
-   IPv6 entre colchetes (`http://[::1]/`), IP em decimal/hex/octal (`http://2130706433/`
-   = 127.0.0.1) e **DNS rebinding** (domínio público que resolve p/ IP interno). Como
-   o backend tem rede, isso alcança serviços internos. NÃO é regressão (pré-existente;
-   a validação de redirect até melhorou). Corrigir validando o **IP resolvido**
-   (desembrulhar colchetes IPv6, cobrir IPv4-mapeado, formatos numéricos) antes do
-   fetch. Também: `ENVIRONMENT_QUERY_RE` (`agent.js`) é amplo demais e dispara um
-   `bash` de auditoria no sandbox em mensagens comuns — estreitar.
+0. ✅ **[RESOLVIDO em 2026-07-19] SSRF residual no `web_fetch`** (`tools.js`,
+   `isBlockedHost`): o bloqueio filtrava por **texto do hostname** e deixava passar
+   IPv6 entre colchetes (`http://[::1]/`) e o IPv4-mapeado; o **DNS rebinding**
+   também não era coberto. Corrigido: colchetes desembrulhados, IPv4-mapeado
+   tratado, faixa link-local completa, e resolução de DNS com validação de cada
+   IP antes do fetch (`assertHostResolvesPublic`). Ver a entrada de log no topo
+   deste arquivo. Os formatos decimal/hex/octal já eram neutralizados pelo parser
+   de URL. **Ainda pendente nesta linha:** `ENVIRONMENT_QUERY_RE` (`agent.js`) é
+   amplo demais e dispara um `bash` de auditoria no sandbox em mensagens comuns —
+   estreitar.
 1. **Usuário testar a memória** (git pull + iniciar.bat; 1ª conversa baixa o
    modelo de embeddings ~112MB) — perguntar "quem sou eu?" após algumas conversas.
 2. Testar **importação** do export do Claude (conversations.json).

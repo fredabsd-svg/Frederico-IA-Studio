@@ -43,14 +43,18 @@ você escolhe é enviado direto ao provedor, sem substituição.
 | 📷 | **Câmera e imagens** | Fotografe um documento (webcam no PC, câmera no celular) ou anexe uma imagem — a IA lê sozinha (**visão** nos modelos com visão; **OCR** nos demais) |
 | 🏢 | **Consulta de CNPJ** | Dados cadastrais oficiais (BrasilAPI/ReceitaWS): razão social, situação, CNAE, endereço e sócios |
 | 🧠 | **Memória de longo prazo** | Recuperação semântica com painel de revisão |
+| 🔀 | **Multiconversa** | Várias conversas processando AO MESMO TEMPO (teto configurável); indicador girando na barra lateral mostra quais estão ativas, e trocar de conversa não interrompe nem mistura nada — ao voltar, o andamento reconecta ao vivo |
+| ⏭️ | **Retomada real (checkpoint)** | Tarefa interrompida por limite de ciclos, queda do provedor ou watchdog salva o estado no banco; o botão **Continuar de onde parei** retoma do ponto exato (sem refazer ferramentas nem arquivos já prontos) e sobrevive a reinício do backend |
 | 👥 | **Modo Equipe** | Combina perspectivas de vários assistentes |
+| 🧩 | **Sistema Multimodelo** | 2+ modelos de IA na mesma mensagem: Comparação lado a lado, Conselho de IAs (coordenador consolida), Debate em rodadas e Especialistas em sequência — com função por modelo, estimativa de custo, orçamento máximo, interrupção por modelo e equipes salvas (presets) |
 | 🖥️ | **Sandbox Docker** | Um container por conversa para Python, Bash e geração de arquivos |
-| 🌐 | **Pesquisa na web** | Google Custom Search, ou DuckDuckGo grátis (com dois endpoints de reserva) |
-| 📁 | **Modo Desenvolvedor** | Trabalhe sobre uma pasta de projeto autorizada |
+| 🛠️ | **Ambiente de Trabalho da IA** | As ações da IA (terminal, código, arquivos, pesquisa, navegador) ficam agrupadas em **uma sessão ao vivo** — cartão compacto no chat que expande numa janela com o passo a passo, o detalhe de cada ação e a **miniatura real** das páginas abertas |
+| 🌐 | **Pesquisa na web** | Google Custom Search, ou DuckDuckGo grátis (com dois endpoints de reserva); ao abrir uma página, um **Chromium headless** captura a miniatura |
+| 📁 | **Modo Desenvolvedor** | Ambiente dedicado de programação: projetos com memória permanente, explorador de arquivos e painel de atividade ao redor do chat, com seis modos de trabalho (Perguntar, Planejar, Implementar, Corrigir erro, Revisar e Agente autônomo). Painel direito em **abas** — Atividade (passos agrupados e expansíveis), Arquivos (analisados), Alterações (criados/editados, com selo A/M) e Memória; barra lateral com **tarefas recentes** do projeto; pill de status honesto no cabeçalho (sem fingir etapas que o backend não expõe); chip **Permissões** mostra o que a IA pode fazer agora |
 | 🔌 | **Conector GitHub** | Conecte a sua conta (token) e a IA clona um repositório, altera o código e envia de volta — push e Pull Request direto pelo chat ou pelo modo desenvolvedor; o token fica cifrado e nunca entra no sandbox |
 | 🎙️ | **Voz e segundo plano** | Ditado por voz, tarefas em background, histórico por cliente |
 | 🛡️ | **Privacidade (LGPD)** | Consentimento registrado, Política de Privacidade e Termos publicados, e painel "Privacidade e dados": exportar tudo em JSON, apagar o histórico ou excluir a conta — hard delete, sem soft delete |
-| 🏷️ | **Seletor de modelos com logos** | Catálogo e filtro por fornecedor com o logo oficial de cada provedor, servido localmente (sem CDN) |
+| 🏷️ | **Seletor de modelos com logos** | Catálogo e filtro por fornecedor com o logo oficial de cada provedor, servido localmente (sem CDN); selo opcional de **classificação de referência** (S+ a B) ao lado do nome, quando o modelo bate com a curadoria em `frontend/src/modelRanking.js` — some sozinho para os demais, e dá para ordenar o catálogo por essa classificação |
 
 ### Execução confiável
 
@@ -112,6 +116,33 @@ casca de UI; a lógica de chat, conversas, tarefas e assistentes vive em
 Nenhum recurso visual vem de CDN: imagens e logos ficam em `frontend/public/` e
 são servidos pelo próprio app. Assim a interface não depende de um terceiro para
 carregar, e o IP de quem usa o site não é entregue a nenhuma CDN externa.
+
+**Ambiente de Trabalho da IA.** As chamadas de ferramenta de uma resposta são
+agrupadas em uma única sessão de execução (`frontend/src/components/ExecutionSession.jsx`)
+em vez de dezenas de cartões soltos: um cartão compacto que abre uma janela ao
+vivo com o passo a passo humanizado e o detalhe (entrada/resultado) de cada ação.
+Quando a IA abre uma página com o `web_fetch`, o backend a renderiza num
+**Chromium headless** (`backend/src/agent/pageShot.js`, via `puppeteer-core` +
+Chromium do sistema, embutido na imagem Docker) e salva um screenshot exibido na
+janela. A captura é *best-effort* e desligável (`WEB_FETCH_SCREENSHOTS=0`), e cada
+requisição do navegador é filtrada pela mesma regra anti-SSRF do `web_fetch`.
+
+**Memória + cache.** A **memória de longo prazo** (perfil, notas, fatos e
+recuperação semântica de conversas antigas) preserva o contexto entre mensagens:
+o `contextBuilder` monta, a cada resposta, um contexto por modelo com perfil,
+notas, resumo do início da conversa (quando ela sai da janela) e os trechos
+relevantes — com isolamento por cliente. Sobre isso, uma **camada de cache**
+(`backend/src/cache.js`, TTL + LRU, sem dependências) reduz custo de tokens e
+latência em quatro frentes: **(1) prompt caching** do LLM — o preâmbulo estável
+(prompt-base, contrato de qualidade, notas de sistema) é marcado com
+`cache_control` e reaproveitado pelo provedor entre mensagens/etapas (via
+OpenRouter para Anthropic/Gemini; a DeepSeek direta já cacheia sozinha); **(2)
+embeddings** — vetores determinísticos memoizados por hash, evitando recomputar a
+mesma pergunta a cada mensagem; **(3) consultas de CNPJ** — TTL longo, pois
+dados cadastrais mudam raramente e a base grátis é limitada; **(4) busca web** —
+TTL curto contra a repetição imediata. A economia é observável em
+`GET /api/cache/stats` e em `usage.cached_tokens` das respostas. Tudo é
+configurável/desligável por variáveis de ambiente (ver `.env.example`).
 
 ---
 
@@ -194,20 +225,70 @@ docker compose up --build -d
 | `BETTER_AUTH_SECRET` | — | Segredo de sessão do Better Auth |
 | `ENCRYPTION_KEY` | — | Criptografa a chave de IA de cada usuário (BYOK) no banco |
 | `ALLOW_SHARED_KEY` | true | `false` num site público: cada usuário precisa da própria chave |
+| `FREE_TIER_API_KEY` | — | Liga o **modo gratuito**: chave da plataforma (só no servidor) para novos usuários conversarem sem configurar nada |
+| `FREE_TIER_BASE_URL` | OpenRouter | Base OpenAI-compatível do modo gratuito |
+| `FREE_TIER_MODELS` | modelos `:free` | Allowlist de modelos gratuitos, em ordem de preferência (o 1º é o padrão; os demais são reserva) |
+| `FREE_TIER_MSGS_PER_DAY` | 20 | Mensagens gratuitas por usuário/dia (admin ajusta pelo painel sem reiniciar) |
+| `FREE_TIER_MSGS_PER_MIN` | 4 | Freio anti-rajada do modo gratuito |
+| `FREE_TIER_CONCURRENCY` | 2 | Respostas gratuitas simultâneas (fila global protege a cota no provedor) |
+| `FREE_TIER_QUEUE_MAX` | 30 | Tamanho máximo da fila do modo gratuito |
 | `RATE_MSGS_PER_DAY` | 0 (sem limite) | Máximo de mensagens por usuário por dia |
 | `RATE_API_PER_MIN` | 600 | Rate limit HTTP geral da API por IP/minuto (0 desliga) |
 | `RATE_AUTH_PER_15MIN` | 50 | Rate limit de login/cadastro por IP a cada 15 min (0 desliga) |
 | `MAX_SANDBOXES_PER_USER` | 2 | Sandboxes ativos ao mesmo tempo por usuário |
+| `MAX_ACTIVE_RUNS_PER_USER` | 5 | Conversas do mesmo usuário processando ao mesmo tempo (multiconversa); conversas que executam código também disputam `MAX_SANDBOXES_PER_USER` |
+| `CHECKPOINT_MAX_BYTES` | 600000 | Tamanho máximo do estado de execução salvo por conversa (retomada real); array aparado preservando objetivo + resultados recentes |
 | `TOOL_TIMEOUT_MS` | 45000 | Tempo máximo de um comando de sandbox |
 | `AGENT_MAX_STEPS` | conforme o esforço | Limite de etapas da tarefa |
 | `SANDBOX_MEMORY / SANDBOX_CPUS` | 1024m / 1 | Recursos do sandbox |
+| `WEB_FETCH_SCREENSHOTS` | 1 | Miniatura da página aberta pelo `web_fetch` (Chromium headless); `0` desliga (só o texto) |
+| `SCREENSHOT_TIMEOUT_MS` | 9000 | Tempo máximo por captura de miniatura (best-effort) |
+| `CHROMIUM_PATH` | /usr/bin/chromium | Caminho do Chromium do sistema (já definido no Dockerfile) |
 | `MODEL_FALLBACKS` | — | Modelos de reserva (ordem) para failover automático quando o provedor cai; sem isso, cai para o modelo-base da conta |
+| `STREAM_STALL_TIMEOUT_MS` | 180000 | Watchdog do streaming: tempo máximo sem receber nenhum dado do provedor antes de abortar e retomar/failover (piso 30000) |
+| `PROVIDER_CONNECT_TIMEOUT_MS` | 180000 | Tempo máximo até o provedor começar a responder a chamada de streaming (piso 30000) |
 | `VALIDATE_RECALC` | true | Recalcula .xlsx/.xlsm com LibreOffice para detectar erros reais de fórmula (#DIV/0!, #REF!); `false` = validação parcial mais rápida |
 | `OUTPUT_RETENTION_DAYS` | 0 (desligado) | Remove arquivos de saída mais antigos que N dias (útil em uso público/soak) |
 | `CONVERSATION_RETENTION_DAYS` | 0 (desligado) | LGPD: apaga em definitivo conversas sem atividade há mais de N dias (mensagens, arquivos, memórias derivadas e workspace) |
 | `USAGE_RETENTION_DAYS` | 365 | Retenção do registro de consumo de tokens (usage/usage_daily); 0 mantém para sempre |
 
 Consulte o [.env.example](.env.example) para todas as opções.
+
+---
+
+## 🆓 Modo gratuito (primeiro acesso sem chave)
+
+Para eliminar a barreira inicial de configuração, o app tem um **modo gratuito**: no primeiro
+acesso, quem ainda não tem chave escolhe entre **"Começar gratuitamente"** (conversa na hora,
+usando modelos gratuitos pagos/limitados pela plataforma) e **"Configurar minha própria chave"**
+(um assistente passo a passo guia a criação da chave em provedores como OpenRouter, DeepSeek,
+Groq, Google Gemini e Mistral).
+
+Como funciona por dentro:
+
+- **A chave gratuita fica só no servidor** (`FREE_TIER_API_KEY` no `.env`/secret do backend).
+  O navegador fala apenas com `/api`; **só o backend** fala com o provedor de IA. A chave nunca
+  aparece no frontend, no app ou no repositório.
+- **Allowlist de modelos:** no modo gratuito só os modelos de `FREE_TIER_MODELS` são usados
+  (padrão: modelos `:free` do OpenRouter). Se o modelo escolhido falhar (429/queda), o app tenta
+  automaticamente o próximo da lista. A lista `:free` do OpenRouter muda com frequência —
+  confira em [openrouter.ai/collections/free-models](https://openrouter.ai/collections/free-models).
+- **Limites e fila com transparência:** limite diário por usuário (com renovação à meia-noite no
+  fuso do app), freio por minuto e fila global de concorrência limitada. O usuário vê no chat o
+  chip "Modo gratuito" com o modelo, o provedor, as mensagens restantes, o horário de renovação e
+  a posição na fila — e pode **cancelar** enquanto espera. Ao atingir o limite, aparece uma tela
+  amigável com opções (aguardar, configurar chave própria, tutorial), não um erro técnico.
+- **Painel do administrador** (menu Administração → Modo gratuito, só para `ADMIN_EMAIL`):
+  usuários ativos, consumo por usuário/modelo/dia, erros e indisponibilidades, limite global e
+  individual, ativar/desativar modelos e **bloquear usuários por abuso** — tudo sem reiniciar.
+- **Termos dos provedores:** o OpenRouter permite servir seus usuários por um backend próprio
+  (proíbe revenda direta de acesso à API e multi-contas para burlar limites; a cota é por conta:
+  ~50 req/dia, ou ~1.000 req/dia após uma compra única de US$ 10). Alguns provedores **proíbem**
+  servir usuários finais no nível gratuito (ex.: NVIDIA NIM, Cohere trial, GitHub Models) — não
+  os use como `FREE_TIER_BASE_URL`. Modelos locais (Ollama em `http://host:11434/v1`) também
+  funcionam como modo gratuito, sem termos de terceiros.
+- **Privacidade (LGPD):** muitos modelos gratuitos registram/treinam com os prompts. Se ativar o
+  modo gratuito num site público, reflita isso na sua Política de Privacidade.
 
 ---
 
@@ -219,6 +300,7 @@ Consulte o [.env.example](.env.example) para todas as opções.
 - 🪧 **Segurança visível ao usuário:** a tela de login exibe selos (arquivos verificados por antivírus, conexão criptografada, compromisso com a LGPD — com link para `/privacidade`) e a página de apresentação tem um bloco de confiança com 6 cartões (dados isolados, chave própria/BYOK, credenciais protegidas, arquivos verificados, HTTPS, LGPD). Regra: só anunciar o que está de fato ativo — se desativar o ClamAV, remova os selos correspondentes.
 - ⚠️ O backend recebe o **socket Docker** — permissão privilegiada; use uma máquina **dedicada** a este app.
 - 🔐 A sandbox roda **sem privilégios** e com limites de CPU/memória, mas a rede fica habilitada para pesquisas e automações — código executado por um usuário tem acesso à internet.
+- 🛰️ **Proteção contra SSRF no `web_fetch`:** o backend bloqueia hostnames/IPs internos (loopback, faixas privadas IPv4, metadados de nuvem `169.254.169.254`, IPv6 loopback/ULA/link-local, incluindo a forma IPv4-mapeada) **e resolve o DNS validando cada IP antes de conectar** (defesa contra DNS rebinding), revalidando a cada redirect. Cobertura verificada em `backend/src/tools.ssrf.test.js`.
 - 🌍 **Site público:** qualquer pessoa pode se cadastrar. Para uso amplo/indexado, considere adicionar confirmação de e-mail e/ou aprovação de conta; enquanto isso, prefira divulgar "por link" e mantenha os limites (`RATE_MSGS_PER_DAY`, `MAX_SANDBOXES_PER_USER`).
 - 📋 Conteúdo enviado ao modelo pode ser transmitido ao provedor configurado — avalie **LGPD** e sigilo antes de enviar dados sensíveis.
 

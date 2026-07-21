@@ -1,12 +1,28 @@
 import fs from 'fs';
 import path from 'path';
+import net from 'net';
+import dns from 'dns';
 import { nanoid } from 'nanoid';
 import { execInSandbox, workspaceFor, safeJoin, pcFolderMounts } from './sandbox.js';
 import { runGithubTool } from './connectors/github.js';
+import { createCache } from './cache.js';
+import { captureThumbnail } from './agent/pageShot.js';
+
+// Cache de chamadas EXTERNAS caras/repetidas. Desligável com TOOL_CACHE=0
+// (usado nos testes para isolar cada caso). Chaves e TTLs por tipo:
+//   * CNPJ: dados cadastrais mudam raramente; TTL longo (12h) evita bater na
+//     BrasilAPI/ReceitaWS de novo (a ReceitaWS grátis limita ~3 req/min).
+//   * web_search: resultados variam com o tempo; TTL curto (10 min) só corta a
+//     repetição da MESMA busca dentro de um intervalo curto.
+const TOOL_CACHE_ENABLED = process.env.TOOL_CACHE !== '0';
+const CNPJ_TTL_MS = Math.max(0, Number(process.env.CNPJ_CACHE_TTL_MS ?? 12 * 60 * 60 * 1000));
+const WEBSEARCH_TTL_MS = Math.max(0, Number(process.env.WEBSEARCH_CACHE_TTL_MS ?? 10 * 60 * 1000));
+const cnpjCache = createCache({ name: 'cnpj', max: 2000, ttl: CNPJ_TTL_MS });
+const webSearchCache = createCache({ name: 'web_search', max: 500, ttl: WEBSEARCH_TTL_MS });
 
 export const toolDefinitions = [
-  { type: 'function', function: { name: 'run_python', description: 'Executa Python 3.12 real na sandbox Linux isolada. Use para análises, planilhas, Word, PDF, gráficos, OCR, APIs e automações. Pacotes incluem pandas, numpy, openpyxl, python-docx, odfpy (importe odf), reportlab, weasyprint, PyMuPDF/fitz, pdfplumber, camelot, ocrmypdf, pytesseract, duckdb, polars, Flask/FastAPI/Uvicorn, pytest/black/ruff, SQLAlchemy, psycopg (v3), psycopg2 e clientes MySQL/Redis/MongoDB. Para ML em CPU: scikit-learn e onnxruntime para inferência; transformers, sentencepiece e safetensors para tokenização/configuração. Sem PyTorch/TensorFlow, use modelos ONNX com onnxruntime.', parameters: { type: 'object', properties: { code: { type: 'string' } }, required: ['code'] } } },
-  { type: 'function', function: { name: 'bash', description: 'Executa comando bash na sandbox. Disponíveis: LibreOffice, ffmpeg, PDF/OCR, ImageMagick, Inkscape/rsvg-convert, Chromium headless/Xvfb/Playwright, gcc/g++/make/cmake/ninja, go, rustc/cargo, javac, dotnet (C#) e kotlinc 2.3.21 (Kotlin JVM), sqlite3/psql/mysql/redis-cli, ssh/rsync/ansible/kubectl, gdb/valgrind/strace/lsof/htop/shellcheck e Node/npm/yarn/pnpm com tsc/vite/sass/postcss/tailwindcss/prettier/eslint. TEM internet: curl/wget e instalações pip/npm funcionam; apt não funciona por ser usuário sem root. Docker/Compose, GPU e Android/iOS nativos são intencionalmente indisponíveis para preservar o isolamento.', parameters: { type: 'object', properties: { command: { type: 'string' } }, required: ['command'] } } },
+  { type: 'function', function: { name: 'run_python', description: 'Executa Python 3 real na sandbox Linux isolada. Use para análises, planilhas, Word, PDF, gráficos, OCR, APIs e automações. Pacotes incluem pandas, numpy, openpyxl, python-docx, odfpy (importe odf), reportlab, weasyprint, PyMuPDF/fitz, pdfplumber, camelot, ocrmypdf, pytesseract, duckdb, polars, Flask/FastAPI/Uvicorn, pytest/black/ruff, SQLAlchemy, psycopg (v3), psycopg2 e clientes MySQL/Redis/MongoDB. Para ML em CPU: scikit-learn e onnxruntime para inferência; transformers, sentencepiece e safetensors para tokenização/configuração. Sem PyTorch/TensorFlow, use modelos ONNX com onnxruntime.', parameters: { type: 'object', properties: { code: { type: 'string' } }, required: ['code'] } } },
+  { type: 'function', function: { name: 'bash', description: 'Executa comando bash na sandbox. Disponíveis: LibreOffice, ffmpeg, PDF/OCR, ImageMagick, Inkscape/rsvg-convert, Chromium headless/Xvfb/Playwright, gcc/g++/make/cmake/ninja, go, rustc/cargo, javac, dotnet (C#) e kotlinc (Kotlin JVM), sqlite3/psql/mysql/redis-cli, ssh/rsync/ansible/kubectl, gdb/valgrind/strace/lsof/htop/shellcheck e Node/npm/yarn/pnpm com tsc/vite/sass/postcss/tailwindcss/prettier/eslint. TEM internet: curl/wget e instalações pip/npm funcionam; apt não funciona por ser usuário sem root. Docker/Compose, GPU e Android/iOS nativos são intencionalmente indisponíveis para preservar o isolamento.', parameters: { type: 'object', properties: { command: { type: 'string' } }, required: ['command'] } } },
   { type: 'function', function: { name: 'write_file', description: 'Cria ou sobrescreve arquivo no workspace da sessão.', parameters: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path','content'] } } },
   { type: 'function', function: { name: 'read_file', description: 'Lê um arquivo de texto do workspace da sessão.', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } } },
   { type: 'function', function: { name: 'list_files', description: 'Lista arquivos enviados e gerados na sessão.', parameters: { type: 'object', properties: { folder: { type: 'string', enum: ['uploads','outputs','.'] } } } } },
@@ -125,7 +141,20 @@ function duckFetch(endpoint, query, signal) {
   });
 }
 
+// Cacheia buscas idênticas por um TTL curto (só corta a repetição imediata da
+// MESMA query). Erros/vazios não entram no cache — devem permitir nova tentativa.
 async function webSearch(query, options = {}) {
+  const q = String(query || '').trim();
+  if (!q || !TOOL_CACHE_ENABLED) return webSearchUncached(query, options);
+  const key = q.toLowerCase();
+  const hit = webSearchCache.get(key);
+  if (hit) return hit;
+  const result = await webSearchUncached(query, options);
+  if (result && Array.isArray(result.results) && result.results.length) webSearchCache.set(key, result);
+  return result;
+}
+
+async function webSearchUncached(query, options = {}) {
   const q = String(query || '').trim();
   if (!q) return { engine: 'nenhum', results: [], erro: 'Consulta de pesquisa vazia.' };
   // Com chaves do Google configuradas, usa a API oficial (Custom Search).
@@ -165,23 +194,89 @@ async function webSearch(query, options = {}) {
   };
 }
 
+// URLs com IPv6 chegam com colchetes no hostname ("[::1]"); remova-os antes de
+// qualquer comparação, senão o literal escaparia de todos os testes abaixo.
+function stripIpv6Brackets(hostname) {
+  const s = String(hostname || '').trim();
+  return s.length >= 2 && s.startsWith('[') && s.endsWith(']') ? s.slice(1, -1) : s;
+}
+
+// true se o IPv4 (pontilhado) pertence a uma faixa interna/reservada.
+function isBlockedIpv4(ip) {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(ip);
+  if (!m) return false;
+  const [a, b, c, d] = m.slice(1).map(Number);
+  if (a > 255 || b > 255 || c > 255 || d > 255) return false;
+  if (a === 0 || a === 127 || a === 10) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 169 && b === 254) return true;           // link-local / metadados de nuvem
+  if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
+  if (a >= 224) return true;                         // multicast/reservado (224/4, 240/4)
+  return false;
+}
+
+// Extrai o IPv4 embutido num IPv6 mapeado, tanto na forma pontilhada
+// (::ffff:127.0.0.1) quanto na hexadecimal que o parser WHATWG produz a partir
+// dela (::ffff:7f00:1). Sem isto, http://[::ffff:127.0.0.1]/ furava o filtro.
+function mappedIpv4(h) {
+  let m = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i.exec(h);
+  if (m) return m[1];
+  m = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(h);
+  if (m) {
+    const hi = parseInt(m[1], 16), lo = parseInt(m[2], 16);
+    return `${(hi >> 8) & 255}.${hi & 255}.${(lo >> 8) & 255}.${lo & 255}`;
+  }
+  return null;
+}
+
 // Bloqueia endereços internos/loopback/link-local para evitar SSRF (o backend
 // tem rede; o modelo pode ser induzido por conteúdo de uma página a buscar,
-// ex., http://169.254.169.254/ de metadados de nuvem).
+// ex., http://169.254.169.254/ de metadados de nuvem). Aceita hostnames, IPv4
+// (o parser WHATWG já normaliza decimal/octal/hex para pontilhado) e IPv6 —
+// inclusive entre colchetes e na forma IPv4-mapeada.
 export function isBlockedHost(hostname) {
-  const h = String(hostname || '').toLowerCase();
+  const h = stripIpv6Brackets(hostname).toLowerCase();
   if (!h || h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.local') || h.endsWith('.internal')) return true;
-  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
-  if (m) {
-    const a = Number(m[1]), b = Number(m[2]);
-    if (a === 0 || a === 127 || a === 10) return true;
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 192 && b === 168) return true;
-    if (a === 169 && b === 254) return true;       // link-local / metadados de nuvem
-    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
+  if (isBlockedIpv4(h)) return true;
+  if (h.includes(':')) {                               // IPv6 literal
+    const mapped = mappedIpv4(h);
+    if (mapped) return isBlockedIpv4(mapped);
+    if (h === '::1' || h === '::') return true;        // loopback / não especificado
+    if (h.startsWith('fc') || h.startsWith('fd')) return true; // ULA fc00::/7
+    if (/^fe[89ab]/.test(h)) return true;              // link-local fe80::/10
   }
-  if (h === '::1' || h === '::' || h.startsWith('fc') || h.startsWith('fd') || h.startsWith('fe80')) return true;
   return false;
+}
+
+// Anti-DNS-rebinding: bloquear o hostname textualmente não basta — um domínio
+// público pode resolver para 127.0.0.1/10.x/169.254.x. Resolvemos o nome e
+// conferimos CADA IP retornado antes de conectar. (Resta uma janela TOCTOU
+// mínima entre resolver e conectar; a mitigação padrão é validar aqui.)
+async function assertHostResolvesPublic(hostname, signal) {
+  const h = stripIpv6Brackets(hostname);
+  if (net.isIP(h)) return; // IP literal já foi validado por isBlockedHost
+  let addrs;
+  try {
+    // dns.promises.lookup não aceita AbortSignal; usamos a forma de callback e
+    // ligamos o signal na mão para o cancelamento também valer durante o DNS.
+    addrs = await new Promise((resolve, reject) => {
+      if (signal?.aborted) return reject(new Error(String(signal.reason || 'aborted')));
+      const onAbort = () => reject(new Error(String(signal?.reason || 'aborted')));
+      signal?.addEventListener('abort', onAbort, { once: true });
+      dns.lookup(h, { all: true }, (err, result) => {
+        signal?.removeEventListener('abort', onAbort);
+        if (err) reject(err);
+        else resolve(result);
+      });
+    });
+  } catch (e) {
+    if (signal?.aborted) throw e; // repassa o cancelamento intacto
+    throw new Error('Não foi possível resolver o endereço da página.');
+  }
+  for (const { address } of addrs) {
+    if (isBlockedHost(address)) throw new Error('Endereço bloqueado por segurança (rede interna/local não é acessível).');
+  }
 }
 
 export async function webFetch(url, options = {}) {
@@ -193,6 +288,7 @@ export async function webFetch(url, options = {}) {
   // backend into a private or metadata address.
   for (let redirects = 0; redirects <= 4; redirects++) {
     if (isBlockedHost(target.hostname)) throw new Error('Endereço bloqueado por segurança (rede interna/local não é acessível).');
+    await assertHostResolvesPublic(target.hostname, options.signal);
     r = await fetchWithTimeout(target, 20000, { redirect: 'manual', signal: options.signal });
     if (![301, 302, 303, 307, 308].includes(r.status)) break;
     const location = r.headers.get('location');
@@ -325,11 +421,24 @@ function fromReceitaWs(d) {
   };
 }
 
+// Cacheia consultas de CNPJ por um TTL longo (dados cadastrais mudam raramente).
+// Guarda só resultados DEFINITIVOS — sucesso ou "não encontrado" —; erros
+// transitórios (base fora do ar) não entram no cache para permitir nova tentativa.
 export async function consultarCnpj(cnpj, options = {}) {
   const digits = normalizeCnpj(cnpj);
   if (digits.length !== 14) {
     return { error: 'CNPJ inválido: informe os 14 dígitos (com ou sem pontuação).', code: 'CNPJ_INVALIDO', recoverable: true, requestedCnpj: cnpj };
   }
+  if (TOOL_CACHE_ENABLED) {
+    const hit = cnpjCache.get(digits);
+    if (hit) return hit;
+  }
+  const result = await consultarCnpjUncached(digits, options);
+  if (TOOL_CACHE_ENABLED && (!result.error || result.code === 'CNPJ_NAO_ENCONTRADO')) cnpjCache.set(digits, result);
+  return result;
+}
+
+async function consultarCnpjUncached(digits, options = {}) {
   const problemas = [];
   // 1) BrasilAPI (primária)
   try {
@@ -487,7 +596,21 @@ async function readMountedPcFile(conversationId, mountedPath, sandboxOptions, ru
 export async function runTool(conversationId, name, args = {}, sandboxOptions = {}, runtime = {}) {
   const signal = runtime?.signal;
   if (name === 'web_search') return JSON.stringify(await webSearch(args.query || '', { signal }));
-  if (name === 'web_fetch') return JSON.stringify(await webFetch(args.url || '', { signal }));
+  if (name === 'web_fetch') {
+    const res = await webFetch(args.url || '', { signal });
+    // Miniatura da página (best-effort): renderiza a URL final já validada e
+    // salva um JPEG no workspace. Se o navegador não estiver disponível ou
+    // falhar, `thumb` fica ausente e o web_fetch segue igual (só o texto).
+    if (res && !res.error && res.url) {
+      try {
+        const ws = workspaceFor(conversationId);
+        const rel = path.posix.join('.thumbs', `${nanoid(10)}.jpg`);
+        const ok = await captureThumbnail(res.url, path.join(ws.base, '.thumbs', path.basename(rel)), { signal });
+        if (ok) res.thumb = rel;
+      } catch {}
+    }
+    return JSON.stringify(res);
+  }
   if (name === 'consultar_cnpj') return JSON.stringify(await consultarCnpj(args.cnpj || '', { signal }));
   // Conector GitHub: roda no BACKEND (o token do usuário nunca entra no sandbox).
   if (name.startsWith('github_')) return JSON.stringify(await runGithubTool(name, args, { userId: sandboxOptions.userId, conversationId, signal }));

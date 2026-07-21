@@ -2,10 +2,13 @@ import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Download, FileText, FileSpreadsheet, FilePenLine, Plus, ArrowUp, Upload, Trash2, Bot, Brain, X, BarChart3, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench, CalendarClock, Inbox, Palette, Gauge, SlidersHorizontal, Paperclip, MoreHorizontal, FolderOpen, Code2, ChevronRight, ShieldCheck, LogOut, KeyRound, Camera, Cable } from 'lucide-react';
-import { API, FALLBACK_MODELS, TOOL_INFO, TEMPLATES, QUICK_ACTIONS, THEMES, WORKSPACES, EFFORTS, EFFORT_DESC, ASSISTANT_ICONS, ASSISTANT_COLORS, isAssistantIcon } from './constants.js';
+import { Download, FileText, FileSpreadsheet, FilePenLine, Plus, ArrowUp, Upload, Trash2, Bot, Brain, X, BarChart3, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench, CalendarClock, Inbox, Palette, Gauge, SlidersHorizontal, Paperclip, MoreHorizontal, FolderOpen, Code2, ChevronRight, ShieldCheck, LogOut, KeyRound, Camera, Cable, MessageCircleQuestion, Bug, PanelRight, Lock, Unlock } from 'lucide-react';
+import { API, FALLBACK_MODELS, TOOL_INFO, TEMPLATES, QUICK_ACTIONS, THEMES, WORKSPACES, EFFORTS, EFFORT_DESC, ASSISTANT_ICONS, ASSISTANT_COLORS, isAssistantIcon, DEV_WORK_MODES } from './constants.js';
 import { signOut } from './authClient.js';
-import { ToolStep, Slider, Modal, Drawer, Collapsible, useAppDialog } from './components.jsx';
+import { Slider, Modal, Drawer, Collapsible, useAppDialog } from './components.jsx';
+import { ExecutionSession } from './components/ExecutionSession.jsx';
+import { DevProjectRail } from './components/DevProjectRail.jsx';
+import { DevActivityRail } from './components/DevActivityRail.jsx';
 import { MemoryPanel } from './MemoryPanel.jsx';
 import { PcFoldersPanel } from './PcFoldersPanel.jsx';
 import { ToolsPanel } from './ToolsPanel.jsx';
@@ -13,10 +16,15 @@ import { DeveloperPanel } from './DeveloperPanel.jsx';
 import { RoutinesPanel } from './RoutinesPanel.jsx';
 import { InboxPanel } from './InboxPanel.jsx';
 import { ProviderPanel } from './ProviderPanel.jsx';
+import { FreeOnboarding, FreeModeBadge, FreeModeDrawer, FreeLimitModal, fetchFreeStatus } from './FreeMode.jsx';
+import { KeyWizard } from './KeyWizard.jsx';
+import { FreeAdminPanel } from './FreeAdminPanel.jsx';
 import { ConnectorsPanel } from './ConnectorsPanel.jsx';
 import { PrivacyPanel, ConsentGate } from './PrivacyPanel.jsx';
 import { CameraCapture } from './CameraCapture.jsx';
 import { ContextPicker, AssistantGlyph, AssistantTile, ASSISTANT_ICON, modelHasTools } from './components/ContextPicker.jsx';
+import { MultiModelPicker } from './components/MultiModelPicker.jsx';
+import { MultiModelBoard } from './components/MultiModelBoard.jsx';
 import { ClientPicker } from './components/ClientPicker.jsx';
 import { MemoryTrace } from './components/MemoryTrace.jsx';
 import { useAssistants } from './hooks/useAssistants.js';
@@ -25,15 +33,19 @@ import { useSpeech } from './hooks/useSpeech.js';
 import { useFileUploads } from './hooks/useFileUploads.js';
 import { useChat } from './hooks/useChat.js';
 import { useTasks } from './hooks/useTasks.js';
+import { useDevProjects, projectContextText } from './hooks/useDevProjects.js';
 
 const QUICK_ACTION_ICON = {
   document: FileText,
   spreadsheet: FileSpreadsheet,
   writing: FilePenLine,
   search: Search,
+  ask: MessageCircleQuestion,
   plan: ListTodo,
   build: Code2,
+  fix: Bug,
   review: Check,
+  auto: Bot,
   folder: FolderCog
 };
 
@@ -53,6 +65,15 @@ const conversationDownloadUrl = (conversationId, filePath) => {
   const encodedPath = String(filePath || '').split('/').filter(Boolean).map(encodeURIComponent).join('/');
   return `${API}/api/conversations/${encodedId}/download/${encodedPath}`;
 };
+// Markdown é caro (o rehype-highlight recolore todo bloco de código a cada
+// render). Enquanto a IA responde, o app re-renderiza a cada token e a cada
+// segundo do relógio — sem memo, TODA mensagem antiga era re-parseada junto,
+// e é isso que travava/engasgava a tela. Com React.memo por conteúdo, só o
+// texto que realmente mudou é reprocessado.
+const MessageText = React.memo(function MessageText({ text }) {
+  return <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{text || ''}</ReactMarkdown>;
+});
+
 function dayLabel(v) {
   const d = parseDate(v);
   if (!d) return '';
@@ -68,9 +89,9 @@ function dayLabel(v) {
 
 const DEVELOPER_QUICK_ACTIONS = [
   { icon: 'plan', label: 'Planejar uma mudança', desc: 'Entenda o projeto antes de editar', mode: 'plan' },
-  { icon: 'build', label: 'Construir com segurança', desc: 'Aplique alterações no projeto escolhido', mode: 'build' },
-  { icon: 'review', label: 'Revisar alterações', desc: 'Encontre riscos antes de concluir', mode: 'review' },
-  { icon: 'folder', label: 'Conectar um projeto', desc: 'Escolha as pastas liberadas no computador', action: 'folders' }
+  { icon: 'build', label: 'Implementar', desc: 'Aplique alterações no projeto escolhido', mode: 'build' },
+  { icon: 'fix', label: 'Corrigir um erro', desc: 'Investigue a causa raiz e valide a solução', mode: 'fix' },
+  { icon: 'review', label: 'Revisar o projeto', desc: 'Arquitetura, segurança e qualidade', mode: 'review' }
 ];
 
 export default function App({ user } = {}) {
@@ -84,9 +105,19 @@ export default function App({ user } = {}) {
   const [developerOpen, setDeveloperOpen] = useState(false);
   const [developerSession, setDeveloperSession] = useState(null);
   const [developerStartMode, setDeveloperStartMode] = useState('plan');
+  const devProjects = useDevProjects();
+  const [devLeftCollapsed, setDevLeftCollapsed] = useState(() => localStorage.getItem('fred_dev_left') === '1');
+  const [devRightCollapsed, setDevRightCollapsed] = useState(() => localStorage.getItem('fred_dev_right') === '1');
   const [routinesOpen, setRoutinesOpen] = useState(false);
   const [inboxOpen, setInboxOpen] = useState(false);
   const [providerOpen, setProviderOpen] = useState(false);
+  // ---- Modo gratuito ----
+  const [freeStatus, setFreeStatus] = useState(null);        // GET /api/free-tier/status
+  const [freeOnbOpen, setFreeOnbOpen] = useState(false);     // escolha do 1º acesso
+  const [freeDrawerOpen, setFreeDrawerOpen] = useState(false);
+  const [freeAdminOpen, setFreeAdminOpen] = useState(false);
+  const [keyWizardOpen, setKeyWizardOpen] = useState(false); // assistente de chave própria
+  const [freeLimitInfo, setFreeLimitInfo] = useState(null);  // tela de limite atingido
   const [connectorsOpen, setConnectorsOpen] = useState(false);
   const [privacyOpen, setPrivacyOpen] = useState(false);
   // LGPD: true quando o usuário ainda não aceitou a versão vigente dos
@@ -95,6 +126,8 @@ export default function App({ user } = {}) {
   const [needsConsent, setNeedsConsent] = useState(false);
   const [team, setTeam] = useState(false);
   const [teamIds, setTeamIds] = useState(() => { try { return JSON.parse(localStorage.getItem('fred_team') || 'null'); } catch { return null; } });
+  // Multimodelo: { enabled, config } — 2+ modelos de IA na mesma mensagem
+  const [multiModel, setMultiModel] = useState(() => { try { return JSON.parse(localStorage.getItem('fred_multimodel') || 'null'); } catch { return null; } });
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
   const [analytics, setAnalytics] = useState(null);
   const [theme, setTheme] = useState(() => localStorage.getItem('fred_theme') || 'dark');
@@ -106,6 +139,7 @@ export default function App({ user } = {}) {
   const [webSearch, setWebSearch] = useState(false);
   const [effort, setEffort] = useState(() => { const s = localStorage.getItem('fred_effort'); return EFFORTS.some(e => e.id === s) ? s : 'medio'; });
   const [composerMenuOpen, setComposerMenuOpen] = useState(false);
+  const [permissionsOpen, setPermissionsOpen] = useState(false);
   const cmpChipsRef = useRef(null);
   const fileInputRef = useRef(null);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -163,20 +197,48 @@ export default function App({ user } = {}) {
   // Membros ativos da equipe (null = todos)
   const effectiveTeam = assistants.filter(a => !teamIds || teamIds.includes(a.id));
   const uploads = files.filter(f => f.kind === 'upload');
+  // Multimodelo só vale com 2+ modelos selecionados; senão o fluxo é o normal
+  const effectiveMulti = multiModel?.enabled && (multiModel.config?.models?.length || 0) >= 2 ? multiModel.config : null;
   const {
-    busy, busyRef, paused, statusText, controlPending, nowTick, sendMessage, retrySend, control
+    busy, busyRef, paused, statusText, controlPending, nowTick, runs, anyBusy, sendMessage, retrySend, resumeRun, control, cancelMultiSlot
   } = useChat({
     input, setInput, messages, setMessages, uploads, team, effectiveTeam,
     listening, recognitionRef, current, currentRef, setCurrent,
     ensureConversation, fetchConversations, loadFiles,
     developerSession, setDeveloperSession, followActiveRef,
-    model, assistantId, webSearch, effort, setNeedLogin, showToast
+    model, assistantId, webSearch, effort, multiModel: effectiveMulti, setNeedLogin, showToast,
+    // Modo gratuito: status ao vivo (restante/renovação) e tela de limite
+    onFreeEvent: ({ type, _seq, ...status }) => setFreeStatus(prev => ({ ...(prev || {}), ...status })),
+    onFreeLimit: (info) => setFreeLimitInfo(info)
   });
   const { tasks, tasksOpen, setTasksOpen, tasksActive, pollTasks, sendAsTask, cancelTask } = useTasks({
     current, busyRef, openConversation, ensureConversation,
     input, setInput, listening, recognitionRef,
     model, assistantId, webSearch, showToast
   });
+
+  function changeMultiModel(next) {
+    setMultiModel(next);
+    try { localStorage.setItem('fred_multimodel', JSON.stringify(next)); } catch {}
+    // Multimodelo e Modo Equipe são mutuamente exclusivos na prática (o backend
+    // dá prioridade ao multimodelo) — desligar a equipe evita confusão.
+    if (next?.enabled) setTeam(false);
+  }
+
+  // Ações dos cartões multimodelo
+  function continueWithModel(card) {
+    setModel(card.id);
+    changeMultiModel({ ...(multiModel || {}), enabled: false });
+    showToast(`A conversa seguirá apenas com ${card.name}.`, 'ok');
+  }
+  function askReviewOfModel(card) {
+    setInput(`Revise criticamente a resposta de ${card.name} (função: ${card.roleLabel}) acima: aponte erros, omissões e riscos, e produza uma versão final melhorada.`);
+    setTimeout(() => inputRef.current?.focus(), 60);
+  }
+  function combineAnswers() {
+    setInput('Combine as melhores partes das respostas dos modelos acima em UMA resposta final, resolvendo as divergências e descartando o que estiver errado.');
+    setTimeout(() => inputRef.current?.focus(), 60);
+  }
 
   function toggleTeamMember(id) {
     const cur = teamIds || assistants.map(a => a.id);
@@ -185,16 +247,27 @@ export default function App({ user } = {}) {
     localStorage.setItem('fred_team', JSON.stringify(next));
   }
   function blockConversationChange() {
-    if (!busyRef.current) return false;
-    showToast('Há uma resposta em andamento. Aguarde terminar ou pare o processamento antes de trocar de conversa.');
-    return true;
+    // MULTICONVERSA: trocar de conversa/cliente ou abrir uma nova NÃO
+    // interrompe mais nada — a resposta continua no servidor, a conversa mostra
+    // o indicador girando na barra lateral e, ao reabri-la, o andamento
+    // reconecta ao vivo. A trava antiga ("aguarde terminar") saiu de cena.
+    return false;
   }
+  // Enquanto houver execução em andamento (aqui ou em outra aba/dispositivo),
+  // atualiza a lista periodicamente para o indicador da barra lateral acender
+  // e apagar sozinho.
+  const sidebarActivity = anyBusy || conversations.some(c => c.active);
+  useEffect(() => {
+    if (!sidebarActivity) return;
+    const t = setInterval(() => { fetchConversations().catch(() => {}); }, 10000);
+    return () => clearInterval(t);
+  }, [sidebarActivity]);
   useEffect(() => { localStorage.setItem('fred_effort', effort); }, [effort]);
   useEffect(() => {
-    // O painel de esforço vive dentro da linha de chips, então basta uma
-    // checagem: clicou fora dela, fecha.
+    // O painel de esforço e o de permissões vivem dentro da linha de chips,
+    // então basta uma checagem: clicou fora dela, fecha os dois.
     function onDoc(e) {
-      if (!cmpChipsRef.current?.contains(e.target)) setComposerMenuOpen(false);
+      if (!cmpChipsRef.current?.contains(e.target)) { setComposerMenuOpen(false); setPermissionsOpen(false); }
     }
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
@@ -339,10 +412,25 @@ export default function App({ user } = {}) {
       loadClients();
       try { const h = await (await fetch(`${API}/api/health`)).json(); setUnprotected(h && h.auth === false); } catch {}
       try { const m = await (await fetch(`${API}/api/me`)).json(); setMe(m || null); } catch {}
+      refreshFreeStatus();
     } catch (err) {
       if (err?.auth) setNeedLogin(true);
       else setConnError(true);
     }
+  }
+
+  // ---- Modo gratuito: status + onboarding do primeiro acesso ----
+  // Recarrega o status (modelo, restante, fila) e decide se mostra a escolha
+  // "Começar gratuitamente x chave própria" — só quando o usuário ainda não
+  // tem NENHUM caminho para conversar (sem chave própria, sem chave do
+  // servidor e sem adesão ao gratuito).
+  async function refreshFreeStatus() {
+    const status = await fetchFreeStatus();
+    setFreeStatus(status);
+    if (status?.configured && status.enabled && !status.optedIn && !status.hasAnyKey) {
+      setFreeOnbOpen(true);
+    }
+    return status;
   }
 
   // Esconde/mostra a barra lateral (guardado entre sessões)
@@ -364,8 +452,10 @@ export default function App({ user } = {}) {
     }
   }
 
-  function openDeveloper(mode = 'plan') {
-    setDeveloperStartMode(mode);
+  function openDeveloper(mode) {
+    // Sem modo explícito (ex.: botão da barra lateral), herda o modo salvo do
+    // projeto ativo para não sobrescrever a preferência do usuário.
+    setDeveloperStartMode(mode || devProjects.active?.mode || 'plan');
     setDeveloperOpen(true);
   }
 
@@ -405,18 +495,36 @@ export default function App({ user } = {}) {
     return true;
   }
 
-  function startDeveloperTask({ mode, projectId, github, brief, rules }) {
+  function startDeveloperTask({ devProjectId, mode, binding, brief }) {
+    const project = devProjects.projects.find(p => p.id === devProjectId) || devProjects.active || null;
     const developerAssistant = assistants.find(assistant => /programa|codigo|codex|desenvolv/i.test(`${assistant.name || ''} ${assistant.system_prompt || ''}`)) || assistants[0];
     if (!startNewChat()) return;
     setTeam(false);
     setWebSearch(false);
     if (developerAssistant) pickAssistant(developerAssistant.id);
-    setDeveloperSession({ mode, projectId, github: github || null, rules, conversationId: null });
+    // O vínculo do projeto vira o par (pasta do PC) OU (repositório GitHub) que
+    // o backend espera. As regras + memória do projeto viajam pelo canal `rules`.
+    const projectId = binding?.type === 'folder' ? (binding.folderId || null) : null;
+    const github = binding?.type === 'github' && binding.repo ? { repo: binding.repo, branch: binding.branch || '' } : null;
+    setDeveloperSession({ mode, projectId, github, rules: projectContextText(project), devProjectId: project?.id || null, conversationId: null });
     setInput(brief);
     setDeveloperOpen(false);
+    setWorkspace('developer'); // revela o ambiente de desenvolvimento (colunas do IDE)
     setTimeout(() => inputRef.current?.focus(), 60);
     showToast('Tarefa de desenvolvimento pronta para enviar.', 'ok');
   }
+
+  // Quando a sessão de desenvolvedor se vincula a uma conversa (1º envio),
+  // registra a conversa no projeto para o histórico.
+  useEffect(() => {
+    if (developerSession?.conversationId && developerSession?.devProjectId) {
+      devProjects.linkConversation(developerSession.devProjectId, developerSession.conversationId);
+    }
+  }, [developerSession?.conversationId, developerSession?.devProjectId]);
+
+  // Colapso das colunas do ambiente de desenvolvimento (guardado entre sessões).
+  function toggleDevLeft() { setDevLeftCollapsed(v => { localStorage.setItem('fred_dev_left', v ? '0' : '1'); return !v; }); }
+  function toggleDevRight() { setDevRightCollapsed(v => { localStorage.setItem('fred_dev_right', v ? '0' : '1'); return !v; }); }
 
   // ---- Clientes / Projetos ----
   async function loadClients() {
@@ -536,6 +644,40 @@ export default function App({ user } = {}) {
   }[workspace] || { title: 'Olá! Como posso ajudar você hoje?', description: 'Envie um arquivo, peça uma planilha, um documento, um código ou uma pesquisa.' };
   const welcomeActions = workspace === 'developer' ? DEVELOPER_QUICK_ACTIONS : QUICK_ACTIONS;
 
+  // Tarefas recentes do projeto ativo (Modo Desenvolvedor): resolve os ids
+  // salvos em conversationIds para título real via allConvs — nada inventado,
+  // só não mostra a tarefa se a conversa correspondente não existir mais.
+  const recentDevTasks = (devProjects.active?.conversationIds || [])
+    .map(id => { const c = allConvs.find(x => x.id === id); return c ? { id, title: c.title || 'Conversa' } : null; })
+    .filter(Boolean)
+    .slice(0, 8);
+
+  // Pill de status do cabeçalho do Modo Desenvolvedor — só estados que dá para
+  // provar com sinais reais (sem inventar um pipeline de 5 etapas que o
+  // backend não expõe): aguardando / trabalhando / interrompido / erro / concluído.
+  const lastAssistantMsg = [...messages].reverse().find(m => m.role === 'assistant');
+  const devStagePill = busy
+    ? { label: paused ? 'Pausado' : (statusText || 'Trabalhando...'), tone: 'live' }
+    : lastAssistantMsg?.failed
+      ? { label: 'Erro', tone: 'error' }
+      : lastAssistantMsg?.resumable
+        ? { label: 'Interrompido — pode continuar', tone: 'warn' }
+        : messages.length > 0
+          ? { label: 'Concluído', tone: 'done' }
+          : { label: 'Aguardando instrução', tone: 'idle' };
+
+  // Permissões reais desta tarefa (não um toggle fictício): modo ativo (ou o do
+  // projeto, se ainda não há sessão preparada) e o vínculo de pasta/repositório.
+  const permMode = DEV_WORK_MODES.find(m => m.id === (developerSession?.mode || devProjects.active?.mode)) || null;
+  const permBinding = developerSession?.github
+    ? { type: 'github', repo: developerSession.github.repo, branch: developerSession.github.branch }
+    : devProjects.active?.binding;
+  const permProjectLabel = permBinding?.type === 'github'
+    ? `GitHub · ${permBinding.repo}${permBinding.branch ? ` (${permBinding.branch})` : ''}`
+    : permBinding?.type === 'folder'
+      ? 'Pasta do computador vinculada'
+      : 'Sem vínculo — workspace temporário da conversa';
+
   return <div className={`app workspace-${workspace} ${sideHidden ? 'sideHidden' : ''}`}>
     {menuOpen && <div className="scrim" onClick={() => setMenuOpen(false)}/>}
     <aside className={`sidebar ${menuOpen ? 'open' : ''}`} aria-label="Navegação do app">
@@ -570,6 +712,7 @@ export default function App({ user } = {}) {
           return list.map(c => (
             <div key={c.id} className={`convItem ${current?.id === c.id ? 'active' : ''}`}>
               <button className="convOpen" onClick={() => openConversation(c.id)} title={c.title}>{c.title}</button>
+              {(runs[c.id] ? runs[c.id].busy : c.active) && <span className="spin sm convSpin" title="Esta conversa está processando agora" aria-label="Conversa processando"/>}
               <button className="convDel" onClick={(e) => deleteConversation(c.id, e)} title="Apagar conversa" aria-label="Apagar conversa"><Trash2 size={15}/></button>
             </div>
           ));
@@ -584,7 +727,7 @@ export default function App({ user } = {}) {
         </div>
         <div className="navGroup navGroupDeveloper">
           <div className="navGroupTitle">Desenvolvimento</div>
-          <button className="studio developerBtn" onClick={() => openDeveloper('plan')} title="Planejar, construir ou revisar um projeto"><Code2 size={16}/> Modo desenvolvedor</button>
+          <button className="studio developerBtn" onClick={() => openDeveloper()} title="Perguntar, planejar, implementar, corrigir ou revisar um projeto"><Code2 size={16}/> Modo desenvolvedor</button>
         </div>
         <div className="navGroup navGroupAutomation">
           <div className="navGroupTitle">Automação</div>
@@ -601,6 +744,7 @@ export default function App({ user } = {}) {
           <button className="studio" onClick={openStudioNew}><Bot size={16}/> Assistentes</button>
           <button className="studio" onClick={openAnalytics}><BarChart3 size={16}/> Análises</button>
           {me?.isAdmin && <button className="studio" onClick={() => window.open(`${API}/api/backup`, '_blank')} title="Baixa um arquivo com o banco e todos os workspaces (somente administrador)"><HardDriveDownload size={16}/> Backup</button>}
+          {me?.isAdmin && freeStatus?.configured && <button className="studio" onClick={() => setFreeAdminOpen(true)} title="Usuários, consumo, bloqueios e limites do modo gratuito (somente administrador)"><Gauge size={16}/> Modo gratuito</button>}
           <button className="studio" onClick={() => setProviderOpen(true)} title="Cadastre a sua própria chave de API"><KeyRound size={16}/> Provedor de IA</button>
           <button className="studio" onClick={() => setConnectorsOpen(true)} title="Conecte serviços externos, como o GitHub"><Cable size={16}/> Conectores</button>
           <button className="studio" onClick={() => setPrivacyOpen(true)} title="Exportar dados, apagar histórico ou excluir a conta (LGPD)"><ShieldCheck size={16}/> Privacidade e dados</button>
@@ -616,6 +760,23 @@ export default function App({ user } = {}) {
         </button>
       </div>
     </aside>
+
+    {workspace === 'developer' && <DevProjectRail
+      collapsed={devLeftCollapsed}
+      onToggle={toggleDevLeft}
+      projects={devProjects.projects}
+      active={devProjects.active}
+      onSelectProject={devProjects.setActiveId}
+      onNewTask={() => openDeveloper(devProjects.active?.mode || 'plan')}
+      onManageFolders={() => setPcOpen(true)}
+      files={files}
+      onRefreshFiles={() => current?.id && loadFiles(current.id)}
+      filesLoading={false}
+      downloadUrl={(path) => conversationDownloadUrl(current?.id, path)}
+      conversationId={current?.id}
+      recentTasks={recentDevTasks}
+      onOpenTask={openConversation}
+    />}
 
     <main
       className={`chat ${dragActive ? 'dragActive' : ''}`}
@@ -644,6 +805,8 @@ export default function App({ user } = {}) {
             currentAssistant={currentAssistant} team={team} onTeam={setTeam}
             teamIds={teamIds} onToggleMember={toggleTeamMember} effectiveTeam={effectiveTeam}
             onEditAssistant={() => currentAssistant ? openStudioEdit(currentAssistant) : openStudioNew()}/>
+          <MultiModelPicker models={allModels} value={multiModel} onChange={changeMultiModel} showToast={showToast}/>
+          <FreeModeBadge status={freeStatus} onClick={() => { setFreeDrawerOpen(true); refreshFreeStatus(); }}/>
         </div>
         <div className="pickers desktopPickers">
           <button className="gear" onClick={openFilesDrawer} title="Arquivos da conversa" aria-label="Arquivos da conversa" disabled={!current?.id}><FolderOpen size={16}/></button>
@@ -680,15 +843,19 @@ export default function App({ user } = {}) {
         <div className="workspaceBarLead">
           <Code2 size={17}/>
           <div>
-            <strong>Área de projeto</strong>
-            <span>{developerSession ? 'Tarefa de desenvolvimento preparada para esta conversa.' : 'Planeje, construa ou revise sem perder o contexto do projeto.'}</span>
+            <strong>{devProjects.active?.name || 'Ambiente de desenvolvimento'}</strong>
+            <span>{developerSession
+              ? `Tarefa preparada · ${DEV_WORK_MODES.find(m => m.id === developerSession.mode)?.label || 'Modo dev'}`
+              : (devProjects.active ? 'Escolha um modo e descreva a missão para começar.' : 'Crie um projeto para trabalhar com contexto, memória e permissões próprias.')}</span>
           </div>
         </div>
         <div className="workspaceBarActions">
+          <span className={`devStagePill ${devStagePill.tone}`}><span className="devStagePillDot"/>{devStagePill.label}</span>
           <button type="button" className="workspaceAction" onClick={() => openDeveloper('plan')}><ListTodo size={15}/> Planejar</button>
-          <button type="button" className="workspaceAction primary" onClick={() => openDeveloper('build')}><Code2 size={15}/> Construir</button>
+          <button type="button" className="workspaceAction primary" onClick={() => openDeveloper('build')}><Code2 size={15}/> Implementar</button>
+          <button type="button" className="workspaceAction" onClick={() => openDeveloper('fix')}><Bug size={15}/> Corrigir</button>
           <button type="button" className="workspaceAction" onClick={() => openDeveloper('review')}><Check size={15}/> Revisar</button>
-          <button type="button" className="workspaceIconAction" onClick={() => setPcOpen(true)} title="Gerenciar projetos e pastas" aria-label="Gerenciar projetos e pastas"><FolderCog size={16}/></button>
+          {devRightCollapsed && <button type="button" className="workspaceIconAction" onClick={toggleDevRight} title="Mostrar atividades e memória" aria-label="Mostrar atividades e memória"><PanelRight size={16}/></button>}
         </div>
       </section>}
       {unprotected && !authWarnHidden && <div className="authWarn">
@@ -730,13 +897,39 @@ export default function App({ user } = {}) {
               {m.role === 'user' && <button onClick={() => saveAsTemplate(m)} title="Salvar como template reutilizável" aria-label="Salvar como template"><BookmarkPlus size={13}/></button>}
               <button onClick={() => copyMessage(m, idx)} title="Copiar a mensagem inteira" aria-label="Copiar mensagem">{copiedIdx === idx ? <Check size={13}/> : <Copy size={13}/>}</button>
             </div>
-            {m.blocks
-              ? m.blocks.map((b, i) => b.type === 'tool'
-                ? <ToolStep key={i} step={b} nowTick={nowTick}/>
-                : <ReactMarkdown key={i} remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{b.content || ''}</ReactMarkdown>)
+            {/* Execução multimodelo: um cartão por modelo (status, resposta,
+                tokens, custo) + ações por cartão. No modo Comparação o texto
+                salvo é a própria junção das respostas — o quadro basta. */}
+            {m.role === 'assistant' && m.multi && <MultiModelBoard
+              multi={m.multi}
+              live={Boolean(m.multi.live) || (busy && idx === messages.length - 1)}
+              onCancelSlot={busy ? cancelMultiSlot : null}
+              onContinueWith={continueWithModel}
+              onAskReview={askReviewOfModel}
+              onCombine={combineAnswers}/>}
+            {m.role === 'assistant' && m.multi && ['compare', 'pipeline'].includes(m.multi.mode) && !(m.blocks || []).some(b => b.type === 'tool')
+              ? null
+              : m.blocks
+              ? (() => {
+                  // Todas as chamadas de ferramenta da resposta são agrupadas numa
+                  // única "sessão de execução" (o Ambiente de Trabalho da IA), em vez
+                  // de virarem dezenas de cartões soltos. O texto continua no lugar.
+                  const toolSteps = m.blocks.filter(b => b.type === 'tool');
+                  const firstToolIdx = m.blocks.findIndex(b => b.type === 'tool');
+                  const sessionLive = (busy && idx === messages.length - 1) || toolSteps.some(s => s.status === 'running');
+                  return m.blocks.map((b, i) => {
+                    if (b.type === 'tool') {
+                      return i === firstToolIdx
+                        ? <ExecutionSession key="exec" steps={toolSteps} live={sessionLive} conversationId={current?.id}/>
+                        : null;
+                    }
+                    return <MessageText key={i} text={b.content}/>;
+                  });
+                })()
               : (m.role === 'user'
-                ? <Collapsible text={m.content}>{t => <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{t}</ReactMarkdown>}</Collapsible>
-                : <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{m.content || ''}</ReactMarkdown>)}
+                ? <Collapsible text={m.content}>{t => <MessageText text={t}/>}</Collapsible>
+                : <MessageText text={m.content}/>)}
+            {m.role === 'assistant' && m.resumable && !busy && <button className="retryBtn resumeBtn" onClick={() => resumeRun(current?.id)} title="Retoma a tarefa exatamente de onde parou, sem refazer o que já foi feito"><Play size={14}/> Continuar de onde parei</button>}
             {m.role === 'assistant' && m.failed && <button className="retryBtn" onClick={() => retrySend(idx, m.retryText)}><RefreshCw size={14}/> Reenviar</button>}
             {m.role === 'assistant' && <MemoryTrace memory={m.memory} onOpenMemory={() => setMemoryOpen(true)}/>}
             {m.files?.length > 0 && <div className="filecards">
@@ -772,7 +965,7 @@ export default function App({ user } = {}) {
       </section>
       <footer className="composerWrap">
         {developerSession && (!developerSession.conversationId || developerSession.conversationId === current?.id) && <div className="devSessionBar">
-          <Code2 size={15}/><span>Modo desenvolvedor</span><b>{{ plan: 'Planejar', build: 'Construir', review: 'Revisar' }[developerSession.mode] || 'Ativo'}</b>
+          <Code2 size={15}/><span>Modo desenvolvedor</span><b>{DEV_WORK_MODES.find(m => m.id === developerSession.mode)?.label || 'Ativo'}</b>
           {developerSession.github?.repo && <span className="muted" title={`Repositório GitHub${developerSession.github.branch ? ` · branch ${developerSession.github.branch}` : ''}`}>· {developerSession.github.repo}{developerSession.github.branch ? ` (${developerSession.github.branch})` : ''}</span>}
           <button onClick={() => setDeveloperSession(null)} title="Sair do modo desenvolvedor" aria-label="Sair do modo desenvolvedor"><X size={14}/></button>
         </div>}
@@ -816,6 +1009,21 @@ export default function App({ user } = {}) {
             title="Envia a mensagem como tarefa e libera o chat enquanto ela roda">
             <Hourglass size={12}/><span>Executar em segundo plano</span>
           </button>
+          {workspace === 'developer' && <div className="cmpChipMenu">
+            <button type="button" className={`cmpChip ${permissionsOpen ? 'open' : ''}`} aria-expanded={permissionsOpen}
+              onClick={() => setPermissionsOpen(o => !o)}
+              title="O que a IA pode fazer nesta tarefa">
+              <ShieldCheck size={12}/><span>Permissões</span>
+            </button>
+            {permissionsOpen && <div className="cmpMenuPanel permissionsPanel">
+              <div className="cmpDesc">O que a IA pode fazer nesta tarefa, com o modo e o projeto escolhidos agora.</div>
+              <div className="permRow">
+                <b>{permMode?.label || 'Nenhum modo escolhido'}</b>
+                {permMode && <span className={permMode.write ? 'write' : 'read'}>{permMode.write ? <Unlock size={12}/> : <Lock size={12}/>}{permMode.write ? 'Pode editar e executar' : 'Somente leitura'}</span>}
+              </div>
+              <div className="permRow"><span>{permProjectLabel}</span></div>
+            </div>}
+          </div>}
         </div>
         <div className="composer">
           <button className="attachBtn" onClick={() => fileInputRef.current?.click()} title="Anexar arquivo" aria-label="Anexar arquivo"><Paperclip size={19}/></button>
@@ -832,6 +1040,17 @@ export default function App({ user } = {}) {
         </div>
       </footer>
     </main>
+
+    {workspace === 'developer' && <DevActivityRail
+      collapsed={devRightCollapsed}
+      onToggle={toggleDevRight}
+      busy={busy}
+      statusText={statusText}
+      messages={messages}
+      project={devProjects.active}
+      onUpdateMemory={(key, value) => devProjects.activeId && devProjects.updateProject(devProjects.activeId, p => ({ ...p, memory: { ...p.memory, [key]: value } }))}
+      downloadUrl={(path) => conversationDownloadUrl(current?.id, path)}
+    />}
 
     {filesDrawerOpen && <Drawer title="Arquivos da conversa" icon={<FolderOpen size={18}/>} onClose={() => setFilesDrawerOpen(false)} className="filesDrawer">
       <p className="muted drawerIntro">Anexos e arquivos gerados nesta conversa ficam reunidos aqui para você encontrar, abrir ou baixar sem procurar no histórico.</p>
@@ -938,10 +1157,28 @@ export default function App({ user } = {}) {
     {memoryOpen && <MemoryPanel assistants={assistants} clients={clients} clientId={clientId} showToast={showToast} askConfirm={askConfirm} askPrompt={askPrompt} onClose={() => setMemoryOpen(false)}/>}
     {pcOpen && <PcFoldersPanel showToast={showToast} askConfirm={askConfirm} onClose={() => setPcOpen(false)}/>}
     {toolsOpen && <ToolsPanel onPick={pickTool} onClose={() => setToolsOpen(false)}/>}
-    {developerOpen && <DeveloperPanel initialMode={developerStartMode} team={team} onStart={startDeveloperTask} onManageFolders={() => { setDeveloperOpen(false); setPcOpen(true); }} onOpenConnectors={() => { setDeveloperOpen(false); setConnectorsOpen(true); }} onClose={() => setDeveloperOpen(false)}/>}
+    {developerOpen && <DeveloperPanel devProjects={devProjects} team={team} initialMode={developerStartMode} onStart={startDeveloperTask} onManageFolders={() => { setDeveloperOpen(false); setPcOpen(true); }} onOpenConnectors={() => { setDeveloperOpen(false); setConnectorsOpen(true); }} onClose={() => setDeveloperOpen(false)}/>}
     {routinesOpen && <RoutinesPanel assistants={assistants} clients={clients} showToast={showToast} askConfirm={askConfirm} onClose={() => setRoutinesOpen(false)}/>}
     {inboxOpen && <InboxPanel clients={clients} clientId={clientId} showToast={showToast} askConfirm={askConfirm} onOpenConversation={(id) => { fetchConversations(); openConversation(id); }} onClose={() => setInboxOpen(false)}/>}
-    {providerOpen && <ProviderPanel showToast={showToast} onClose={() => setProviderOpen(false)}/>}
+    {providerOpen && <ProviderPanel showToast={showToast} freeStatus={freeStatus}
+      onOpenWizard={() => { setProviderOpen(false); setKeyWizardOpen(true); }}
+      onFreeChange={refreshFreeStatus}
+      onClose={() => { setProviderOpen(false); refreshFreeStatus(); }}/>}
+    {freeOnbOpen && <FreeOnboarding status={freeStatus} showToast={showToast}
+      onStarted={() => { setFreeOnbOpen(false); refreshFreeStatus(); loadModels(); }}
+      onOpenWizard={() => { setFreeOnbOpen(false); setKeyWizardOpen(true); }}
+      onClose={() => setFreeOnbOpen(false)}/>}
+    {freeDrawerOpen && <FreeModeDrawer status={freeStatus} onRefresh={refreshFreeStatus}
+      onOpenWizard={() => { setFreeDrawerOpen(false); setKeyWizardOpen(true); }}
+      onClose={() => setFreeDrawerOpen(false)}/>}
+    {keyWizardOpen && <KeyWizard showToast={showToast}
+      onDone={() => { refreshFreeStatus(); loadModels(); }}
+      onClose={() => setKeyWizardOpen(false)}/>}
+    {freeLimitInfo && <FreeLimitModal info={freeLimitInfo}
+      onRetry={() => { const t = freeLimitInfo?.retryText; setFreeLimitInfo(null); if (t) sendMessage(t); }}
+      onOpenWizard={() => { setFreeLimitInfo(null); setKeyWizardOpen(true); }}
+      onClose={() => setFreeLimitInfo(null)}/>}
+    {freeAdminOpen && <FreeAdminPanel showToast={showToast} askConfirm={askConfirm} askPrompt={askPrompt} onClose={() => setFreeAdminOpen(false)}/>}
     {connectorsOpen && <ConnectorsPanel showToast={showToast} onClose={() => setConnectorsOpen(false)}/>}
     {privacyOpen && <PrivacyPanel user={user} showToast={showToast} askConfirm={askConfirm} askPrompt={askPrompt}
       onHistoryCleared={() => { startNewChat(); fetchConversations(); }} onClose={() => setPrivacyOpen(false)}/>}

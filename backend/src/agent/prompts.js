@@ -154,7 +154,7 @@ const SHELL_INVENTORY = [
   'Frontend: node/npm, yarn e pnpm com tsc, vite, sass, postcss, tailwindcss, prettier e eslint.',
   'Browser/testes visuais: Chromium headless, Xvfb/xvfb-run e Playwright. Para Playwright, prefira o Chromium do sistema em /usr/bin/chromium e não baixe outro navegador sem necessidade.',
   'Mobile: não há React Native/Expo pré-instalados, Android SDK, emulador, iOS/Xcode ou Flutter.',
-  'Outras linguagens: dotnet (C#) e kotlinc 2.3.21 (Kotlin JVM atual). Swift, Kotlin Native, Nim, Zig e Odin não estão disponíveis.'
+  'Outras linguagens: dotnet (C#) e kotlinc (Kotlin JVM). Swift, Kotlin Native, Nim, Zig e Odin não estão disponíveis.'
 ];
 
 // Padrão de qualidade aplicado a TODA resposta (assistente geral, customizados
@@ -168,6 +168,7 @@ Antes de responder:
 - Entenda o que a pessoa realmente quer, as restrições e em que formato ela espera a resposta.
 - Se o pedido estiver ambíguo e isso mudar o resultado, considere as leituras possíveis; se não mudar, siga com a mais razoável e diga a suposição em uma linha.
 - Só faça pergunta de esclarecimento quando sem ela a resposta ficaria pouco confiável. Se dá para responder com suposições sensatas, responda.
+- Quando você PERGUNTAR algo que depende de decisão da pessoa (escopo, opção A ou B, permissão), a pergunta é o FIM da sua resposta: PARE ali e aguarde. NUNCA continue executando ferramentas nem responda a própria pergunta no mesmo turno — a pessoa precisa conseguir responder.
 
 Raciocínio: ajuste a profundidade ao tamanho e ao risco da tarefa. Em pedido técnico, numérico, ambíguo ou de alto impacto, pese alternativas, exceções e casos-limite, desconfie da primeira conclusão, procure contradições e erros de conta, e confira se a conclusão fecha com as informações que você tem. Em pedido simples, responda direto. Pense por dentro — não despeje o passo a passo do seu raciocínio; quando ajudar, mostre só os fatos, evidências e passos que sustentam a resposta.
 
@@ -232,10 +233,24 @@ export function toolsFor(assistant) {
   return all.filter(t => allowed.includes(t.function.name));
 }
 
+// Modos de trabalho do Modo Desenvolvedor. Os três primeiros (plan/build/review)
+// são os originais; ask/fix/auto foram acrescentados na reformulação para dar um
+// fluxo profissional (perguntar, corrigir erro, agente autônomo). Só build/fix/auto
+// podem alterar arquivos e enviar (push/PR) — os demais são estritamente leitura.
+export const DEV_MODES = ['ask', 'plan', 'build', 'fix', 'review', 'auto'];
+export const DEV_WRITE_MODES = new Set(['build', 'fix', 'auto']);
+// Instrução reutilizada pelos modos que executam: apresentar um plano curto
+// ANTES de mexer no projeto (item 6 da especificação do Modo Desenvolvedor).
+const PLAN_BEFORE = 'ANTES DE QUALQUER EDIÇÃO, apresente em cinco tópicos curtos: (1) o que você entendeu do pedido; (2) quais arquivos pretende analisar; (3) quais mudanças pretende fazer; (4) riscos ou impactos possíveis; (5) como vai validar o resultado. Só depois comece a executar, mostrando o progresso.';
+// Resumo profissional exigido ao final das tarefas que alteram o projeto
+// (item 10 da especificação).
+const FINAL_SUMMARY = 'AO CONCLUIR, entregue um resumo profissional com: o que foi alterado; arquivos modificados; arquivos criados ou removidos; testes executados e seus resultados; problemas encontrados; pendências; e sugestões de próximas etapas.';
+
 export function developerContextFor(request, userId) {
   if (!request || typeof request !== 'object') return null;
-  const mode = ['plan', 'build', 'review'].includes(request.mode) ? request.mode : null;
+  const mode = DEV_MODES.includes(request.mode) ? request.mode : null;
   if (!mode) return null;
+  const canWrite = DEV_WRITE_MODES.has(mode);
   const projectId = String(request.projectId || '');
   const project = projectId ? pcFolderMounts(userId).find(folder => folder.id === projectId) : null;
   // Projeto vindo do conector GitHub (selecionado no painel do modo desenvolvedor).
@@ -244,21 +259,25 @@ export function developerContextFor(request, userId) {
     ? { repo: String(githubRaw.repo).trim(), branch: String(githubRaw.branch || '').trim() || null }
     : null;
   // Em projeto GitHub, o trabalho acontece no workspace da conversa (sempre
-  // gravável); "somente leitura" vale para plan/review, que não devem editar.
-  const readOnlyProject = mode !== 'build' || (github ? false : !project?.writable);
+  // gravável); "somente leitura" vale para os modos que não editam (ask/plan/review).
+  const readOnlyProject = !canWrite || (github ? false : !project?.writable);
   const projectNote = github
-    ? `Projeto selecionado: repositório GitHub "${github.repo}"${github.branch ? ` (branch de trabalho: "${github.branch}")` : ''}. PRIMEIRO PASSO OBRIGATÓRIO: chame a ferramenta github_clone com {"repo":"${github.repo}"${github.branch ? `,"branch":"${github.branch}"` : ''}} para trazer (ou atualizar) o código em /workspace/repo/${repoDirName(github.repo)}. Depois trabalhe nos arquivos por bash/run_python; git status/diff/log/commit funcionam pelo bash do sandbox. Push e Pull Request só pelas ferramentas github_push/github_create_pr (a autenticação é do app — nunca peça token nem tente git push pelo bash, não funciona).${mode === 'build' ? ' Ao concluir a missão, faça commit com mensagem descritiva em português e envie com github_push; informe no final a branch e o commit enviados.' : ' Nesta tarefa NÃO altere arquivos nem use github_push/github_create_pr.'}`
+    ? `Projeto selecionado: repositório GitHub "${github.repo}"${github.branch ? ` (branch de trabalho: "${github.branch}")` : ''}. PRIMEIRO PASSO OBRIGATÓRIO: chame a ferramenta github_clone com {"repo":"${github.repo}"${github.branch ? `,"branch":"${github.branch}"` : ''}} para trazer (ou atualizar) o código em /workspace/repo/${repoDirName(github.repo)}. Depois trabalhe nos arquivos por bash/run_python; git status/diff/log/commit funcionam pelo bash do sandbox. Push e Pull Request só pelas ferramentas github_push/github_create_pr (a autenticação é do app — nunca peça token nem tente git push pelo bash, não funciona).${canWrite ? ' Ao concluir a missão, faça commit com mensagem descritiva em português e envie com github_push; informe no final a branch e o commit enviados.' : ' Nesta tarefa NÃO altere arquivos nem use github_push/github_create_pr.'}`
     : project
       ? `Projeto selecionado: "${project.label}" em ${project.target}. ${readOnlyProject ? 'Ele está montado somente para leitura nesta tarefa.' : 'Somente esta pasta do PC está autorizada para escrita nesta tarefa.'}`
       : 'Nenhuma pasta do PC foi selecionada. Trabalhe apenas no workspace temporário e entregue arquivos em /workspace/outputs quando necessário.';
   const modeNote = {
+    ask: 'PERGUNTAR: apenas analise e responda — NÃO altere arquivos, não faça staging, commits, instalações nem push. Leia o que for necessário (código, README, manifests, logs) e responda de forma direta e fundamentada, citando arquivo e trecho quando ajudar.',
     plan: 'PLANEJAR: investigue a base antes de sugerir mudanças. Leia AGENTS.md/AGENTS.override.md, README, manifests, comandos de teste e pontos de entrada. Não altere arquivos do projeto, não faça staging, commits ou instalações. Entregue uma leitura curta do projeto, um plano ordenado com arquivos prováveis, riscos e verificações.',
-    build: 'CONSTRUIR: antes da primeira edição, investigue o projeto e suas instruções locais. Faça somente mudanças dentro da missão, preserve alterações existentes e execute a verificação mais relevante disponível. Não instale dependências sem pedido explícito. Ao final, enumere arquivos alterados, verificações e limitações.',
-    review: 'REVISAR: examine git status e git diff, incluindo mudanças não rastreadas quando forem relevantes. Não altere arquivos, não faça staging, commits, reset ou revert. Responda primeiro com achados priorizados, apontando arquivo e causa; depois, lacunas de teste ou riscos restantes.'
+    build: `CONSTRUIR (implementar): ${PLAN_BEFORE} Faça somente mudanças dentro da missão, preserve alterações existentes e execute a verificação mais relevante disponível. Não instale dependências sem necessidade clara. ${FINAL_SUMMARY}`,
+    fix: `CORRIGIR ERRO: ${PLAN_BEFORE} Primeiro reproduza ou localize a falha investigando logs, mensagens de erro, testes e o git diff/blame quando útil; identifique a CAUSA RAIZ antes de mexer. Aplique a menor correção que resolve, evite mudanças não relacionadas e valide rodando o teste ou comando que expunha o problema. ${FINAL_SUMMARY}`,
+    review: 'REVISAR: examine git status e git diff, incluindo mudanças não rastreadas quando forem relevantes. Avalie arquitetura, segurança, desempenho e qualidade. Não altere arquivos, não faça staging, commits, reset ou revert. Responda primeiro com achados priorizados, apontando arquivo e causa; depois, lacunas de teste ou riscos restantes.',
+    auto: `AGENTE AUTÔNOMO: execute a tarefa completa de ponta a ponta, dentro dos limites autorizados. ${PLAN_BEFORE} Trabalhe em ciclos curtos (analisar → alterar → testar → validar), corrigindo o rumo conforme os resultados, sem pedir confirmação a cada passo. Pare e pergunte apenas diante de ação destrutiva ou fora do escopo autorizado. ${FINAL_SUMMARY}`
   }[mode];
   const rules = String(request.rules || '').trim().slice(0, 6000);
   return {
     mode,
+    canWrite,
     github,
     readOnlyProject,
     sandboxOptions: project && !readOnlyProject ? { writablePcFolderId: project.id } : { readOnlyPc: true },
@@ -297,7 +316,7 @@ export function toolAvailabilityNote(tools, { includeInventory = false } = {}) {
   lines.push('Para executar algo — gerar arquivo, rodar código, pesquisar, ler anexo — CHAME a ferramenta certa pelo function-calling da API (ex.: run_python para criar Excel/Word/PDF; web_search para pesquisar; consultar_cnpj para CNPJ). A ferramenta roda de fato e o arquivo salvo em /workspace/outputs vira download; o texto da resposta é só para falar com a pessoa.');
 
   lines.push('Ferramentas do chat habilitadas para você:');
-  if (names.has('run_python')) lines.push('- run_python: executar Python 3.12 real no sandbox.');
+  if (names.has('run_python')) lines.push('- run_python: executar Python 3 real no sandbox.');
   if (names.has('bash')) lines.push('- bash: executar comandos Linux no sandbox.');
   if (names.has('write_file')) lines.push('- write_file: criar ou sobrescrever arquivos no workspace.');
   if (names.has('read_file')) lines.push('- read_file: ler arquivos de texto do workspace.');
