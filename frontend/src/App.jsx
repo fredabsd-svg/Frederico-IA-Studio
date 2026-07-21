@@ -5,7 +5,8 @@ import rehypeHighlight from 'rehype-highlight';
 import { Download, FileText, FileSpreadsheet, FilePenLine, Plus, ArrowUp, Upload, Trash2, Bot, Brain, X, BarChart3, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench, CalendarClock, Inbox, Palette, Gauge, SlidersHorizontal, Paperclip, MoreHorizontal, FolderOpen, Code2, ChevronRight, ShieldCheck, LogOut, KeyRound, Camera, Cable } from 'lucide-react';
 import { API, FALLBACK_MODELS, TOOL_INFO, TEMPLATES, QUICK_ACTIONS, THEMES, WORKSPACES, EFFORTS, EFFORT_DESC, ASSISTANT_ICONS, ASSISTANT_COLORS, isAssistantIcon } from './constants.js';
 import { signOut } from './authClient.js';
-import { ToolStep, Slider, Modal, Drawer, Collapsible, useAppDialog } from './components.jsx';
+import { Slider, Modal, Drawer, Collapsible, useAppDialog } from './components.jsx';
+import { ExecutionSession } from './components/ExecutionSession.jsx';
 import { MemoryPanel } from './MemoryPanel.jsx';
 import { PcFoldersPanel } from './PcFoldersPanel.jsx';
 import { ToolsPanel } from './ToolsPanel.jsx';
@@ -731,9 +732,22 @@ export default function App({ user } = {}) {
               <button onClick={() => copyMessage(m, idx)} title="Copiar a mensagem inteira" aria-label="Copiar mensagem">{copiedIdx === idx ? <Check size={13}/> : <Copy size={13}/>}</button>
             </div>
             {m.blocks
-              ? m.blocks.map((b, i) => b.type === 'tool'
-                ? <ToolStep key={i} step={b} nowTick={nowTick}/>
-                : <ReactMarkdown key={i} remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{b.content || ''}</ReactMarkdown>)
+              ? (() => {
+                  // Todas as chamadas de ferramenta da resposta são agrupadas numa
+                  // única "sessão de execução" (o Ambiente de Trabalho da IA), em vez
+                  // de virarem dezenas de cartões soltos. O texto continua no lugar.
+                  const toolSteps = m.blocks.filter(b => b.type === 'tool');
+                  const firstToolIdx = m.blocks.findIndex(b => b.type === 'tool');
+                  const sessionLive = (busy && idx === messages.length - 1) || toolSteps.some(s => s.status === 'running');
+                  return m.blocks.map((b, i) => {
+                    if (b.type === 'tool') {
+                      return i === firstToolIdx
+                        ? <ExecutionSession key="exec" steps={toolSteps} live={sessionLive} nowTick={nowTick}/>
+                        : null;
+                    }
+                    return <ReactMarkdown key={i} remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{b.content || ''}</ReactMarkdown>;
+                  });
+                })()
               : (m.role === 'user'
                 ? <Collapsible text={m.content}>{t => <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{t}</ReactMarkdown>}</Collapsible>
                 : <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{m.content || ''}</ReactMarkdown>)}

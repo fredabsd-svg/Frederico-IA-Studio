@@ -75,6 +75,60 @@ resolviam.
 em branco para o esforço do menu mandar (agora é inofensivo, mas confunde). Backend-only,
 validado com `node --check`.
 
+## 🖥️ Ambiente de Trabalho da IA: execução agrupada em uma sessão (2026-07-20 — branch `claude/unified-ai-execution-session-25rm4h`, PR #59)
+
+Antes, cada chamada de ferramenta virava um cartão solto **"bash 0s"** no chat.
+Numa tarefa real, dezenas empilhavam — poluíam a conversa, ocupavam a tela toda
+(pior no celular) e não diziam o que a IA fazia (todos com o mesmo nome, sem
+contexto). Agora **todas as ferramentas de uma resposta são agrupadas numa única
+sessão de execução** (o *Ambiente de Trabalho da IA*).
+
+**Como fica:**
+- **Cartão compacto no chat** — enquanto trabalha: "IA trabalhando no projeto" +
+  etapa atual + `N etapas · N arquivos · tempo` + botão **Abrir ambiente de
+  trabalho**. Ao terminar: "Tarefa concluída" + resumo (`N arquivos · N comandos ·
+  nenhum erro · tempo`) + botão **Ver detalhes**.
+- **Janela expandida** (overlay em tela cheia) — barra de estatísticas; filtros
+  por tipo (Terminal · Código · Arquivos · Pesquisa · Navegador); lista de etapas
+  humanizadas com ícone por categoria e status (concluída/executando/erro); etapa
+  em execução destacada e acompanhada ao vivo; painel de detalhe com a entrada
+  (comando/arquivo/consulta/URL) e o resultado de cada ação. Fechar (X) minimiza
+  de volta ao cartão.
+
+**Arquivos:**
+- `frontend/src/components/ExecutionSession.jsx` — **novo**. `ExecutionSession`
+  (cartão compacto) + `WorkspaceOverlay` (janela ao vivo). Mapa `TOOL_META`
+  traduz cada ferramenta (`bash`, `run_python`, `write_file`, `read_file`,
+  `list_files`, `zip_outputs`, `web_search`, `web_fetch`, `generate_image`,
+  `consultar_cnpj`) → categoria + rótulo humano; fallback genérico para nomes
+  desconhecidos.
+- `frontend/src/App.jsx` — no render das mensagens, os blocos `type:'tool'` são
+  agrupados numa só `<ExecutionSession>` (posicionada no 1º bloco de ferramenta);
+  o texto continua inline. Removido o `import { ToolStep }` (agora só o
+  `ExecutionSession`). `live = busy && última mensagem` OU alguma etapa `running`.
+- `frontend/src/styles.css` — bloco novo no fim (`.esCard*`, `.esOverlay`,
+  `.esWindow`, `.esSteps`, `.esStep*`, `.esDetail*`, `.esFilters`, etc.), com
+  media query `max-width:640px` (janela em tela cheia; lista vira faixa superior).
+
+**Decisões:**
+- **`ToolStep` (em `components.jsx`) foi mantido** como export, só deixou de ser
+  usado — remover era risco desnecessário. Se ninguém mais consumir, pode sair
+  depois.
+- A janela **reconstrói** terminal/arquivos/pesquisa/navegador a partir dos
+  eventos que o backend JÁ emite por ferramenta (`tool_start` com `preview` e
+  `tool_result` com `content` até 2000 chars, ver `backend/src/agent/loop.js`).
+  **Não** é streaming byte-a-byte de terminal real. Nenhuma mudança de backend
+  foi necessária — só apresentação. Evolução futura: o backend mandar preview do
+  conteúdo do arquivo editado / miniatura da página aberta para enriquecer o
+  painel de detalhe.
+- Mostra só ações **operacionais observáveis** — nunca o raciocínio interno do
+  modelo, conforme pedido.
+
+**Validação:** `npm run build` (vite) compila sem erros e `node --test src/*.test.js`
+passa (7 testes). Layout dos três estados conferido em preview visual (dark) antes
+do commit. O `dist/` é versionado neste repo, então foi recompilado e commitado
+junto. Falta a conferência visual em produção após o deploy da VPS.
+
 ## 🏷️ Logos de provedor no seletor de modelos (2026-07-20) — NÃO VALIDADO LOCALMENTE
 
 Cada modelo da lista mostra o logo oficial do provedor antes do nome, e o filtro
