@@ -1,5 +1,7 @@
 import fs from 'fs';
 import path from 'path';
+import net from 'net';
+import dns from 'dns';
 import { nanoid } from 'nanoid';
 import { execInSandbox, workspaceFor, safeJoin, pcFolderMounts } from './sandbox.js';
 import { runGithubTool } from './connectors/github.js';
@@ -192,23 +194,89 @@ async function webSearchUncached(query, options = {}) {
   };
 }
 
+// URLs com IPv6 chegam com colchetes no hostname ("[::1]"); remova-os antes de
+// qualquer comparação, senão o literal escaparia de todos os testes abaixo.
+function stripIpv6Brackets(hostname) {
+  const s = String(hostname || '').trim();
+  return s.length >= 2 && s.startsWith('[') && s.endsWith(']') ? s.slice(1, -1) : s;
+}
+
+// true se o IPv4 (pontilhado) pertence a uma faixa interna/reservada.
+function isBlockedIpv4(ip) {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(ip);
+  if (!m) return false;
+  const [a, b, c, d] = m.slice(1).map(Number);
+  if (a > 255 || b > 255 || c > 255 || d > 255) return false;
+  if (a === 0 || a === 127 || a === 10) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 169 && b === 254) return true;           // link-local / metadados de nuvem
+  if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
+  if (a >= 224) return true;                         // multicast/reservado (224/4, 240/4)
+  return false;
+}
+
+// Extrai o IPv4 embutido num IPv6 mapeado, tanto na forma pontilhada
+// (::ffff:127.0.0.1) quanto na hexadecimal que o parser WHATWG produz a partir
+// dela (::ffff:7f00:1). Sem isto, http://[::ffff:127.0.0.1]/ furava o filtro.
+function mappedIpv4(h) {
+  let m = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i.exec(h);
+  if (m) return m[1];
+  m = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(h);
+  if (m) {
+    const hi = parseInt(m[1], 16), lo = parseInt(m[2], 16);
+    return `${(hi >> 8) & 255}.${hi & 255}.${(lo >> 8) & 255}.${lo & 255}`;
+  }
+  return null;
+}
+
 // Bloqueia endereços internos/loopback/link-local para evitar SSRF (o backend
 // tem rede; o modelo pode ser induzido por conteúdo de uma página a buscar,
-// ex., http://169.254.169.254/ de metadados de nuvem).
+// ex., http://169.254.169.254/ de metadados de nuvem). Aceita hostnames, IPv4
+// (o parser WHATWG já normaliza decimal/octal/hex para pontilhado) e IPv6 —
+// inclusive entre colchetes e na forma IPv4-mapeada.
 export function isBlockedHost(hostname) {
-  const h = String(hostname || '').toLowerCase();
+  const h = stripIpv6Brackets(hostname).toLowerCase();
   if (!h || h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.local') || h.endsWith('.internal')) return true;
-  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
-  if (m) {
-    const a = Number(m[1]), b = Number(m[2]);
-    if (a === 0 || a === 127 || a === 10) return true;
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 192 && b === 168) return true;
-    if (a === 169 && b === 254) return true;       // link-local / metadados de nuvem
-    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
+  if (isBlockedIpv4(h)) return true;
+  if (h.includes(':')) {                               // IPv6 literal
+    const mapped = mappedIpv4(h);
+    if (mapped) return isBlockedIpv4(mapped);
+    if (h === '::1' || h === '::') return true;        // loopback / não especificado
+    if (h.startsWith('fc') || h.startsWith('fd')) return true; // ULA fc00::/7
+    if (/^fe[89ab]/.test(h)) return true;              // link-local fe80::/10
   }
-  if (h === '::1' || h === '::' || h.startsWith('fc') || h.startsWith('fd') || h.startsWith('fe80')) return true;
   return false;
+}
+
+// Anti-DNS-rebinding: bloquear o hostname textualmente não basta — um domínio
+// público pode resolver para 127.0.0.1/10.x/169.254.x. Resolvemos o nome e
+// conferimos CADA IP retornado antes de conectar. (Resta uma janela TOCTOU
+// mínima entre resolver e conectar; a mitigação padrão é validar aqui.)
+async function assertHostResolvesPublic(hostname, signal) {
+  const h = stripIpv6Brackets(hostname);
+  if (net.isIP(h)) return; // IP literal já foi validado por isBlockedHost
+  let addrs;
+  try {
+    // dns.promises.lookup não aceita AbortSignal; usamos a forma de callback e
+    // ligamos o signal na mão para o cancelamento também valer durante o DNS.
+    addrs = await new Promise((resolve, reject) => {
+      if (signal?.aborted) return reject(new Error(String(signal.reason || 'aborted')));
+      const onAbort = () => reject(new Error(String(signal?.reason || 'aborted')));
+      signal?.addEventListener('abort', onAbort, { once: true });
+      dns.lookup(h, { all: true }, (err, result) => {
+        signal?.removeEventListener('abort', onAbort);
+        if (err) reject(err);
+        else resolve(result);
+      });
+    });
+  } catch (e) {
+    if (signal?.aborted) throw e; // repassa o cancelamento intacto
+    throw new Error('Não foi possível resolver o endereço da página.');
+  }
+  for (const { address } of addrs) {
+    if (isBlockedHost(address)) throw new Error('Endereço bloqueado por segurança (rede interna/local não é acessível).');
+  }
 }
 
 export async function webFetch(url, options = {}) {
@@ -220,6 +288,7 @@ export async function webFetch(url, options = {}) {
   // backend into a private or metadata address.
   for (let redirects = 0; redirects <= 4; redirects++) {
     if (isBlockedHost(target.hostname)) throw new Error('Endereço bloqueado por segurança (rede interna/local não é acessível).');
+    await assertHostResolvesPublic(target.hostname, options.signal);
     r = await fetchWithTimeout(target, 20000, { redirect: 'manual', signal: options.signal });
     if (![301, 302, 303, 307, 308].includes(r.status)) break;
     const location = r.headers.get('location');

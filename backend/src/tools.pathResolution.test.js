@@ -84,7 +84,9 @@ test('forwards cancellation to a web request', async () => {
         options.signal.addEventListener('abort', () => reject(new Error('request canceled')), { once: true });
       });
     };
-    const pending = webFetch('https://example.com/demorada', { signal: controller.signal });
+    // IP literal público: pula a resolução de DNS (net.isIP) e vai direto ao
+    // fetch mockado, exercitando o repasse do cancelamento de forma determinística.
+    const pending = webFetch('https://93.184.216.34/demorada', { signal: controller.signal });
     await Promise.resolve();
     controller.abort('stop');
     await assert.rejects(pending, /request canceled/);
