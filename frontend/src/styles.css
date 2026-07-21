@@ -1058,3 +1058,44 @@ input[type=checkbox]:focus-visible,input[type=radio]:focus-visible{outline-offse
 /* ---- Retomada real: botão Continuar de onde parei (checkpoint) ---- */
 .resumeBtn{border-color:var(--ok);color:var(--ok);margin-right:8px}
 .resumeBtn:hover{background:rgba(46,160,67,.10)}
+
+/* ==== MODO GRATUITO ==== */
+/* Cartões de opção (onboarding, tela de limite, escolha de provedor) */
+.freeOptionList{display:flex;flex-direction:column;gap:10px}
+.freeOptionCard{display:flex;flex-direction:column;gap:5px;text-align:left;border:1px solid var(--line);background:var(--panel2);border-radius:var(--r-lg);padding:13px 15px;cursor:pointer}
+.freeOptionCard:hover{border-color:var(--accent)}
+.freeOptionCard small{color:var(--muted);line-height:1.45;font-weight:400}
+.freeOptionCard .freeOptionHead{display:flex;align-items:center;gap:8px;font-size:var(--fs-md)}
+.freeOptionPrimary{border-color:var(--accent);background:rgba(79,140,255,.10)}
+.freeNotice{line-height:1.55}
+/* Chip do topo do chat */
+.freeBadge{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--accent);color:var(--accent);background:rgba(79,140,255,.10);border-radius:var(--r-full);padding:5px 11px;font-size:var(--fs-xs);font-weight:600;white-space:nowrap}
+.freeBadge:hover{background:rgba(79,140,255,.2)}
+.freeBadge .freeBadgeCount{font-variant-numeric:tabular-nums;background:var(--accent);color:var(--on-accent);border-radius:var(--r-full);padding:1px 7px;font-size:var(--fs-2xs)}
+@media(max-width:900px){.freeBadge .freeBadgeLabel{display:none}}
+/* Linhas de informação (gaveta de detalhes e painel admin) */
+.freeInfoRows{display:flex;flex-direction:column;gap:6px;font-size:var(--fs-sm)}
+.freeInfoRows>div{display:flex;justify-content:space-between;gap:12px;border-bottom:1px dashed var(--line);padding-bottom:6px}
+.freeInfoRows span{color:var(--muted)}
+.freeInfoRows b{text-align:right;word-break:break-word}
+.freeCompare td:nth-child(2),.freeCompare th:nth-child(2),.freeCompare td:nth-child(3),.freeCompare th:nth-child(3){text-align:left;font-variant-numeric:normal}
+/* Assistente de chave (wizard) */
+.wizardSteps{margin:0;padding-left:22px;display:flex;flex-direction:column;gap:8px;line-height:1.5}
+.wizardLink{display:inline-flex;align-items:center;gap:8px;font-weight:600;color:var(--on-accent);background:var(--accent);border-radius:var(--r-md);padding:11px 14px;text-decoration:none;width:fit-content}
+.wizardLink:hover{filter:brightness(1.08)}
+.wizardEntry{display:flex;align-items:center;gap:8px;text-align:left;border:1px dashed var(--accent);color:var(--accent);background:rgba(79,140,255,.06);border-radius:var(--r-md);padding:11px 13px;font-weight:400;line-height:1.4}
+.wizardEntry:hover{background:rgba(79,140,255,.14)}
+.freeToggleBtn{display:flex;align-items:center;gap:8px;justify-content:center}
+.freeToggleBtn.primaryish{border-color:var(--accent);color:var(--accent)}
+/* Painel admin */
+.freeModelToggles{display:flex;flex-wrap:wrap;gap:8px}
+.freeModelToggle{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-xs);border-radius:var(--r-full);padding:6px 12px;border:1px solid var(--ok);color:var(--ok)}
+.freeModelToggle.off{border-color:var(--line);color:var(--muted);text-decoration:line-through;opacity:.75}
+.freeRowBlocked td{opacity:.6}
+.badge.danger{background:var(--danger);color:#fff}
+.linkish{border:none;background:transparent;color:var(--accent);padding:2px 4px;text-decoration:underline;cursor:pointer}
+.freeLimitInline{display:flex;align-items:center;gap:8px;font-size:var(--fs-sm);color:var(--muted)}
+.freeLimitInline input{border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:var(--r-md);padding:8px 10px;font:inherit}
+.freeErrorList{max-height:260px;overflow:auto}
+.freeErrorItem{border:1px solid var(--line);border-radius:var(--r-md);padding:8px 11px;font-size:var(--fs-xs);line-height:1.45}
+.freeErrorItem b{text-transform:uppercase;font-size:var(--fs-2xs);letter-spacing:.03em;color:var(--warn)}

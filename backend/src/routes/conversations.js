@@ -12,6 +12,9 @@ import { workspaceFor, insideBase, realInside } from '../sandbox.js';
 import { sanitizeToolProtocolText } from '../toolProtocol.js';
 import { deleteConversationDeep } from '../privacy.js';
 import { validate, schemas } from '../validation.js';
+import { getUserProvider } from '../userProvider.js';
+import { enforceFreeTierLimits, bumpFreeTierUsage, logFreeTierEvent, freeTierStatusFor } from '../freeTier.js';
+import { acquireFreeSlot, cancelFreeJob, freeQueueSnapshot } from '../freeQueue.js';
 import { makeRouter, upload, scanOrReject, decodeUploadName, loadAssistant, ensureConversation, enforceDailyLimit, looksLikeFailedAssistantReply } from './helpers.js';
 
 const router = makeRouter();
@@ -256,7 +259,14 @@ router.post('/conversations/:id/control', validate(schemas.control), async (req,
   const conv = await db.prepare('SELECT id FROM conversations WHERE id=? AND user_id=?').get(req.params.id, req.userId);
   if (!conv) return res.status(404).json({ error: 'Não encontrado' });
   const control = setControl(req.params.id, action);
-  if (!control) return res.status(409).json({ error: 'Não há processamento ativo nesta conversa.' });
+  if (!control) {
+    // "Parar" também cancela uma solicitação que AINDA aguarda na fila do modo
+    // gratuito (ela não tem controle ativo porque nem começou a processar).
+    if (action === 'stop' && cancelFreeJob(req.params.id)) {
+      return res.json({ ok: true, action, cancelled: true });
+    }
+    return res.status(409).json({ error: 'Não há processamento ativo nesta conversa.' });
+  }
   res.json({ ok: true, action, paused: control.paused, stopped: control.stopped });
 });
 
@@ -319,6 +329,19 @@ router.post('/conversations/:id/chat', validate(schemas.chat), async (req, res) 
   if (!await ensureConversation(req.userId, req.params.id, req.body?.model)) return res.status(404).json({ error: 'Não encontrado' });
   const limitMsg = await enforceDailyLimit(req.userId);
   if (limitMsg) return res.status(429).json({ error: limitMsg });
+  // MODO GRATUITO: limites próprios (diário/por minuto/bloqueio) checados ANTES
+  // do SSE começar — o front recebe um JSON estruturado (code) e mostra a tela
+  // amigável de limite, não um erro técnico.
+  const provider = await getUserProvider(req.userId);
+  const freeMode = provider.source === 'free';
+  if (freeMode) {
+    const denial = await enforceFreeTierLimits(req.userId);
+    if (denial) {
+      logFreeTierEvent({ userId: req.userId, model: provider.model, status: denial.code === 'free_blocked' ? 'blocked' : 'limited', detail: denial.code });
+      const status = denial.code === 'free_blocked' ? 403 : 429;
+      return res.status(status).json({ error: denial.error, code: denial.code, resetAt: denial.resetAt, used: denial.used, limit: denial.limit });
+    }
+  }
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
@@ -356,8 +379,27 @@ router.post('/conversations/:id/chat', validate(schemas.chat), async (req, res) 
     clientGone = true;
     clearInterval(heartbeat);
     if (cancelOnDisconnect && !res.writableEnded) setControl(req.params.id, 'stop');
+    // Job ainda na fila do modo gratuito não sobrevive à desconexão: sem
+    // ninguém para receber a resposta, a vaga volta para quem está esperando.
+    if (!res.writableEnded) cancelFreeJob(req.params.id);
   });
+  let releaseFreeSlot = null;
   try {
+    // FILA DO MODO GRATUITO: concorrência limitada na chave da plataforma. O
+    // usuário vê os estados (preparando/aguardando/posição) e pode cancelar
+    // enquanto espera (POST /control action=stop cancela o job na fila).
+    if (freeMode) {
+      const snapshot = freeQueueSnapshot();
+      send({ type: 'free_queue', state: 'preparing', provider: provider.providerName, model: provider.model });
+      if (snapshot.running >= snapshot.concurrency) {
+        send({ type: 'free_queue', state: 'waiting', position: snapshot.waiting + 1, total: snapshot.waiting + 1 });
+      }
+      releaseFreeSlot = await acquireFreeSlot({
+        id: req.params.id,
+        onPosition: (position, total) => send({ type: 'free_queue', state: 'waiting', position, total })
+      });
+      send({ type: 'free_queue', state: 'processing' });
+    }
     // Título automático: usa o início da 1ª mensagem em vez de "Nova conversa"
     const conv = await db.prepare('SELECT title FROM conversations WHERE id=? AND user_id=?').get(req.params.id, req.userId);
     if (conv && (!conv.title?.trim() || conv.title === 'Nova conversa')) {
@@ -409,11 +451,32 @@ router.post('/conversations/:id/chat', validate(schemas.chat), async (req, res) 
       await db.prepare('INSERT INTO usage (id,user_id,conversation_id,assistant_id,model,kind,prompt_tokens,completion_tokens,total_tokens,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
         .run(nanoid(), req.userId, req.params.id, usageAssistantId, result.model, kind, result.usage.prompt_tokens, result.usage.completion_tokens, result.usage.total_tokens, now());
     }
+    // MODO GRATUITO: contabiliza no limite diário, registra o evento (auditoria/
+    // painel admin) e manda o status atualizado (restante/renovação) ao front.
+    if (freeMode) {
+      const tokens = result?.usage?.total_tokens || 0;
+      await bumpFreeTierUsage(req.userId, tokens);
+      logFreeTierEvent({ userId: req.userId, model: result?.model || provider.model, status: 'ok', tokens });
+      try { send({ type: 'free_status', ...(await freeTierStatusFor(req.userId, { optedIn: true, source: 'free' })) }); } catch {}
+    }
     send({ type: 'done' });
   } catch (err) {
-    console.error('[chat]', err);
-    send({ type: 'error', content: friendlyApiError(err) });
+    if (err?.code === 'FREE_QUEUE_CANCELLED') {
+      // O usuário cancelou enquanto aguardava na fila do modo gratuito — não é
+      // erro: encerra silenciosamente sem consumir cota.
+      logFreeTierEvent({ userId: req.userId, model: provider.model, status: 'cancelled', detail: 'cancelado na fila' });
+      send({ type: 'free_queue', state: 'cancelled' });
+      send({ type: 'done' });
+    } else if (err?.code === 'FREE_QUEUE_FULL') {
+      logFreeTierEvent({ userId: req.userId, model: provider.model, status: 'limited', detail: 'fila cheia' });
+      send({ type: 'error', content: 'O modo gratuito está com muitas solicitações agora. Aguarde alguns minutos e tente de novo — ou adicione a sua própria chave de API em Configurações para não depender da fila.' });
+    } else {
+      console.error('[chat]', err);
+      if (freeMode) logFreeTierEvent({ userId: req.userId, model: provider.model, status: 'error', detail: String(err?.message || err).slice(0, 300) });
+      send({ type: 'error', content: friendlyApiError(err) });
+    }
   } finally {
+    releaseFreeSlot?.();
     clearInterval(heartbeat);
     // Encerra o run no registro ao vivo: mantém o buffer por uma janela de
     // carência para quem reconectar no último segundo, depois se apaga sozinho.
@@ -443,6 +506,18 @@ router.post('/conversations/:id/resume', async (req, res) => {
   if (countActiveRunsForUser(req.userId) >= maxRuns) {
     return res.status(429).json({ error: `Você já tem ${maxRuns} conversas processando ao mesmo tempo. Aguarde alguma terminar antes de continuar esta.` });
   }
+  // MODO GRATUITO: retomar também consome o provedor — valem os mesmos limites
+  // e a mesma fila do /chat.
+  const provider = await getUserProvider(req.userId);
+  const freeMode = provider.source === 'free';
+  if (freeMode) {
+    const denial = await enforceFreeTierLimits(req.userId);
+    if (denial) {
+      logFreeTierEvent({ userId: req.userId, model: provider.model, status: denial.code === 'free_blocked' ? 'blocked' : 'limited', detail: denial.code });
+      const status = denial.code === 'free_blocked' ? 403 : 429;
+      return res.status(status).json({ error: denial.error, code: denial.code, resetAt: denial.resetAt, used: denial.used, limit: denial.limit });
+    }
+  }
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
@@ -462,8 +537,18 @@ router.post('/conversations/:id/resume', async (req, res) => {
     clientGone = true;
     clearInterval(heartbeat);
     if (cancelOnDisconnect && !res.writableEnded) setControl(conversationId, 'stop');
+    if (!res.writableEnded) cancelFreeJob(conversationId);
   });
+  let releaseFreeSlot = null;
   try {
+    if (freeMode) {
+      send({ type: 'free_queue', state: 'preparing', provider: provider.providerName, model: provider.model });
+      releaseFreeSlot = await acquireFreeSlot({
+        id: conversationId,
+        onPosition: (position, total) => send({ type: 'free_queue', state: 'waiting', position, total })
+      });
+      send({ type: 'free_queue', state: 'processing' });
+    }
     const meta = checkpoint.meta || {};
     const assistant = meta.assistantId ? await loadAssistant(req.userId, meta.assistantId) : null;
     // O `saved` precisa apontar para a mensagem de usuário REAL (a que originou a
@@ -489,11 +574,28 @@ router.post('/conversations/:id/resume', async (req, res) => {
       await db.prepare('INSERT INTO usage (id,user_id,conversation_id,assistant_id,model,kind,prompt_tokens,completion_tokens,total_tokens,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
         .run(nanoid(), req.userId, conversationId, meta.assistantId || null, result.model, 'chat', result.usage.prompt_tokens, result.usage.completion_tokens, result.usage.total_tokens, now());
     }
+    if (freeMode) {
+      const tokens = result?.usage?.total_tokens || 0;
+      await bumpFreeTierUsage(req.userId, tokens);
+      logFreeTierEvent({ userId: req.userId, model: result?.model || provider.model, status: 'ok', tokens });
+      try { send({ type: 'free_status', ...(await freeTierStatusFor(req.userId, { optedIn: true, source: 'free' })) }); } catch {}
+    }
     send({ type: 'done' });
   } catch (err) {
-    console.error('[resume]', err);
-    send({ type: 'error', content: friendlyApiError(err) });
+    if (err?.code === 'FREE_QUEUE_CANCELLED') {
+      logFreeTierEvent({ userId: req.userId, model: provider.model, status: 'cancelled', detail: 'cancelado na fila (retomada)' });
+      send({ type: 'free_queue', state: 'cancelled' });
+      send({ type: 'done' });
+    } else if (err?.code === 'FREE_QUEUE_FULL') {
+      logFreeTierEvent({ userId: req.userId, model: provider.model, status: 'limited', detail: 'fila cheia (retomada)' });
+      send({ type: 'error', content: 'O modo gratuito está com muitas solicitações agora. Aguarde alguns minutos e tente continuar de novo.' });
+    } else {
+      console.error('[resume]', err);
+      if (freeMode) logFreeTierEvent({ userId: req.userId, model: provider.model, status: 'error', detail: String(err?.message || err).slice(0, 300) });
+      send({ type: 'error', content: friendlyApiError(err) });
+    }
   } finally {
+    releaseFreeSlot?.();
     clearInterval(heartbeat);
     live.finish();
     res.end();

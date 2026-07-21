@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { KeyRound, Check, X, RefreshCw } from 'lucide-react';
+import { KeyRound, Check, X, RefreshCw, Sparkles, Wand2 } from 'lucide-react';
 import { API } from './constants.js';
 import { Drawer } from './components.jsx';
 
 // Provedor de IA (BYOK): cada pessoa cadastra a própria chave de API. A chave
-// fica criptografada no servidor e nunca é exibida por completo.
-export function ProviderPanel({ showToast, onClose }) {
+// fica criptografada no servidor e nunca é exibida por completo. Quem preferir
+// pode usar o MODO GRATUITO (chave da plataforma, com limites) ou o assistente
+// passo a passo para criar a própria chave.
+export function ProviderPanel({ showToast, freeStatus, onOpenWizard, onFreeChange, onClose }) {
   const [status, setStatus] = useState(null);
   const [apiKey, setApiKey] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
@@ -72,14 +74,39 @@ export function ProviderPanel({ showToast, onClose }) {
 
     {status && (status.hasKey
       ? <div className="pcHint" style={{ color: 'var(--text)' }}>
-          <b style={{ display: 'flex', alignItems: 'center', gap: 6 }}><Check size={14} style={{ color: 'var(--ok)' }}/> Chave configurada</b>
+          <b style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            {status.source === 'free' ? <Sparkles size={14} style={{ color: 'var(--accent)' }}/> : <Check size={14} style={{ color: 'var(--ok)' }}/>}
+            {status.source === 'free' ? 'Modo gratuito ativo' : 'Chave configurada'}
+          </b>
           <div className="muted small" style={{ marginTop: 4 }}>
-            {status.keyMask && <code>{status.keyMask}</code>}
-            {' · '}
-            {status.source === 'user' ? 'chave própria' : 'chave do servidor'}
+            {status.source === 'free'
+              ? <>via {status.freeProvider || 'plataforma'} · modelo {String(status.freeModel || '').replace(/:free$/, '')} · a chave fica só no servidor</>
+              : <>{status.keyMask && <code>{status.keyMask}</code>}{' · '}{status.source === 'user' ? 'chave própria' : 'chave do servidor'}</>}
           </div>
         </div>
-      : <div className="pcWarn">Nenhuma chave configurada. É preciso cadastrar uma chave de API abaixo para conseguir conversar com a IA.</div>
+      : <div className="pcWarn">Nenhuma chave configurada. Use o assistente abaixo, cadastre uma chave manualmente{freeStatus?.configured ? ' ou ative o modo gratuito' : ''} para conversar com a IA.</div>
+    )}
+
+    {onOpenWizard && <button className="wizardEntry" onClick={onOpenWizard}>
+      <Wand2 size={15}/> <b>Assistente passo a passo</b> — te guia para criar e testar a sua chave (recomendado para iniciantes)
+    </button>}
+
+    {freeStatus?.configured && status && status.source !== 'user' && (
+      status.source === 'free'
+        ? <button className="freeToggleBtn" disabled={busy} onClick={async () => {
+            setBusy(true);
+            try {
+              await fetch(`${API}/api/free-tier/opt-in`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enable: false }) });
+              showToast('Modo gratuito desativado.', 'ok'); load(); onFreeChange?.();
+            } finally { setBusy(false); }
+          }}><X size={14}/> Sair do modo gratuito</button>
+        : <button className="freeToggleBtn primaryish" disabled={busy || !freeStatus.enabled} onClick={async () => {
+            setBusy(true);
+            try {
+              await fetch(`${API}/api/free-tier/opt-in`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enable: true }) });
+              showToast('Modo gratuito ativado!', 'ok'); load(); onFreeChange?.();
+            } finally { setBusy(false); }
+          }}><Sparkles size={14}/> {freeStatus.enabled ? 'Começar gratuitamente (sem chave)' : 'Modo gratuito indisponível no momento'}</button>
     )}
 
     <label>Chave de API

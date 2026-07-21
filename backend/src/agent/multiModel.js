@@ -157,6 +157,14 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
       return { text: finalText, usage, model: config.coordinator };
     }
 
+    // MODO GRATUITO: todos os participantes precisam estar na allowlist
+    // gratuita — a chave da plataforma não atende modelo pago escolhido à mão.
+    if (provider.source === 'free') {
+      const allowed = provider.freeModels || [];
+      for (const member of config.models) if (!allowed.includes(member.id)) member.id = provider.model;
+      if (!allowed.includes(config.coordinator)) config.coordinator = provider.model;
+    }
+
     // Estado por participante (slot = índice na configuração)
     const slots = config.models.map((member, slot) => ({
       slot,

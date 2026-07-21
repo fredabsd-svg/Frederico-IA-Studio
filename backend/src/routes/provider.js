@@ -16,7 +16,12 @@ router.get('/provider', async (req, res) => {
   let keyMask = '';
   if (row?.api_key_enc) { const dec = decryptSecret(row.api_key_enc); keyMask = dec ? maskSecret(dec) : ''; }
   const prov = await getUserProvider(req.userId);
-  res.json({ hasKey: prov.hasKey, source: prov.source, keyMask, base_url: row?.base_url || '', model: row?.model || '' });
+  res.json({
+    hasKey: prov.hasKey, source: prov.source, keyMask,
+    base_url: row?.base_url || '', model: row?.model || '',
+    // Modo gratuito ativo: o front mostra provedor/modelo da plataforma.
+    ...(prov.source === 'free' ? { freeProvider: prov.providerName, freeModel: prov.model, freeModels: prov.freeModels } : {})
+  });
 });
 
 // PUT salva/atualiza. apiKey ausente = mantém a atual; apiKey '' = remove.

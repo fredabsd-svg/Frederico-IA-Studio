@@ -225,6 +225,13 @@ docker compose up --build -d
 | `BETTER_AUTH_SECRET` | — | Segredo de sessão do Better Auth |
 | `ENCRYPTION_KEY` | — | Criptografa a chave de IA de cada usuário (BYOK) no banco |
 | `ALLOW_SHARED_KEY` | true | `false` num site público: cada usuário precisa da própria chave |
+| `FREE_TIER_API_KEY` | — | Liga o **modo gratuito**: chave da plataforma (só no servidor) para novos usuários conversarem sem configurar nada |
+| `FREE_TIER_BASE_URL` | OpenRouter | Base OpenAI-compatível do modo gratuito |
+| `FREE_TIER_MODELS` | modelos `:free` | Allowlist de modelos gratuitos, em ordem de preferência (o 1º é o padrão; os demais são reserva) |
+| `FREE_TIER_MSGS_PER_DAY` | 20 | Mensagens gratuitas por usuário/dia (admin ajusta pelo painel sem reiniciar) |
+| `FREE_TIER_MSGS_PER_MIN` | 4 | Freio anti-rajada do modo gratuito |
+| `FREE_TIER_CONCURRENCY` | 2 | Respostas gratuitas simultâneas (fila global protege a cota no provedor) |
+| `FREE_TIER_QUEUE_MAX` | 30 | Tamanho máximo da fila do modo gratuito |
 | `RATE_MSGS_PER_DAY` | 0 (sem limite) | Máximo de mensagens por usuário por dia |
 | `RATE_API_PER_MIN` | 600 | Rate limit HTTP geral da API por IP/minuto (0 desliga) |
 | `RATE_AUTH_PER_15MIN` | 50 | Rate limit de login/cadastro por IP a cada 15 min (0 desliga) |
@@ -246,6 +253,42 @@ docker compose up --build -d
 | `USAGE_RETENTION_DAYS` | 365 | Retenção do registro de consumo de tokens (usage/usage_daily); 0 mantém para sempre |
 
 Consulte o [.env.example](.env.example) para todas as opções.
+
+---
+
+## 🆓 Modo gratuito (primeiro acesso sem chave)
+
+Para eliminar a barreira inicial de configuração, o app tem um **modo gratuito**: no primeiro
+acesso, quem ainda não tem chave escolhe entre **"Começar gratuitamente"** (conversa na hora,
+usando modelos gratuitos pagos/limitados pela plataforma) e **"Configurar minha própria chave"**
+(um assistente passo a passo guia a criação da chave em provedores como OpenRouter, DeepSeek,
+Groq, Google Gemini e Mistral).
+
+Como funciona por dentro:
+
+- **A chave gratuita fica só no servidor** (`FREE_TIER_API_KEY` no `.env`/secret do backend).
+  O navegador fala apenas com `/api`; **só o backend** fala com o provedor de IA. A chave nunca
+  aparece no frontend, no app ou no repositório.
+- **Allowlist de modelos:** no modo gratuito só os modelos de `FREE_TIER_MODELS` são usados
+  (padrão: modelos `:free` do OpenRouter). Se o modelo escolhido falhar (429/queda), o app tenta
+  automaticamente o próximo da lista. A lista `:free` do OpenRouter muda com frequência —
+  confira em [openrouter.ai/collections/free-models](https://openrouter.ai/collections/free-models).
+- **Limites e fila com transparência:** limite diário por usuário (com renovação à meia-noite no
+  fuso do app), freio por minuto e fila global de concorrência limitada. O usuário vê no chat o
+  chip "Modo gratuito" com o modelo, o provedor, as mensagens restantes, o horário de renovação e
+  a posição na fila — e pode **cancelar** enquanto espera. Ao atingir o limite, aparece uma tela
+  amigável com opções (aguardar, configurar chave própria, tutorial), não um erro técnico.
+- **Painel do administrador** (menu Administração → Modo gratuito, só para `ADMIN_EMAIL`):
+  usuários ativos, consumo por usuário/modelo/dia, erros e indisponibilidades, limite global e
+  individual, ativar/desativar modelos e **bloquear usuários por abuso** — tudo sem reiniciar.
+- **Termos dos provedores:** o OpenRouter permite servir seus usuários por um backend próprio
+  (proíbe revenda direta de acesso à API e multi-contas para burlar limites; a cota é por conta:
+  ~50 req/dia, ou ~1.000 req/dia após uma compra única de US$ 10). Alguns provedores **proíbem**
+  servir usuários finais no nível gratuito (ex.: NVIDIA NIM, Cohere trial, GitHub Models) — não
+  os use como `FREE_TIER_BASE_URL`. Modelos locais (Ollama em `http://host:11434/v1`) também
+  funcionam como modo gratuito, sem termos de terceiros.
+- **Privacidade (LGPD):** muitos modelos gratuitos registram/treinam com os prompts. Se ativar o
+  modo gratuito num site público, reflita isso na sua Política de Privacidade.
 
 ---
 
