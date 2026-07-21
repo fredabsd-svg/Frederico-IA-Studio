@@ -117,7 +117,13 @@ export function friendlyApiError(err) {
   if (isUnsupportedToolError(err)) {
     return 'Este modelo não oferece ferramentas neste ambiente. Ele ainda pode conversar por texto; para criar arquivos, pesquisar ou executar algo, escolha no seletor um modelo marcado com Ferramentas.';
   }
-  if (status === 404) return 'Modelo não encontrado no provedor. Escolha outro modelo no seletor.';
+  if (status === 404) {
+    // Mostra o motivo real do provedor (ex.: "xyz is not a valid model id",
+    // "No endpoints found for <modelo>"). Sem isso, todo 404 virava um genérico
+    // "Modelo não encontrado" que escondia QUAL modelo e por quê.
+    const detail = String(err?.error?.message || err?.response?.data?.error?.message || '').trim();
+    return `Modelo não encontrado ou indisponível no provedor${detail ? ` (${detail.slice(0, 180)})` : ''}. Escolha outro modelo no seletor.`;
+  }
   if (status >= 500) return 'O provedor do modelo está instável neste momento. Tente novamente em instantes.';
   return raw.slice(0, 300) || 'Erro inesperado ao falar com o modelo.';
 }

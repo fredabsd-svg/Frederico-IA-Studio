@@ -9,7 +9,7 @@ import { buildContext, historyBudgetForModel, selectHistoryForContext } from '..
 import { indexAfterReply } from '../memory/indexer.js';
 import { getSettings } from '../memory/memoryService.js';
 import { isLowSignalTurn, LOW_SIGNAL_TURN_NOTE } from '../memory/retrievalPolicy.js';
-import { buildModelCallPlan, isUnsupportedToolError, isUnsupportedVisionError, markModelCapabilityUnsupported, modelCompatibilityMessage } from '../modelCapabilities.js';
+import { buildModelCallPlan, isUnsupportedToolError, isUnsupportedVisionError, isModelUnavailableError, markModelCapabilityUnsupported, modelCompatibilityMessage } from '../modelCapabilities.js';
 import { createToolProtocolStreamGuard, parseTextToolCalls, sanitizeToolProtocolText } from '../toolProtocol.js';
 import { githubToolDefinitions, GITHUB_WRITE_TOOLS, hasGithubConnection } from '../connectors/github.js';
 import { effortCfg, promptFor, toolsFor, temperatureFor, developerContextFor, toolAvailabilityNote, ENVIRONMENT_QUERY_RE, verifiedEnvironmentNote, pcFoldersNote, uploadsNote, clipForBriefing, BRIEFING_CHAR_LIMIT, QUALITY_BAR } from './prompts.js';
@@ -378,6 +378,20 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
           onEvent({ type: 'delta', content: PROVIDER_TIMEOUT_NOTICE });
           completedNaturally = true;
           break;
+        }
+        // Modelo indisponível (404 / ID inexistente): antes o app encerrava a
+        // tarefa de vez com "Modelo não encontrado". Agora, se houver modelo de
+        // reserva, tenta o próximo em vez de dar erro fatal — só desiste quando
+        // a cadeia de reserva se esgota (aí o erro real volta pelo throw).
+        if (isModelUnavailableError(err)) {
+          const fb = nextFallbackModel();
+          if (fb) {
+            onEvent({ type: 'status', content: `O modelo ${chosenModel} não está disponível no provedor. Tentando o modelo de reserva ${fb}...` });
+            chosenModel = fb;
+            streamRecoveryAttempts = 0;
+            step -= 1;
+            continue;
+          }
         }
         throw err;
       }

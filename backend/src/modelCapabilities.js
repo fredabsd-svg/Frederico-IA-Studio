@@ -198,6 +198,19 @@ export function isUnsupportedToolError(error) {
   return /support tool use|support tools|tool use is not supported|tools? (?:are|is) not supported|no endpoints found.*tool/i.test(errorText(error));
 }
 
+// Modelo indisponível no provedor: o ID não existe (foi renomeado/removido), não
+// há endpoint que atenda o pedido, ou a conta não tem acesso a ele. O provedor
+// responde 404 (às vezes 400 "not a valid model id"). Serve para acionar o
+// FAILOVER de modelo (tentar a reserva) em vez de encerrar a tarefa de vez —
+// exceto quando a causa é falta de ferramentas, que tem tratamento próprio.
+export function isModelUnavailableError(error) {
+  if (isUnsupportedToolError(error)) return false;
+  const status = Number(error?.status ?? error?.response?.status ?? error?.error?.code ?? error?.code);
+  const text = errorText(error);
+  if (status === 404) return true;
+  return /not a valid model|no (?:allowed )?(?:endpoints?|providers?)[\w\s]{0,20}(?:found|available)|model (?:not found|does not exist|is not available)|no such model/i.test(text);
+}
+
 export function isUnsupportedReasoningError(error) {
   return /reasoning(?: effort| parameter| controls?)?.*(?:not supported|unsupported)|(?:not supported|unsupported).*reasoning/i.test(errorText(error));
 }
