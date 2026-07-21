@@ -881,3 +881,8 @@ input[type=checkbox]:focus-visible,input[type=radio]:focus-visible{outline-offse
 /* Lista de arquivos */
 .esFileList{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px;font-family:ui-monospace,Consolas,monospace;font-size:var(--fs-2xs);color:#b9c6dd}
 .esFileList li{padding:4px 8px;background:var(--code-bg);border:1px solid var(--code-line);border-radius:var(--r-sm)}
+
+/* Miniatura de página capturada pelo navegador headless */
+.esShot{display:block;border-radius:var(--r-md);overflow:hidden;border:1px solid var(--line);background:var(--code-bg);max-width:520px}
+.esShot img{display:block;width:100%;height:auto}
+.esShot:hover{border-color:var(--accent)}

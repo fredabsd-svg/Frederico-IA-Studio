@@ -1,5 +1,59 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 📸 Miniatura real de página: navegador headless no backend (2026-07-21 — branch `claude/unified-ai-execution-session-25rm4h`, PR #60)
+
+Pedido: "instale um navegador headless" para gerar a MINIATURA real da página
+(o item que ficou de fora no PR #60 inicial, que só mostrava endereço + texto).
+Agora, quando a IA abre uma página com `web_fetch`, o backend renderiza a página
+num Chromium headless e salva um screenshot, exibido no painel de detalhe do
+Ambiente de Trabalho.
+
+**Arquivos:**
+- `Dockerfile` (raiz) — instala `chromium` + `fonts-liberation` via apt e define
+  `ENV CHROMIUM_PATH=/usr/bin/chromium`. **A imagem fica ~alguns 100 MB maior.**
+- `backend/package.json` — adiciona `puppeteer-core` (usa o Chromium do sistema;
+  NÃO baixa navegador). **⚠️ `package-lock.json` não foi regenerado** (sem rede
+  neste ambiente); o Dockerfile usa `npm install` (não `npm ci`), então resolve
+  na build. Rodar `npm install` na VPS/local atualiza o lock.
+- `backend/src/agent/pageShot.js` — **novo**. Navegador compartilhado (singleton
+  com auto-close após 1 min ocioso), `captureThumbnail(url, destPath)`. É
+  **best-effort**: import dinâmico do puppeteer-core em try/catch, checa
+  `CHROMIUM_PATH` existe; qualquer falha/timeout → retorna false e o `web_fetch`
+  segue só com o texto. **SSRF:** interceptação de requisições aborta QUALQUER
+  host bloqueado por `isBlockedHost` (mesma regra do web_fetch), inclusive em
+  redirecionamentos/JS da página. Viewport 1024×640, JPEG q55, timeout 9s.
+- `backend/src/tools.js` — no `runTool`, o `web_fetch` chama `captureThumbnail`
+  após o fetch (URL final já validada) e grava em `<ws>/.thumbs/<id>.jpg`,
+  devolvendo `thumb` (caminho relativo) no resultado. Import de `captureThumbnail`
+  (import circular com pageShot.js → OK, uso só em runtime; testado isolado).
+- `backend/src/agent/loop.js` — extrai `thumb` do resultado do web_fetch e manda
+  num campo SEPARADO no evento `tool_result` (o `content` é cortado em 2000 chars
+  e o caminho poderia se perder).
+- `frontend/src/hooks/useChat.js` — guarda `ev.thumb` no bloco da ferramenta.
+- `frontend/src/components/ExecutionSession.jsx` — `ResultView` do navegador
+  mostra a miniatura clicável (abre em tamanho real) acima do endereço/texto.
+- `frontend/src/styles.css` — `.esShot`.
+- `.env.example` — documenta `CHROMIUM_PATH`, `WEB_FETCH_SCREENSHOTS` (0 desliga),
+  `SCREENSHOT_TIMEOUT_MS`.
+
+**Decisões:**
+- **puppeteer-core + Chromium do apt** (não playwright, não puppeteer completo):
+  mais leve e é o caminho clássico p/ "screenshot com Chromium do sistema" em
+  Docker. `--no-sandbox --disable-dev-shm-usage` (sem /dev/shm grande no
+  container). Navegador reaproveitado entre capturas e fechado no ócio p/ poupar
+  RAM da VPS.
+- **Miniatura por página, não por pesquisa:** só o `web_fetch` (abrir página)
+  gera screenshot; `web_search` (lista de links) não.
+- **Custo:** cada `web_fetch` passa a renderizar a página (fetch de texto + render
+  no browser). Timeout curto e best-effort limitam o impacto; `WEB_FETCH_SCREENSHOTS=0`
+  desliga tudo se a VPS ficar apertada.
+
+**Validação:** `node --check` nos 3 arquivos backend + repro isolado do import
+circular e do guard SSRF (público passa, localhost bloqueia). Frontend: `build`
+OK + `node --test` (7). **Não** dá p/ testar a captura real aqui (backend sem
+deps — proxy bloqueia `npm install` de `openai`/`sharp` com 403). Quem valida de
+fato é a build da VPS; conferir na tela após o deploy que a miniatura aparece.
+
 ## ⚡ Ambiente de Trabalho da IA: fluidez + prévia de arquivo/imagem/página (2026-07-21 — branch `claude/unified-ai-execution-session-25rm4h`, follow-up do PR #59)
 
 Continuação do #59 (que já está na `main`). Dois pedidos: **(1)** a interface

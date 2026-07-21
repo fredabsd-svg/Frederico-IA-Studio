@@ -132,11 +132,17 @@ function ResultView({ step, conversationId }) {
     </ul>;
   }
 
-  // Página aberta no navegador: cabeçalho com o endereço + prévia do conteúdo.
-  if (cat === 'browser' && parsed?.content) {
+  // Página aberta no navegador: miniatura (se houver) + endereço + prévia do texto.
+  if (cat === 'browser' && (parsed?.content || step.thumb)) {
+    const pageUrl = parsed?.url || step.preview;
     return <div className="esPage">
-      {parsed.url && <a className="esPageUrl" href={parsed.url} target="_blank" rel="noreferrer">{parsed.url} <ExternalLink size={11} /></a>}
-      <pre className="esOutput">{String(parsed.content).slice(0, 4000)}</pre>
+      {step.thumb && (
+        <a className="esShot" href={fileUrl(conversationId, step.thumb)} target="_blank" rel="noreferrer" title="Abrir a miniatura em tamanho real">
+          <img src={fileUrl(conversationId, step.thumb)} alt="Miniatura da página" loading="lazy" />
+        </a>
+      )}
+      {pageUrl && <a className="esPageUrl" href={pageUrl} target="_blank" rel="noreferrer">{pageUrl} <ExternalLink size={11} /></a>}
+      {parsed?.content && <pre className="esOutput">{String(parsed.content).slice(0, 4000)}</pre>}
     </div>;
   }
 

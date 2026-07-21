@@ -4,6 +4,7 @@ import { nanoid } from 'nanoid';
 import { execInSandbox, workspaceFor, safeJoin, pcFolderMounts } from './sandbox.js';
 import { runGithubTool } from './connectors/github.js';
 import { createCache } from './cache.js';
+import { captureThumbnail } from './agent/pageShot.js';
 
 // Cache de chamadas EXTERNAS caras/repetidas. Desligável com TOOL_CACHE=0
 // (usado nos testes para isolar cada caso). Chaves e TTLs por tipo:
@@ -526,7 +527,21 @@ async function readMountedPcFile(conversationId, mountedPath, sandboxOptions, ru
 export async function runTool(conversationId, name, args = {}, sandboxOptions = {}, runtime = {}) {
   const signal = runtime?.signal;
   if (name === 'web_search') return JSON.stringify(await webSearch(args.query || '', { signal }));
-  if (name === 'web_fetch') return JSON.stringify(await webFetch(args.url || '', { signal }));
+  if (name === 'web_fetch') {
+    const res = await webFetch(args.url || '', { signal });
+    // Miniatura da página (best-effort): renderiza a URL final já validada e
+    // salva um JPEG no workspace. Se o navegador não estiver disponível ou
+    // falhar, `thumb` fica ausente e o web_fetch segue igual (só o texto).
+    if (res && !res.error && res.url) {
+      try {
+        const ws = workspaceFor(conversationId);
+        const rel = path.posix.join('.thumbs', `${nanoid(10)}.jpg`);
+        const ok = await captureThumbnail(res.url, path.join(ws.base, '.thumbs', path.basename(rel)), { signal });
+        if (ok) res.thumb = rel;
+      } catch {}
+    }
+    return JSON.stringify(res);
+  }
   if (name === 'consultar_cnpj') return JSON.stringify(await consultarCnpj(args.cnpj || '', { signal }));
   // Conector GitHub: roda no BACKEND (o token do usuário nunca entra no sandbox).
   if (name.startsWith('github_')) return JSON.stringify(await runGithubTool(name, args, { userId: sandboxOptions.userId, conversationId, signal }));

@@ -143,7 +143,7 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
         if (ev.type === 'tool_result') update(m => {
           const blocks = [...(m.blocks || [])];
           const status = toolResultFailed(ev.content) ? 'error' : 'done';
-          for (let i = blocks.length - 1; i >= 0; i--) { if (blocks[i].type === 'tool' && blocks[i].status === 'running') { blocks[i] = { ...blocks[i], status, ended: Date.now(), result: ev.content }; break; } }
+          for (let i = blocks.length - 1; i >= 0; i--) { if (blocks[i].type === 'tool' && blocks[i].status === 'running') { blocks[i] = { ...blocks[i], status, ended: Date.now(), result: ev.content, ...(ev.thumb ? { thumb: ev.thumb } : {}) }; break; } }
           return { ...m, blocks };
         });
         if (ev.type === 'files') update(m => ({ ...m, files: [...(m.files || []), ...ev.files] }));

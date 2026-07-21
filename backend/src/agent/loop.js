@@ -581,7 +581,11 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
         }
       }
       executedToolCalls += 1;
-      onEvent({ type: 'tool_result', name, content: result.slice(0, 2000) });
+      // A miniatura da página (web_fetch) vai num campo SEPARADO do stream: o
+      // `content` é cortado em 2000 chars e o caminho poderia ficar de fora.
+      let thumb = '';
+      if (name === 'web_fetch') { try { thumb = JSON.parse(result).thumb || ''; } catch {} }
+      onEvent({ type: 'tool_result', name, content: result.slice(0, 2000), ...(thumb ? { thumb } : {}) });
       messages.push({ role: 'tool', tool_call_id: call.id, content: result });
       // Freio de loop: conta falhas consecutivas das ferramentas
       const outcome = classifyToolOutcome(name, result);
