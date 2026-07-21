@@ -9,7 +9,7 @@ import { isLowSignalTurn, LOW_SIGNAL_TURN_NOTE } from '../memory/retrievalPolicy
 import { detectToolRequirement } from '../modelCapabilities.js';
 import { runAgent } from './loop.js';
 import { AGENTS, QUALITY_BAR, clipForBriefing, PERSPECTIVE_CHAR_LIMIT, BRIEFING_CHAR_LIMIT, uploadsNote } from './prompts.js';
-import { STREAM_RECOVERY_LIMIT, STREAM_RESUME_NOTE, STREAM_PAUSE_RESUME_NOTE, isRetryableStreamError, openRouterRouting, retryDelay, addUsage, friendlyApiError } from './provider.js';
+import { STREAM_RECOVERY_LIMIT, STREAM_RESUME_NOTE, STREAM_PAUSE_RESUME_NOTE, isRetryableStreamError, openRouterRouting, retryDelay, addUsage, friendlyApiError, applyPromptCache } from './provider.js';
 import { acquireConversationControl, releaseConversationControl, beginProviderRequest, releaseProviderRequest, controlInterruptReason, gate } from './control.js';
 import { clientScopeFor, memoryNote, saveMessage } from './persistence.js';
 
@@ -206,9 +206,11 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
     if (lowSignalTurn) directMsgs[0] = { role: 'system', content: LOW_SIGNAL_TURN_NOTE };
     directMsgs.push({ role: 'system', content: QUALITY_BAR });
     directMsgs.push({ role: 'system', content: TEAM_TOOL_AWARENESS });
+    const directPrefixEnd = directMsgs.length; // antes de memória/histórico
     if (memory) directMsgs.push({ role: 'system', content: memory });
     for (const m of histRows) directMsgs.push({ role: m.role, content: String(m.content).slice(0, 2000) });
     directMsgs.push({ role: 'user', content: userText });
+    applyPromptCache(directMsgs, coordModel, directPrefixEnd);
     try { finalText = await streamCoordinator(directMsgs); }
     catch (err) { finalText = `Não foi possível responder: ${friendlyApiError(err)}`; onEvent({ type: 'delta', content: finalText }); }
   } else {
@@ -224,8 +226,10 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
         onEvent({ type: 'tool_start', name: a.name });
         const sys = `${a.system_prompt}\n\n${TEAM_TOOL_AWARENESS}\n\nVocê faz parte de um time que já está conversando com a pessoa. Olhe o histórico e traga só a sua visão de especialista sobre a nova mensagem, direto ao ponto — sem se apresentar e sem repetir o que o time já disse. Nesta etapa você não gera arquivos nem roda código.`;
         const msgs = [{ role: 'system', content: sys }];
+        const memberPrefixEnd = msgs.length; // antes de memória/histórico
         if (memory) msgs.push({ role: 'system', content: memory });
         msgs.push({ role: 'user', content: historyText ? `Histórico recente da conversa:\n${historyText}\n\nNOVA mensagem do usuário:\n${userText}` : userText });
+        applyPromptCache(msgs, coordModel, memberPrefixEnd);
         return { a, memberResult: await askTeamMember(a, msgs) };
       }));
       for (const { a, memberResult } of results) {
@@ -266,6 +270,7 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
       { role: 'system', content: TEAM_TOOL_AWARENESS },
       { role: 'user', content: `${historyText ? `Histórico recente:\n${historyText}\n\n` : ''}NOVA mensagem do usuário:\n${userText}\n\nPerspectivas da equipe:\n${combined}` }
     ];
+    applyPromptCache(synthMsgs, coordModel, 3); // 3 blocos system estáveis antes do user
     try { finalText = await streamCoordinator(synthMsgs); }
     catch (err) { finalText = `Não foi possível compilar a resposta final: ${friendlyApiError(err)}`; onEvent({ type: 'delta', content: finalText }); }
   }

@@ -30,6 +30,7 @@ import conversationsRouter from './routes/conversations.js';
 import tasksRouter, { processTasks } from './routes/tasks.js';
 import schedulesRouter, { startSchedulers } from './routes/schedules.js';
 import backupRouter from './routes/backup.js';
+import cacheRouter from './routes/cache.js';
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -133,6 +134,7 @@ app.use('/api', conversationsRouter);
 app.use('/api', tasksRouter);
 app.use('/api', schedulesRouter);
 app.use('/api', backupRouter);
+app.use('/api', cacheRouter);
 
 // LGPD — retenção automática: com CONVERSATION_RETENTION_DAYS > 0, apaga
 // conversas paradas há mais de N dias (varredura a cada 6 h; desligada por padrão).

@@ -3,6 +3,19 @@ import path from 'path';
 import { nanoid } from 'nanoid';
 import { execInSandbox, workspaceFor, safeJoin, pcFolderMounts } from './sandbox.js';
 import { runGithubTool } from './connectors/github.js';
+import { createCache } from './cache.js';
+
+// Cache de chamadas EXTERNAS caras/repetidas. Desligável com TOOL_CACHE=0
+// (usado nos testes para isolar cada caso). Chaves e TTLs por tipo:
+//   * CNPJ: dados cadastrais mudam raramente; TTL longo (12h) evita bater na
+//     BrasilAPI/ReceitaWS de novo (a ReceitaWS grátis limita ~3 req/min).
+//   * web_search: resultados variam com o tempo; TTL curto (10 min) só corta a
+//     repetição da MESMA busca dentro de um intervalo curto.
+const TOOL_CACHE_ENABLED = process.env.TOOL_CACHE !== '0';
+const CNPJ_TTL_MS = Math.max(0, Number(process.env.CNPJ_CACHE_TTL_MS ?? 12 * 60 * 60 * 1000));
+const WEBSEARCH_TTL_MS = Math.max(0, Number(process.env.WEBSEARCH_CACHE_TTL_MS ?? 10 * 60 * 1000));
+const cnpjCache = createCache({ name: 'cnpj', max: 2000, ttl: CNPJ_TTL_MS });
+const webSearchCache = createCache({ name: 'web_search', max: 500, ttl: WEBSEARCH_TTL_MS });
 
 export const toolDefinitions = [
   { type: 'function', function: { name: 'run_python', description: 'Executa Python 3.12 real na sandbox Linux isolada. Use para análises, planilhas, Word, PDF, gráficos, OCR, APIs e automações. Pacotes incluem pandas, numpy, openpyxl, python-docx, odfpy (importe odf), reportlab, weasyprint, PyMuPDF/fitz, pdfplumber, camelot, ocrmypdf, pytesseract, duckdb, polars, Flask/FastAPI/Uvicorn, pytest/black/ruff, SQLAlchemy, psycopg (v3), psycopg2 e clientes MySQL/Redis/MongoDB. Para ML em CPU: scikit-learn e onnxruntime para inferência; transformers, sentencepiece e safetensors para tokenização/configuração. Sem PyTorch/TensorFlow, use modelos ONNX com onnxruntime.', parameters: { type: 'object', properties: { code: { type: 'string' } }, required: ['code'] } } },
@@ -125,7 +138,20 @@ function duckFetch(endpoint, query, signal) {
   });
 }
 
+// Cacheia buscas idênticas por um TTL curto (só corta a repetição imediata da
+// MESMA query). Erros/vazios não entram no cache — devem permitir nova tentativa.
 async function webSearch(query, options = {}) {
+  const q = String(query || '').trim();
+  if (!q || !TOOL_CACHE_ENABLED) return webSearchUncached(query, options);
+  const key = q.toLowerCase();
+  const hit = webSearchCache.get(key);
+  if (hit) return hit;
+  const result = await webSearchUncached(query, options);
+  if (result && Array.isArray(result.results) && result.results.length) webSearchCache.set(key, result);
+  return result;
+}
+
+async function webSearchUncached(query, options = {}) {
   const q = String(query || '').trim();
   if (!q) return { engine: 'nenhum', results: [], erro: 'Consulta de pesquisa vazia.' };
   // Com chaves do Google configuradas, usa a API oficial (Custom Search).
@@ -325,11 +351,24 @@ function fromReceitaWs(d) {
   };
 }
 
+// Cacheia consultas de CNPJ por um TTL longo (dados cadastrais mudam raramente).
+// Guarda só resultados DEFINITIVOS — sucesso ou "não encontrado" —; erros
+// transitórios (base fora do ar) não entram no cache para permitir nova tentativa.
 export async function consultarCnpj(cnpj, options = {}) {
   const digits = normalizeCnpj(cnpj);
   if (digits.length !== 14) {
     return { error: 'CNPJ inválido: informe os 14 dígitos (com ou sem pontuação).', code: 'CNPJ_INVALIDO', recoverable: true, requestedCnpj: cnpj };
   }
+  if (TOOL_CACHE_ENABLED) {
+    const hit = cnpjCache.get(digits);
+    if (hit) return hit;
+  }
+  const result = await consultarCnpjUncached(digits, options);
+  if (TOOL_CACHE_ENABLED && (!result.error || result.code === 'CNPJ_NAO_ENCONTRADO')) cnpjCache.set(digits, result);
+  return result;
+}
+
+async function consultarCnpjUncached(digits, options = {}) {
   const problemas = [];
   // 1) BrasilAPI (primária)
   try {
