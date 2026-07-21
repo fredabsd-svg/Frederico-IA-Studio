@@ -130,3 +130,42 @@ test('does not execute a huge repeated web-fetch batch from one model turn', () 
   assert.equal(fetchLimited.calls.length, 1);
   assert.match(fetchLimited.webStopReason, /limite/i);
 });
+
+test('multiconversa: conta execuções ativas POR usuário e permite conversas paralelas', async () => {
+  const { countActiveRunsForUser } = await import('./agent.js');
+  const a1 = acquireConversationControl('multi-conv-a1', 'user-a');
+  const a2 = acquireConversationControl('multi-conv-a2', 'user-a');
+  const b1 = acquireConversationControl('multi-conv-b1', 'user-b');
+  const anon = acquireConversationControl('multi-conv-anon'); // sem userId (legado)
+  try {
+    // Duas conversas do MESMO usuário rodando ao mesmo tempo: permitido.
+    assert.equal(isConversationActive('multi-conv-a1'), true);
+    assert.equal(isConversationActive('multi-conv-a2'), true);
+    assert.equal(countActiveRunsForUser('user-a'), 2);
+    assert.equal(countActiveRunsForUser('user-b'), 1);
+    assert.equal(countActiveRunsForUser('user-sem-nada'), 0);
+    assert.equal(countActiveRunsForUser(null), 0); // sem userId nunca conta
+  } finally {
+    releaseConversationControl('multi-conv-a1', a1);
+    releaseConversationControl('multi-conv-a2', a2);
+    releaseConversationControl('multi-conv-b1', b1);
+    releaseConversationControl('multi-conv-anon', anon);
+  }
+  assert.equal(countActiveRunsForUser('user-a'), 0);
+});
+
+test('multiconversa: parar UMA conversa não afeta a outra do mesmo usuário', () => {
+  const c1 = acquireConversationControl('multi-stop-1', 'user-x');
+  const c2 = acquireConversationControl('multi-stop-2', 'user-x');
+  try {
+    setControl('multi-stop-1', 'stop');
+    assert.equal(c1.stopped, true);
+    assert.equal(c2.stopped, false); // a outra conversa segue intacta
+    setControl('multi-stop-2', 'pause');
+    assert.equal(c2.paused, true);
+    assert.equal(c1.paused, false);
+  } finally {
+    releaseConversationControl('multi-stop-1', c1);
+    releaseConversationControl('multi-stop-2', c2);
+  }
+});

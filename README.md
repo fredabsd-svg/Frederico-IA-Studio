@@ -43,6 +43,7 @@ você escolhe é enviado direto ao provedor, sem substituição.
 | 📷 | **Câmera e imagens** | Fotografe um documento (webcam no PC, câmera no celular) ou anexe uma imagem — a IA lê sozinha (**visão** nos modelos com visão; **OCR** nos demais) |
 | 🏢 | **Consulta de CNPJ** | Dados cadastrais oficiais (BrasilAPI/ReceitaWS): razão social, situação, CNAE, endereço e sócios |
 | 🧠 | **Memória de longo prazo** | Recuperação semântica com painel de revisão |
+| 🔀 | **Multiconversa** | Várias conversas processando AO MESMO TEMPO (teto configurável); indicador girando na barra lateral mostra quais estão ativas, e trocar de conversa não interrompe nem mistura nada — ao voltar, o andamento reconecta ao vivo |
 | 👥 | **Modo Equipe** | Combina perspectivas de vários assistentes |
 | 🧩 | **Sistema Multimodelo** | 2+ modelos de IA na mesma mensagem: Comparação lado a lado, Conselho de IAs (coordenador consolida), Debate em rodadas e Especialistas em sequência — com função por modelo, estimativa de custo, orçamento máximo, interrupção por modelo e equipes salvas (presets) |
 | 🖥️ | **Sandbox Docker** | Um container por conversa para Python, Bash e geração de arquivos |
@@ -227,6 +228,7 @@ docker compose up --build -d
 | `RATE_API_PER_MIN` | 600 | Rate limit HTTP geral da API por IP/minuto (0 desliga) |
 | `RATE_AUTH_PER_15MIN` | 50 | Rate limit de login/cadastro por IP a cada 15 min (0 desliga) |
 | `MAX_SANDBOXES_PER_USER` | 2 | Sandboxes ativos ao mesmo tempo por usuário |
+| `MAX_ACTIVE_RUNS_PER_USER` | 5 | Conversas do mesmo usuário processando ao mesmo tempo (multiconversa); conversas que executam código também disputam `MAX_SANDBOXES_PER_USER` |
 | `TOOL_TIMEOUT_MS` | 45000 | Tempo máximo de um comando de sandbox |
 | `AGENT_MAX_STEPS` | conforme o esforço | Limite de etapas da tarefa |
 | `SANDBOX_MEMORY / SANDBOX_CPUS` | 1024m / 1 | Recursos do sandbox |

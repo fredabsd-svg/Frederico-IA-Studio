@@ -1051,3 +1051,6 @@ input[type=checkbox]:focus-visible,input[type=radio]:focus-visible{outline-offse
   .mmFieldRow{flex-direction:column}
   .mmModes{grid-template-columns:1fr}
 }
+
+/* ---- Multiconversa: indicador de conversa processando na barra lateral ---- */
+.convItem .convSpin{flex:none;align-self:center;margin-right:2px}

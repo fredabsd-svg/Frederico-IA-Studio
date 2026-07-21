@@ -33,7 +33,8 @@ export {
   releaseToolRequest,
   controlInterruptReason,
   setControl,
-  isConversationActive
+  isConversationActive,
+  countActiveRunsForUser
 } from './agent/control.js';
 export { runAgent } from './agent/loop.js';
 export { runOrchestrator } from './agent/orchestrator.js';

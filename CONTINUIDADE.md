@@ -1,5 +1,73 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 🔀 Multiconversa — várias conversas processando ao mesmo tempo (2026-07-21 — branch `claude/modelo-travando-execucao-uwatco`)
+
+**Pedido:** ter 3–5 conversas processando simultaneamente, com um indicador
+girando na barra lateral mostrando quais estão ativas — e com MUITO cuidado:
+trocar de conversa não pode parar, misturar nem confundir os andamentos.
+
+**O que já existia:** o backend SEMPRE suportou execuções paralelas em
+conversas diferentes (o controle pausar/parar e o liveStream são POR conversa;
+`ConversationBusyError` só bloqueia a MESMA conversa). As travas eram todas do
+frontend: um único estado global `busy/paused/statusText` no `useChat`, o
+`blockConversationChange` do App impedia trocar de conversa durante um run, e
+o consumo do SSE escrevia em `messages` sem checar qual conversa estava aberta.
+
+**Frontend (`useChat.js` — o núcleo da mudança):**
+- Estado de execução POR CONVERSA: `runs` (`convId → {busy, paused, status}`)
+  + `runsRef` (fonte síncrona). `busy/paused/statusText` viraram PROJEÇÃO da
+  conversa aberta — a API consumida pelo App não mudou (só ganhou
+  `runs`/`anyBusy`). `busyRef` continua = conversa aberta (o `useTasks` usa).
+- **ÉPOCAS de stream (anti-duplicação — o "não pode se misturar"):**
+  `streamEpochsRef` conta uma época por conversa; todo consumidor (envio OU
+  replay de reconexão) registra a época em que nasceu. Quem reconecta avança a
+  época; o consumidor antigo detecta (`isLiveEpoch`) e se descarta cancelando o
+  reader. Sem isso, voltar a uma conversa ativa criaria DOIS consumidores
+  aplicando os mesmos eventos (texto dobrado).
+- **Gates por conversa:** TODO update visual do stream (`update()`, `saved`)
+  só aplica se `currentRef.current?.id === convId`. Status vai para o `runs` da
+  conversa do stream, nunca para um global. Trocar de conversa no meio → os
+  eventos da outra viram no-ops visuais (a tarefa segue no servidor).
+- **1ª mensagem de conversa nova:** `currentRef` é sincronizado por efeito
+  (roda depois do render); o sendMessage agora escreve `currentRef.current =
+  conv` na hora (mesmo truque do openConversation) — sem isso os gates
+  descartariam os primeiros eventos do stream.
+- **Sair e voltar:** sair não interrompe (consumidor original segue lendo com
+  updates em no-op e limpa o estado no `done`); voltar dispara o replay
+  (`followActiveConversation`), que avança a época e reassume. Se o SSE cair
+  com o usuário em OUTRA conversa, `watchDetachedRun` vigia por polling (5s,
+  ~30 min) e apaga o "girando" quando o servidor terminar — a menos que alguém
+  reconecte antes (época avança → vigia se retira).
+- **Limpezas com dono único:** quem assume o acompanhamento (follow) é quem
+  limpa (`endRun`); resultados `stale` NUNCA fazem cleanup (o novo consumidor é
+  o dono). `loadFiles`/`setCurrent` pós-run só se a conversa ainda é a aberta.
+- `App.jsx`: `blockConversationChange` virou no-op (trocar de conversa/cliente/
+  nova conversa é livre); indicador `.spin.sm.convSpin` no item da barra
+  lateral (`runs[c.id] ? runs[c.id].busy : c.active` — estado local vence, flag
+  do servidor cobre reload/outro dispositivo); polling da lista a cada 10s
+  ENQUANTO houver atividade (apaga/acende sozinho). CSS em styles.css.
+
+**Backend (aditivo):**
+- `GET /conversations` (todas as variantes) devolve `active` por linha
+  (`isConversationActive`) — alimenta o indicador após reload/outro aparelho.
+- `control.js`: `acquireConversationControl(conversationId, userId)` marca o
+  dono; novo `countActiveRunsForUser(userId)`. `loop.js`/`multiModel.js`/
+  `orchestrator.js` passam o userId (aditivo, sem mudança de comportamento).
+- `POST /chat`: teto `MAX_ACTIVE_RUNS_PER_USER` (padrão 5, piso 1) → 429 com
+  mensagem clara. Protege a VPS; tarefas de segundo plano não são bloqueadas
+  pelo teto (só contam), e o 409 da MESMA conversa continua igual.
+- `.env.example`/`README.md`: variável nova + linha na tabela de recursos.
+  **Atenção:** conversas paralelas que EXECUTAM código disputam
+  `MAX_SANDBOXES_PER_USER` (padrão 2) — subir os dois juntos se necessário.
+
+**Validação:** backend **144 testes, 0 falhas** (2 novos em
+`agent.control.test.js`: contagem por usuário e independência de stop/pause
+entre conversas do mesmo dono). Frontend: build Vite OK + 7/7 (`dist/`
+recompilado e commitado). NÃO houve teste de UI ao vivo multiconversa (sem
+Docker/Postgres aqui) — validar em produção: enviar em 2–3 conversas, trocar
+entre elas durante o processamento, conferir indicador girando, voltar e ver o
+replay reconectar sem duplicar texto.
+
 ## ❓ Pergunta ao usuário encerra o turno — a IA não "responde a si mesma" (2026-07-21 — branch `claude/modelo-travando-execucao-uwatco`, follow-up do PR #63)
 
 **Sintoma (print do usuário):** no Modo Desenvolvedor, o modelo terminou a

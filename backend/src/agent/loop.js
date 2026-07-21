@@ -75,7 +75,7 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   let tools = modelPlan.tools;
   const reasoningEffort = modelPlan.reasoning;
   const temperature = temperatureFor(assistant?.personality);
-  const control = inheritedControl || acquireConversationControl(conversationId);
+  const control = inheritedControl || acquireConversationControl(conversationId, userId);
   const ownsControl = !inheritedControl;
   try {
   const userMsgId = saveUserMessage || !existingUserMessageId
