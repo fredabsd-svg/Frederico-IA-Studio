@@ -67,6 +67,76 @@ cliente e injetada em toda tarefa; uma indexação semântica por projeto no bac
 é o passo natural. Ainda em aberto: pontos de restauração/desfazer, permissões
 por ação com toggles e repasse do contexto de desenvolvedor às tarefas em
 segundo plano.
+## 🧩 Sistema Multimodelo — 2+ IAs na mesma mensagem (2026-07-21 — branch `claude/multimodelo-system-h8t0tb`)
+
+**Pedido:** usar dois ou mais modelos de IA simultaneamente na mesma conversa —
+não só duplicar a pergunta, mas colaborar/comparar/revisar/sintetizar — com
+função por modelo, controle de custos e presets de equipes (spec completa do
+usuário em 16 seções).
+
+**O que foi implementado (funcional de ponta a ponta):**
+- **Motor novo** `backend/src/agent/multiModel.js` (`runMultiModel`): cada
+  participante é uma chamada INDEPENDENTE ao provedor (modelo distinto), com
+  streaming individual (eventos SSE `mm_start`/`mm_status`/`mm_delta`/
+  `mm_reset`/`mm_round`/`mm_done`), status por modelo (aguardando → analisando →
+  respondendo/revisando → concluído/interrompido/erro), tokens, custo e tempo.
+  NÃO confundir com o Modo Equipe (`orchestrator.js` = vários ASSISTENTES no
+  mesmo modelo) nem com fallback (disponibilidade) — são recursos separados.
+- **4 modos:** `compare` (paralelo, lado a lado; a mensagem salva é a junção em
+  seções), `council` (paralelo + coordenador consolida concordâncias/
+  divergências/erros; síntese streamada como texto principal), `debate` (até 3
+  rodadas: cada modelo lê os outros, critica e REESCREVE a própria resposta;
+  coordenador fecha) e `pipeline` (sequencial: cada etapa recebe o que as
+  anteriores produziram; no Modo Desenvolvedor a 1ª etapa com papel
+  implementador/código executa DE VERDADE via `runAgent` com ferramentas, e as
+  etapas seguintes revisam — a revisão vira um 2º balão salvo).
+- **12 papéis prontos** (`MULTI_ROLES`): principal, revisor, pesquisador,
+  código, arquiteto, implementador, segurança, testador, tributário, contábil,
+  jurídico, livre — cada um com system prompt próprio; o usuário pode
+  sobrescrever com prompt customizado por participante.
+- **Custos:** estimativa ANTES do envio no frontend (`estimateMultiCost`, usa
+  `price`/`priceOut` do catálogo — `priceOut` é campo NOVO em
+  `modelCapabilities.js`), orçamento máximo em US$ com interrupção automática
+  (`budgetUsd` → `budgetExceeded`), teto de tokens por modelo (`max_tokens`),
+  teto de 6 modelos e 3 rodadas (env `MULTI_MAX_MODELS`/`MULTI_MAX_ROUNDS`),
+  alerta $$$ para modelos caros. Custo REAL por modelo gravado no meta.
+- **Contexto por política** (`context`): `recent` (padrão, ~8 msgs), `full`
+  (~30 msgs), `summary` (usa `conversations.summary_long/short`; sem resumo cai
+  para recent) e `none` — o orquestrador decide o que cada modelo recebe, nunca
+  o histórico inteiro por padrão.
+- **Cancelar UM modelo só:** `POST /conversations/:id/multimodel/cancel {slot}`
+  (registro `slotRegistries` por conversa aborta só os AbortControllers daquele
+  slot); pausar/continuar/parar geral continuam valendo para tudo (mesmo
+  `control` de sempre).
+- **Persistência:** coluna nova `messages.multi_meta` (migração
+  `006_multimodel.sql`) guarda o JSON por modelo (status/texto/usage/custo/
+  tempo) — o GET da conversa devolve como `m.multi` e a interface remonta os
+  cartões ao reabrir. Se o JSON passar de 200k, regrava com textos encurtados
+  (nunca `.slice()` cego que quebraria o JSON).
+- **Presets ("equipes"):** tabela `model_teams` + rotas `GET/POST/DELETE
+  /api/model-teams` (máx. 30 por usuário; config re-normalizada no POST).
+- **Frontend:** `MultiModelPicker.jsx` (botão na topbar ao lado do
+  ContextPicker: modo, modelos+funções, coordenador, rodadas, contexto,
+  orçamento, estimativa, equipes salvas; estado em `localStorage
+  fred_multimodel`; ligar multimodelo DESLIGA o Modo Equipe — o backend dá
+  prioridade ao multimodelo) e `MultiModelBoard.jsx` (cartões por modelo nas
+  mensagens com ações: copiar uma resposta, "continuar com este" (troca o
+  modelo principal e desliga o multi), "pedir revisão" (pré-preenche o campo),
+  "combinar respostas", parar um modelo). No render, modos `compare`/`pipeline`
+  NÃO repetem o `content` (o quadro já mostra tudo); `council`/`debate` mostram
+  quadro + síntese.
+- **Validação:** schema zod `multiModel` no `chat` (validation.js) +
+  normalização de verdade em `normalizeMultiModelConfig` (menos de 2 modelos
+  válidos → null → fluxo normal de 1 modelo segue intacto).
+
+**Testes/validação:** `backend/src/multiModel.test.js` (7 testes: normalização
+e custo); 125 testes de backend passando; build do Vite OK. NÃO houve teste de
+UI ao vivo (sem Docker/Postgres nesta sessão) — validar em produção o fluxo
+completo com chave OpenRouter real.
+
+**Fora do escopo desta entrega:** "escolher automaticamente o melhor modelo"
+(seção 6 da spec) — exigiria um classificador/roteador próprio; o restante da
+spec está coberto.
 
 ## 🔄 Catálogo de modelos por usuário — OpenRouter voltando a aparecer (2026-07-20 — branch `claude/openrouter-models-sync-wp1krw`)
 
