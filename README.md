@@ -47,7 +47,7 @@ você escolhe é enviado direto ao provedor, sem substituição.
 | 🧩 | **Sistema Multimodelo** | 2+ modelos de IA na mesma mensagem: Comparação lado a lado, Conselho de IAs (coordenador consolida), Debate em rodadas e Especialistas em sequência — com função por modelo, estimativa de custo, orçamento máximo, interrupção por modelo e equipes salvas (presets) |
 | 🖥️ | **Sandbox Docker** | Um container por conversa para Python, Bash e geração de arquivos |
 | 🌐 | **Pesquisa na web** | Google Custom Search, ou DuckDuckGo grátis (com dois endpoints de reserva) |
-| 📁 | **Modo Desenvolvedor** | Trabalhe sobre uma pasta de projeto autorizada |
+| 📁 | **Modo Desenvolvedor** | Ambiente dedicado de programação: projetos com memória permanente, explorador de arquivos e painel de atividade ao redor do chat, com seis modos de trabalho (Perguntar, Planejar, Implementar, Corrigir erro, Revisar e Agente autônomo) e permissões de leitura/escrita explícitas |
 | 🔌 | **Conector GitHub** | Conecte a sua conta (token) e a IA clona um repositório, altera o código e envia de volta — push e Pull Request direto pelo chat ou pelo modo desenvolvedor; o token fica cifrado e nunca entra no sandbox |
 | 🎙️ | **Voz e segundo plano** | Ditado por voz, tarefas em background, histórico por cliente |
 | 🛡️ | **Privacidade (LGPD)** | Consentimento registrado, Política de Privacidade e Termos publicados, e painel "Privacidade e dados": exportar tudo em JSON, apagar o histórico ou excluir a conta — hard delete, sem soft delete |
