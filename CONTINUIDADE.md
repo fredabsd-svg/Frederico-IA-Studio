@@ -1,5 +1,106 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## ⏭️ Retomada REAL de tarefa interrompida — checkpoint persistente (2026-07-21 — branch `claude/modelo-travando-execucao-uwatco`)
+
+**Pedido:** o app prometia "Reenviar para continuar de onde parei" quando a
+tarefa batia no limite de ciclos (~90), mas ao reenviar a execução **começava do
+zero** — todo o progresso, contexto operacional e estado se perdiam. O usuário
+pediu uma retomada estrutural (não só aumentar o limite ou reenviar o texto),
+preservando objetivo, plano, etapas/ferramentas já usadas, arquivos criados,
+comandos executados, resultados, erros, ciclo em que parou, texto parcial,
+decisões, modelo principal/reserva e o que falta — com checkpoint persistente e
+cenários separados (limite / watchdog / desconexão / falha de modelo / reinício
+do backend). É problema DIFERENTE do watchdog (PR #63): watchdog é o stream
+travar; este é a retomada não existir de verdade.
+
+**Causa raiz (confirmada no código):** o array `messages` do agente — que É o
+estado operacional completo (objetivo = msg do usuário; plano/texto parcial =
+conteúdo do assistente; etapas/ferramentas = `assistant.tool_calls`; resultados/
+erros = mensagens `role:'tool'`; decisões = conteúdo) — vivia **só na RAM** e era
+descartado quando o `runAgent` retornava. No limite de ciclos só o `finalText`
+(texto visível parcial) era salvo. E o "Reenviar" (`retrySend`) chamava
+`/truncate` com o id da mensagem do USUÁRIO, **apagando** a msg do usuário + a
+resposta parcial, e reenviava o texto → run NOVO cujo contexto (via
+`selectHistoryForContext`) não tinha nada do turno interrompido. Duas falhas
+somadas: (A) estado nunca persistido; (B) "Reenviar" era restart destrutivo.
+
+**Correção estrutural — o array `messages` VIRA o checkpoint, persistido no
+Postgres:**
+- **`backend/migrations/007_execution_checkpoints.sql`** — tabela
+  `execution_checkpoints` (1 por conversa, PK `conversation_id`, ON DELETE
+  CASCADE): `run_id`, `objective`, `reason`, `model`, `tried_models` (cadeia de
+  failover), `step`, `messages` (JSONB — o estado), `usage`, `meta`. **Postgres →
+  sobrevive a reinício do backend** (não é só RAM).
+- **`backend/src/agent/checkpoint.js`** (novo): `saveCheckpoint`/`loadCheckpoint`/
+  `hasCheckpoint`/`clearCheckpoint`. Partes PURAS (testáveis sem DB/LLM):
+  `trimCheckpointMessages` (apara por tamanho preservando preâmbulo + cauda
+  recente e NUNCA deixando `tool` órfã — pareamento tool_call/tool_result
+  válido), `buildResumeMessages` (semeia o run de retomada: estado + nota de
+  "continue, não repita"), `isResumableReason` (mesmo mecanismo central p/
+  limite E watchdog), `leadingSystemCount`.
+- **`backend/src/agent/loop.js`** — `runAgent` aceita `resume`:
+  - restaura `chosenModel` e `triedModels` do checkpoint (o **modelo de reserva
+    herda o contexto**: continua no modelo ativo e não retenta os que já
+    falharam);
+  - substitui o contexto recém-montado pelo array salvo + notas de continuidade
+    (não regrava mensagem de usuário, não reanexa imagens);
+  - **orçamento de ciclos NOVO** (a retomada avança de verdade em vez de morrer
+    no limite de novo);
+  - `usage` soma sobre o run anterior; `outputsBefore` vazio no resume (arquivos
+    já prontos contam como entrega e não disparam falso "arquivo não gerado");
+  - ao terminar interrompida por `step_limit`/`provider_failure`/`stopped` (com
+    progresso), **salva o checkpoint**; ao concluir limpo, **limpa**. Emite
+    evento `resumable` ao vivo. Mensagem de limite reescrita: "**Continuar**"
+    (não mais "Reenviar").
+- **`backend/src/routes/conversations.js`** — `POST /conversations/:id/resume`
+  (SSE igual ao /chat, mesmo `openLiveStream`, **sem gravar msg de usuário**,
+  carrega o checkpoint e passa `resume` ao runAgent → mesmo `conversationId`, sem
+  execução nova). `GET /:id` devolve `resumable` e marca a última msg do
+  assistente. 409 se já ativo / sem checkpoint; 429 respeita o teto multiconversa.
+- **Frontend** (`useChat.js`, `App.jsx`): `resumeRun(convId)` faz stream do
+  `/resume` reusando `consumeChatStream` (multiconversa-aware: mesma época/gate
+  por conversa, sem duplicar). Botão **"Continuar de onde parei"** (verde,
+  distinto do "Reenviar") aparece na msg quando `resumable` (evento ao vivo OU
+  flag do GET após reload). `.resumeBtn` no styles.css.
+
+**Cenários separados (como pedido):**
+- **Limite de ciclos** → checkpoint `step_limit`, continuação real.
+- **Watchdog/stream travado** → o stall exaurido vira `provider_failure` (retryável)
+  → checkpoint, retomada a partir do conteúdo já recebido.
+- **Frontend desconectado** → reconecta à execução existente (multiconversa,
+  PR #65) — não cria tarefa nova.
+- **Falha do modelo** → failover herda `messages`+`triedModels` do ponto de parada.
+- **Reinício do servidor** → checkpoint no Postgres; `loadCheckpoint` numa
+  requisição nova reidrata o estado.
+
+**Anti-duplicidade:** resume checa `isConversationActive` (409), não grava msg de
+usuário, usa o mesmo `conversationId`; no front, época por conversa descarta
+consumidor duplo (herdado do PR #65).
+
+**Testes:** `backend/src/agent/checkpoint.test.js` (7, PUROS — sem DB/LLM):
+objetivo+ferramentas+resultados+texto parcial preservados; aparo mantém
+pareamento e cauda recente sem tool órfã; toda `tool` tem seu `assistant` antes;
+`buildResumeMessages` adiciona a orientação de continuar (e não a adiciona quando
+parou após ferramenta); `isResumableReason` cobre requisito 8 (watchdog+limite no
+mesmo mecanismo; falhas de qualidade fora). Suíte backend: **151 passam, 0
+falham, 2 skips**. Frontend build OK + 7/7.
+
+**Limitações que permanecem (honestidade):**
+- O checkpoint guarda o estado do MODELO (array de mensagens), não um snapshot do
+  filesystem do sandbox. Arquivos em `/workspace/outputs` persistem em disco por
+  conversa, então continuam disponíveis; mas se o sandbox for reciclado, artefatos
+  FORA de outputs (ex.: venv, estado intermediário) não voltam — o modelo relê/
+  refaz o que precisar a partir dos resultados registrados.
+- Interrupção EXATAMENTE no meio de uma ferramenta longa (ex.: um `bash` a meio
+  de rodar): a ferramenta não é retomada no meio; o resume parte do último
+  resultado COMPLETO registrado. Sem efeito colateral duplicado (a ferramenta
+  incompleta não deixou resultado no array).
+- Os testes puros provam o mecanismo (trim/seed/reason). A continuação
+  ponta-a-ponta (ciclo 90 → 91 sem repetir, com LLM+Postgres reais) precisa ser
+  exercitada em produção — este ambiente não tem provedor nem banco para o E2E.
+- Só o agente de conversa única tem checkpoint. Multimodelo/Equipe ainda não
+  (cada um teria seu próprio estado por participante) — fica como evolução.
+
 ## 🔀 Multiconversa — várias conversas processando ao mesmo tempo (2026-07-21 — branch `claude/modelo-travando-execucao-uwatco`)
 
 **Pedido:** ter 3–5 conversas processando simultaneamente, com um indicador

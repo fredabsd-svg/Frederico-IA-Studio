@@ -266,6 +266,8 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
           if (ev.content) showToast(ev.content);
         }
         if (ev.type === 'error') { sawError = true; update(m => ({ ...m, failed: true, retryText: text, blocks: [...(m.blocks || []), { type: 'text', content: `\n\n**Erro:** ${ev.content}` }] })); }
+        // Checkpoint salvo: a tarefa dá para RETOMAR de onde parou (botão Continuar).
+        if (ev.type === 'resumable') update(m => ({ ...m, resumable: Boolean(ev.value) }));
         if (ev.type === 'done') sawDone = true;
       }
       if (done) break;
@@ -467,6 +469,66 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
     } catch {}
   }
 
+  // RETOMADA REAL: continua uma tarefa interrompida A PARTIR DO CHECKPOINT do
+  // servidor (POST /resume) — NÃO reenvia o texto nem cria mensagem nova de
+  // usuário. Faz stream para um balão de assistente novo (o balão interrompido,
+  // com o parcial + aviso, permanece acima). Multiconversa-aware (mesma época/
+  // gate por conversa do envio normal).
+  async function resumeRun(convId) {
+    const id = convId || current?.id;
+    if (!id) return;
+    if (runsRef.current[id]?.busy) return; // já processando
+    if (currentRef.current?.id !== id) return;
+    const epoch = newStreamEpoch(id);
+    patchRun(id, { busy: true, paused: false, status: 'Retomando de onde parei...' });
+    const assistantMsgId = `local-resume-${Date.now()}`;
+    const keyRef = { key: assistantMsgId };
+    setMessages(prev => {
+      // Tira o marcador de retomável da mensagem interrompida (o botão sai) e
+      // acrescenta o balão que vai receber a continuação.
+      const cleared = prev.map(m => m.resumable ? { ...m, resumable: false } : m);
+      return [...cleared, { id: assistantMsgId, role: 'assistant', content: '', blocks: [], created_at: new Date().toISOString() }];
+    });
+    const update = (fn) => {
+      if (currentRef.current?.id !== id) return;
+      setMessages(prev => prev.map(m => m.id === keyRef.key ? fn(m) : m));
+    };
+    let outcome = null;
+    try {
+      const res = await fetch(`${API}/api/conversations/${id}/resume`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+      if (res.status === 401) { endRun(id); setNeedLogin(true); return; }
+      if (!res.ok) {
+        let msg = `Não foi possível continuar (${res.status}).`;
+        try { const j = await res.json(); if (j?.error) msg = j.error; } catch {}
+        showToast(msg);
+        // Sem checkpoint (409) ou erro: remove o balão vazio que criamos.
+        setMessages(prev => prev.filter(m => m.id !== keyRef.key));
+        endRun(id);
+        // Recarrega para o botão refletir o estado real do servidor.
+        try { const r = await fetch(`${API}/api/conversations/${id}`); if (r.ok) { const d = await r.json(); if (currentRef.current?.id === id) setMessages(d.messages || []); } } catch {}
+        return;
+      }
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error('A resposta do servidor não pôde ser lida.');
+      outcome = await consumeChatStream(reader, keyRef, '', id, epoch);
+    } catch {
+      // Conexão caiu: a tarefa CONTINUA no servidor. Reconecta ao vivo (ou, se
+      // o usuário está noutra conversa, um vigia limpa o indicador ao terminar).
+      if (currentRef.current?.id !== id) { watchDetachedRun(id); return; }
+      patchRun(id, { status: 'Reconectando...' });
+      const r = await reconnectLiveRun(id, keyRef, '');
+      if (r.stale) return;
+      if (!r.attached) { recoverPendingReply(id); outcome = { sawDone: false, stale: false }; }
+      else if (!r.sawDone) { followActiveConversation(id, ''); return; }
+      else outcome = { sawDone: true, stale: false };
+    }
+    if (outcome?.stale) return;
+    update(m => ({ ...m, blocks: (m.blocks || []).map(b => b.type === 'tool' && b.status === 'running' ? { ...b, status: 'done', ended: Date.now() } : b) }));
+    endRun(id);
+    if (currentRef.current?.id === id) await loadFiles(id);
+    try { const rows = await fetchConversations(); const u = rows.find(c => c.id === id); if (u && currentRef.current?.id === id) setCurrent(u); } catch {}
+  }
+
   // Interrompe SÓ um modelo da execução multimodelo em andamento (o botão
   // "Parar" geral continua parando tudo, via control('stop')).
   async function cancelMultiSlot(slot) {
@@ -484,5 +546,5 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
     }
   }
 
-  return { busy, busyRef, paused, statusText, controlPending, nowTick, runs, anyBusy, sendMessage, retrySend, control, cancelMultiSlot };
+  return { busy, busyRef, paused, statusText, controlPending, nowTick, runs, anyBusy, sendMessage, retrySend, resumeRun, control, cancelMultiSlot };
 }
