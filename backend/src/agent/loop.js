@@ -20,11 +20,19 @@ import { STREAM_RECOVERY_LIMIT, STREAM_RESUME_NOTE, STREAM_PAUSE_RESUME_NOTE, PR
 import { guardStreamStall, PROVIDER_CONNECT_TIMEOUT_MS } from './streamGuard.js';
 import { acquireConversationControl, releaseConversationControl, beginProviderRequest, releaseProviderRequest, beginToolRequest, releaseToolRequest, controlInterruptReason, gate } from './control.js';
 import { clientScopeFor, memoryNote, saveMessage, persistAssistantReply } from './persistence.js';
+import { saveCheckpoint, clearCheckpoint, isResumableReason, buildResumeMessages, leadingSystemCount } from './checkpoint.js';
 
-export async function runAgent({ userId, conversationId, userText, model, assistant, webSearch, effort, developer, onEvent, saveUserMessage = true, existingUserMessageId = null, executionBriefing = null, forceExecution = false, control: inheritedControl = null }) {
+// RETOMADA REAL (checkpoint): `resume` (quando presente) traz o estado salvo de
+// um run interrompido — array de mensagens do agente, modelo ativo, cadeia de
+// failover já tentada e o objetivo. Com ele, o loop CONTINUA de onde parou (com
+// orçamento de ciclos NOVO), em vez de recomeçar do zero. Ver checkpoint.js.
+export async function runAgent({ userId, conversationId, userText, model, assistant, webSearch, effort, developer, onEvent, saveUserMessage = true, existingUserMessageId = null, executionBriefing = null, forceExecution = false, control: inheritedControl = null, resume = null }) {
   const provider = await getUserProvider(userId);          // BYOK: chave do usuário
   const client = provider.client;                          // sombreia o cliente global
-  let chosenModel = model || assistant?.model || provider.model;
+  const runId = resume?.runId || nanoid();
+  // No resume, o modelo ativo é o que estava rodando quando parou (pode ser um
+  // de reserva já acionado) — não voltamos ao modelo original.
+  let chosenModel = resume?.model || model || assistant?.model || provider.model;
   // FAILOVER (MM-04): se o provedor cair no meio da tarefa, antes o app só
   // repetia o MESMO modelo e desistia. Agora há uma cadeia de reserva — os
   // modelos de MODEL_FALLBACKS (env) e, por padrão, o modelo-base da conta —
@@ -34,7 +42,9 @@ export async function runAgent({ userId, conversationId, userText, model, assist
     ...String(process.env.MODEL_FALLBACKS || '').split(',').map(s => s.trim()).filter(Boolean),
     ...(provider.model && provider.model !== chosenModel ? [provider.model] : [])
   ];
-  const triedModels = new Set([chosenModel]);
+  // No resume, preserva a cadeia de failover já tentada (não retenta modelos
+  // que já falharam nesta tarefa).
+  const triedModels = new Set(resume?.triedModels?.length ? resume.triedModels : [chosenModel]);
   const nextFallbackModel = () => {
     for (const m of fallbackChain) if (m && !triedModels.has(m)) { triedModels.add(m); return m; }
     return null;
@@ -78,9 +88,13 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   const control = inheritedControl || acquireConversationControl(conversationId, userId);
   const ownsControl = !inheritedControl;
   try {
-  const userMsgId = saveUserMessage || !existingUserMessageId
-    ? await saveMessage(userId, conversationId, 'user', userText)
-    : existingUserMessageId;
+  // No resume NÃO gravamos uma nova mensagem de usuário — o objetivo já está na
+  // conversa e no checkpoint (evita duplicar o pedido e criar execução nova).
+  const userMsgId = resume
+    ? (existingUserMessageId || null)
+    : (saveUserMessage || !existingUserMessageId
+        ? await saveMessage(userId, conversationId, 'user', userText)
+        : existingUserMessageId);
 
   // BYOK: sem chave de API configurada, orienta a cadastrar e encerra.
   if (!provider.hasKey) {
@@ -189,11 +203,24 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
     }))
     .filter(m => String(m.content || '').trim()));
 
+  // RETOMADA: descarta o contexto recém-montado e usa o ESTADO SALVO do run
+  // interrompido. O array do checkpoint já traz objetivo, plano, tool_calls,
+  // resultados de ferramenta, erros e texto parcial — o modelo continua da
+  // próxima etapa pendente, sem repetir o trabalho já feito.
+  let resumePrefixEnd = staticPrefixEnd;
+  if (resume) {
+    const seeded = buildResumeMessages(resume.messages, { streamResumeNote: STREAM_RESUME_NOTE });
+    messages.length = 0;
+    for (const m of seeded) messages.push(m);
+    resumePrefixEnd = leadingSystemCount(messages);
+  }
+
   // VISÃO MULTIMODAL: se o modelo escolhido tem visão e há imagens anexadas,
   // envia as imagens direto para o modelo (ele enxerga). Modelos SEM visão não
-  // recebem as imagens aqui — continuam lendo por OCR no sandbox.
+  // recebem as imagens aqui — continuam lendo por OCR no sandbox. No resume as
+  // imagens já estão no array do checkpoint (não reanexar).
   let visionApplied = false;
-  if (modelPlan.capabilities?.vision === true) {
+  if (!resume && modelPlan.capabilities?.vision === true) {
     visionApplied = attachImagesToLastUserMessage(messages, imageUploadParts(conversationId));
     if (visionApplied) onEvent({ type: 'status', content: 'Enviando a imagem para o modelo analisar...' });
   }
@@ -201,9 +228,15 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
   // Prompt caching: marca o prefixo estável para o provedor reaproveitá-lo nos
   // próximos passos/mensagens (economia de tokens de entrada + latência). No-op
   // quando o modelo/rota não suporta (ex.: DeepSeek direto já cacheia sozinho).
-  applyPromptCache(messages, chosenModel, staticPrefixEnd);
+  applyPromptCache(messages, chosenModel, resumePrefixEnd);
 
-  const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, cached_tokens: 0 };
+  // Usage: no resume, soma sobre o que já foi consumido no run anterior.
+  const usage = {
+    prompt_tokens: resume?.usage?.prompt_tokens || 0,
+    completion_tokens: resume?.usage?.completion_tokens || 0,
+    total_tokens: resume?.usage?.total_tokens || 0,
+    cached_tokens: resume?.usage?.cached_tokens || 0
+  };
   // Orçamento de etapas do loop agêntico. Cada etapa = um turno do modelo (que
   // costuma executar UMA ferramenta), então tarefa longa/programação consome
   // muitas etapas de trabalho legítimo.
@@ -224,7 +257,13 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
   let lastProductiveStep = 0;
   const executionRequired = forceExecution || modelPlan.requirements.required;
   const requiresOutput = modelPlan.requirements.expectsOutput;
-  const outputsBefore = new Map(listOutputs(conversationId).map(f => [f.path, fileSignature(f)]));
+  // No resume, tratamos os arquivos que JÁ existem (criados no run anterior)
+  // como "entregáveis desta conclusão": assim eles reaparecem como download na
+  // resposta final e não disparam o falso alarme de "arquivo não gerado" quando
+  // a retomada só finaliza sem recriar o que já estava pronto.
+  const outputsBefore = resume
+    ? new Map()
+    : new Map(listOutputs(conversationId).map(f => [f.path, fileSignature(f)]));
   let finalText = '';
   let stopped = false;
   let completedNaturally = false;
@@ -245,12 +284,19 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
   let webResearchStop = '';
   let webResearchConclusionAttempted = false;
   let awaitingUserReply = false;
+  // Checkpoint: motivo da interrupção que JUSTIFICA salvar estado p/ retomar
+  // (limite de ciclos, falha de provedor/stall exaurido, parada do usuário).
+  // Falhas de QUALIDADE (degeneração, protocolo) NÃO viram checkpoint — ali o
+  // certo é reenviar do zero, não continuar o mesmo array problemático.
+  let checkpointReason = null;
+  let reachedStep = 0;
   for (let step = 0; step < hardMaxSteps; step++) {
     // Passou do orçamento base? Só segue enquanto o trabalho ainda rende (uma
     // ferramenta executada com sucesso há poucas etapas). Se estagnou, encerra
     // como limite de etapas — as travas de falha (5 seguidas), repetição e
     // pesquisa web continuam valendo à parte.
     if (step >= maxSteps && (step - lastProductiveStep) >= IDLE_STEP_GRACE) break;
+    reachedStep = step;
     if (await gate(control, onEvent)) { stopped = true; break; }
     onEvent({ type: 'status', content: step === 0 ? 'Pensando...' : 'Continuando...' });
     // Streaming: o texto é enviado token a token para a interface (tela viva)
@@ -315,6 +361,7 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
             continue;
           }
           providerFailure = true;
+          checkpointReason = 'provider_failure';
           failureMessage = 'O provedor do modelo ficou indisponível antes de concluir a tarefa.';
           finalText += PROVIDER_TIMEOUT_NOTICE;
           onEvent({ type: 'delta', content: PROVIDER_TIMEOUT_NOTICE });
@@ -419,6 +466,7 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
         }
         finalText += PROVIDER_TIMEOUT_NOTICE;
         providerFailure = true;
+        checkpointReason = 'provider_failure';
         failureMessage = 'O provedor do modelo interrompeu a resposta antes de concluir a tarefa.';
         onEvent({ type: 'delta', content: PROVIDER_TIMEOUT_NOTICE });
         completedNaturally = true;
@@ -639,14 +687,18 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
   if (stopped) {
     onEvent({ type: 'status', content: 'Interrompido pelo usuário' });
     if (!finalText.trim()) { finalText = '_Processamento interrompido pelo usuário._'; onEvent({ type: 'delta', content: finalText }); }
+    // Só oferece retomada se houve progresso real (ferramenta executada) — assim
+    // o usuário pode continuar uma tarefa que ele mesmo pausou.
+    if (executedToolCalls > 0) checkpointReason = 'stopped';
   }
   else if (!completedNaturally) {
     incomplete = true;
+    checkpointReason = 'step_limit';
     failureMessage = `A tarefa atingiu o limite de ${hardMaxSteps} etapas antes da conclusão.`;
     // Atingiu o limite de etapas ainda usando ferramentas: avisa de forma honesta
-    // e diz como retomar. NÃO presuma que era extração de dados — pode ser
-    // programação, pesquisa etc.; a mensagem antiga sugeria CSV sem cabimento.
-    const note = `\n\n_⚠️ Esta tarefa ficou longa e precisei pausá-la para não rodar sem fim. O que já consegui fazer está acima. Toque em **Reenviar** para eu continuar de onde parei; se for algo grande, ajuda dividir em etapas menores (ex.: primeiro investigar/planejar, depois executar por partes)._`;
+    // e diz como retomar. O progresso é salvo num checkpoint (backend), então a
+    // retomada CONTINUA de onde parou — não recomeça.
+    const note = `\n\n_⚠️ Esta tarefa ficou longa e precisei pausá-la para não rodar sem fim. **O progresso foi salvo.** Toque em **Continuar** para eu retomar exatamente de onde parei (sem refazer o que já fiz); se for algo grande, ajuda dividir em etapas menores._`;
     finalText += note;
     onEvent({ type: 'delta', content: note });
   }
@@ -702,7 +754,31 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
   }
   // Memória: indexa a troca e extrai fatos em segundo plano (não bloqueia)
   if (!stopped) indexAfterReply(userId, conversationId).catch(() => {});
-  return { text: finalText, usage, model: chosenModel, stopped, providerFailure, incomplete, failureMessage };
+  // CHECKPOINT: interrompida por limite/infra/parada com progresso real → salva
+  // o estado (mesmo mecanismo p/ limite de ciclos E watchdog/provedor). Caso
+  // contrário (conclusão limpa, ou falha de qualidade), limpa qualquer
+  // checkpoint antigo — não há o que retomar. `messages.length > 3` evita salvar
+  // um checkpoint que seja só o preâmbulo, sem trabalho de verdade.
+  let resumable = false;
+  if (isResumableReason(checkpointReason) && messages.length > 3) {
+    resumable = await saveCheckpoint({
+      userId, conversationId, runId,
+      objective: resume?.objective || userText,
+      reason: checkpointReason,
+      model: chosenModel,
+      triedModels: [...triedModels],
+      step: (resume?.step || 0) + reachedStep,
+      messages,
+      usage,
+      meta: { webSearch: Boolean(webSearch), effort: effort || null, developer: developer || null, assistantId: assistant?.id || null }
+    });
+    // Avisa a interface AO VIVO que dá para retomar (sem esperar um reload):
+    // o botão "Continuar" aparece na mensagem interrompida.
+    if (resumable) onEvent({ type: 'resumable', value: true });
+  } else {
+    await clearCheckpoint(conversationId);
+  }
+  return { text: finalText, usage, model: chosenModel, stopped, providerFailure, incomplete, failureMessage, resumable };
   } finally {
     // Mantém a conversa marcada como ativa até o card de download ter sido
     // persistido e emitido. Isso impede uma exclusão concorrente de apagar o

@@ -189,7 +189,7 @@ export default function App({ user } = {}) {
   // Multimodelo só vale com 2+ modelos selecionados; senão o fluxo é o normal
   const effectiveMulti = multiModel?.enabled && (multiModel.config?.models?.length || 0) >= 2 ? multiModel.config : null;
   const {
-    busy, busyRef, paused, statusText, controlPending, nowTick, runs, anyBusy, sendMessage, retrySend, control, cancelMultiSlot
+    busy, busyRef, paused, statusText, controlPending, nowTick, runs, anyBusy, sendMessage, retrySend, resumeRun, control, cancelMultiSlot
   } = useChat({
     input, setInput, messages, setMessages, uploads, team, effectiveTeam,
     listening, recognitionRef, current, currentRef, setCurrent,
@@ -861,6 +861,7 @@ export default function App({ user } = {}) {
               : (m.role === 'user'
                 ? <Collapsible text={m.content}>{t => <MessageText text={t}/>}</Collapsible>
                 : <MessageText text={m.content}/>)}
+            {m.role === 'assistant' && m.resumable && !busy && <button className="retryBtn resumeBtn" onClick={() => resumeRun(current?.id)} title="Retoma a tarefa exatamente de onde parou, sem refazer o que já foi feito"><Play size={14}/> Continuar de onde parei</button>}
             {m.role === 'assistant' && m.failed && <button className="retryBtn" onClick={() => retrySend(idx, m.retryText)}><RefreshCw size={14}/> Reenviar</button>}
             {m.role === 'assistant' && <MemoryTrace memory={m.memory} onOpenMemory={() => setMemoryOpen(true)}/>}
             {m.files?.length > 0 && <div className="filecards">
