@@ -9,11 +9,14 @@
 import OpenAI from 'openai';
 
 const APP_TITLE = process.env.OPENROUTER_APP_TITLE || 'Frederico IA Studio';
-// URL pública do app: usa a origem já configurada para o login/frontend como
-// padrão, evitando pedir mais uma variável só para isso.
+// URL pública do app: usa a origem já configurada como padrão, evitando pedir
+// mais uma variável só para isso. Preferimos BETTER_AUTH_URL porque em produção
+// o docker-compose a define a partir do DOMAIN (https://SEU_DOMINIO); só depois
+// caímos para FRONTEND_URL, que no .env.example ainda é localhost e, se herdado
+// na VPS, marcaria o app com uma URL de desenvolvimento no OpenRouter.
 const APP_URL = process.env.OPENROUTER_APP_URL
-  || process.env.FRONTEND_URL
   || process.env.BETTER_AUTH_URL
+  || process.env.FRONTEND_URL
   || 'http://localhost:5173';
 
 // Só faz sentido mandar os cabeçalhos de atribuição para o OpenRouter; a API
