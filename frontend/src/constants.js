@@ -110,6 +110,19 @@ export const WORKSPACES = [
   { id: 'developer', label: 'Desenvolvedor', description: 'Projetos, arquivos e revisão ficam na frente.', hint: 'Técnico' }
 ];
 
+// Modos de trabalho do Modo Desenvolvedor. Espelham DEV_MODES do backend
+// (backend/src/agent/prompts.js). `write` indica se o modo pode alterar
+// arquivos e enviar (push/PR); os demais são estritamente leitura. `icon` é
+// resolvido para um componente lucide nas telas (DEV_MODE_ICON).
+export const DEV_WORK_MODES = [
+  { id: 'ask',    label: 'Perguntar',       icon: 'ask',    write: false, short: 'Analisa e responde sem tocar nos arquivos.',           steps: ['Ler o projeto', 'Analisar', 'Responder'] },
+  { id: 'plan',   label: 'Planejar',        icon: 'plan',   write: false, short: 'Estuda o projeto e propõe uma estratégia.',            steps: ['Mapear projeto', 'Definir plano', 'Listar riscos'] },
+  { id: 'build',  label: 'Implementar',     icon: 'build',  write: true,  short: 'Edita arquivos e executa comandos no projeto.',        steps: ['Planejar', 'Aplicar mudanças', 'Validar'] },
+  { id: 'fix',    label: 'Corrigir erro',   icon: 'fix',    write: true,  short: 'Investiga a causa raiz e aplica a solução.',           steps: ['Investigar logs', 'Achar a causa', 'Corrigir e testar'] },
+  { id: 'review', label: 'Revisar',         icon: 'review', write: false, short: 'Avalia arquitetura, segurança e qualidade.',           steps: ['Ler alterações', 'Achar riscos', 'Priorizar'] },
+  { id: 'auto',   label: 'Agente autônomo', icon: 'auto',   write: true,  short: 'Executa a tarefa completa dentro dos limites.',        steps: ['Planejar', 'Executar em ciclos', 'Validar e resumir'] }
+];
+
 // Esforço da IA (raciocínio + nº de etapas). Escolhido no chat.
 export const EFFORT_DESC = 'Mais esforço = respostas mais completas, porém mais lentas e com maior consumo de tokens.';
 export const EFFORTS = [

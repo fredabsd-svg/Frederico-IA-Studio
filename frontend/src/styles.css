@@ -579,7 +579,8 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
   .app.workspace-essential{grid-template-columns:232px minmax(0,1fr)}
   .app.workspace-focus:not(.sideHidden){grid-template-columns:236px minmax(0,1fr)}
   .app.workspace-focus.sideHidden{grid-template-columns:0 minmax(0,1fr)}
-  .app.workspace-developer{grid-template-columns:300px minmax(0,1fr)}
+  /* Ambiente de desenvolvimento: barra lateral · explorador · chat · atividade */
+  .app.workspace-developer{grid-template-columns:290px auto minmax(0,1fr) auto}
 }
 
 /* Essential keeps the whole app available while making repeated work denser. */
@@ -634,6 +635,85 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .workspace-developer .composerWrap{padding:10px 22px 18px;border-top:1px solid var(--line);background:var(--side)}
 .workspace-developer .composer{max-width:1080px;border-radius:var(--r-sm);background:var(--panel)}
 .workspace-developer .quickCard{border-radius:var(--r-sm)}
+
+/* ── Colunas do ambiente de desenvolvimento (Explorador · Atividade) ──────── */
+.devRail{display:flex;flex-direction:column;min-height:0;height:100vh;width:270px;background:var(--panel2);border-right:1px solid var(--line);overflow:hidden}
+.devRailRight{border-right:0;border-left:1px solid var(--line)}
+.devRail.collapsed{width:42px;align-items:center;padding-top:12px;gap:12px}
+.devRailExpand{display:flex;align-items:center;justify-content:center;width:30px;height:30px;padding:0;border:1px solid var(--line);background:var(--panel);color:var(--muted);border-radius:var(--r-sm)}
+.devRailExpand:hover{color:var(--accent);border-color:var(--accent)}
+.devRailStripLabel{writing-mode:vertical-rl;transform:rotate(180deg);font-size:var(--fs-2xs);letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-family:ui-monospace,Consolas,monospace}
+.devRailHead{display:flex;align-items:center;justify-content:space-between;padding:12px 12px 10px;border-bottom:1px solid var(--line);font-weight:700;font-size:var(--fs-sm);color:var(--text)}
+.devRailHead>span{display:flex;align-items:center;gap:7px}.devRailHead svg{color:var(--accent)}
+.devRailCollapse{display:flex;padding:5px;border:0;background:transparent;color:var(--muted);border-radius:var(--r-sm)}
+.devRailCollapse:hover{background:rgba(127,127,127,.12);color:var(--text)}
+.devRailScroll{flex:1;min-height:0;overflow:auto;padding:12px;display:flex;flex-direction:column;gap:16px}
+.devRailSection{display:flex;flex-direction:column;gap:8px}
+.devRailLabel{display:flex;align-items:center;gap:5px;font-size:var(--fs-2xs);font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.devRailLabelRow{display:flex;align-items:center;justify-content:space-between}
+.devRailMini{display:flex;padding:4px;border:1px solid var(--line);background:var(--panel);color:var(--muted);border-radius:var(--r-sm)}
+.devRailMini:hover:not(:disabled){color:var(--accent);border-color:var(--accent)}.devRailMini:disabled{opacity:.5}
+.devRailSelect,.devRailBtn{width:100%;font-size:var(--fs-sm)}
+.devRailBtn{display:flex;align-items:center;justify-content:center;gap:7px;font-weight:600}
+.devRailBtn.primary{background:var(--accent);color:var(--on-accent);border-color:var(--accent)}
+.devRailBtn.ghost{background:transparent;border:1px dashed var(--line);color:var(--muted);justify-content:flex-start}
+.devRailBtn.ghost:hover{color:var(--accent);border-color:var(--accent)}
+.devRailEmpty{margin:0;font-size:var(--fs-xs);color:var(--muted);line-height:1.45}
+.devRailHint{display:flex;align-items:flex-start;gap:5px;margin:2px 0 0;font-size:var(--fs-2xs);color:var(--muted);line-height:1.4}.devRailHint svg{flex:none;margin-top:2px;color:var(--accent)}
+.devProjectCard{border:1px solid var(--line);border-radius:var(--r-sm);background:var(--panel);padding:11px}
+.devProjectCardHead{display:flex;align-items:center;gap:7px;color:var(--text);font-size:var(--fs-sm)}.devProjectCardHead svg{color:var(--accent);flex:none}.devProjectCardHead b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.devProjectCardDesc{margin:6px 0 0;font-size:var(--fs-xs);color:var(--muted);line-height:1.4}
+.devProjectTechs{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+.devProjectTechs span{font-size:var(--fs-2xs);padding:2px 7px;border-radius:var(--r-full);background:rgba(127,127,127,.12);color:var(--muted)}
+.devProjectBind{display:flex;align-items:center;gap:6px;margin-top:9px;padding-top:9px;border-top:1px solid var(--line);font-size:var(--fs-2xs);color:var(--muted)}
+.devProjectBind svg{flex:none;color:var(--accent)}.devProjectBind>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.devProjectBind b{display:inline-flex;align-items:center;gap:3px;margin-left:auto;flex:none;font-weight:700}
+.devProjectBind b.write{color:var(--ok)}.devProjectBind b.read{color:var(--muted)}
+.devFileList{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+.devFileItem{display:flex;align-items:center;gap:7px;padding:6px 7px;border-radius:var(--r-sm);color:var(--text);text-decoration:none;font-size:var(--fs-xs);border:1px solid transparent}
+.devFileItem:hover{background:var(--panel);border-color:var(--line)}
+.devFileItem svg:first-child{color:var(--muted);flex:none}
+.devFileName{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.devFileKind{font-size:var(--fs-2xs);color:var(--muted);flex:none}
+.devFileDl{opacity:0;color:var(--accent)}.devFileItem:hover .devFileDl{opacity:1}
+/* Painel de atividade */
+.devActStatus{display:flex;align-items:flex-start;gap:9px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--panel);padding:10px}
+.devActStatus.live{border-color:color-mix(in srgb,var(--accent) 45%,var(--line));background:color-mix(in srgb,var(--accent) 8%,var(--panel))}
+.devActStatus.warn{border-color:color-mix(in srgb,var(--warn) 45%,var(--line))}
+.devActIcon{flex:none;margin-top:1px}.devActStatus.live .devActIcon{color:var(--accent)}.devActStatus.warn .devActIcon{color:var(--warn)}.devActStatus.done .devActIcon{color:var(--ok)}.devActStatus.idle .devActIcon{color:var(--muted)}
+.devActStatus b{display:block;font-size:var(--fs-sm)}.devActStatus small{display:block;margin-top:2px;font-size:var(--fs-xs);color:var(--muted)}
+.devActCounts{display:flex;flex-wrap:wrap;gap:6px}
+.devActCounts span{display:inline-flex;align-items:center;gap:4px;font-size:var(--fs-2xs);color:var(--muted);border:1px solid var(--line);border-radius:var(--r-full);padding:3px 8px}
+.devActCounts span svg{color:var(--accent)}.devActCounts span.err{color:var(--danger)}.devActCounts span.err svg{color:var(--danger)}
+.devActCounts b{color:var(--text)}
+/* Memória do projeto */
+.devMemoryToggle{display:flex;align-items:center;justify-content:space-between;width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--panel);color:var(--text);font-weight:700;font-size:var(--fs-sm)}
+.devMemoryToggle>span{display:flex;align-items:center;gap:7px}.devMemoryToggle svg:first-child{color:var(--accent)}
+.devMemoryToggle .open{transform:rotate(180deg)}.devMemoryToggle svg{transition:transform .15s}
+.devMemory{display:flex;flex-direction:column;gap:9px;margin-top:9px}
+.devMemoryField{display:flex;flex-direction:column;gap:4px;font-size:var(--fs-2xs);font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.devMemoryField textarea{font:inherit;font-size:var(--fs-xs);font-weight:400;text-transform:none;letter-spacing:0;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:var(--r-sm);padding:7px 9px;resize:vertical;min-height:44px}
+.devMemoryField textarea:focus{outline:none;border-color:var(--accent)}
+
+/* ── Novos controles do painel lançador (DeveloperPanel) ─────────────────── */
+.devProjectRow{display:flex;gap:6px}.devProjectRow select{flex:1;min-width:0}
+.devText{width:100%;font-size:var(--fs-sm)}
+.devIconBtn{display:flex;align-items:center;justify-content:center;padding:0 10px;border:1px solid var(--line);background:var(--panel2);color:var(--muted);border-radius:var(--r-md)}
+.devIconBtn.danger:hover{color:var(--danger);border-color:var(--danger)}
+.devModeGrid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.devModeCard{display:flex;flex-direction:column;gap:3px;align-items:flex-start;text-align:left;padding:9px 10px;border:1px solid var(--line);background:var(--panel2);border-radius:var(--r-sm)}
+.devModeCard:hover{border-color:color-mix(in srgb,var(--accent) 50%,var(--line))}
+.devModeCard.sel{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 10%,var(--panel2))}
+.devModeCardTop{display:flex;align-items:center;gap:6px;width:100%;font-size:var(--fs-sm)}.devModeCardTop svg{color:var(--accent);flex:none}.devModeCardTop b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.devModeTag{margin-left:auto;flex:none;font-size:9px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;padding:2px 5px;border-radius:var(--r-full)}
+.devModeTag.write{background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok)}
+.devModeTag.read{background:rgba(127,127,127,.14);color:var(--muted)}
+.devModeCard small{font-size:var(--fs-2xs);color:var(--muted);line-height:1.35}
+.linklike{background:none;border:0;padding:0;color:var(--accent);cursor:pointer;font:inherit;text-decoration:underline}
+
+/* Em telas menores o ambiente vira uma coluna só: as laterais somem e a
+   entrada continua pelo painel "Modo desenvolvedor". */
+@media(max-width:1180px){ .devRail{display:none} }
 
 @media(max-width:980px){
   .workspaceBar{align-items:flex-start;flex-direction:column;padding:10px 14px}

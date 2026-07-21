@@ -1,5 +1,73 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 🧑‍💻 Reformulação do Modo Desenvolvedor — ambiente dedicado, 6 modos e memória por projeto (2026-07-21 — branch `claude/developer-mode-redesign-b41nz8`)
+
+**Motivação:** o Modo Desenvolvedor parecia amador — "só uma opção que
+redirecionava o pedido para uma conversa comum", sem ambiente próprio. O pedido
+era aproximá-lo de Codex/Claude Code (área independente, projetos, ferramentas,
+memória e fluxo próprios), mantendo compatibilidade com os modelos do OpenRouter.
+
+**O que mudou (backend):**
+- `backend/src/agent/prompts.js` — `developerContextFor` passou de 3 para **6
+  modos**: `ask` (Perguntar), `plan` (Planejar), `build` (Implementar), `fix`
+  (Corrigir erro), `review` (Revisar) e `auto` (Agente autônomo). Exporta
+  `DEV_MODES` e `DEV_WRITE_MODES`. Só `build/fix/auto` escrevem (retorna
+  `canWrite`); `ask/plan/review` são leitura (`readOnlyProject`). Modos que
+  executam agora exigem **plano antes de editar** (`PLAN_BEFORE`: entendimento,
+  arquivos, mudanças, riscos, validação) e **resumo profissional ao final**
+  (`FINAL_SUMMARY`: alterações, arquivos, testes/resultados, problemas,
+  pendências, próximos passos). O modo `fix` orienta buscar a **causa raiz**.
+- `backend/src/agent/loop.js` — o gating das ferramentas de escrita do GitHub
+  (`github_push`/`github_create_pr`) deixou de olhar `mode !== 'build'` e passou
+  a usar `!developerContext.canWrite` (cobre `fix`/`auto`). Regra do `write_file`
+  segue por `readOnlyProject` (respeita a permissão da pasta do PC).
+- `backend/src/agent/prompts.dev.test.js` — novo teste dos 6 modos, permissões e
+  presença de plano/resumo. **Suíte backend: 122 passam, 0 falham, 2 skips
+  pré-existentes.**
+
+**O que mudou (frontend):**
+- Novo hook `frontend/src/hooks/useDevProjects.js` — **projetos** persistidos no
+  navegador (`fred_dev_projects_v1`): nome, descrição, tecnologias, vínculo
+  (pasta do PC ou repositório GitHub), regras e **memória permanente**
+  categorizada (`MEMORY_FIELDS`: arquitetura, decisões, padrões, problemas
+  corrigidos, preferências, próximas etapas). `projectContextText()` compõe
+  regras + memória e envia pela via `rules` (que já chega ao system prompt), então
+  a IA "lembra" do projeto sem o usuário reexplicar. O contexto do projeto não se
+  mistura com conversas comuns.
+- Duas colunas recolhíveis no espaço "Desenvolvedor", ao redor do chat (sem
+  reescrever o motor de chat): `components/DevProjectRail.jsx` (**Explorador** —
+  projeto ativo, vínculo/permissão e arquivos da tarefa via
+  `/api/conversations/:id/files`) e `components/DevActivityRail.jsx`
+  (**Atividade** em tempo real reaproveitando o "Ambiente de Trabalho da IA" +
+  editor da **memória do projeto**).
+- `frontend/src/DeveloperPanel.jsx` redesenhado como **lançador**: seleção/criação
+  de projeto, campos do projeto, vínculo (pasta/GitHub + branch), seletor visual
+  dos 6 modos com selo leitura/escrita e o fluxo de cada modo. Exporta
+  `DEV_MODE_ICON`.
+- `frontend/src/constants.js` — `DEV_WORK_MODES` (espelha o backend).
+- `frontend/src/App.jsx` — hook de projetos, render das colunas no workspace
+  `developer`, barra superior ciente do projeto/modo, `startDeveloperTask` compõe
+  regras+memória e mapeia o vínculo para `projectId`/`github`, e vincula a
+  conversa ao projeto no 1º envio.
+- `frontend/src/styles.css` — grid de 4 colunas do ambiente
+  (`barra lateral · explorador · chat · atividade`), estilos das colunas,
+  explorador, atividade, memória e cartões de modo; colunas somem em telas
+  ≤1180px (a entrada continua pelo painel). Tudo por variáveis de tema.
+
+**Verificação:** `npm run build` (frontend) OK; testes backend 122/122 e
+frontend 7/7 verdes. **Não** houve teste de UI ao vivo (sem Docker/servidor
+neste ambiente).
+
+**Escopo consciente (para as próximas iterações):** editor de código e terminal
+como painéis "de verdade" precisariam de endpoints novos para servir/gravar
+arquivos do host (hoje a execução é num sandbox Docker por conversa) — por isso o
+trabalho real da IA aparece no painel de Atividade e no "Ambiente de Trabalho",
+não num editor que não gravaria nada. Memória por projeto é persistida no
+cliente e injetada em toda tarefa; uma indexação semântica por projeto no backend
+é o passo natural. Ainda em aberto: pontos de restauração/desfazer, permissões
+por ação com toggles e repasse do contexto de desenvolvedor às tarefas em
+segundo plano.
+
 ## 🔄 Catálogo de modelos por usuário — OpenRouter voltando a aparecer (2026-07-20 — branch `claude/openrouter-models-sync-wp1krw`)
 
 **Sintoma relatado:** "modelos do OpenRouter que não aparecem no app" — dúvida se
