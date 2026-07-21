@@ -45,7 +45,8 @@ você escolhe é enviado direto ao provedor, sem substituição.
 | 🧠 | **Memória de longo prazo** | Recuperação semântica com painel de revisão |
 | 👥 | **Modo Equipe** | Combina perspectivas de vários assistentes |
 | 🖥️ | **Sandbox Docker** | Um container por conversa para Python, Bash e geração de arquivos |
-| 🌐 | **Pesquisa na web** | Google Custom Search, ou DuckDuckGo grátis (com dois endpoints de reserva) |
+| 🛠️ | **Ambiente de Trabalho da IA** | As ações da IA (terminal, código, arquivos, pesquisa, navegador) ficam agrupadas em **uma sessão ao vivo** — cartão compacto no chat que expande numa janela com o passo a passo, o detalhe de cada ação e a **miniatura real** das páginas abertas |
+| 🌐 | **Pesquisa na web** | Google Custom Search, ou DuckDuckGo grátis (com dois endpoints de reserva); ao abrir uma página, um **Chromium headless** captura a miniatura |
 | 📁 | **Modo Desenvolvedor** | Trabalhe sobre uma pasta de projeto autorizada |
 | 🔌 | **Conector GitHub** | Conecte a sua conta (token) e a IA clona um repositório, altera o código e envia de volta — push e Pull Request direto pelo chat ou pelo modo desenvolvedor; o token fica cifrado e nunca entra no sandbox |
 | 🎙️ | **Voz e segundo plano** | Ditado por voz, tarefas em background, histórico por cliente |
@@ -112,6 +113,16 @@ casca de UI; a lógica de chat, conversas, tarefas e assistentes vive em
 Nenhum recurso visual vem de CDN: imagens e logos ficam em `frontend/public/` e
 são servidos pelo próprio app. Assim a interface não depende de um terceiro para
 carregar, e o IP de quem usa o site não é entregue a nenhuma CDN externa.
+
+**Ambiente de Trabalho da IA.** As chamadas de ferramenta de uma resposta são
+agrupadas em uma única sessão de execução (`frontend/src/components/ExecutionSession.jsx`)
+em vez de dezenas de cartões soltos: um cartão compacto que abre uma janela ao
+vivo com o passo a passo humanizado e o detalhe (entrada/resultado) de cada ação.
+Quando a IA abre uma página com o `web_fetch`, o backend a renderiza num
+**Chromium headless** (`backend/src/agent/pageShot.js`, via `puppeteer-core` +
+Chromium do sistema, embutido na imagem Docker) e salva um screenshot exibido na
+janela. A captura é *best-effort* e desligável (`WEB_FETCH_SCREENSHOTS=0`), e cada
+requisição do navegador é filtrada pela mesma regra anti-SSRF do `web_fetch`.
 
 **Memória + cache.** A **memória de longo prazo** (perfil, notas, fatos e
 recuperação semântica de conversas antigas) preserva o contexto entre mensagens:
@@ -218,6 +229,9 @@ docker compose up --build -d
 | `TOOL_TIMEOUT_MS` | 45000 | Tempo máximo de um comando de sandbox |
 | `AGENT_MAX_STEPS` | conforme o esforço | Limite de etapas da tarefa |
 | `SANDBOX_MEMORY / SANDBOX_CPUS` | 1024m / 1 | Recursos do sandbox |
+| `WEB_FETCH_SCREENSHOTS` | 1 | Miniatura da página aberta pelo `web_fetch` (Chromium headless); `0` desliga (só o texto) |
+| `SCREENSHOT_TIMEOUT_MS` | 9000 | Tempo máximo por captura de miniatura (best-effort) |
+| `CHROMIUM_PATH` | /usr/bin/chromium | Caminho do Chromium do sistema (já definido no Dockerfile) |
 | `MODEL_FALLBACKS` | — | Modelos de reserva (ordem) para failover automático quando o provedor cai; sem isso, cai para o modelo-base da conta |
 | `VALIDATE_RECALC` | true | Recalcula .xlsx/.xlsm com LibreOffice para detectar erros reais de fórmula (#DIV/0!, #REF!); `false` = validação parcial mais rápida |
 | `OUTPUT_RETENTION_DAYS` | 0 (desligado) | Remove arquivos de saída mais antigos que N dias (útil em uso público/soak) |

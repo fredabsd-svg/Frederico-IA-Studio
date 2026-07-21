@@ -35,6 +35,9 @@ Ambiente de Trabalho.
 - `frontend/src/styles.css` — `.esShot`.
 - `.env.example` — documenta `CHROMIUM_PATH`, `WEB_FETCH_SCREENSHOTS` (0 desliga),
   `SCREENSHOT_TIMEOUT_MS`.
+- `README.md` — nova linha na tabela de recursos (Ambiente de Trabalho da IA),
+  nota de arquitetura sobre o Chromium headless e as 3 variáveis novas na tabela
+  de variáveis.
 
 **Decisões:**
 - **puppeteer-core + Chromium do apt** (não playwright, não puppeteer completo):
