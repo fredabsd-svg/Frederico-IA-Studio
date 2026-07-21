@@ -234,6 +234,8 @@ docker compose up --build -d
 | `SCREENSHOT_TIMEOUT_MS` | 9000 | Tempo máximo por captura de miniatura (best-effort) |
 | `CHROMIUM_PATH` | /usr/bin/chromium | Caminho do Chromium do sistema (já definido no Dockerfile) |
 | `MODEL_FALLBACKS` | — | Modelos de reserva (ordem) para failover automático quando o provedor cai; sem isso, cai para o modelo-base da conta |
+| `STREAM_STALL_TIMEOUT_MS` | 180000 | Watchdog do streaming: tempo máximo sem receber nenhum dado do provedor antes de abortar e retomar/failover (piso 30000) |
+| `PROVIDER_CONNECT_TIMEOUT_MS` | 180000 | Tempo máximo até o provedor começar a responder a chamada de streaming (piso 30000) |
 | `VALIDATE_RECALC` | true | Recalcula .xlsx/.xlsm com LibreOffice para detectar erros reais de fórmula (#DIV/0!, #REF!); `false` = validação parcial mais rápida |
 | `OUTPUT_RETENTION_DAYS` | 0 (desligado) | Remove arquivos de saída mais antigos que N dias (útil em uso público/soak) |
 | `CONVERSATION_RETENTION_DAYS` | 0 (desligado) | LGPD: apaga em definitivo conversas sem atividade há mais de N dias (mensagens, arquivos, memórias derivadas e workspace) |

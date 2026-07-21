@@ -17,6 +17,7 @@ import { OUTPUT_DELIVERY_REPAIR_NOTE, MISSING_OUTPUT_NOTICE, EXECUTION_COMPLETIO
 import { normalizeWebFetchUrl, classifyToolOutcome, webResearchStopReason, planToolCallBatch, WEB_TOOL_NAMES, webResearchFinalizationNote, WEB_RESEARCH_FETCH_LIMIT, TOOL_CALLS_PER_STEP_LIMIT } from './webResearch.js';
 import { imageUploadParts, attachImagesToLastUserMessage, stripImagePartsFromMessages } from './vision.js';
 import { STREAM_RECOVERY_LIMIT, STREAM_RESUME_NOTE, STREAM_PAUSE_RESUME_NOTE, PROVIDER_TIMEOUT_NOTICE, isRetryableStreamError, openRouterRouting, retryDelay, addUsage, applyPromptCache } from './provider.js';
+import { guardStreamStall, PROVIDER_CONNECT_TIMEOUT_MS } from './streamGuard.js';
 import { acquireConversationControl, releaseConversationControl, beginProviderRequest, releaseProviderRequest, beginToolRequest, releaseToolRequest, controlInterruptReason, gate } from './control.js';
 import { clientScopeFor, memoryNote, saveMessage, persistAssistantReply } from './persistence.js';
 
@@ -272,7 +273,7 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
         ...openRouterRouting(tools.length > 0),
         stream: true,
         stream_options: { include_usage: true }
-      }, { signal: activeRequest.signal });
+      }, { signal: activeRequest.signal, timeout: PROVIDER_CONNECT_TIMEOUT_MS });
     } catch (err) {
       const interrupted = controlInterruptReason(control, activeRequest);
       releaseProviderRequest(control, activeRequest);
@@ -340,7 +341,10 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
     let reasoningNotified = false;
     let pausedDuringStream = false;
     try {
-    for await (const chunk of stream) {
+    // Watchdog: se o provedor parar de mandar dados sem fechar a conexão,
+    // aborta e cai na recuperação (retomar de onde parou / modelo de reserva)
+    // em vez de deixar a resposta pendurada em "Raciocinando..." para sempre.
+    for await (const chunk of guardStreamStall(stream, { onStall: () => activeRequest.abort('stall') })) {
       if (await gate(control, onEvent)) { stopped = true; break; }
       if (chunk.usage) addUsage(usage, chunk.usage);
       const choice = chunk.choices?.[0];

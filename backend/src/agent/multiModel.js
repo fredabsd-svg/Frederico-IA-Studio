@@ -23,6 +23,7 @@ import { indexAfterReply } from '../memory/indexer.js';
 import { runAgent } from './loop.js';
 import { clipForBriefing } from './prompts.js';
 import { STREAM_RECOVERY_LIMIT, STREAM_RESUME_NOTE, STREAM_PAUSE_RESUME_NOTE, isRetryableStreamError, openRouterRouting, retryDelay, addUsage, friendlyApiError, applyPromptCache } from './provider.js';
+import { guardStreamStall, PROVIDER_CONNECT_TIMEOUT_MS } from './streamGuard.js';
 import { acquireConversationControl, releaseConversationControl, beginProviderRequest, releaseProviderRequest, controlInterruptReason, gate } from './control.js';
 import { saveMessage } from './persistence.js';
 
@@ -231,9 +232,9 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
           activeRequest = beginProviderRequest(control);
           if (!registry.requests.has(state.slot)) registry.requests.set(state.slot, new Set());
           registry.requests.get(state.slot).add(activeRequest);
-          const stream = await client.chat.completions.create(requestParams, { signal: activeRequest.signal });
+          const stream = await client.chat.completions.create(requestParams, { signal: activeRequest.signal, timeout: PROVIDER_CONNECT_TIMEOUT_MS });
           let finish = null;
-          for await (const chunk of stream) {
+          for await (const chunk of guardStreamStall(stream, { onStall: () => activeRequest.abort('stall') })) {
             if (control.stopped) { setStatus(state, STATUS.stopped); return { stopped: true, text }; }
             if (chunk.usage) { addUsage(state.usage, chunk.usage); addUsage(usage, chunk.usage); }
             if (chunk.choices?.[0]?.finish_reason) finish = chunk.choices[0].finish_reason;
@@ -312,8 +313,8 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
         let activeRequest;
         try {
           activeRequest = beginProviderRequest(control);
-          const stream = await client.chat.completions.create({ model: config.coordinator, messages: msgs, temperature: 0.3, ...openRouterRouting(), stream: true, stream_options: { include_usage: true } }, { signal: activeRequest.signal });
-          for await (const chunk of stream) {
+          const stream = await client.chat.completions.create({ model: config.coordinator, messages: msgs, temperature: 0.3, ...openRouterRouting(), stream: true, stream_options: { include_usage: true } }, { signal: activeRequest.signal, timeout: PROVIDER_CONNECT_TIMEOUT_MS });
+          for await (const chunk of guardStreamStall(stream, { onStall: () => activeRequest.abort('stall') })) {
             if (control.stopped) return text;
             if (chunk.usage) addUsage(usage, chunk.usage);
             const d = chunk.choices?.[0]?.delta?.content || '';

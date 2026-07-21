@@ -21,13 +21,17 @@ export const STREAM_PAUSE_RESUME_NOTE = 'A resposta anterior foi pausada pelo us
 export const PROVIDER_TIMEOUT_NOTICE = '\n\n_Nota: o provedor do modelo ficou indisponivel enquanto esta etapa era gerada. O aplicativo tentou retomar automaticamente, mas nao recebeu uma resposta completa. Reenvie esta mesma tarefa para continuar a partir do trabalho ja salvo._';
 
 export function isRetryableStreamError(error) {
+  // Watchdog de stream parado (streamGuard.js): o provedor deixou de mandar
+  // dados sem fechar a conexão. É retryável por definição — o objetivo do
+  // watchdog é justamente acionar esta recuperação em vez de travar p/ sempre.
+  if (error?.code === 'STREAM_STALLED') return true;
   const status = Number(error?.status ?? error?.code ?? error?.error?.code);
   const detail = [error?.message, error?.error?.message, error?.error?.metadata?.error_type]
     .filter(Boolean)
     .join(' ')
     .toLowerCase();
   return [408, 429, 500, 502, 503, 504].includes(status)
-    || /upstream idle timeout|gateway timeout|temporar(?:y|ily)|provider.*(?:overload|timeout)|econnreset|fetch failed/.test(detail);
+    || /upstream idle timeout|gateway timeout|temporar(?:y|ily)|provider.*(?:overload|timeout)|econnreset|fetch failed|stream stalled|request timed out/.test(detail);
 }
 
 export function openRouterRouting(hasTools = false) {
