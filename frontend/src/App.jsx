@@ -189,7 +189,7 @@ export default function App({ user } = {}) {
   // Multimodelo só vale com 2+ modelos selecionados; senão o fluxo é o normal
   const effectiveMulti = multiModel?.enabled && (multiModel.config?.models?.length || 0) >= 2 ? multiModel.config : null;
   const {
-    busy, busyRef, paused, statusText, controlPending, nowTick, sendMessage, retrySend, control, cancelMultiSlot
+    busy, busyRef, paused, statusText, controlPending, nowTick, runs, anyBusy, sendMessage, retrySend, control, cancelMultiSlot
   } = useChat({
     input, setInput, messages, setMessages, uploads, team, effectiveTeam,
     listening, recognitionRef, current, currentRef, setCurrent,
@@ -233,10 +233,21 @@ export default function App({ user } = {}) {
     localStorage.setItem('fred_team', JSON.stringify(next));
   }
   function blockConversationChange() {
-    if (!busyRef.current) return false;
-    showToast('Há uma resposta em andamento. Aguarde terminar ou pare o processamento antes de trocar de conversa.');
-    return true;
+    // MULTICONVERSA: trocar de conversa/cliente ou abrir uma nova NÃO
+    // interrompe mais nada — a resposta continua no servidor, a conversa mostra
+    // o indicador girando na barra lateral e, ao reabri-la, o andamento
+    // reconecta ao vivo. A trava antiga ("aguarde terminar") saiu de cena.
+    return false;
   }
+  // Enquanto houver execução em andamento (aqui ou em outra aba/dispositivo),
+  // atualiza a lista periodicamente para o indicador da barra lateral acender
+  // e apagar sozinho.
+  const sidebarActivity = anyBusy || conversations.some(c => c.active);
+  useEffect(() => {
+    if (!sidebarActivity) return;
+    const t = setInterval(() => { fetchConversations().catch(() => {}); }, 10000);
+    return () => clearInterval(t);
+  }, [sidebarActivity]);
   useEffect(() => { localStorage.setItem('fred_effort', effort); }, [effort]);
   useEffect(() => {
     // O painel de esforço vive dentro da linha de chips, então basta uma
@@ -638,6 +649,7 @@ export default function App({ user } = {}) {
           return list.map(c => (
             <div key={c.id} className={`convItem ${current?.id === c.id ? 'active' : ''}`}>
               <button className="convOpen" onClick={() => openConversation(c.id)} title={c.title}>{c.title}</button>
+              {(runs[c.id] ? runs[c.id].busy : c.active) && <span className="spin sm convSpin" title="Esta conversa está processando agora" aria-label="Conversa processando"/>}
               <button className="convDel" onClick={(e) => deleteConversation(c.id, e)} title="Apagar conversa" aria-label="Apagar conversa"><Trash2 size={15}/></button>
             </div>
           ));

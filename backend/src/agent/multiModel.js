@@ -142,7 +142,7 @@ function memberSystemPrompt(member, mode) {
 export async function runMultiModel({ userId, conversationId, userText, config, webSearch = false, effort, developer = null, onEvent }) {
   const provider = await getUserProvider(userId);
   const client = provider.client;
-  const control = acquireConversationControl(conversationId);
+  const control = acquireConversationControl(conversationId, userId);
   const registry = { cancelled: new Set(), requests: new Map() };
   slotRegistries.set(conversationId, registry);
   const startedAt = Date.now();

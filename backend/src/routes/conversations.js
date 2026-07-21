@@ -4,7 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { nanoid } from 'nanoid';
 import { db, now } from '../db.js';
-import { runAgent, runOrchestrator, runMultiModel, normalizeMultiModelConfig, cancelMultiModelSlot, setControl, isConversationActive, friendlyApiError } from '../agent.js';
+import { runAgent, runOrchestrator, runMultiModel, normalizeMultiModelConfig, cancelMultiModelSlot, setControl, isConversationActive, countActiveRunsForUser, friendlyApiError } from '../agent.js';
 import { openLiveStream, getLiveStream } from '../liveStream.js';
 import { runTool } from '../tools.js';
 import { classifyTaskResult } from '../taskOutcome.js';
@@ -17,12 +17,15 @@ import { makeRouter, upload, scanOrReject, decodeUploadName, loadAssistant, ensu
 const router = makeRouter();
 
 router.get('/conversations', async (req, res) => {
-  if (req.query.all === '1') return res.json(await db.prepare('SELECT * FROM conversations WHERE user_id=? ORDER BY updated_at DESC').all(req.userId));
+  // `active` em cada linha: a conversa está processando AGORA? A barra lateral
+  // usa isso para girar o indicador de conversa ativa (multiconversa).
+  const withActive = (rows) => rows.map(row => ({ ...row, active: isConversationActive(row.id) }));
+  if (req.query.all === '1') return res.json(withActive(await db.prepare('SELECT * FROM conversations WHERE user_id=? ORDER BY updated_at DESC').all(req.userId)));
   const clientId = req.query.client || null;
   const rows = clientId
     ? await db.prepare('SELECT * FROM conversations WHERE user_id=? AND client_id=? ORDER BY updated_at DESC').all(req.userId, clientId)
     : await db.prepare('SELECT * FROM conversations WHERE user_id=? AND client_id IS NULL ORDER BY updated_at DESC').all(req.userId);
-  res.json(rows);
+  res.json(withActive(rows));
 });
 
 router.post('/conversations', validate(schemas.conversationCreate), async (req, res) => {
@@ -295,6 +298,13 @@ router.post('/conversations/:id/chat', validate(schemas.chat), async (req, res) 
   const text = req.body.message;
   if (isConversationActive(req.params.id)) {
     return res.status(409).json({ error: 'Esta conversa já está processando uma resposta. Aguarde terminar ou pare o processamento antes de enviar outra mensagem.' });
+  }
+  // Multiconversa: várias conversas podem processar AO MESMO TEMPO, mas com um
+  // teto por usuário para proteger a VPS (cada execução consome provedor,
+  // memória e possivelmente um sandbox). Configurável por env.
+  const maxRuns = Math.max(1, Number(process.env.MAX_ACTIVE_RUNS_PER_USER) || 5);
+  if (countActiveRunsForUser(req.userId) >= maxRuns) {
+    return res.status(429).json({ error: `Você já tem ${maxRuns} conversas processando ao mesmo tempo. Aguarde alguma terminar (o indicador na barra lateral para de girar) ou pare uma delas antes de iniciar outra.` });
   }
   if (!await ensureConversation(req.userId, req.params.id, req.body?.model)) return res.status(404).json({ error: 'Não encontrado' });
   const limitMsg = await enforceDailyLimit(req.userId);

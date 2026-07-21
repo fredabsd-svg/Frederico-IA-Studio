@@ -13,15 +13,27 @@ export class ConversationBusyError extends Error {
   }
 }
 
-export function acquireConversationControl(conversationId) {
+export function acquireConversationControl(conversationId, userId = null) {
   if (controls.has(conversationId)) throw new ConversationBusyError();
   // activeRequests é um Set porque o Modo Equipe consulta vários modelos EM
   // PARALELO — com um slot único, pausar/parar abortaria só a última requisição
   // e deixaria as outras rodando. Com o Set, o pause/stop aborta todas as que
   // estiverem em voo.
-  const control = { paused: false, stopped: false, activeRequests: new Set(), activeTool: null };
+  // userId (opcional) marca o dono da execução — alimenta o teto de conversas
+  // SIMULTÂNEAS por usuário (multiconversa), sem mudar nenhum comportamento.
+  const control = { paused: false, stopped: false, activeRequests: new Set(), activeTool: null, userId };
   controls.set(conversationId, control);
   return control;
+}
+
+// Quantas execuções ATIVAS este usuário tem agora (todas as conversas dele que
+// estão processando — chat, multimodelo, equipe e tarefas de segundo plano).
+// Usado pelo teto MAX_ACTIVE_RUNS_PER_USER na rota de chat.
+export function countActiveRunsForUser(userId) {
+  if (!userId) return 0;
+  let count = 0;
+  for (const control of controls.values()) if (control.userId === userId) count += 1;
+  return count;
 }
 
 export function releaseConversationControl(conversationId, control) {

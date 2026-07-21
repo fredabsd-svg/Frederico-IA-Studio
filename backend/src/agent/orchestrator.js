@@ -22,7 +22,7 @@ No Modo Equipe, os especialistas individuais desta etapa NÃO executam ferrament
 export async function runOrchestrator({ userId, conversationId, userText, model, assistants = [], executor = null, webSearch = false, effort, developer, onEvent }) {
   const provider = await getUserProvider(userId);            // BYOK
   const client = provider.client;                            // sombreia o cliente global
-  const control = acquireConversationControl(conversationId);
+  const control = acquireConversationControl(conversationId, userId);
   try {
   const userMsgId = await saveMessage(userId, conversationId, 'user', userText);
   const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
