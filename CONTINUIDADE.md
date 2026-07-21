@@ -1,5 +1,50 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## ❓ Pergunta ao usuário encerra o turno — a IA não "responde a si mesma" (2026-07-21 — branch `claude/modelo-travando-execucao-uwatco`, follow-up do PR #63)
+
+**Sintoma (print do usuário):** no Modo Desenvolvedor, o modelo terminou a
+resposta com 3 perguntas ("Quais itens quer que eu ataque? Branch separado com
+PR ou commit direto na main? Algo específico a incluir?") e, em vez de PARAR
+para o usuário responder, a execução CONTINUOU — clonou o repositório e decidiu
+tudo sozinha. O usuário não conseguia responder (o composer fica bloqueado
+enquanto o run está ativo).
+
+**Causa raiz:** quando o modelo para de chamar ferramentas para perguntar, o
+`shouldRepairExecution` (repair.js) interpretava como "execução incompleta" e o
+loop injetava `EXECUTION_COMPLETION_REPAIR_NOTE` com `tool_choice='required'` —
+FORÇANDO o modelo a chamar ferramenta em vez de deixar a pergunta chegar ao
+usuário. Os prompts (EXECUTION_CONTRACT_NOTE: "nada de ficar no plano") ainda
+empurravam na mesma direção. Ou seja: o app tratava "perguntar" como falha.
+
+**Correção:**
+- `backend/src/agent/repair.js` — novo `endsAwaitingUserReply(text)`:
+  detecta que a resposta TERMINA com "?" (após remover avisos padronizados do
+  sistema e enfeites de markdown/aspas/parênteses do fechamento). Conservador:
+  pergunta retórica no meio seguida de conclusão NÃO conta.
+  `EXECUTION_CONTRACT_NOTE` ganhou a exceção explícita: faltou decisão do
+  usuário → pergunte e PARE.
+- `backend/src/agent/loop.js` — no ramo sem tool calls: se
+  `endsAwaitingUserReply(content)` (e NÃO for `forceExecution` — tarefa de
+  segundo plano não tem usuário presente para responder; lá o comportamento
+  antigo continua), o turno completa naturalmente: sem reparo forçado, sem
+  `MISSING_OUTPUT_NOTICE`/`EXECUTION_INCOMPLETE_NOTICE`, sem marcar
+  `incomplete`. A pergunta é entregue e o composer libera. A checagem de
+  `missingClaimedOutput` (texto afirma download que não existe) continua
+  valendo MESMO com pergunta no final — mentir sobre arquivo é pior.
+- `backend/src/agent/prompts.js` — QUALITY_BAR ganhou a regra: pergunta que
+  depende de decisão da pessoa é o FIM da resposta; nunca continuar executando
+  nem responder a própria pergunta no mesmo turno.
+
+**Validação:** `repair.awaiting.test.js` (7 testes novos, incluindo o texto
+REAL do bug com lista numerada de perguntas). Suíte backend completa: **142
+passam, 0 falham, 2 skips pré-existentes**. Sem mudança de frontend (o
+composer já libera quando o run termina — o problema era o run não terminar).
+
+**Comportamento esperado após o deploy:** modelo pergunta → run termina →
+usuário responde → a tarefa continua na mensagem seguinte com o contexto da
+conversa. No modo `auto` o prompt já orienta a só perguntar diante de ação
+destrutiva/fora de escopo — perguntas continuam raras lá.
+
 ## 🧊 Modelo "travando na execução" — watchdog contra stream parado (2026-07-21 — branch `claude/modelo-travando-execucao-uwatco`)
 
 **Sintoma (recorrente, relatado com prints + .mht):** no meio de uma resposta

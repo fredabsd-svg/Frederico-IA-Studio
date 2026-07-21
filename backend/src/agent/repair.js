@@ -18,7 +18,7 @@ export const TOOL_PROTOCOL_FAILURE_NOTICE = '\n\n**Não consegui executar a ferr
 export const RESPONSE_TRUNCATED_REPAIR_NOTE = 'A resposta anterior foi cortada pelo limite de tamanho antes de ser concluida. Continue exatamente de onde parou, sem repetir o que ja foi dito. Termine o trabalho de forma verificavel antes de responder ao usuario.';
 export const RESPONSE_TRUNCATED_NOTICE = '\n\n_Nota: a resposta foi interrompida pelo limite do modelo antes de terminar. Tente continuar com uma nova mensagem ou escolha um modelo com saida maior._';
 const DEFERRED_EXECUTION_RE = /\b(?:proximo passo|pendente|a executar|executar o script|assistente principal|deve(?:ria)?\s+(?:executar|criar|gerar|verificar)|responsavel|aguarde|vou\s+(?:criar|gerar|executar))\b/i;
-export const EXECUTION_CONTRACT_NOTE = `Este pedido precisa de uma ação de verdade, não só de um plano. Use as ferramentas da conversa, confira o resultado e só então responda — nada de entregar código ilustrativo, uma lista de "próximos passos" ou a tarefa pela metade. Se o pedido é um arquivo, ele precisa existir mesmo em /workspace/outputs antes de você dizer que está pronto.`;
+export const EXECUTION_CONTRACT_NOTE = `Este pedido precisa de uma ação de verdade, não só de um plano. Use as ferramentas da conversa, confira o resultado e só então responda — nada de entregar código ilustrativo, uma lista de "próximos passos" ou a tarefa pela metade. Se o pedido é um arquivo, ele precisa existir mesmo em /workspace/outputs antes de você dizer que está pronto. Exceção: se faltar uma DECISÃO do usuário para continuar (escopo, opção A ou B, permissão), termine a resposta com a pergunta e PARE — não decida por ele nem continue executando.`;
 // Pedidos de macro VBA: o ambiente (openpyxl/xlsxwriter) NÃO gera um
 // vbaProject.bin funcional — não dá para criar uma macro que roda de verdade.
 // Sem este aviso, o modelo salvava um .xlsm "com macro" que na prática não
@@ -44,6 +44,22 @@ export function shouldRepairOutputDelivery(text, outputsBefore, outputsAfter) {
   if (!mentionsOutputPath(text)) return false;
   const createdThisTurn = outputsAfter.some(file => outputsBefore.get(file.path) !== fileSignature(file));
   return !createdThisTurn && referencedOutputFiles(text, outputsAfter).length === 0;
+}
+
+// A resposta TERMINA com uma pergunta para o usuário? Então o turno acabou:
+// o app deve ENTREGAR a pergunta e esperar a resposta. Sem isto, o reparo de
+// execução via tool_choice='required' forçava o modelo a continuar — ele
+// "respondia a própria pergunta" e decidia sozinho (bug relatado: o app não
+// parava para o usuário responder). Conservador de propósito: só considera a
+// pergunta se ela for o FINAL da resposta (pergunta retórica no meio do texto
+// seguida de conclusão não conta).
+export function endsAwaitingUserReply(text) {
+  const s = withoutSystemNotices(String(text || ''));
+  if (!s) return false;
+  // Ignora enfeites de fechamento comuns depois do "?": markdown (** _ ` ~),
+  // aspas, parênteses/colchetes e pontuação de lista.
+  const tail = s.replace(/[\s*_`>\)\]"'~]+$/, '');
+  return tail.endsWith('?');
 }
 
 export function shouldRepairExecution({ requiresExecution, requiresOutput, toolsAvailable, executedToolCalls, outputsBefore, outputsAfter, responseText }) {
