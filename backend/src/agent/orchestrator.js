@@ -15,7 +15,7 @@ import { acquireConversationControl, releaseConversationControl, beginProviderRe
 import { clientScopeFor, memoryNote, saveMessage } from './persistence.js';
 
 const TEAM_TOOL_AWARENESS = `CAPACIDADES DO APP:
-O Frederico AI Studio tem sandbox com Python 3.12, bash, LibreOffice/soffice, ffmpeg, OCR/PDF, vetores headless, Chromium/Playwright/Xvfb, toolchains C/C++/Go/Rust/Java/.NET/Kotlin, ML leve em CPU, qualidade e diagnóstico, bancos/clients remotos, Node com toolchain frontend, geração de arquivos e ferramentas de imagem/web quando habilitadas. Docker/Compose, GPU e builds nativos Android/iOS continuam deliberadamente fora do sandbox.
+O Frederico AI Studio tem sandbox com Python 3, bash, LibreOffice/soffice, ffmpeg, OCR/PDF, vetores headless, Chromium/Playwright/Xvfb, toolchains C/C++/Go/Rust/Java/.NET/Kotlin, ML leve em CPU, qualidade e diagnóstico, bancos/clients remotos, Node com toolchain frontend, geração de arquivos e ferramentas de imagem/web quando habilitadas. Docker/Compose, GPU e builds nativos Android/iOS continuam deliberadamente fora do sandbox.
 No Modo Equipe, os especialistas individuais desta etapa NÃO executam ferramentas diretamente; eles analisam e orientam. Se a resposta final exigir arquivo, cálculo, conversão ou validação, indique claramente que isso deve ser executado pelas ferramentas do assistente principal.`;
 
 // Orquestrador: aciona vários assistentes e um coordenador une as respostas
