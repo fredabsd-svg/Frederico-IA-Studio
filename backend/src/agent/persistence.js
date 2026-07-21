@@ -43,9 +43,22 @@ export async function saveMessage(userId, conversationId, role, content, extra =
   if (extra.multiMeta) {
     multiMeta = JSON.stringify(extra.multiMeta);
     if (multiMeta.length > 200000) {
+      // Encurta os campos volumosos: texto de cada modelo, o histórico por
+      // rodada (debate) e a síntese do coordenador (council/debate). Antes só o
+      // texto por modelo era cortado — um debate longo (N modelos × R rodadas)
+      // podia estourar o teto pelo histórico e ficar sem efeito.
       const compact = {
         ...extra.multiMeta,
-        models: (extra.multiMeta.models || []).map(m => ({ ...m, text: String(m.text || '').slice(0, 4000) }))
+        synthesis: extra.multiMeta.synthesis
+          ? { ...extra.multiMeta.synthesis, text: String(extra.multiMeta.synthesis.text || '').slice(0, 4000) }
+          : undefined,
+        models: (extra.multiMeta.models || []).map(m => ({
+          ...m,
+          text: String(m.text || '').slice(0, 4000),
+          history: Array.isArray(m.history)
+            ? m.history.map(h => ({ ...h, text: String(h.text || '').slice(0, 2000) }))
+            : m.history
+        }))
       };
       multiMeta = JSON.stringify(compact);
     }
