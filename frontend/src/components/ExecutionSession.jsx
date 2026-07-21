@@ -17,7 +17,9 @@ import { API } from '../constants.js';
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Cada ferramenta do backend vira uma "etapa" com nome humano e categoria.
-const TOOL_META = {
+// Exportado: reaproveitado pela aba Atividade do DevActivityRail, para os dois
+// lugares mostrarem a mesma categoria/rótulo de cada ferramenta.
+export const TOOL_META = {
   bash:           { cat: 'terminal', running: 'Executando comando no terminal', done: 'Comando no terminal' },
   run_python:     { cat: 'terminal', running: 'Executando código Python',        done: 'Código Python executado' },
   write_file:     { cat: 'code',     running: 'Criando ou alterando arquivo',     done: 'Arquivo criado ou alterado' },
@@ -30,7 +32,7 @@ const TOOL_META = {
   consultar_cnpj: { cat: 'search',   running: 'Consultando CNPJ',                 done: 'CNPJ consultado' }
 };
 
-const CAT_META = {
+export const CAT_META = {
   terminal: { Icon: Terminal,   label: 'Terminal',  inputLabel: 'Comando' },
   code:     { Icon: FileCog,    label: 'Código',    inputLabel: 'Arquivo' },
   files:    { Icon: FolderOpen, label: 'Arquivos',  inputLabel: 'Arquivo' },
@@ -40,9 +42,9 @@ const CAT_META = {
   other:    { Icon: Cpu,        label: 'Ações',     inputLabel: 'Entrada' }
 };
 
-const metaOf = name => TOOL_META[name] || { cat: 'other', running: `Executando ${name}`, done: name };
+export const metaOf = name => TOOL_META[name] || { cat: 'other', running: `Executando ${name}`, done: name };
 
-function describe(step) {
+export function describe(step) {
   const meta = metaOf(step.name);
   const cat = CAT_META[meta.cat] || CAT_META.other;
   const label = step.status === 'running' ? meta.running : meta.done;
@@ -57,7 +59,7 @@ const fmtDuration = ms => {
   return s ? `${m}min ${s}s` : `${m}min`;
 };
 
-const tryParse = raw => { try { return JSON.parse(raw); } catch { return null; } };
+export const tryParse = raw => { try { return JSON.parse(raw); } catch { return null; } };
 
 const fileUrl = (conversationId, filePath) => {
   const id = encodeURIComponent(String(conversationId || ''));
@@ -92,7 +94,7 @@ function summaryPhrase(s) {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
-function statusIcon(status) {
+export function statusIcon(status) {
   if (status === 'running') return <Loader size={15} className="esSpin" />;
   if (status === 'error') return <AlertCircle size={15} className="esErr" />;
   return <CheckCircle2 size={15} className="esOk" />;

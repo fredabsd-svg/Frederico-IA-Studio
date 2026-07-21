@@ -19,7 +19,7 @@ function bindingLabel(binding) {
 
 export function DevProjectRail({
   collapsed, onToggle, projects, active, onSelectProject, onNewTask, onManageFolders,
-  files, onRefreshFiles, filesLoading, downloadUrl, conversationId
+  files, onRefreshFiles, filesLoading, downloadUrl, conversationId, recentTasks, onOpenTask
 }) {
   if (collapsed) {
     return <aside className="devRail devRailLeft collapsed">
@@ -86,9 +86,16 @@ export function DevProjectRail({
         </ul>
       </div>
 
-      {active && (active.conversationIds || []).length > 0 && <div className="devRailSection">
-        <label className="devRailLabel"><MessagesSquare size={13}/> Conversas do projeto</label>
-        <p className="devRailEmpty">{active.conversationIds.length} conversa{active.conversationIds.length > 1 ? 's' : ''} registrada{active.conversationIds.length > 1 ? 's' : ''} neste projeto.</p>
+      {active && (recentTasks || []).length > 0 && <div className="devRailSection">
+        <label className="devRailLabel"><MessagesSquare size={13}/> Tarefas recentes</label>
+        <ul className="devTaskList">
+          {recentTasks.map(t => <li key={t.id}>
+            <button className={`devTaskItem ${t.id === conversationId ? 'active' : ''}`} onClick={() => onOpenTask(t.id)} title={t.title}>
+              <span className={`devTaskDot ${t.id === conversationId ? 'active' : ''}`}/>
+              <span className="devTaskTitle">{t.title}</span>
+            </button>
+          </li>)}
+        </ul>
       </div>}
 
       <button className="devRailBtn ghost" onClick={onManageFolders}><ChevronRight size={14}/> Gerenciar pastas do PC</button>

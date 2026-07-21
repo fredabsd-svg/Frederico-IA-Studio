@@ -1,5 +1,96 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 🖥️ Redesign do Modo Desenvolvedor a partir de handoff de design (2026-07-21 — branch `claude/antivirus-vps-42tstn`)
+
+**Pedido:** aplicar no app um handoff de design (`.dc.html` + README, protótipo
+Codex/Claude-Code-style) para o Modo Desenvolvedor — sidebar de projetos/tarefas,
+centro com stage-driven timeline, gaveta direita com abas Atividade/Arquivos/
+Alterações/Memória.
+
+**Descoberta antes de codar (mudou o plano):** o repositório já tinha avançado
+~49 commits desde a última vez que essa área foi tocada nesta sessão. O que o
+handoff descrevia como "a ser construído" **já existia, mais avançado**: 6
+modos de trabalho ponta a ponta (`DEV_WORK_MODES`/`DEV_MODES` no backend),
+projetos persistentes (`useDevProjects.js`, localStorage: nome, descrição,
+techs, vínculo pasta/GitHub, regras, memória em 6 categorias, histórico de
+conversas), layout de 4 colunas (`workspace-developer`: sidebar + `DevProjectRail`
++ chat + `DevActivityRail`), e um `ExecutionSession` rico (cartão + overlay em
+tela cheia, categorização por ferramenta, miniaturas reais de página via
+`pageShot.js`). Reconstruir do zero teria REGREDIDO checkpoint/resume,
+multiconversa e o `ExecutionSession` — todos maduros e testados. Decisão:
+**redesenhar visual/interação em cima do que já existe**, não substituir.
+
+**O que foi feito (só frontend):**
+- `components/ExecutionSession.jsx`: exporta `metaOf`/`describe`/`CAT_META`/
+  `statusIcon`/`tryParse` (antes privados do módulo) — o painel de Atividade
+  reaproveita a MESMA categorização/rótulo por ferramenta que o "Ambiente de
+  Trabalho da IA" já usa, em vez de duplicar/divergir.
+- `components/DevActivityRail.jsx`: virou painel com 4 abas.
+  - **Atividade**: além do cartão de status (mantido), lista cronológica dos
+    passos da última resposta, com chamadas CONSECUTIVAS da mesma ferramenta
+    agrupadas ("2× Comando no terminal", expansível) em vez de um item por
+    chamada.
+  - **Arquivos**: `read_file`/`list_files` da resposta (analisados).
+  - **Alterações**: `write_file` com path/tamanho REAIS (do JSON que a
+    ferramenta devolve) e selo A/M — M se o mesmo caminho já apareceu numa
+    leitura antes na mesma resposta, A caso contrário. **Não inventa contagem
+    de linhas/diff** — o backend não devolve isso.
+  - **Memória**: o editor de 6 campos que já existia, só migrado para aba.
+- `components/DevProjectRail.jsx`: a seção "Conversas do projeto" (só uma
+  contagem, sem lista) virou **"Tarefas recentes"** clicável de verdade —
+  resolve `project.conversationIds` para título real via `allConvs` (não
+  mostra nada se a conversa não existir mais).
+- `App.jsx`: pill de status no cabeçalho do workspace dev — **honesto**, 3-5
+  estados derivados de sinais reais (`busy`/`paused`/`statusText`/
+  `message.failed`/`message.resumable`), SEM fingir o pipeline de 5 etapas do
+  protótipo (Analisando/Planejando/.../Revisando) que o backend não expõe
+  (modos são um seletor de tipo de tarefa, não estágios sequenciais — confirmado
+  por leitura de `backend/src/agent/prompts.js`/`loop.js`). Novo chip
+  **Permissões** no composer (mesmo padrão do chip Esforço): popover só-leitura
+  mostrando o modo ativo (edita/não edita) e o vínculo do projeto — dado real,
+  não um toggle fictício. Cores decorativas dos 4 cartões de modo na tela vazia
+  (azul/verde/âmbar/violeta) seguindo o MESMO precedente já usado nos
+  `QUICK_ACTIONS` (`:nth-child` escopado, `v2.css`) — não um tema fixo.
+- **Removido**: `ToolStep` (componente + CSS `.toolstep/.toolwrap/.tchev/
+  .tooldetail`) — zero usos em todo o frontend, órfão desde que
+  `ExecutionSession` assumiu esse papel.
+
+**Decisão deliberada de NÃO seguir o handoff ao pé da letra (paletas):** o
+protótipo define uma paleta escura fixa em hex. Este projeto tem uma regra já
+documentada e reforçada por sessões anteriores — "Regra das 7 paletas: cores
+saem de `var(--accent/--muted/--line)` ou `color-mix`, nunca hex fixo, senão
+Claro/Sépia herdam azul" (`v2.css`, cabeçalho). Forçar o tema escuro do
+protótipo ignoraria essa regra e quebraria a experiência de quem usa Claro/
+Sépia/Slate/etc. no Modo Desenvolvedor. Em vez disso, o redesign usa os MESMOS
+tokens semânticos (`--accent`, `--ok`, `--warn`, `--danger`) para computar os
+mesmos papéis de cor do handoff (azul=ação, verde=sucesso/edita, âmbar=atenção/
+corrigir, roxo=revisar — fixo, mesmo precedente decorativo do `QUICK_ACTIONS`),
+então o resultado se adapta às 7 paletas em vez de fixar uma só.
+**Também fora do escopo, por honestidade**: a barra de "Protótipo · estados"/
+toggle desktop-mobile/overlay "Mudanças de arquitetura" do topo do `.dc.html`
+— o próprio README do handoff diz que é chrome da ferramenta de design, não
+parte do produto.
+
+**Gaps conhecidos que ficam para depois (não bloqueiam este redesign):**
+- `POST /tasks` (fila em segundo plano) não aceita contexto `developer` nem
+  `effort` hoje — confirmado lendo `backend/src/routes/tasks.js`. O chip
+  "Executar em segundo plano" já existia e continua funcionando, mas uma
+  tarefa de dev enviada em 2º plano perde o modo/projeto/regras (só o texto
+  vai). Se algum dia isso incomodar, dá para persistir `developer`/`effort` na
+  tabela `tasks` e repassar em `processTasks()`.
+- "Tarefas recentes" e a memória do projeto continuam só em `localStorage`
+  (`useDevProjects.js`) — não sincronizam entre navegadores/dispositivos. Virar
+  persistência no servidor é um projeto à parte (tabela nova + rotas CRUD).
+
+**Verificação:** sem acesso a Postgres/chave de IA real neste ambiente, então
+sem E2E ao vivo. Feito: `npx esbuild` em todo arquivo tocado, `npm run build`
+do frontend (limpo), suíte `authUrls.test.js`+`sse.test.js` (7/7), e um teste
+de fumaça server-side (`renderToStaticMarkup`) dos dois componentes novos com
+dados realistas (chamadas de ferramenta consecutivas/erros/list_files/
+write_file com JSON real do backend) confirmando que o agrupamento "2×", os
+selos A/M, a categorização e a lista de tarefas recentes renderizam como
+esperado — não só que compilam.
+
 ## ⏭️ Retomada REAL de tarefa interrompida — checkpoint persistente (2026-07-21 — branch `claude/modelo-travando-execucao-uwatco`)
 
 **Pedido:** o app prometia "Reenviar para continuar de onde parei" quando a

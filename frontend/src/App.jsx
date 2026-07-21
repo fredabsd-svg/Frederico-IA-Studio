@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Download, FileText, FileSpreadsheet, FilePenLine, Plus, ArrowUp, Upload, Trash2, Bot, Brain, X, BarChart3, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench, CalendarClock, Inbox, Palette, Gauge, SlidersHorizontal, Paperclip, MoreHorizontal, FolderOpen, Code2, ChevronRight, ShieldCheck, LogOut, KeyRound, Camera, Cable, MessageCircleQuestion, Bug, PanelRight } from 'lucide-react';
+import { Download, FileText, FileSpreadsheet, FilePenLine, Plus, ArrowUp, Upload, Trash2, Bot, Brain, X, BarChart3, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench, CalendarClock, Inbox, Palette, Gauge, SlidersHorizontal, Paperclip, MoreHorizontal, FolderOpen, Code2, ChevronRight, ShieldCheck, LogOut, KeyRound, Camera, Cable, MessageCircleQuestion, Bug, PanelRight, Lock, Unlock } from 'lucide-react';
 import { API, FALLBACK_MODELS, TOOL_INFO, TEMPLATES, QUICK_ACTIONS, THEMES, WORKSPACES, EFFORTS, EFFORT_DESC, ASSISTANT_ICONS, ASSISTANT_COLORS, isAssistantIcon, DEV_WORK_MODES } from './constants.js';
 import { signOut } from './authClient.js';
 import { Slider, Modal, Drawer, Collapsible, useAppDialog } from './components.jsx';
@@ -139,6 +139,7 @@ export default function App({ user } = {}) {
   const [webSearch, setWebSearch] = useState(false);
   const [effort, setEffort] = useState(() => { const s = localStorage.getItem('fred_effort'); return EFFORTS.some(e => e.id === s) ? s : 'medio'; });
   const [composerMenuOpen, setComposerMenuOpen] = useState(false);
+  const [permissionsOpen, setPermissionsOpen] = useState(false);
   const cmpChipsRef = useRef(null);
   const fileInputRef = useRef(null);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -263,10 +264,10 @@ export default function App({ user } = {}) {
   }, [sidebarActivity]);
   useEffect(() => { localStorage.setItem('fred_effort', effort); }, [effort]);
   useEffect(() => {
-    // O painel de esforço vive dentro da linha de chips, então basta uma
-    // checagem: clicou fora dela, fecha.
+    // O painel de esforço e o de permissões vivem dentro da linha de chips,
+    // então basta uma checagem: clicou fora dela, fecha os dois.
     function onDoc(e) {
-      if (!cmpChipsRef.current?.contains(e.target)) setComposerMenuOpen(false);
+      if (!cmpChipsRef.current?.contains(e.target)) { setComposerMenuOpen(false); setPermissionsOpen(false); }
     }
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
@@ -643,6 +644,40 @@ export default function App({ user } = {}) {
   }[workspace] || { title: 'Olá! Como posso ajudar você hoje?', description: 'Envie um arquivo, peça uma planilha, um documento, um código ou uma pesquisa.' };
   const welcomeActions = workspace === 'developer' ? DEVELOPER_QUICK_ACTIONS : QUICK_ACTIONS;
 
+  // Tarefas recentes do projeto ativo (Modo Desenvolvedor): resolve os ids
+  // salvos em conversationIds para título real via allConvs — nada inventado,
+  // só não mostra a tarefa se a conversa correspondente não existir mais.
+  const recentDevTasks = (devProjects.active?.conversationIds || [])
+    .map(id => { const c = allConvs.find(x => x.id === id); return c ? { id, title: c.title || 'Conversa' } : null; })
+    .filter(Boolean)
+    .slice(0, 8);
+
+  // Pill de status do cabeçalho do Modo Desenvolvedor — só estados que dá para
+  // provar com sinais reais (sem inventar um pipeline de 5 etapas que o
+  // backend não expõe): aguardando / trabalhando / interrompido / erro / concluído.
+  const lastAssistantMsg = [...messages].reverse().find(m => m.role === 'assistant');
+  const devStagePill = busy
+    ? { label: paused ? 'Pausado' : (statusText || 'Trabalhando...'), tone: 'live' }
+    : lastAssistantMsg?.failed
+      ? { label: 'Erro', tone: 'error' }
+      : lastAssistantMsg?.resumable
+        ? { label: 'Interrompido — pode continuar', tone: 'warn' }
+        : messages.length > 0
+          ? { label: 'Concluído', tone: 'done' }
+          : { label: 'Aguardando instrução', tone: 'idle' };
+
+  // Permissões reais desta tarefa (não um toggle fictício): modo ativo (ou o do
+  // projeto, se ainda não há sessão preparada) e o vínculo de pasta/repositório.
+  const permMode = DEV_WORK_MODES.find(m => m.id === (developerSession?.mode || devProjects.active?.mode)) || null;
+  const permBinding = developerSession?.github
+    ? { type: 'github', repo: developerSession.github.repo, branch: developerSession.github.branch }
+    : devProjects.active?.binding;
+  const permProjectLabel = permBinding?.type === 'github'
+    ? `GitHub · ${permBinding.repo}${permBinding.branch ? ` (${permBinding.branch})` : ''}`
+    : permBinding?.type === 'folder'
+      ? 'Pasta do computador vinculada'
+      : 'Sem vínculo — workspace temporário da conversa';
+
   return <div className={`app workspace-${workspace} ${sideHidden ? 'sideHidden' : ''}`}>
     {menuOpen && <div className="scrim" onClick={() => setMenuOpen(false)}/>}
     <aside className={`sidebar ${menuOpen ? 'open' : ''}`} aria-label="Navegação do app">
@@ -739,6 +774,8 @@ export default function App({ user } = {}) {
       filesLoading={false}
       downloadUrl={(path) => conversationDownloadUrl(current?.id, path)}
       conversationId={current?.id}
+      recentTasks={recentDevTasks}
+      onOpenTask={openConversation}
     />}
 
     <main
@@ -813,6 +850,7 @@ export default function App({ user } = {}) {
           </div>
         </div>
         <div className="workspaceBarActions">
+          <span className={`devStagePill ${devStagePill.tone}`}><span className="devStagePillDot"/>{devStagePill.label}</span>
           <button type="button" className="workspaceAction" onClick={() => openDeveloper('plan')}><ListTodo size={15}/> Planejar</button>
           <button type="button" className="workspaceAction primary" onClick={() => openDeveloper('build')}><Code2 size={15}/> Implementar</button>
           <button type="button" className="workspaceAction" onClick={() => openDeveloper('fix')}><Bug size={15}/> Corrigir</button>
@@ -971,6 +1009,21 @@ export default function App({ user } = {}) {
             title="Envia a mensagem como tarefa e libera o chat enquanto ela roda">
             <Hourglass size={12}/><span>Executar em segundo plano</span>
           </button>
+          {workspace === 'developer' && <div className="cmpChipMenu">
+            <button type="button" className={`cmpChip ${permissionsOpen ? 'open' : ''}`} aria-expanded={permissionsOpen}
+              onClick={() => setPermissionsOpen(o => !o)}
+              title="O que a IA pode fazer nesta tarefa">
+              <ShieldCheck size={12}/><span>Permissões</span>
+            </button>
+            {permissionsOpen && <div className="cmpMenuPanel permissionsPanel">
+              <div className="cmpDesc">O que a IA pode fazer nesta tarefa, com o modo e o projeto escolhidos agora.</div>
+              <div className="permRow">
+                <b>{permMode?.label || 'Nenhum modo escolhido'}</b>
+                {permMode && <span className={permMode.write ? 'write' : 'read'}>{permMode.write ? <Unlock size={12}/> : <Lock size={12}/>}{permMode.write ? 'Pode editar e executar' : 'Somente leitura'}</span>}
+              </div>
+              <div className="permRow"><span>{permProjectLabel}</span></div>
+            </div>}
+          </div>}
         </div>
         <div className="composer">
           <button className="attachBtn" onClick={() => fileInputRef.current?.click()} title="Anexar arquivo" aria-label="Anexar arquivo"><Paperclip size={19}/></button>
@@ -996,6 +1049,7 @@ export default function App({ user } = {}) {
       messages={messages}
       project={devProjects.active}
       onUpdateMemory={(key, value) => devProjects.activeId && devProjects.updateProject(devProjects.activeId, p => ({ ...p, memory: { ...p.memory, [key]: value } }))}
+      downloadUrl={(path) => conversationDownloadUrl(current?.id, path)}
     />}
 
     {filesDrawerOpen && <Drawer title="Arquivos da conversa" icon={<FolderOpen size={18}/>} onClose={() => setFilesDrawerOpen(false)} className="filesDrawer">
