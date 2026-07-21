@@ -33,9 +33,11 @@ export {
   releaseToolRequest,
   controlInterruptReason,
   setControl,
-  isConversationActive
+  isConversationActive,
+  countActiveRunsForUser
 } from './agent/control.js';
 export { runAgent } from './agent/loop.js';
+export { loadCheckpoint, hasCheckpoint, clearCheckpoint, saveCheckpoint } from './agent/checkpoint.js';
 export { runOrchestrator } from './agent/orchestrator.js';
 export { runMultiModel, normalizeMultiModelConfig, cancelMultiModelSlot, MULTI_MODES, MULTI_ROLES } from './agent/multiModel.js';
 export { saveMessage, persistAssistantReply } from './agent/persistence.js';

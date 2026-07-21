@@ -4,7 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { nanoid } from 'nanoid';
 import { db, now } from '../db.js';
-import { runAgent, runOrchestrator, runMultiModel, normalizeMultiModelConfig, cancelMultiModelSlot, setControl, isConversationActive, friendlyApiError } from '../agent.js';
+import { runAgent, runOrchestrator, runMultiModel, normalizeMultiModelConfig, cancelMultiModelSlot, setControl, isConversationActive, countActiveRunsForUser, friendlyApiError, loadCheckpoint, hasCheckpoint } from '../agent.js';
 import { openLiveStream, getLiveStream } from '../liveStream.js';
 import { runTool } from '../tools.js';
 import { classifyTaskResult } from '../taskOutcome.js';
@@ -20,12 +20,15 @@ import { makeRouter, upload, scanOrReject, decodeUploadName, loadAssistant, ensu
 const router = makeRouter();
 
 router.get('/conversations', async (req, res) => {
-  if (req.query.all === '1') return res.json(await db.prepare('SELECT * FROM conversations WHERE user_id=? ORDER BY updated_at DESC').all(req.userId));
+  // `active` em cada linha: a conversa está processando AGORA? A barra lateral
+  // usa isso para girar o indicador de conversa ativa (multiconversa).
+  const withActive = (rows) => rows.map(row => ({ ...row, active: isConversationActive(row.id) }));
+  if (req.query.all === '1') return res.json(withActive(await db.prepare('SELECT * FROM conversations WHERE user_id=? ORDER BY updated_at DESC').all(req.userId)));
   const clientId = req.query.client || null;
   const rows = clientId
     ? await db.prepare('SELECT * FROM conversations WHERE user_id=? AND client_id=? ORDER BY updated_at DESC').all(req.userId, clientId)
     : await db.prepare('SELECT * FROM conversations WHERE user_id=? AND client_id IS NULL ORDER BY updated_at DESC').all(req.userId);
-  res.json(rows);
+  res.json(withActive(rows));
 });
 
 router.post('/conversations', validate(schemas.conversationCreate), async (req, res) => {
@@ -73,7 +76,17 @@ router.get('/conversations/:id', async (req, res) => {
   // active: há um processamento rodando AGORA nesta conversa? O front usa isso
   // para, ao reabrir a conversa, reconectar ao stream ao vivo (GET /stream) e
   // seguir acompanhando o andamento em vez de só mostrar o histórico parado.
-  res.json({ conversation, messages, active: isConversationActive(req.params.id) });
+  // resumable: existe um checkpoint de execução interrompida? O front mostra o
+  // botão "Continuar de onde parei" na última mensagem (retomada REAL).
+  const active = isConversationActive(req.params.id);
+  const resumable = !active && await hasCheckpoint(req.userId, req.params.id);
+  // Marca a última mensagem do assistente como retomável (o botão vive nela).
+  if (resumable) {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'assistant') { messages[i].resumable = true; break; }
+    }
+  }
+  res.json({ conversation, messages, active, resumable });
 });
 
 router.delete('/conversations/:id', async (req, res) => {
@@ -306,6 +319,13 @@ router.post('/conversations/:id/chat', validate(schemas.chat), async (req, res) 
   if (isConversationActive(req.params.id)) {
     return res.status(409).json({ error: 'Esta conversa já está processando uma resposta. Aguarde terminar ou pare o processamento antes de enviar outra mensagem.' });
   }
+  // Multiconversa: várias conversas podem processar AO MESMO TEMPO, mas com um
+  // teto por usuário para proteger a VPS (cada execução consome provedor,
+  // memória e possivelmente um sandbox). Configurável por env.
+  const maxRuns = Math.max(1, Number(process.env.MAX_ACTIVE_RUNS_PER_USER) || 5);
+  if (countActiveRunsForUser(req.userId) >= maxRuns) {
+    return res.status(429).json({ error: `Você já tem ${maxRuns} conversas processando ao mesmo tempo. Aguarde alguma terminar (o indicador na barra lateral para de girar) ou pare uma delas antes de iniciar outra.` });
+  }
   if (!await ensureConversation(req.userId, req.params.id, req.body?.model)) return res.status(404).json({ error: 'Não encontrado' });
   const limitMsg = await enforceDailyLimit(req.userId);
   if (limitMsg) return res.status(429).json({ error: limitMsg });
@@ -460,6 +480,123 @@ router.post('/conversations/:id/chat', validate(schemas.chat), async (req, res) 
     clearInterval(heartbeat);
     // Encerra o run no registro ao vivo: mantém o buffer por uma janela de
     // carência para quem reconectar no último segundo, depois se apaga sozinho.
+    live.finish();
+    res.end();
+  }
+});
+
+// RETOMADA REAL: continua uma tarefa interrompida A PARTIR DO CHECKPOINT (não
+// recomeça do zero). Diferente do /chat: NÃO grava uma nova mensagem de
+// usuário, carrega o estado salvo (array de mensagens do agente + modelo +
+// cadeia de failover) e passa `resume` ao runAgent, que prossegue da próxima
+// etapa pendente com um orçamento de ciclos NOVO. Reusa o MESMO mecanismo de
+// stream/live do /chat (o front consome igual).
+router.post('/conversations/:id/resume', async (req, res) => {
+  const conversationId = req.params.id;
+  const conv = await db.prepare('SELECT id FROM conversations WHERE id=? AND user_id=?').get(conversationId, req.userId);
+  if (!conv) return res.status(404).json({ error: 'Não encontrado' });
+  if (isConversationActive(conversationId)) {
+    return res.status(409).json({ error: 'Esta conversa já está processando. Aguarde terminar antes de continuar.' });
+  }
+  const checkpoint = await loadCheckpoint(req.userId, conversationId);
+  if (!checkpoint) {
+    return res.status(409).json({ error: 'Não há execução salva para continuar. Envie a mensagem novamente.' });
+  }
+  const maxRuns = Math.max(1, Number(process.env.MAX_ACTIVE_RUNS_PER_USER) || 5);
+  if (countActiveRunsForUser(req.userId) >= maxRuns) {
+    return res.status(429).json({ error: `Você já tem ${maxRuns} conversas processando ao mesmo tempo. Aguarde alguma terminar antes de continuar esta.` });
+  }
+  // MODO GRATUITO: retomar também consome o provedor — valem os mesmos limites
+  // e a mesma fila do /chat.
+  const provider = await getUserProvider(req.userId);
+  const freeMode = provider.source === 'free';
+  if (freeMode) {
+    const denial = await enforceFreeTierLimits(req.userId);
+    if (denial) {
+      logFreeTierEvent({ userId: req.userId, model: provider.model, status: denial.code === 'free_blocked' ? 'blocked' : 'limited', detail: denial.code });
+      const status = denial.code === 'free_blocked' ? 403 : 429;
+      return res.status(status).json({ error: denial.error, code: denial.code, resetAt: denial.resetAt, used: denial.used, limit: denial.limit });
+    }
+  }
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+  let clientGone = false;
+  const live = openLiveStream(conversationId);
+  const send = (event) => {
+    live.publish(event);
+    if (clientGone || res.writableEnded) return;
+    try { res.write(`data: ${JSON.stringify(event)}\n\n`); }
+    catch { clientGone = true; }
+  };
+  const heartbeat = setInterval(() => { if (!clientGone && !res.writableEnded) { try { res.write(': ping\n\n'); } catch { clientGone = true; } } }, 15000);
+  const cancelOnDisconnect = String(process.env.CANCEL_ON_DISCONNECT || '').toLowerCase() === 'true';
+  res.on('close', () => {
+    clientGone = true;
+    clearInterval(heartbeat);
+    if (cancelOnDisconnect && !res.writableEnded) setControl(conversationId, 'stop');
+    if (!res.writableEnded) cancelFreeJob(conversationId);
+  });
+  let releaseFreeSlot = null;
+  try {
+    if (freeMode) {
+      send({ type: 'free_queue', state: 'preparing', provider: provider.providerName, model: provider.model });
+      releaseFreeSlot = await acquireFreeSlot({
+        id: conversationId,
+        onPosition: (position, total) => send({ type: 'free_queue', state: 'waiting', position, total })
+      });
+      send({ type: 'free_queue', state: 'processing' });
+    }
+    const meta = checkpoint.meta || {};
+    const assistant = meta.assistantId ? await loadAssistant(req.userId, meta.assistantId) : null;
+    // O `saved` precisa apontar para a mensagem de usuário REAL (a que originou a
+    // tarefa) — buscamos a última da conversa em vez de gravar uma nova.
+    const lastUser = await db.prepare("SELECT id FROM messages WHERE conversation_id=? AND role='user' ORDER BY created_at DESC, seq DESC LIMIT 1").get(conversationId);
+    const result = await runAgent({
+      userId: req.userId,
+      conversationId,
+      userText: checkpoint.objective,
+      model: checkpoint.model,
+      assistant,
+      webSearch: !!meta.webSearch,
+      effort: meta.effort,
+      developer: meta.developer,
+      resume: checkpoint,
+      saveUserMessage: false,
+      existingUserMessageId: lastUser?.id || null,
+      onEvent: send
+    });
+    const chatOutcome = classifyTaskResult(result);
+    if (chatOutcome.status === 'error') send({ type: 'execution_failed', content: chatOutcome.error });
+    if (result?.usage) {
+      await db.prepare('INSERT INTO usage (id,user_id,conversation_id,assistant_id,model,kind,prompt_tokens,completion_tokens,total_tokens,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
+        .run(nanoid(), req.userId, conversationId, meta.assistantId || null, result.model, 'chat', result.usage.prompt_tokens, result.usage.completion_tokens, result.usage.total_tokens, now());
+    }
+    if (freeMode) {
+      const tokens = result?.usage?.total_tokens || 0;
+      await bumpFreeTierUsage(req.userId, tokens);
+      logFreeTierEvent({ userId: req.userId, model: result?.model || provider.model, status: 'ok', tokens });
+      try { send({ type: 'free_status', ...(await freeTierStatusFor(req.userId, { optedIn: true, source: 'free' })) }); } catch {}
+    }
+    send({ type: 'done' });
+  } catch (err) {
+    if (err?.code === 'FREE_QUEUE_CANCELLED') {
+      logFreeTierEvent({ userId: req.userId, model: provider.model, status: 'cancelled', detail: 'cancelado na fila (retomada)' });
+      send({ type: 'free_queue', state: 'cancelled' });
+      send({ type: 'done' });
+    } else if (err?.code === 'FREE_QUEUE_FULL') {
+      logFreeTierEvent({ userId: req.userId, model: provider.model, status: 'limited', detail: 'fila cheia (retomada)' });
+      send({ type: 'error', content: 'O modo gratuito está com muitas solicitações agora. Aguarde alguns minutos e tente continuar de novo.' });
+    } else {
+      console.error('[resume]', err);
+      if (freeMode) logFreeTierEvent({ userId: req.userId, model: provider.model, status: 'error', detail: String(err?.message || err).slice(0, 300) });
+      send({ type: 'error', content: friendlyApiError(err) });
+    }
+  } finally {
+    releaseFreeSlot?.();
+    clearInterval(heartbeat);
     live.finish();
     res.end();
   }

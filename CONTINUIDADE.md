@@ -1,5 +1,219 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## ⏭️ Retomada REAL de tarefa interrompida — checkpoint persistente (2026-07-21 — branch `claude/modelo-travando-execucao-uwatco`)
+
+**Pedido:** o app prometia "Reenviar para continuar de onde parei" quando a
+tarefa batia no limite de ciclos (~90), mas ao reenviar a execução **começava do
+zero** — todo o progresso, contexto operacional e estado se perdiam. O usuário
+pediu uma retomada estrutural (não só aumentar o limite ou reenviar o texto),
+preservando objetivo, plano, etapas/ferramentas já usadas, arquivos criados,
+comandos executados, resultados, erros, ciclo em que parou, texto parcial,
+decisões, modelo principal/reserva e o que falta — com checkpoint persistente e
+cenários separados (limite / watchdog / desconexão / falha de modelo / reinício
+do backend). É problema DIFERENTE do watchdog (PR #63): watchdog é o stream
+travar; este é a retomada não existir de verdade.
+
+**Causa raiz (confirmada no código):** o array `messages` do agente — que É o
+estado operacional completo (objetivo = msg do usuário; plano/texto parcial =
+conteúdo do assistente; etapas/ferramentas = `assistant.tool_calls`; resultados/
+erros = mensagens `role:'tool'`; decisões = conteúdo) — vivia **só na RAM** e era
+descartado quando o `runAgent` retornava. No limite de ciclos só o `finalText`
+(texto visível parcial) era salvo. E o "Reenviar" (`retrySend`) chamava
+`/truncate` com o id da mensagem do USUÁRIO, **apagando** a msg do usuário + a
+resposta parcial, e reenviava o texto → run NOVO cujo contexto (via
+`selectHistoryForContext`) não tinha nada do turno interrompido. Duas falhas
+somadas: (A) estado nunca persistido; (B) "Reenviar" era restart destrutivo.
+
+**Correção estrutural — o array `messages` VIRA o checkpoint, persistido no
+Postgres:**
+- **`backend/migrations/007_execution_checkpoints.sql`** — tabela
+  `execution_checkpoints` (1 por conversa, PK `conversation_id`, ON DELETE
+  CASCADE): `run_id`, `objective`, `reason`, `model`, `tried_models` (cadeia de
+  failover), `step`, `messages` (JSONB — o estado), `usage`, `meta`. **Postgres →
+  sobrevive a reinício do backend** (não é só RAM).
+- **`backend/src/agent/checkpoint.js`** (novo): `saveCheckpoint`/`loadCheckpoint`/
+  `hasCheckpoint`/`clearCheckpoint`. Partes PURAS (testáveis sem DB/LLM):
+  `trimCheckpointMessages` (apara por tamanho preservando preâmbulo + cauda
+  recente e NUNCA deixando `tool` órfã — pareamento tool_call/tool_result
+  válido), `buildResumeMessages` (semeia o run de retomada: estado + nota de
+  "continue, não repita"), `isResumableReason` (mesmo mecanismo central p/
+  limite E watchdog), `leadingSystemCount`.
+- **`backend/src/agent/loop.js`** — `runAgent` aceita `resume`:
+  - restaura `chosenModel` e `triedModels` do checkpoint (o **modelo de reserva
+    herda o contexto**: continua no modelo ativo e não retenta os que já
+    falharam);
+  - substitui o contexto recém-montado pelo array salvo + notas de continuidade
+    (não regrava mensagem de usuário, não reanexa imagens);
+  - **orçamento de ciclos NOVO** (a retomada avança de verdade em vez de morrer
+    no limite de novo);
+  - `usage` soma sobre o run anterior; `outputsBefore` vazio no resume (arquivos
+    já prontos contam como entrega e não disparam falso "arquivo não gerado");
+  - ao terminar interrompida por `step_limit`/`provider_failure`/`stopped` (com
+    progresso), **salva o checkpoint**; ao concluir limpo, **limpa**. Emite
+    evento `resumable` ao vivo. Mensagem de limite reescrita: "**Continuar**"
+    (não mais "Reenviar").
+- **`backend/src/routes/conversations.js`** — `POST /conversations/:id/resume`
+  (SSE igual ao /chat, mesmo `openLiveStream`, **sem gravar msg de usuário**,
+  carrega o checkpoint e passa `resume` ao runAgent → mesmo `conversationId`, sem
+  execução nova). `GET /:id` devolve `resumable` e marca a última msg do
+  assistente. 409 se já ativo / sem checkpoint; 429 respeita o teto multiconversa.
+- **Frontend** (`useChat.js`, `App.jsx`): `resumeRun(convId)` faz stream do
+  `/resume` reusando `consumeChatStream` (multiconversa-aware: mesma época/gate
+  por conversa, sem duplicar). Botão **"Continuar de onde parei"** (verde,
+  distinto do "Reenviar") aparece na msg quando `resumable` (evento ao vivo OU
+  flag do GET após reload). `.resumeBtn` no styles.css.
+
+**Cenários separados (como pedido):**
+- **Limite de ciclos** → checkpoint `step_limit`, continuação real.
+- **Watchdog/stream travado** → o stall exaurido vira `provider_failure` (retryável)
+  → checkpoint, retomada a partir do conteúdo já recebido.
+- **Frontend desconectado** → reconecta à execução existente (multiconversa,
+  PR #65) — não cria tarefa nova.
+- **Falha do modelo** → failover herda `messages`+`triedModels` do ponto de parada.
+- **Reinício do servidor** → checkpoint no Postgres; `loadCheckpoint` numa
+  requisição nova reidrata o estado.
+
+**Anti-duplicidade:** resume checa `isConversationActive` (409), não grava msg de
+usuário, usa o mesmo `conversationId`; no front, época por conversa descarta
+consumidor duplo (herdado do PR #65).
+
+**Testes:** `backend/src/agent/checkpoint.test.js` (7, PUROS — sem DB/LLM):
+objetivo+ferramentas+resultados+texto parcial preservados; aparo mantém
+pareamento e cauda recente sem tool órfã; toda `tool` tem seu `assistant` antes;
+`buildResumeMessages` adiciona a orientação de continuar (e não a adiciona quando
+parou após ferramenta); `isResumableReason` cobre requisito 8 (watchdog+limite no
+mesmo mecanismo; falhas de qualidade fora). Suíte backend: **151 passam, 0
+falham, 2 skips**. Frontend build OK + 7/7.
+
+**Limitações que permanecem (honestidade):**
+- O checkpoint guarda o estado do MODELO (array de mensagens), não um snapshot do
+  filesystem do sandbox. Arquivos em `/workspace/outputs` persistem em disco por
+  conversa, então continuam disponíveis; mas se o sandbox for reciclado, artefatos
+  FORA de outputs (ex.: venv, estado intermediário) não voltam — o modelo relê/
+  refaz o que precisar a partir dos resultados registrados.
+- Interrupção EXATAMENTE no meio de uma ferramenta longa (ex.: um `bash` a meio
+  de rodar): a ferramenta não é retomada no meio; o resume parte do último
+  resultado COMPLETO registrado. Sem efeito colateral duplicado (a ferramenta
+  incompleta não deixou resultado no array).
+- Os testes puros provam o mecanismo (trim/seed/reason). A continuação
+  ponta-a-ponta (ciclo 90 → 91 sem repetir, com LLM+Postgres reais) precisa ser
+  exercitada em produção — este ambiente não tem provedor nem banco para o E2E.
+- Só o agente de conversa única tem checkpoint. Multimodelo/Equipe ainda não
+  (cada um teria seu próprio estado por participante) — fica como evolução.
+
+## 🔀 Multiconversa — várias conversas processando ao mesmo tempo (2026-07-21 — branch `claude/modelo-travando-execucao-uwatco`)
+
+**Pedido:** ter 3–5 conversas processando simultaneamente, com um indicador
+girando na barra lateral mostrando quais estão ativas — e com MUITO cuidado:
+trocar de conversa não pode parar, misturar nem confundir os andamentos.
+
+**O que já existia:** o backend SEMPRE suportou execuções paralelas em
+conversas diferentes (o controle pausar/parar e o liveStream são POR conversa;
+`ConversationBusyError` só bloqueia a MESMA conversa). As travas eram todas do
+frontend: um único estado global `busy/paused/statusText` no `useChat`, o
+`blockConversationChange` do App impedia trocar de conversa durante um run, e
+o consumo do SSE escrevia em `messages` sem checar qual conversa estava aberta.
+
+**Frontend (`useChat.js` — o núcleo da mudança):**
+- Estado de execução POR CONVERSA: `runs` (`convId → {busy, paused, status}`)
+  + `runsRef` (fonte síncrona). `busy/paused/statusText` viraram PROJEÇÃO da
+  conversa aberta — a API consumida pelo App não mudou (só ganhou
+  `runs`/`anyBusy`). `busyRef` continua = conversa aberta (o `useTasks` usa).
+- **ÉPOCAS de stream (anti-duplicação — o "não pode se misturar"):**
+  `streamEpochsRef` conta uma época por conversa; todo consumidor (envio OU
+  replay de reconexão) registra a época em que nasceu. Quem reconecta avança a
+  época; o consumidor antigo detecta (`isLiveEpoch`) e se descarta cancelando o
+  reader. Sem isso, voltar a uma conversa ativa criaria DOIS consumidores
+  aplicando os mesmos eventos (texto dobrado).
+- **Gates por conversa:** TODO update visual do stream (`update()`, `saved`)
+  só aplica se `currentRef.current?.id === convId`. Status vai para o `runs` da
+  conversa do stream, nunca para um global. Trocar de conversa no meio → os
+  eventos da outra viram no-ops visuais (a tarefa segue no servidor).
+- **1ª mensagem de conversa nova:** `currentRef` é sincronizado por efeito
+  (roda depois do render); o sendMessage agora escreve `currentRef.current =
+  conv` na hora (mesmo truque do openConversation) — sem isso os gates
+  descartariam os primeiros eventos do stream.
+- **Sair e voltar:** sair não interrompe (consumidor original segue lendo com
+  updates em no-op e limpa o estado no `done`); voltar dispara o replay
+  (`followActiveConversation`), que avança a época e reassume. Se o SSE cair
+  com o usuário em OUTRA conversa, `watchDetachedRun` vigia por polling (5s,
+  ~30 min) e apaga o "girando" quando o servidor terminar — a menos que alguém
+  reconecte antes (época avança → vigia se retira).
+- **Limpezas com dono único:** quem assume o acompanhamento (follow) é quem
+  limpa (`endRun`); resultados `stale` NUNCA fazem cleanup (o novo consumidor é
+  o dono). `loadFiles`/`setCurrent` pós-run só se a conversa ainda é a aberta.
+- `App.jsx`: `blockConversationChange` virou no-op (trocar de conversa/cliente/
+  nova conversa é livre); indicador `.spin.sm.convSpin` no item da barra
+  lateral (`runs[c.id] ? runs[c.id].busy : c.active` — estado local vence, flag
+  do servidor cobre reload/outro dispositivo); polling da lista a cada 10s
+  ENQUANTO houver atividade (apaga/acende sozinho). CSS em styles.css.
+
+**Backend (aditivo):**
+- `GET /conversations` (todas as variantes) devolve `active` por linha
+  (`isConversationActive`) — alimenta o indicador após reload/outro aparelho.
+- `control.js`: `acquireConversationControl(conversationId, userId)` marca o
+  dono; novo `countActiveRunsForUser(userId)`. `loop.js`/`multiModel.js`/
+  `orchestrator.js` passam o userId (aditivo, sem mudança de comportamento).
+- `POST /chat`: teto `MAX_ACTIVE_RUNS_PER_USER` (padrão 5, piso 1) → 429 com
+  mensagem clara. Protege a VPS; tarefas de segundo plano não são bloqueadas
+  pelo teto (só contam), e o 409 da MESMA conversa continua igual.
+- `.env.example`/`README.md`: variável nova + linha na tabela de recursos.
+  **Atenção:** conversas paralelas que EXECUTAM código disputam
+  `MAX_SANDBOXES_PER_USER` (padrão 2) — subir os dois juntos se necessário.
+
+**Validação:** backend **144 testes, 0 falhas** (2 novos em
+`agent.control.test.js`: contagem por usuário e independência de stop/pause
+entre conversas do mesmo dono). Frontend: build Vite OK + 7/7 (`dist/`
+recompilado e commitado). NÃO houve teste de UI ao vivo multiconversa (sem
+Docker/Postgres aqui) — validar em produção: enviar em 2–3 conversas, trocar
+entre elas durante o processamento, conferir indicador girando, voltar e ver o
+replay reconectar sem duplicar texto.
+
+## ❓ Pergunta ao usuário encerra o turno — a IA não "responde a si mesma" (2026-07-21 — branch `claude/modelo-travando-execucao-uwatco`, follow-up do PR #63)
+
+**Sintoma (print do usuário):** no Modo Desenvolvedor, o modelo terminou a
+resposta com 3 perguntas ("Quais itens quer que eu ataque? Branch separado com
+PR ou commit direto na main? Algo específico a incluir?") e, em vez de PARAR
+para o usuário responder, a execução CONTINUOU — clonou o repositório e decidiu
+tudo sozinha. O usuário não conseguia responder (o composer fica bloqueado
+enquanto o run está ativo).
+
+**Causa raiz:** quando o modelo para de chamar ferramentas para perguntar, o
+`shouldRepairExecution` (repair.js) interpretava como "execução incompleta" e o
+loop injetava `EXECUTION_COMPLETION_REPAIR_NOTE` com `tool_choice='required'` —
+FORÇANDO o modelo a chamar ferramenta em vez de deixar a pergunta chegar ao
+usuário. Os prompts (EXECUTION_CONTRACT_NOTE: "nada de ficar no plano") ainda
+empurravam na mesma direção. Ou seja: o app tratava "perguntar" como falha.
+
+**Correção:**
+- `backend/src/agent/repair.js` — novo `endsAwaitingUserReply(text)`:
+  detecta que a resposta TERMINA com "?" (após remover avisos padronizados do
+  sistema e enfeites de markdown/aspas/parênteses do fechamento). Conservador:
+  pergunta retórica no meio seguida de conclusão NÃO conta.
+  `EXECUTION_CONTRACT_NOTE` ganhou a exceção explícita: faltou decisão do
+  usuário → pergunte e PARE.
+- `backend/src/agent/loop.js` — no ramo sem tool calls: se
+  `endsAwaitingUserReply(content)` (e NÃO for `forceExecution` — tarefa de
+  segundo plano não tem usuário presente para responder; lá o comportamento
+  antigo continua), o turno completa naturalmente: sem reparo forçado, sem
+  `MISSING_OUTPUT_NOTICE`/`EXECUTION_INCOMPLETE_NOTICE`, sem marcar
+  `incomplete`. A pergunta é entregue e o composer libera. A checagem de
+  `missingClaimedOutput` (texto afirma download que não existe) continua
+  valendo MESMO com pergunta no final — mentir sobre arquivo é pior.
+- `backend/src/agent/prompts.js` — QUALITY_BAR ganhou a regra: pergunta que
+  depende de decisão da pessoa é o FIM da resposta; nunca continuar executando
+  nem responder a própria pergunta no mesmo turno.
+
+**Validação:** `repair.awaiting.test.js` (7 testes novos, incluindo o texto
+REAL do bug com lista numerada de perguntas). Suíte backend completa: **142
+passam, 0 falham, 2 skips pré-existentes**. Sem mudança de frontend (o
+composer já libera quando o run termina — o problema era o run não terminar).
+
+**Comportamento esperado após o deploy:** modelo pergunta → run termina →
+usuário responde → a tarefa continua na mensagem seguinte com o contexto da
+conversa. No modo `auto` o prompt já orienta a só perguntar diante de ação
+destrutiva/fora de escopo — perguntas continuam raras lá.
+
 ## 🧊 Modelo "travando na execução" — watchdog contra stream parado (2026-07-21 — branch `claude/modelo-travando-execucao-uwatco`)
 
 **Sintoma (recorrente, relatado com prints + .mht):** no meio de uma resposta

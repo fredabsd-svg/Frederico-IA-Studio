@@ -1052,6 +1052,13 @@ input[type=checkbox]:focus-visible,input[type=radio]:focus-visible{outline-offse
   .mmModes{grid-template-columns:1fr}
 }
 
+/* ---- Multiconversa: indicador de conversa processando na barra lateral ---- */
+.convItem .convSpin{flex:none;align-self:center;margin-right:2px}
+
+/* ---- Retomada real: botão Continuar de onde parei (checkpoint) ---- */
+.resumeBtn{border-color:var(--ok);color:var(--ok);margin-right:8px}
+.resumeBtn:hover{background:rgba(46,160,67,.10)}
+
 /* ==== MODO GRATUITO ==== */
 /* Cartões de opção (onboarding, tela de limite, escolha de provedor) */
 .freeOptionList{display:flex;flex-direction:column;gap:10px}
