@@ -920,6 +920,52 @@ input[type=checkbox]:focus-visible,input[type=radio]:focus-visible{outline-offse
   .esCardBtn{width:100%;justify-content:center}
 }
 
+/* ===== Ambiente de Trabalho da IA — detalhe rico + transições orgânicas ===== */
+/* Movimento suave: o cartão e as etapas mudam de estado sem "pular". */
+.esCard{transition:border-color .25s ease,background .25s ease}
+.esCardSub{transition:color .2s ease}
+.esCard.live{animation:esPulse 2.4s ease-in-out infinite}
+@keyframes esPulse{0%,100%{box-shadow:0 0 0 0 rgba(79,140,255,0)}50%{box-shadow:0 0 0 3px rgba(79,140,255,.10)}}
+.esStepIn{animation:esIn .22s ease both}
+@keyframes esIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.esStep{transition:background .18s ease,border-color .18s ease}
+.esOverlay{animation:esFade .16s ease}
+.esWindow{animation:esRise .2s ease}
+@keyframes esFade{from{opacity:0}to{opacity:1}}
+@keyframes esRise{from{opacity:0;transform:translateY(10px) scale(.99)}to{opacity:1;transform:none}}
+@media(prefers-reduced-motion:reduce){
+  .esCard.live,.esStepIn,.esOverlay,.esWindow{animation:none}
+  .esCard,.esCardSub,.esStep{transition:none}
+}
+
+/* Miniaturas de imagens geradas */
+.esThumbs{display:flex;flex-wrap:wrap;gap:10px}
+.esThumb{display:flex;flex-direction:column;gap:5px;width:150px;text-decoration:none;color:var(--muted);font-size:var(--fs-2xs)}
+.esThumb img{width:150px;height:150px;object-fit:cover;border-radius:var(--r-md);border:1px solid var(--line);background:var(--code-bg)}
+.esThumb span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.esThumb:hover img{border-color:var(--accent)}
+
+/* Resultados de pesquisa na internet */
+.esResults{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:12px}
+.esResults li{display:flex;flex-direction:column;gap:3px}
+.esResults a{display:inline-flex;align-items:center;gap:5px;color:var(--accent);font-size:var(--fs-sm);font-weight:600;text-decoration:none;overflow-wrap:anywhere}
+.esResults a:hover{text-decoration:underline}
+.esResults p{margin:0;font-size:var(--fs-xs);color:var(--text);line-height:1.5}
+.esResults small{font-size:var(--fs-2xs);color:var(--muted);overflow-wrap:anywhere}
+
+/* Prévia de página aberta no navegador */
+.esPage{display:flex;flex-direction:column;gap:8px}
+.esPageUrl{display:inline-flex;align-items:center;gap:6px;color:var(--accent);font-size:var(--fs-xs);font-weight:600;text-decoration:none;overflow-wrap:anywhere}
+.esPageUrl:hover{text-decoration:underline}
+
+/* Lista de arquivos */
+.esFileList{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px;font-family:ui-monospace,Consolas,monospace;font-size:var(--fs-2xs);color:#b9c6dd}
+.esFileList li{padding:4px 8px;background:var(--code-bg);border:1px solid var(--code-line);border-radius:var(--r-sm)}
+
+/* Miniatura de página capturada pelo navegador headless */
+.esShot{display:block;border-radius:var(--r-md);overflow:hidden;border:1px solid var(--line);background:var(--code-bg);max-width:520px}
+.esShot img{display:block;width:100%;height:auto}
+.esShot:hover{border-color:var(--accent)}
 /* ============================================================
    MULTIMODELO — seletor (topbar) e quadro de respostas por modelo
    ============================================================ */

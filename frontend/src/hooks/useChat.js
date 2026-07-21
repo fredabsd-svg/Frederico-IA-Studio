@@ -145,11 +145,11 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
           else blocks.push({ type: 'text', content: ev.content });
           return { ...m, blocks, content: (m.content || '') + ev.content };
         });
-        if (ev.type === 'tool_start') { setStatusText(`Executando ${ev.name}...`); update(m => ({ ...m, blocks: [...(m.blocks || []), { type: 'tool', name: ev.name, preview: ev.preview, status: 'running', started: Date.now() }] })); }
+        if (ev.type === 'tool_start') { setStatusText(`Executando ${ev.name}...`); update(m => ({ ...m, blocks: [...(m.blocks || []), { type: 'tool', name: ev.name, preview: ev.preview, detail: ev.detail || '', status: 'running', started: Date.now() }] })); }
         if (ev.type === 'tool_result') update(m => {
           const blocks = [...(m.blocks || [])];
           const status = toolResultFailed(ev.content) ? 'error' : 'done';
-          for (let i = blocks.length - 1; i >= 0; i--) { if (blocks[i].type === 'tool' && blocks[i].status === 'running') { blocks[i] = { ...blocks[i], status, ended: Date.now(), result: ev.content }; break; } }
+          for (let i = blocks.length - 1; i >= 0; i--) { if (blocks[i].type === 'tool' && blocks[i].status === 'running') { blocks[i] = { ...blocks[i], status, ended: Date.now(), result: ev.content, ...(ev.thumb ? { thumb: ev.thumb } : {}) }; break; } }
           return { ...m, blocks };
         });
         // ---- Execução multimodelo: estado ao vivo de cada modelo ----

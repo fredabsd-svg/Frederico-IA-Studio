@@ -62,6 +62,15 @@ const conversationDownloadUrl = (conversationId, filePath) => {
   const encodedPath = String(filePath || '').split('/').filter(Boolean).map(encodeURIComponent).join('/');
   return `${API}/api/conversations/${encodedId}/download/${encodedPath}`;
 };
+// Markdown é caro (o rehype-highlight recolore todo bloco de código a cada
+// render). Enquanto a IA responde, o app re-renderiza a cada token e a cada
+// segundo do relógio — sem memo, TODA mensagem antiga era re-parseada junto,
+// e é isso que travava/engasgava a tela. Com React.memo por conteúdo, só o
+// texto que realmente mudou é reprocessado.
+const MessageText = React.memo(function MessageText({ text }) {
+  return <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{text || ''}</ReactMarkdown>;
+});
+
 function dayLabel(v) {
   const d = parseDate(v);
   if (!d) return '';
@@ -831,15 +840,15 @@ export default function App({ user } = {}) {
                   return m.blocks.map((b, i) => {
                     if (b.type === 'tool') {
                       return i === firstToolIdx
-                        ? <ExecutionSession key="exec" steps={toolSteps} live={sessionLive} nowTick={nowTick}/>
+                        ? <ExecutionSession key="exec" steps={toolSteps} live={sessionLive} conversationId={current?.id}/>
                         : null;
                     }
-                    return <ReactMarkdown key={i} remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{b.content || ''}</ReactMarkdown>;
+                    return <MessageText key={i} text={b.content}/>;
                   });
                 })()
               : (m.role === 'user'
-                ? <Collapsible text={m.content}>{t => <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{t}</ReactMarkdown>}</Collapsible>
-                : <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{m.content || ''}</ReactMarkdown>)}
+                ? <Collapsible text={m.content}>{t => <MessageText text={t}/>}</Collapsible>
+                : <MessageText text={m.content}/>)}
             {m.role === 'assistant' && m.failed && <button className="retryBtn" onClick={() => retrySend(idx, m.retryText)}><RefreshCw size={14}/> Reenviar</button>}
             {m.role === 'assistant' && <MemoryTrace memory={m.memory} onOpenMemory={() => setMemoryOpen(true)}/>}
             {m.files?.length > 0 && <div className="filecards">

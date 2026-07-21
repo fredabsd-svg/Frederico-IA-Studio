@@ -1,5 +1,118 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 📸 Miniatura real de página: navegador headless no backend (2026-07-21 — branch `claude/unified-ai-execution-session-25rm4h`, PR #60)
+
+Pedido: "instale um navegador headless" para gerar a MINIATURA real da página
+(o item que ficou de fora no PR #60 inicial, que só mostrava endereço + texto).
+Agora, quando a IA abre uma página com `web_fetch`, o backend renderiza a página
+num Chromium headless e salva um screenshot, exibido no painel de detalhe do
+Ambiente de Trabalho.
+
+**Arquivos:**
+- `Dockerfile` (raiz) — instala `chromium` + `fonts-liberation` via apt e define
+  `ENV CHROMIUM_PATH=/usr/bin/chromium`. **A imagem fica ~alguns 100 MB maior.**
+- `backend/package.json` — adiciona `puppeteer-core` (usa o Chromium do sistema;
+  NÃO baixa navegador). **⚠️ `package-lock.json` não foi regenerado** (sem rede
+  neste ambiente); o Dockerfile usa `npm install` (não `npm ci`), então resolve
+  na build. Rodar `npm install` na VPS/local atualiza o lock.
+- `backend/src/agent/pageShot.js` — **novo**. Navegador compartilhado (singleton
+  com auto-close após 1 min ocioso), `captureThumbnail(url, destPath)`. É
+  **best-effort**: import dinâmico do puppeteer-core em try/catch, checa
+  `CHROMIUM_PATH` existe; qualquer falha/timeout → retorna false e o `web_fetch`
+  segue só com o texto. **SSRF:** interceptação de requisições aborta QUALQUER
+  host bloqueado por `isBlockedHost` (mesma regra do web_fetch), inclusive em
+  redirecionamentos/JS da página. Viewport 1024×640, JPEG q55, timeout 9s.
+- `backend/src/tools.js` — no `runTool`, o `web_fetch` chama `captureThumbnail`
+  após o fetch (URL final já validada) e grava em `<ws>/.thumbs/<id>.jpg`,
+  devolvendo `thumb` (caminho relativo) no resultado. Import de `captureThumbnail`
+  (import circular com pageShot.js → OK, uso só em runtime; testado isolado).
+- `backend/src/agent/loop.js` — extrai `thumb` do resultado do web_fetch e manda
+  num campo SEPARADO no evento `tool_result` (o `content` é cortado em 2000 chars
+  e o caminho poderia se perder).
+- `frontend/src/hooks/useChat.js` — guarda `ev.thumb` no bloco da ferramenta.
+- `frontend/src/components/ExecutionSession.jsx` — `ResultView` do navegador
+  mostra a miniatura clicável (abre em tamanho real) acima do endereço/texto.
+- `frontend/src/styles.css` — `.esShot`.
+- `.env.example` — documenta `CHROMIUM_PATH`, `WEB_FETCH_SCREENSHOTS` (0 desliga),
+  `SCREENSHOT_TIMEOUT_MS`.
+- `README.md` — nova linha na tabela de recursos (Ambiente de Trabalho da IA),
+  nota de arquitetura sobre o Chromium headless e as 3 variáveis novas na tabela
+  de variáveis.
+
+**Decisões:**
+- **puppeteer-core + Chromium do apt** (não playwright, não puppeteer completo):
+  mais leve e é o caminho clássico p/ "screenshot com Chromium do sistema" em
+  Docker. `--no-sandbox --disable-dev-shm-usage` (sem /dev/shm grande no
+  container). Navegador reaproveitado entre capturas e fechado no ócio p/ poupar
+  RAM da VPS.
+- **Miniatura por página, não por pesquisa:** só o `web_fetch` (abrir página)
+  gera screenshot; `web_search` (lista de links) não.
+- **Custo:** cada `web_fetch` passa a renderizar a página (fetch de texto + render
+  no browser). Timeout curto e best-effort limitam o impacto; `WEB_FETCH_SCREENSHOTS=0`
+  desliga tudo se a VPS ficar apertada.
+
+**Validação:** `node --check` nos 3 arquivos backend + repro isolado do import
+circular e do guard SSRF (público passa, localhost bloqueia). Frontend: `build`
+OK + `node --test` (7). **Não** dá p/ testar a captura real aqui (backend sem
+deps — proxy bloqueia `npm install` de `openai`/`sharp` com 403). Quem valida de
+fato é a build da VPS; conferir na tela após o deploy que a miniatura aparece.
+
+## ⚡ Ambiente de Trabalho da IA: fluidez + prévia de arquivo/imagem/página (2026-07-21 — branch `claude/unified-ai-execution-session-25rm4h`, follow-up do PR #59)
+
+Continuação do #59 (que já está na `main`). Dois pedidos: **(1)** a interface
+estava "travando / demorando a atualizar" — não parecia orgânica; **(2)** faltava
+a prévia do conteúdo do arquivo / miniatura da imagem / prévia da página no painel
+de detalhe. Como o #59 já foi mesclado, este trabalho recomeçou do `origin/main`
+no mesmo nome de branch (abre um PR novo).
+
+**(1) Fluidez — o que travava e o que mudou:**
+- **Causa raiz:** enquanto a IA responde, o app re-renderiza a cada token (delta)
+  e a cada 1s (relógio de `useChat`). Sem memo, TODA mensagem — incluindo o
+  `ReactMarkdown` com `rehype-highlight` (recolore blocos de código) de mensagens
+  antigas — era re-parseada a cada tique. Era isso que engasgava, sobretudo no
+  celular.
+- **Correções (`frontend/src/App.jsx`):** novo componente `MessageText` embrulhado
+  em `React.memo` (compara pelo texto) — o markdown só reprocessa o que mudou de
+  fato. Toda renderização de markdown do chat passou a usá-lo.
+- **`frontend/src/components/ExecutionSession.jsx`:** `ExecutionSession` agora é
+  `React.memo` com comparador `sameSteps` (compara nº de etapas + status/ended/
+  result de cada uma). Como `toolSteps` é recriado a cada render (`.filter`),
+  comparar por identidade não bastava — por isso o comparador por conteúdo.
+  O relógio virou estado interno (`now`) que só corre quando `live`, em vez de
+  depender do `nowTick` do pai (prop `nowTick` removida). No overlay, os
+  `useEffect` de auto-seguir/rolar passaram a depender de primitivos
+  (`runningIdx`, `steps.length`, `follow`) e não da identidade do array — antes
+  disparavam a cada render.
+- **CSS (`frontend/src/styles.css`):** transições suaves no cartão/etapas, pulse
+  discreto no cartão "ao vivo", fade/rise no overlay, com guarda
+  `prefers-reduced-motion`.
+
+**(2) Prévia rica no painel de detalhe:**
+- **Backend (`backend/src/agent/loop.js`):** o `write_file` só devolvia `{ok,path,
+  size}` (sem conteúdo). Agora o `tool_start` leva também `detail` = conteúdo
+  escrito (até 4000 chars) — única mudança de backend, aditiva. `useChat.js`
+  guarda `detail` no bloco da ferramenta.
+- **Frontend (`ExecutionSession.jsx`, novo `ResultView`):** o resultado é
+  parseado e formatado por categoria — **imagem** (`generate_image.saved`) vira
+  miniatura clicável (usa `API` + `/download/`); **pesquisa** vira lista de
+  resultados (título/resumo/link); **navegador** (`web_fetch`) mostra o endereço
+  clicável + prévia do texto da página; **terminal** (`bash`/`run_python`) mostra
+  a saída como console (erro se `exitCode≠0`); **leitura**/**lista** mostram
+  conteúdo/arquivos; **gravação** mostra o conteúdo salvo + confirmação.
+- **Miniatura real de página (screenshot) NÃO foi feita:** `web_fetch` retorna só
+  texto; um thumbnail exigiria um navegador headless no backend. Em vez disso, a
+  "prévia da página" é endereço + excerto do texto. Fica como possível evolução.
+
+**Persistência:** os `blocks` (etapas) NÃO são salvos no banco — só existem ao
+vivo e no replay do stream (reconexão). Ao recarregar do zero, a mensagem mostra
+só o texto final (conversa limpa). Comportamento intencional, mantido.
+
+**Validação:** `npm run build` (vite) OK; `node --test src/*.test.js` do frontend
+passa (7). Backend: `node --check src/agent/loop.js` OK e o diff é aditivo; os
+testes que importam `openai` não rodam NESTE ambiente (proxy bloqueia instalar
+`openai`/`sharp` com 403) — quem valida de fato é o build da VPS. Detalhe visual
+(pesquisa, terminal, código, navegador, cartões) conferido em preview antes do
+commit.
 ## 🧑‍💻 Reformulação do Modo Desenvolvedor — ambiente dedicado, 6 modos e memória por projeto (2026-07-21 — branch `claude/developer-mode-redesign-b41nz8`)
 
 **Motivação:** o Modo Desenvolvedor parecia amador — "só uma opção que
