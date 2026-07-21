@@ -231,6 +231,7 @@ Rode na pasta do projeto, via SSH:
 | Ver se está rodando | `docker compose -f docker-compose.prod.yml ps` |
 | Ver os logs | `docker compose -f docker-compose.prod.yml logs -f backend` |
 | **Atualizar para a versão nova** | `bash atualizar.sh` (atalho: baixa do GitHub, reconstrói, limpa imagens antigas e mostra o status). Equivale a `git pull && docker compose -f docker-compose.prod.yml up -d --build`. Os dados (banco, arquivos, `.env`) são preservados. |
+| **Atualizar as ferramentas da IA** | `bash atualizar.sh --ferramentas` — além do código, atualiza LibreOffice, Python e bibliotecas, OCR, ffmpeg, Node, compiladores, Postgres e antivírus. Reconstrói as imagens do zero (`build --no-cache --pull`) e baixa as imagens prontas de novo. **Demora 15–40 min** e baixa alguns GB; use a cada 1–2 meses. Os dados também são preservados. |
 | Reiniciar | `docker compose -f docker-compose.prod.yml restart` |
 | Desligar | `docker compose -f docker-compose.prod.yml down` |
 

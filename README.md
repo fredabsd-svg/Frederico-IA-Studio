@@ -209,6 +209,16 @@ git pull
 docker compose up --build -d
 ```
 
+No Windows, basta rodar o `atualizar.bat` (faz isso tudo sozinho).
+
+**Atualizar também as ferramentas da IA** (LibreOffice, Python e bibliotecas,
+OCR, ffmpeg, Node...): a atualização normal usa o cache do Docker, então as
+ferramentas dentro das imagens só mudam quando os Dockerfiles mudam. Para
+forçar a versão mais nova de tudo, rode o `atualizar-ferramentas.bat`
+(Windows) ou, na VPS, `bash atualizar.sh --ferramentas`. Reconstrói as
+imagens do zero — demora 15–40 min e baixa alguns GB; fazer a cada 1–2 meses
+é suficiente. Os dados (banco, arquivos, `.env`) são preservados.
+
 ---
 
 ## ⚙️ Variáveis importantes

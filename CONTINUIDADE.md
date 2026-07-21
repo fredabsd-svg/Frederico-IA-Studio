@@ -1,5 +1,46 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 🔄 Atualização das FERRAMENTAS da IA via Docker (2026-07-21 — branch `claude/update-tools-docker-i1if7o`)
+
+Pedido: "atualizar o LibreOffice, o Python e as demais ferramentas que o modelo
+utiliza" através do update do Docker. O problema: `atualizar.sh`/`atualizar.bat`
+reconstroem com **cache** — se os Dockerfiles não mudaram, o Docker reaproveita
+as camadas e NÃO reinstala nada; as ferramentas dentro das imagens (sandbox:
+LibreOffice, Python/pip, Tesseract, ffmpeg, Node, compiladores; backend:
+Chromium etc.) ficam congeladas na versão da primeira build.
+
+**Arquivos:**
+- `atualizar.sh` — nova opção `--ferramentas` (aceita `--tools`). Com ela, o
+  fluxo vira 6 passos: git sync → `build --no-cache --pull` (refaz todas as
+  camadas apt/pip/npm e baixa as bases `python:3.12-slim`/`node:20-slim` novas)
+  → `pull postgres clamav` → `up -d` → `image prune -f` → `ps`. Sem a opção,
+  comportamento idêntico ao anterior (4 passos). Argumento desconhecido → erro
+  com uso correto.
+- `atualizar-ferramentas.bat` — **novo**, para o PC (compose local), no estilo
+  dos .bat existentes (sem acentos, checa Docker/`.env`, pausas didáticas):
+  git sync → `down --remove-orphans` → `build --no-cache --pull` →
+  `pull postgres frontend` + `image prune -f` → `up` (com navegador
+  auto-abrindo). Comentário indica `--profile antivirus pull clamav` para quem
+  usa o ClamAV local.
+- `VPS-DEPLOY.md` — nova linha na tabela de operação ("Atualizar as
+  ferramentas da IA").
+- `README.md` — seção "Atualizar uma instalação existente" explica o cache e
+  os dois novos caminhos.
+
+**Decisões:**
+- `--no-cache --pull` em vez de bump manual de versões nos Dockerfiles: os
+  pacotes apt/pip/npm não são pinados, então refazer as camadas já traz as
+  versões atuais dos repositórios. Sem risco de salto de major no banco: o
+  Postgres segue fixado em `pgvector/pgvector:pg16` (pull traz só patch da 16).
+- Avisos de custo em todos os pontos (15–40 min, alguns GB, usar a cada 1–2
+  meses) — o caminho do dia a dia continua sendo a atualização normal.
+- Dados preservados como sempre: volumes (pgdata, clamav_db), `workspaces/` e
+  `.env` ficam fora das imagens; rebuild não os toca.
+
+**Validação:** `bash -n atualizar.sh` OK; ensaio (dry-run) da seleção de
+passos com e sem `--ferramentas`. A build completa não roda neste ambiente
+(sem daemon Docker) — validar na VPS/PC na primeira execução real.
+
 ## 📸 Miniatura real de página: navegador headless no backend (2026-07-21 — branch `claude/unified-ai-execution-session-25rm4h`, PR #60)
 
 Pedido: "instale um navegador headless" para gerar a MINIATURA real da página
