@@ -13,7 +13,7 @@ import { createToolProtocolStreamGuard, parseTextToolCalls, sanitizeToolProtocol
 import { githubToolDefinitions, GITHUB_WRITE_TOOLS, hasGithubConnection } from '../connectors/github.js';
 import { effortCfg, promptFor, toolsFor, temperatureFor, developerContextFor, toolAvailabilityNote, ENVIRONMENT_QUERY_RE, verifiedEnvironmentNote, pcFoldersNote, uploadsNote, clipForBriefing, BRIEFING_CHAR_LIMIT, QUALITY_BAR } from './prompts.js';
 import { listOutputs, mentionsOutputPath, recoverAlternateOutputs, referencedOutputFiles, fileSignature, validateOutputs } from './outputs.js';
-import { OUTPUT_DELIVERY_REPAIR_NOTE, MISSING_OUTPUT_NOTICE, EXECUTION_COMPLETION_REPAIR_NOTE, EXECUTION_INCOMPLETE_NOTICE, TOOL_PROTOCOL_REPAIR_NOTE, TOOL_PROTOCOL_FAILURE_NOTICE, RESPONSE_TRUNCATED_REPAIR_NOTE, RESPONSE_TRUNCATED_NOTICE, EXECUTION_CONTRACT_NOTE, MACRO_REQUEST_RE, MACRO_LIMITATION_NOTE, DEGEN_CHECK_STEP, looksDegenerate, shouldRepairOutputDelivery, shouldRepairExecution, shouldContinueAfterTruncation, materializeTextOutput } from './repair.js';
+import { OUTPUT_DELIVERY_REPAIR_NOTE, MISSING_OUTPUT_NOTICE, EXECUTION_COMPLETION_REPAIR_NOTE, EXECUTION_INCOMPLETE_NOTICE, TOOL_PROTOCOL_REPAIR_NOTE, TOOL_PROTOCOL_FAILURE_NOTICE, RESPONSE_TRUNCATED_REPAIR_NOTE, RESPONSE_TRUNCATED_NOTICE, EXECUTION_CONTRACT_NOTE, MACRO_REQUEST_RE, MACRO_LIMITATION_NOTE, DEGEN_CHECK_STEP, looksDegenerate, shouldRepairOutputDelivery, shouldRepairExecution, shouldContinueAfterTruncation, materializeTextOutput, endsAwaitingUserReply } from './repair.js';
 import { normalizeWebFetchUrl, classifyToolOutcome, webResearchStopReason, planToolCallBatch, WEB_TOOL_NAMES, webResearchFinalizationNote, WEB_RESEARCH_FETCH_LIMIT, TOOL_CALLS_PER_STEP_LIMIT } from './webResearch.js';
 import { imageUploadParts, attachImagesToLastUserMessage, stripImagePartsFromMessages } from './vision.js';
 import { STREAM_RECOVERY_LIMIT, STREAM_RESUME_NOTE, STREAM_PAUSE_RESUME_NOTE, PROVIDER_TIMEOUT_NOTICE, isRetryableStreamError, openRouterRouting, retryDelay, addUsage, applyPromptCache } from './provider.js';
@@ -244,6 +244,7 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
   let webFetchAttempts = 0;
   let webResearchStop = '';
   let webResearchConclusionAttempted = false;
+  let awaitingUserReply = false;
   for (let step = 0; step < hardMaxSteps; step++) {
     // Passou do orçamento base? Só segue enquanto o trabalho ainda rende (uma
     // ferramenta executada com sucesso há poucas etapas). Se estagnou, encerra
@@ -518,7 +519,14 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
         continue;
       }
       const missingClaimedOutput = shouldRepairOutputDelivery(content, outputsBefore, outputsSoFar);
-      const incompleteExecution = shouldRepairExecution({
+      // O modelo terminou PERGUNTANDO algo ao usuário (escopo, opção, permissão):
+      // o turno acabou — entregar a pergunta e aguardar a resposta. Forçar a
+      // execução aqui (reparo com tool_choice='required') fazia o modelo
+      // "responder a própria pergunta" e decidir sozinho, sem o usuário conseguir
+      // intervir. Em tarefas de segundo plano (forceExecution) não há usuário
+      // presente para responder — lá o comportamento antigo continua valendo.
+      awaitingUserReply = !forceExecution && !missingClaimedOutput && endsAwaitingUserReply(content);
+      const incompleteExecution = !awaitingUserReply && shouldRepairExecution({
         requiresExecution: executionRequired,
         requiresOutput,
         toolsAvailable: tools.length > 0,
@@ -655,7 +663,9 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
     outputsAfter = listOutputs(conversationId);
     newFiles = outputsAfter.filter(f => outputsBefore.get(f.path) !== fileSignature(f));
   }
-  if (!newFiles.length && (requiresOutput || mentionsOutputPath(finalText))) {
+  // Turno encerrado numa pergunta ao usuário: não é execução incompleta — o
+  // arquivo/trabalho virá depois que ele responder.
+  if (!newFiles.length && !awaitingUserReply && (requiresOutput || mentionsOutputPath(finalText))) {
     incomplete = true;
     failureMessage ||= 'A tarefa solicitou um arquivo, mas nenhum arquivo foi criado.';
     const alreadyExplained = /\*\*(?:Não consegui|O arquivo não foi gerado)/i.test(finalText);
