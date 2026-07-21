@@ -8,7 +8,7 @@ import { indexAfterReply } from '../memory/indexer.js';
 import { isLowSignalTurn, LOW_SIGNAL_TURN_NOTE } from '../memory/retrievalPolicy.js';
 import { detectToolRequirement } from '../modelCapabilities.js';
 import { runAgent } from './loop.js';
-import { AGENTS, QUALITY_BAR, clipForBriefing, PERSPECTIVE_CHAR_LIMIT, BRIEFING_CHAR_LIMIT, uploadsNote } from './prompts.js';
+import { AGENTS, QUALITY_BAR, clipForBriefing, PERSPECTIVE_CHAR_LIMIT, BRIEFING_CHAR_LIMIT, uploadsNote, developerTeamContextFor } from './prompts.js';
 import { STREAM_RECOVERY_LIMIT, STREAM_RESUME_NOTE, STREAM_PAUSE_RESUME_NOTE, isRetryableStreamError, openRouterRouting, retryDelay, addUsage, friendlyApiError, applyPromptCache } from './provider.js';
 import { guardStreamStall, PROVIDER_CONNECT_TIMEOUT_MS } from './streamGuard.js';
 import { acquireConversationControl, releaseConversationControl, beginProviderRequest, releaseProviderRequest, controlInterruptReason, gate } from './control.js';
@@ -51,6 +51,11 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
     developer: Boolean(developer && !lowSignalTurn),
     hasUploads: !lowSignalTurn && Boolean(uploadsNote(conversationId))
   });
+  // Modo desenvolvedor no Modo Equipe: os especialistas e o coordenador precisam
+  // saber QUAL projeto/repositório está selecionado e que o app já tem acesso ao
+  // GitHub — senão respondem "me mande o link do repositório". (A execução real
+  // continua no executor, via runAgent, que clona e lê o código.)
+  const developerTeamNote = !lowSignalTurn ? developerTeamContextFor(developer, userId) : null;
   let memory = null;
   let memoryMeta = null;
   try {
@@ -217,6 +222,7 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
     if (lowSignalTurn) directMsgs[0] = { role: 'system', content: LOW_SIGNAL_TURN_NOTE };
     directMsgs.push({ role: 'system', content: QUALITY_BAR });
     directMsgs.push({ role: 'system', content: TEAM_TOOL_AWARENESS });
+    if (developerTeamNote) directMsgs.push({ role: 'system', content: developerTeamNote });
     const directPrefixEnd = directMsgs.length; // antes de memória/histórico
     if (memory) directMsgs.push({ role: 'system', content: memory });
     for (const m of histRows) directMsgs.push({ role: m.role, content: String(m.content).slice(0, 2000) });
@@ -237,6 +243,7 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
         onEvent({ type: 'tool_start', name: a.name });
         const sys = `${a.system_prompt}\n\n${TEAM_TOOL_AWARENESS}\n\nVocê faz parte de um time que já está conversando com a pessoa. Olhe o histórico e traga só a sua visão de especialista sobre a nova mensagem, direto ao ponto — sem se apresentar e sem repetir o que o time já disse. Nesta etapa você não gera arquivos nem roda código.`;
         const msgs = [{ role: 'system', content: sys }];
+        if (developerTeamNote) msgs.push({ role: 'system', content: developerTeamNote });
         const memberPrefixEnd = msgs.length; // antes de memória/histórico
         if (memory) msgs.push({ role: 'system', content: memory });
         msgs.push({ role: 'user', content: historyText ? `Histórico recente da conversa:\n${historyText}\n\nNOVA mensagem do usuário:\n${userText}` : userText });
@@ -279,6 +286,7 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
       { role: 'system', content: 'Você coordena um time de assistentes especializados, numa conversa em andamento. Junte as perspectivas abaixo em UMA resposta só, coesa e em português do Brasil, que responda direto à nova mensagem da pessoa. Sem se reapresentar, sem descrever o time e sem discurso — vá ao ponto. Use títulos por área quando ajudar e feche com um resumo prático.' },
       { role: 'system', content: QUALITY_BAR },
       { role: 'system', content: TEAM_TOOL_AWARENESS },
+      ...(developerTeamNote ? [{ role: 'system', content: developerTeamNote }] : []),
       { role: 'user', content: `${historyText ? `Histórico recente:\n${historyText}\n\n` : ''}NOVA mensagem do usuário:\n${userText}\n\nPerspectivas da equipe:\n${combined}` }
     ];
     applyPromptCache(synthMsgs, coordModel, 3); // 3 blocos system estáveis antes do user

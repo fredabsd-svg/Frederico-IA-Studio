@@ -1157,7 +1157,7 @@ export default function App({ user } = {}) {
     {memoryOpen && <MemoryPanel assistants={assistants} clients={clients} clientId={clientId} showToast={showToast} askConfirm={askConfirm} askPrompt={askPrompt} onClose={() => setMemoryOpen(false)}/>}
     {pcOpen && <PcFoldersPanel showToast={showToast} askConfirm={askConfirm} onClose={() => setPcOpen(false)}/>}
     {toolsOpen && <ToolsPanel onPick={pickTool} onClose={() => setToolsOpen(false)}/>}
-    {developerOpen && <DeveloperPanel devProjects={devProjects} initialMode={developerStartMode} onStart={startDeveloperTask} onManageFolders={() => { setDeveloperOpen(false); setPcOpen(true); }} onOpenConnectors={() => { setDeveloperOpen(false); setConnectorsOpen(true); }} onClose={() => setDeveloperOpen(false)}/>}
+    {developerOpen && <DeveloperPanel devProjects={devProjects} team={team} initialMode={developerStartMode} onStart={startDeveloperTask} onManageFolders={() => { setDeveloperOpen(false); setPcOpen(true); }} onOpenConnectors={() => { setDeveloperOpen(false); setConnectorsOpen(true); }} onClose={() => setDeveloperOpen(false)}/>}
     {routinesOpen && <RoutinesPanel assistants={assistants} clients={clients} showToast={showToast} askConfirm={askConfirm} onClose={() => setRoutinesOpen(false)}/>}
     {inboxOpen && <InboxPanel clients={clients} clientId={clientId} showToast={showToast} askConfirm={askConfirm} onOpenConversation={(id) => { fetchConversations(); openConversation(id); }} onClose={() => setInboxOpen(false)}/>}
     {providerOpen && <ProviderPanel showToast={showToast} freeStatus={freeStatus}

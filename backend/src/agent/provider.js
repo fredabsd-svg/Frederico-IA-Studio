@@ -2,7 +2,7 @@
 // de stream interrompido, roteamento OpenRouter, acumulação de usage e
 // tradução de erros da API em mensagens amigáveis.
 // Extraído de agent.js (refatoração mecânica, sem mudança de comportamento).
-import OpenAI from 'openai';
+import { createAiClient } from '../aiClient.js';
 import { isUnsupportedToolError } from '../modelCapabilities.js';
 
 const modelApiBaseUrl = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com';
@@ -10,7 +10,7 @@ const modelApiBaseUrl = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.c
 // provider.client do usuário (getUserProvider). O fallback 'sem-chave' evita
 // que o construtor da OpenAI derrube o boot quando o servidor não tem chave
 // própria (caso da SaaS pura, com ALLOW_SHARED_KEY=false) — igual ao indexer.
-const client = new OpenAI({
+const client = createAiClient({
   apiKey: process.env.DEEPSEEK_API_KEY || 'sem-chave',
   baseURL: modelApiBaseUrl
 });

@@ -10,7 +10,7 @@
 // quem não cadastrou a própria, sem quebrar nada). Numa SaaS pública, ponha
 // ALLOW_SHARED_KEY=false para que o servidor NÃO pague a conta de ninguém —
 // aí cada usuário usa o modo gratuito ou cadastra a própria chave.
-import OpenAI from 'openai';
+import { createAiClient } from './aiClient.js';
 import { db } from './db.js';
 import { decryptSecret } from './crypto.js';
 import { getFreeTierConfig, isFreeModeOptedIn } from './freeTier.js';
@@ -50,7 +50,7 @@ export async function getUserProvider(userId) {
         fallbackModels: free.models.slice(1),
         providerName: free.providerName,
         apiKey: free.apiKey,
-        client: new OpenAI({ apiKey: free.apiKey, baseURL: free.baseURL }),
+        client: createAiClient({ apiKey: free.apiKey, baseURL: free.baseURL }),
       };
     }
   }
@@ -61,7 +61,7 @@ export async function getUserProvider(userId) {
     baseURL,
     model,
     apiKey,          // chave crua (uso interno no servidor: ex. listar o catálogo do provedor do usuário)
-    client: apiKey ? new OpenAI({ apiKey, baseURL }) : null,
+    client: apiKey ? createAiClient({ apiKey, baseURL }) : null,
   };
 }
 

@@ -1,4 +1,4 @@
-import OpenAI from 'openai';
+import { createAiClient } from '../aiClient.js';
 import { db, now } from '../db.js';
 import { nanoid } from 'nanoid';
 import { embed } from './embeddings.js';
@@ -12,7 +12,7 @@ import { sanitizeToolProtocolText } from '../toolProtocol.js';
 
 let _client = null;
 function client() {
-  if (!_client) _client = new OpenAI({
+  if (!_client) _client = createAiClient({
     apiKey: process.env.DEEPSEEK_API_KEY || 'sem-chave',
     baseURL: process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com'
   });

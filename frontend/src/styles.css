@@ -509,6 +509,9 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .devProjectStatus>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .devProjectStatus b{display:inline-flex;align-items:center;gap:5px;font-size:var(--fs-2xs);font-weight:700}
 .devProjectStatus b.write{color:var(--ok)}.devProjectStatus b.read{color:var(--muted)}
+.devTeamHint{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:start;gap:8px;margin-top:6px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--panel2);padding:8px 10px;color:var(--muted);font-size:var(--fs-xs);line-height:1.4}
+.devTeamHint>svg{color:var(--accent);margin-top:1px}
+.devTeamHint b{color:var(--text);font-weight:700}
 .devBrief{display:flex;flex-direction:column;gap:7px;font-size:var(--fs-sm);font-weight:600;color:var(--muted)}
 .developerDrawer .devBrief textarea{min-height:112px;resize:vertical}
 .devRules{border:1px solid var(--line);border-radius:var(--r-sm);background:var(--panel2);padding:0 11px}

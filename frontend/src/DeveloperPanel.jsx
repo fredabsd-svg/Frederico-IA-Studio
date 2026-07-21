@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  ArrowRight, BookOpen, Code2, FolderCog, FolderOpen, GitBranch, Lock, Unlock,
+  ArrowRight, BookOpen, Code2, FolderCog, FolderOpen, GitBranch, Lock, Unlock, Info,
   MessageCircleQuestion, ListChecks, Hammer, Bug, ShieldCheck, Bot, Plus, Trash2, FolderGit2
 } from 'lucide-react';
 import { API, DEV_WORK_MODES } from './constants.js';
@@ -25,7 +25,7 @@ function bindingToValue(binding) {
   return '';
 }
 
-export function DeveloperPanel({ devProjects, onStart, onManageFolders, onOpenConnectors, onClose, initialMode }) {
+export function DeveloperPanel({ devProjects, onStart, onManageFolders, onOpenConnectors, onClose, initialMode, team = false }) {
   const { projects, active, activeId, setActiveId, createProject, updateProject, deleteProject } = devProjects;
 
   const [folders, setFolders] = useState(null);
@@ -185,6 +185,10 @@ export function DeveloperPanel({ devProjects, onStart, onManageFolders, onOpenCo
       {githubRepoName && <div className="devProjectStatus">
         <GitHubIcon size={15}/><span title={githubRepoName}>{githubRepoName}</span>
         <b className={canWriteProject ? 'write' : 'read'}>{canWriteProject ? <Unlock size={13}/> : <Lock size={13}/>}{canWriteProject ? 'Pode enviar (push)' : 'Só leitura'}</b>
+      </div>}
+      {githubRepoName && team && <div className="devTeamHint">
+        <Info size={15}/>
+        <span>Modo Equipe ativo: os especialistas do debate <b>analisam e orientam</b>, mas quem lê o código do repositório de fato é o executor, na etapa de execução. Para o modelo <b>ler os arquivos e responder direto</b>, desligue a Equipe e use um assistente único.</span>
       </div>}
       {!githubConnected && githubRepos !== null && <div className="muted small" style={{ marginTop: 2 }}>
         Quer trabalhar num repositório GitHub? <button type="button" className="linklike" onClick={onOpenConnectors}>Conecte a sua conta</button>.
