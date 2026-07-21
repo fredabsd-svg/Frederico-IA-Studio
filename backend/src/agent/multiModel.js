@@ -18,7 +18,7 @@
 // executados e produzem resposta própria (ver docs — seção 15 do pedido).
 import { getUserProvider } from '../userProvider.js';
 import { db } from '../db.js';
-import { getModelProfile } from '../modelCapabilities.js';
+import { getModelProfile, providerLabel } from '../modelCapabilities.js';
 import { indexAfterReply } from '../memory/indexer.js';
 import { runAgent } from './loop.js';
 import { clipForBriefing } from './prompts.js';
@@ -170,10 +170,12 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
       slot,
       member,
       name: memberName(member),
+      provider: providerLabel(member.id),
       role: member.role,
       roleLabel: roleOf(member).label,
       status: STATUS.waiting,
       text: '',
+      history: [],       // debate: texto de cada rodada [{ round, text }]
       usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
       costUsd: null,
       elapsedMs: 0,
@@ -198,7 +200,7 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
     onEvent({
       type: 'mm_start',
       mode: config.mode,
-      models: slots.map(s => ({ slot: s.slot, id: s.member.id, name: s.name, role: s.role, roleLabel: s.roleLabel }))
+      models: slots.map(s => ({ slot: s.slot, id: s.member.id, name: s.name, provider: s.provider, role: s.role, roleLabel: s.roleLabel }))
     });
 
     // Capacidade mínima: o modelo precisa conversar por texto. Modelos sem
@@ -368,6 +370,10 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
 
     let finalText = '';
     let roundsRun = 1;
+    // Síntese do COORDENADOR (só em council/debate). Fica no meta para a
+    // interface exibir como um bloco próprio ("Conclusão do Conselho" / do
+    // debate), em vez de o texto solto duplicar visualmente o 1º modelo.
+    let synthesis = null;
 
     if (config.mode === 'pipeline') {
       // ---- Execução SEQUENCIAL (especialistas em cadeia) ----
@@ -381,6 +387,9 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
 
       if (config.mode === 'debate' && !control.stopped && !budgetExceeded) {
         // ---- Rodadas de debate: cada modelo lê os demais, critica e revisa ----
+        // Guarda o texto de CADA rodada (não só o final) para a interface poder
+        // mostrar a discussão organizada por rodadas (crítica → réplica → revisão).
+        for (const s of runnable()) s.history = [{ round: 1, text: s.text }];
         for (let round = 2; round <= config.rounds; round++) {
           if (control.stopped || budgetExceeded) break;
           if (await gate(control, onEvent)) break;
@@ -398,6 +407,8 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
             onEvent({ type: 'mm_reset', slot: state.slot, round });
             return streamSlot(state, slotMessages(state, extra), { statusWhileStreaming: STATUS.reviewing });
           }));
+          // Fecha a rodada: registra o texto revisado de cada modelo no histórico.
+          for (const s of runnable()) (s.history = s.history || []).push({ round, text: s.text });
         }
       }
 
@@ -412,6 +423,7 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
         const budgetNote = budgetExceeded ? '\n\nATENÇÃO: o orçamento definido pelo usuário foi atingido — parte das rodadas pode não ter acontecido. Deixe isso claro em uma nota curta ao final.' : '';
         try {
           finalText = await streamCoordinator(`${historyText ? `Contexto da conversa:\n${clipForBriefing(historyText, 6000)}\n\n` : ''}Solicitação do usuário:\n${userText}\n\nRespostas dos modelos:\n${body || '_nenhum modelo conseguiu responder_'}${budgetNote}`);
+          synthesis = { text: clipForBriefing(finalText, META_TEXT_LIMIT), model: config.coordinator, name: memberName({ id: config.coordinator }), provider: providerLabel(config.coordinator) };
         } catch (err) {
           finalText = `Não foi possível consolidar a resposta final: ${friendlyApiError(err)}`;
           onEvent({ type: 'delta', content: finalText });
@@ -477,9 +489,12 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
         // A execução real já foi salva pelo runAgent. Se houve etapas de revisão
         // DEPOIS do implementador, salvamos um segundo balão com os pareceres.
         if (postExecutorOutputs.length) {
+          // Segundo balão só com as revisões, em TEXTO. Não anexamos multiMeta
+          // aqui: a execução real (com o board ao vivo) já é a mensagem principal;
+          // anexar o board de novo fazia os cartões aparecerem DUPLICADOS ao
+          // reabrir a conversa.
           const reviewText = `## Revisão da equipe de modelos\n\n${postExecutorOutputs.map(p => `### ${p.name} — ${p.roleLabel}\n${p.text}`).join('\n\n')}`;
-          const multiMeta = buildMeta();
-          const reviewMsgId = await saveMessage(userId, conversationId, 'assistant', reviewText, { multiMeta });
+          const reviewMsgId = await saveMessage(userId, conversationId, 'assistant', reviewText);
           onEvent({ type: 'mm_review_saved', assistantMessageId: reviewMsgId });
         }
         // Fecha o quadro ao vivo mesmo sem mensagem própria do multimodelo
@@ -502,9 +517,16 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
         budgetUsd: config.budgetUsd || undefined,
         budgetExceeded: budgetExceeded || undefined,
         elapsedMs: Date.now() - startedAt,
+        // Síntese do coordenador (council/debate) — exibida como bloco próprio.
+        synthesis: synthesis || undefined,
         models: slots.map(s => ({
-          slot: s.slot, id: s.member.id, name: s.name, role: s.role, roleLabel: s.roleLabel,
+          slot: s.slot, id: s.member.id, name: s.name, provider: s.provider,
+          role: s.role, roleLabel: s.roleLabel, step: s.slot + 1,
           status: s.status, text: clipForBriefing(s.text, META_TEXT_LIMIT),
+          // Histórico por rodada (só debate) — para a interface agrupar a discussão.
+          history: (config.mode === 'debate' && s.history?.length)
+            ? s.history.map(h => ({ round: h.round, text: clipForBriefing(h.text, META_TEXT_LIMIT) }))
+            : undefined,
           usage: s.usage, costUsd: s.costUsd, elapsedMs: s.elapsedMs,
           error: s.error, truncated: s.truncated || undefined
         })),

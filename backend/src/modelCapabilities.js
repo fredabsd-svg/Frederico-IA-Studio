@@ -127,6 +127,26 @@ export function getModelProfile(id) {
   return catalog.get(key) || modelProfileFromProvider({ id: key, name: key });
 }
 
+// Nome amigável do PROVEDOR/desenvolvedor do modelo, derivado do prefixo do id
+// do OpenRouter (formato "provedor/modelo", ex.: "openai/gpt-4o" → "OpenAI").
+// Usado na interface multimodelo para exibir de quem é cada resposta.
+const PROVIDER_LABELS = {
+  openai: 'OpenAI', 'anthropic': 'Anthropic', google: 'Google', 'meta-llama': 'Meta',
+  mistralai: 'Mistral', deepseek: 'DeepSeek', qwen: 'Qwen', 'x-ai': 'xAI', cohere: 'Cohere',
+  nvidia: 'NVIDIA', microsoft: 'Microsoft', perplexity: 'Perplexity', moonshotai: 'Moonshot AI',
+  'z-ai': 'Z.AI', amazon: 'Amazon', openrouter: 'OpenRouter', nousresearch: 'Nous Research',
+  minimax: 'MiniMax', bytedance: 'ByteDance', 'thudm': 'THUDM', ai21: 'AI21', inflection: 'Inflection',
+  liquid: 'Liquid', 'inception': 'Inception', reka: 'Reka', gryphe: 'Gryphe', sao10k: 'Sao10K',
+  poolside: 'Poolside', aionlabs: 'AionLabs'
+};
+export function providerLabel(id) {
+  const prefix = String(id || '').split('/')[0].toLowerCase().trim();
+  if (!prefix) return '';
+  if (PROVIDER_LABELS[prefix]) return PROVIDER_LABELS[prefix];
+  // Fallback: capitaliza o prefixo (ex.: "algum-provedor" → "Algum-provedor").
+  return prefix.charAt(0).toUpperCase() + prefix.slice(1);
+}
+
 export function markModelCapabilityUnsupported(id, capability) {
   if (!CAPABILITY_KEYS.includes(capability)) return null;
   const profile = getModelProfile(id);

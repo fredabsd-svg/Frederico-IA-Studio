@@ -907,7 +907,12 @@ export default function App({ user } = {}) {
               onContinueWith={continueWithModel}
               onAskReview={askReviewOfModel}
               onCombine={combineAnswers}/>}
-            {m.role === 'assistant' && m.multi && ['compare', 'pipeline'].includes(m.multi.mode) && !(m.blocks || []).some(b => b.type === 'tool')
+            {/* Com o quadro multimodelo presente, o texto salvo (concatenação das
+                respostas ou a síntese do coordenador) é redundante com o board —
+                que já mostra tudo, inclusive a "Conclusão". Só NÃO suprimimos
+                quando há execução real de ferramentas (pipeline do Modo
+                Desenvolvedor), pois aí o texto é o entregável de verdade. */}
+            {m.role === 'assistant' && m.multi && !(m.blocks || []).some(b => b.type === 'tool')
               ? null
               : m.blocks
               ? (() => {
