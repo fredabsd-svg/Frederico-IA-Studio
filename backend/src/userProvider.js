@@ -35,6 +35,7 @@ export async function getUserProvider(userId) {
     source,          // 'user' | 'server' | 'none'
     baseURL,
     model,
+    apiKey,          // chave crua (uso interno no servidor: ex. listar o catálogo do provedor do usuário)
     client: apiKey ? new OpenAI({ apiKey, baseURL }) : null,
   };
 }

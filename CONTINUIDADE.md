@@ -1,5 +1,46 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 🔄 Catálogo de modelos por usuário — OpenRouter voltando a aparecer (2026-07-20 — branch `claude/openrouter-models-sync-wp1krw`)
+
+**Sintoma relatado:** "modelos do OpenRouter que não aparecem no app" — dúvida se
+era falta de sincronização.
+
+**Causa-raiz (não era sincronização):** a rota `GET /api/models`
+(`backend/src/routes/models.js`) buscava o catálogo SEMPRE com a `base_url` e a
+chave do **servidor** (`DEEPSEEK_BASE_URL`/`DEEPSEEK_API_KEY` do `.env`),
+ignorando o provedor **BYOK de cada usuário**. Como a produção roda
+`ALLOW_SHARED_KEY=false` (sem chave de servidor) e o default da base é o DeepSeek,
+um usuário com chave própria do OpenRouter recebia um catálogo que NÃO era o dele
+(no pior caso, pouquíssimos modelos). Havia ainda um **cache global único**
+(`modelsCache`/`modelsCacheAt`) compartilhado entre todos os usuários,
+independentemente do provedor de cada um.
+
+**Correção:**
+- `backend/src/routes/models.js`: a rota agora resolve
+  `getUserProvider(req.userId)` e busca o catálogo na MESMA `base_url`/chave que o
+  usuário usa para conversar (o mesmo provider do chat). O cache virou um `Map`
+  por chave: `u:<userId>` para quem tem chave própria (o catálogo pode variar por
+  conta) e `s:<base>` para quem usa a chave compartilhada do servidor. TTL de 10
+  min mantido. Fetch cru preservado (não usa `client.models.list()`) para garantir
+  que os campos extras do OpenRouter — `architecture`, `pricing`,
+  `supported_parameters` — cheguem intactos ao `registerModelCatalog`
+  (é deles que sai a detecção de ferramentas/visão/raciocínio).
+- `backend/src/userProvider.js`: `getUserProvider` passou a expor `apiKey` (chave
+  crua) no objeto de retorno — uso interno no servidor, para a rota autenticar a
+  listagem no provedor do usuário. Aditivo; nenhum consumidor existente muda.
+
+**Verificação:** endpoint real do OpenRouter retorna **339 modelos**; o backend
+não descarta nenhum (só exige `id`) e `registerModelCatalog` produz os 339
+perfis. `node --check` OK nos dois arquivos; nenhum teste dependia da rota antiga.
+NÃO houve teste de UI ao vivo (sem Node/Docker no host desta sessão).
+
+**Não era bug do app (para triagem futura):** cache de 10 min atrasa modelos
+recém-adicionados; a aba "Recomendados" do seletor mostra só ~6 (catálogo inteiro
+fica na aba "Catálogo"); o "modelo padrão do assistente" e o objetivo "Trabalho
+geral" escondem de propósito os ~71 modelos SEM ferramentas (geradores de
+imagem/áudio, safety); e a política de dados/provedores da própria conta OpenRouter
+pode bloquear modelos na hora de usar ("No endpoints found").
+
 ## 🏷️ Logos de provedor no seletor de modelos (2026-07-20) — NÃO VALIDADO LOCALMENTE
 
 Cada modelo da lista mostra o logo oficial do provedor antes do nome, e o filtro
