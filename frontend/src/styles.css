@@ -20,6 +20,16 @@
 .mpItem:hover{background:var(--panel2)}
 .mpItem.sel{background:rgba(79,140,255,.14)}
 .mpItemName{font-size:var(--fs-sm);color:var(--text);padding-right:22px}
+/* Selo discreto de classificação de referência no seletor de modelo — só
+   aparece quando o modelo bate com algo da lista (modelRanking.js); some
+   sozinho para todos os outros, sem mudar o layout do item. */
+.mpRank{display:inline-flex;align-items:center;justify-content:center;margin-left:6px;padding:1px 6px;border-radius:var(--r-full);font-size:9px;font-weight:800;letter-spacing:.02em;vertical-align:middle;line-height:1.6}
+.mpRank.tierSp{background:color-mix(in srgb,var(--accent) 24%,transparent);color:var(--accent)}
+.mpRank.tierS{background:color-mix(in srgb,var(--accent) 18%,transparent);color:var(--accent)}
+.mpRank.tierAp{background:color-mix(in srgb,var(--accent) 13%,transparent);color:var(--muted)}
+.mpRank.tierA{background:color-mix(in srgb,var(--accent) 9%,transparent);color:var(--muted)}
+.mpRank.tierBp{background:rgba(127,127,127,.14);color:var(--muted)}
+.mpRank.tierB{background:rgba(127,127,127,.1);color:var(--muted)}
 .mpItemId{font-size:var(--fs-2xs);color:var(--muted);font-family:ui-monospace,Consolas,monospace}.gear{display:flex;align-items:center;justify-content:center;padding:9px 11px}.gear:hover{border-color:var(--accent);color:var(--accent)}.gear:disabled{opacity:.4;cursor:not-allowed}.gear.on{border-color:var(--accent);color:var(--accent)}.pickers select:disabled{opacity:.5;cursor:not-allowed}.messages{flex:1;overflow:auto;padding:26px;display:flex;flex-direction:column;gap:18px}.msg{max-width:900px;line-height:1.55;position:relative}
 .msgActions{position:absolute;top:-13px;right:10px;display:flex;gap:4px;opacity:0;transition:opacity .15s;z-index:5}
 .msg:hover .msgActions,.msgActions:focus-within{opacity:1}

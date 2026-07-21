@@ -54,7 +54,7 @@ você escolhe é enviado direto ao provedor, sem substituição.
 | 🔌 | **Conector GitHub** | Conecte a sua conta (token) e a IA clona um repositório, altera o código e envia de volta — push e Pull Request direto pelo chat ou pelo modo desenvolvedor; o token fica cifrado e nunca entra no sandbox |
 | 🎙️ | **Voz e segundo plano** | Ditado por voz, tarefas em background, histórico por cliente |
 | 🛡️ | **Privacidade (LGPD)** | Consentimento registrado, Política de Privacidade e Termos publicados, e painel "Privacidade e dados": exportar tudo em JSON, apagar o histórico ou excluir a conta — hard delete, sem soft delete |
-| 🏷️ | **Seletor de modelos com logos** | Catálogo e filtro por fornecedor com o logo oficial de cada provedor, servido localmente (sem CDN) |
+| 🏷️ | **Seletor de modelos com logos** | Catálogo e filtro por fornecedor com o logo oficial de cada provedor, servido localmente (sem CDN); selo opcional de **classificação de referência** (S+ a B) ao lado do nome, quando o modelo bate com a curadoria em `frontend/src/modelRanking.js` — some sozinho para os demais, e dá para ordenar o catálogo por essa classificação |
 
 ### Execução confiável
 

@@ -1,5 +1,57 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 🏆 Classificação de referência dos modelos no seletor (2026-07-21 — branch `claude/antivirus-vps-42tstn`)
+
+**Pedido:** o usuário tem um ranking pessoal dos 100 melhores modelos (Tier
+S+/S/A+/A/B+/B) e queria essa informação disponível no seletor de modelo, sem
+"bagunçar o layout" nem complicar a visualização.
+
+**Decisão de design:** nada de seção nova, coluna nova ou painel novo — só um
+**selo discreto** (`S+`/`S`/`A+`/.../`B`) colado ao nome do modelo, e mais UMA
+opção no `<select>` "Ordenar" que já existia (Nome/Lançamentos/Menor custo →
++ "Classificação de referência"). Modelo sem correspondência no ranking não
+ganha selo nenhum — o app nunca inventa uma posição.
+
+**`frontend/src/modelRanking.js`** (novo): os 100 nomes na ordem informada
+(posição no array = rank), faixas de tier fixas (1–10 S+, 11–25 S, 26–50 A+,
+51–75 A, 76–90 B+, 91–100 B) e `findRanking(model)`. O casamento é por NOME
+normalizado contra o catálogo real (que vem do OpenRouter/DeepSeek em tempo de
+execução) — não por id, porque os nomes na lista ("Claude Opus 4.8 Thinking")
+raramente batem exatamente com o slug do catálogo
+(`anthropic/claude-opus-4.8`). Normalização: minúsculas, travessão usado como
+separador vira espaço (mas hífen colado numa palavra como `gpt-5.6` ou `x-ai`
+não é tocado), pontuação removida sem quebrar número de versão (`5.6` → `56`,
+não `5 6`). Se não bate exato, tenta bater pela versão "sem ruído" (remove
+palavras como thinking/high/preview/turbo/instant/beta N) — assim "Claude Opus
+4.8" (nome simples do catálogo) encontra a entrada "Claude Opus 4.8 Thinking"
+da lista quando não existe uma entrada sem qualificador. **Sem match nenhum →
+`null` → sem selo.** Nunca chuta.
+
+**`components.jsx` (`ModelPicker`)**: `row(model)` calcula `findRanking(model)`
+uma vez e, se existir, insere `<span class="mpRank tier{X}">{tier}</span>`
+logo depois do nome, com `title` explicando a posição exata (ex.: "#22 de 100
+· Tier S"). Novo `sort==='rank'` no `sortFn` existente + `<option
+value="rank">` no select "Ordenar" (mesmo padrão de "Lançamentos"/"Menor
+custo" — nada de UI nova).
+
+**CSS (`styles.css`)**: `.mpRank` é uma pastilha pequena, cor **derivada de
+`var(--accent)`** por `color-mix` (mais forte em S+/S, neutra em B+/B) — não
+hex fixo, mantém a regra das 7 paletas. Um bloco de 8 linhas, sem novo layout.
+
+**Honestidade sobre o rótulo:** o app é multiusuário (SaaS). Chamei de
+"Classificação de referência" em vez de "Sua classificação"/"Minha
+classificação" no texto visível, porque é uma curadoria do dono do app
+embutida como dado estático — não é a opinião de quem está logado no momento
+(mesmo cuidado já aplicado noutras partes do produto, ex.: seção de segurança
+da landing só anuncia o que está de fato ativo).
+
+**Teste:** dataset com 100 entradas confirmado (contagem por tier bate:
+10/15/25/25/15/10), casamento verificado com nomes reais plausíveis do
+catálogo (`Claude Sonnet 5`→#22, `Claude Opus 4.8`→#11 exato, `GPT-5.6
+Sol`→#2 via fallback sem "xHigh", nome desconhecido→`null`), e render real
+(`renderToStaticMarkup`) do `ModelPicker` confirmando que o HTML gerado tem o
+selo certo (`tierS`, tooltip com #22) no lugar certo.
+
 ## 🖥️ Redesign do Modo Desenvolvedor a partir de handoff de design (2026-07-21 — branch `claude/antivirus-vps-42tstn`)
 
 **Pedido:** aplicar no app um handoff de design (`.dc.html` + README, protótipo
