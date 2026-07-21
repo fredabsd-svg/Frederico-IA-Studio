@@ -7,6 +7,7 @@ import './styles.css';
 import './v2.css';
 import './auth.css';
 import './landing.css';
+import './dev-handoff.css';
 import './camera.css';
 
 // Rotas públicas dos documentos legais (LGPD) — funcionam sem login, tanto no
