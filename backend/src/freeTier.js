@@ -26,15 +26,14 @@ const ENV_PROVIDER_NAME = (process.env.FREE_TIER_PROVIDER_NAME || defaultProvide
 // Modelos gratuitos oferecidos, em ordem de preferência (o 1º habilitado é o
 // padrão; os demais são a cadeia de reserva quando o provedor devolve 429/5xx).
 const ENV_MODELS = String(process.env.FREE_TIER_MODELS || [
-  // Padrões pensados para o OpenRouter (sufixo :free = custo zero). A lista
-  // :free ROTACIONA sem aviso — confira em openrouter.ai/collections/free-models
-  // e ajuste FREE_TIER_MODELS no .env quando um modelo sair do ar. O último da
-  // lista é o roteador automático do OpenRouter (escolhe qualquer :free vivo).
-  'google/gemma-4-31b-it:free',
-  'openai/gpt-oss-20b:free',
-  'nvidia/nemotron-3-super-120b-a12b:free',
-  'nvidia/nemotron-nano-9b-v2:free',
-  'openrouter/free'
+  // Padrões pensados para o OpenRouter (sufixo :free = custo zero). ATENÇÃO: a
+  // lista :free ROTACIONA sem aviso — modelos entram e SAEM do ar. Quando um id
+  // sai, o provedor responde 404 ("Modelo não encontrado"); por isso o app agora
+  // faz FAILOVER para o próximo desta lista (ver loop.js/isModelUnavailableError).
+  // Ainda assim, confira periodicamente em openrouter.ai/models?q=:free e ajuste
+  // FREE_TIER_MODELS no .env — estes padrões podem envelhecer.
+  'nvidia/nemotron-3-ultra-550b-a55b:free',
+  'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free'
 ].join(',')).split(',').map(s => s.trim()).filter(Boolean);
 const ENV_MSGS_PER_DAY = Math.max(1, Number(process.env.FREE_TIER_MSGS_PER_DAY || 20));
 const ENV_MSGS_PER_MIN = Math.max(1, Number(process.env.FREE_TIER_MSGS_PER_MIN || 4));
