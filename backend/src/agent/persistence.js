@@ -35,8 +35,23 @@ export async function memoryNote(userId, assistantId, clientScope) {
 export async function saveMessage(userId, conversationId, role, content, extra = {}) {
   const id = nanoid();
   const memoryMeta = extra.memoryMeta ? JSON.stringify(extra.memoryMeta).slice(0, 20000) : null;
-  await db.prepare('INSERT INTO messages (id, conversation_id, role, content, memory_meta, created_at) VALUES (?,?,?,?,?,?)')
-    .run(id, conversationId, role, content, memoryMeta, now());
+  // Execução multimodelo: resultado individual de cada modelo (função, status,
+  // texto, tokens, custo) para a interface remontar os cartões ao reabrir.
+  // Um .slice() cego quebraria o JSON; se passar do teto, regrava com os textos
+  // individuais encurtados (o texto principal da mensagem continua íntegro).
+  let multiMeta = null;
+  if (extra.multiMeta) {
+    multiMeta = JSON.stringify(extra.multiMeta);
+    if (multiMeta.length > 200000) {
+      const compact = {
+        ...extra.multiMeta,
+        models: (extra.multiMeta.models || []).map(m => ({ ...m, text: String(m.text || '').slice(0, 4000) }))
+      };
+      multiMeta = JSON.stringify(compact);
+    }
+  }
+  await db.prepare('INSERT INTO messages (id, conversation_id, role, content, memory_meta, multi_meta, created_at) VALUES (?,?,?,?,?,?,?)')
+    .run(id, conversationId, role, content, memoryMeta, multiMeta, now());
   await db.prepare('UPDATE conversations SET updated_at=? WHERE id=? AND user_id=?').run(now(), conversationId, userId);
   return id;
 }

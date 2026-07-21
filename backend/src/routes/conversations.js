@@ -4,7 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { nanoid } from 'nanoid';
 import { db, now } from '../db.js';
-import { runAgent, runOrchestrator, setControl, isConversationActive, friendlyApiError } from '../agent.js';
+import { runAgent, runOrchestrator, runMultiModel, normalizeMultiModelConfig, cancelMultiModelSlot, setControl, isConversationActive, friendlyApiError } from '../agent.js';
 import { openLiveStream, getLiveStream } from '../liveStream.js';
 import { runTool } from '../tools.js';
 import { classifyTaskResult } from '../taskOutcome.js';
@@ -61,6 +61,11 @@ router.get('/conversations/:id', async (req, res) => {
       try { m.memory = JSON.parse(m.memory_meta); } catch {}
     }
     delete m.memory_meta;
+    // Execução multimodelo: devolve os cartões por modelo para a interface
+    if (m.multi_meta) {
+      try { m.multi = JSON.parse(m.multi_meta); } catch {}
+    }
+    delete m.multi_meta;
   });
   // active: há um processamento rodando AGORA nesta conversa? O front usa isso
   // para, ao reabrir a conversa, reconectar ao stream ao vivo (GET /stream) e
@@ -242,6 +247,16 @@ router.post('/conversations/:id/control', validate(schemas.control), async (req,
   res.json({ ok: true, action, paused: control.paused, stopped: control.stopped });
 });
 
+// Multimodelo: interrompe UM modelo da execução em andamento, sem derrubar os
+// demais (o botão "parar tudo" continua sendo o /control com action=stop).
+router.post('/conversations/:id/multimodel/cancel', validate(schemas.multiModelCancelSlot), async (req, res) => {
+  const conv = await db.prepare('SELECT id FROM conversations WHERE id=? AND user_id=?').get(req.params.id, req.userId);
+  if (!conv) return res.status(404).json({ error: 'Não encontrado' });
+  const ok = cancelMultiModelSlot(req.params.id, req.body.slot);
+  if (!ok) return res.status(409).json({ error: 'Não há execução multimodelo ativa nesta conversa.' });
+  res.json({ ok: true, slot: req.body.slot });
+});
+
 // RECONEXÃO ao processamento em andamento. Quando o usuário volta à conversa
 // (mesmo dispositivo/sessão) e ela ainda está processando, o front abre este
 // SSE: recebe primeiro o REPLAY de tudo que já aconteceu no run (para remontar a
@@ -330,7 +345,22 @@ router.post('/conversations/:id/chat', validate(schemas.chat), async (req, res) 
       if (autoTitle) await db.prepare('UPDATE conversations SET title=? WHERE id=? AND user_id=?').run(autoTitle, req.params.id, req.userId);
     }
     let result, kind = 'chat', usageAssistantId = req.body?.assistantId || null;
-    if (req.body?.orchestrate) {
+    // MULTIMODELO tem prioridade sobre os demais modos: 2+ modelos executam a
+    // mesma solicitação (comparação, conselho, debate ou pipeline sequencial).
+    const multiConfig = req.body?.multiModel ? normalizeMultiModelConfig(req.body.multiModel) : null;
+    if (multiConfig) {
+      kind = 'multimodelo'; usageAssistantId = null;
+      result = await runMultiModel({
+        userId: req.userId,
+        conversationId: req.params.id,
+        userText: text,
+        config: multiConfig,
+        webSearch: !!req.body?.webSearch,
+        effort: req.body?.effort,
+        developer: req.body?.developer,
+        onEvent: send
+      });
+    } else if (req.body?.orchestrate) {
       const assistants = (await Promise.all((req.body?.orchestrateIds || []).map(id => loadAssistant(req.userId, id)))).filter(Boolean);
       kind = 'orquestrador'; usageAssistantId = null;
       const executor = await loadAssistant(req.userId, req.body?.assistantId);
