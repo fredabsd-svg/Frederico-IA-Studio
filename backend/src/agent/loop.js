@@ -53,7 +53,9 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   // a conta (Configurações → Conectores). Em plan/review, as de escrita
   // (push/PR) ficam de fora — esses modos não alteram nada.
   if (!lowSignalTurn && await hasGithubConnection(userId)) {
-    const githubTools = developerContext && developerContext.mode !== 'build'
+    // Em modo desenvolvedor de leitura (ask/plan/review), as ferramentas de
+    // escrita do GitHub (push/PR) ficam de fora — esses modos não alteram nada.
+    const githubTools = developerContext && !developerContext.canWrite
       ? githubToolDefinitions.filter(tool => !GITHUB_WRITE_TOOLS.has(tool.function.name))
       : githubToolDefinitions;
     requestedTools = [...requestedTools, ...githubTools];

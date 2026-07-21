@@ -113,6 +113,143 @@ testes que importam `openai` não rodam NESTE ambiente (proxy bloqueia instalar
 `openai`/`sharp` com 403) — quem valida de fato é o build da VPS. Detalhe visual
 (pesquisa, terminal, código, navegador, cartões) conferido em preview antes do
 commit.
+## 🧑‍💻 Reformulação do Modo Desenvolvedor — ambiente dedicado, 6 modos e memória por projeto (2026-07-21 — branch `claude/developer-mode-redesign-b41nz8`)
+
+**Motivação:** o Modo Desenvolvedor parecia amador — "só uma opção que
+redirecionava o pedido para uma conversa comum", sem ambiente próprio. O pedido
+era aproximá-lo de Codex/Claude Code (área independente, projetos, ferramentas,
+memória e fluxo próprios), mantendo compatibilidade com os modelos do OpenRouter.
+
+**O que mudou (backend):**
+- `backend/src/agent/prompts.js` — `developerContextFor` passou de 3 para **6
+  modos**: `ask` (Perguntar), `plan` (Planejar), `build` (Implementar), `fix`
+  (Corrigir erro), `review` (Revisar) e `auto` (Agente autônomo). Exporta
+  `DEV_MODES` e `DEV_WRITE_MODES`. Só `build/fix/auto` escrevem (retorna
+  `canWrite`); `ask/plan/review` são leitura (`readOnlyProject`). Modos que
+  executam agora exigem **plano antes de editar** (`PLAN_BEFORE`: entendimento,
+  arquivos, mudanças, riscos, validação) e **resumo profissional ao final**
+  (`FINAL_SUMMARY`: alterações, arquivos, testes/resultados, problemas,
+  pendências, próximos passos). O modo `fix` orienta buscar a **causa raiz**.
+- `backend/src/agent/loop.js` — o gating das ferramentas de escrita do GitHub
+  (`github_push`/`github_create_pr`) deixou de olhar `mode !== 'build'` e passou
+  a usar `!developerContext.canWrite` (cobre `fix`/`auto`). Regra do `write_file`
+  segue por `readOnlyProject` (respeita a permissão da pasta do PC).
+- `backend/src/agent/prompts.dev.test.js` — novo teste dos 6 modos, permissões e
+  presença de plano/resumo. **Suíte backend: 122 passam, 0 falham, 2 skips
+  pré-existentes.**
+
+**O que mudou (frontend):**
+- Novo hook `frontend/src/hooks/useDevProjects.js` — **projetos** persistidos no
+  navegador (`fred_dev_projects_v1`): nome, descrição, tecnologias, vínculo
+  (pasta do PC ou repositório GitHub), regras e **memória permanente**
+  categorizada (`MEMORY_FIELDS`: arquitetura, decisões, padrões, problemas
+  corrigidos, preferências, próximas etapas). `projectContextText()` compõe
+  regras + memória e envia pela via `rules` (que já chega ao system prompt), então
+  a IA "lembra" do projeto sem o usuário reexplicar. O contexto do projeto não se
+  mistura com conversas comuns.
+- Duas colunas recolhíveis no espaço "Desenvolvedor", ao redor do chat (sem
+  reescrever o motor de chat): `components/DevProjectRail.jsx` (**Explorador** —
+  projeto ativo, vínculo/permissão e arquivos da tarefa via
+  `/api/conversations/:id/files`) e `components/DevActivityRail.jsx`
+  (**Atividade** em tempo real reaproveitando o "Ambiente de Trabalho da IA" +
+  editor da **memória do projeto**).
+- `frontend/src/DeveloperPanel.jsx` redesenhado como **lançador**: seleção/criação
+  de projeto, campos do projeto, vínculo (pasta/GitHub + branch), seletor visual
+  dos 6 modos com selo leitura/escrita e o fluxo de cada modo. Exporta
+  `DEV_MODE_ICON`.
+- `frontend/src/constants.js` — `DEV_WORK_MODES` (espelha o backend).
+- `frontend/src/App.jsx` — hook de projetos, render das colunas no workspace
+  `developer`, barra superior ciente do projeto/modo, `startDeveloperTask` compõe
+  regras+memória e mapeia o vínculo para `projectId`/`github`, e vincula a
+  conversa ao projeto no 1º envio.
+- `frontend/src/styles.css` — grid de 4 colunas do ambiente
+  (`barra lateral · explorador · chat · atividade`), estilos das colunas,
+  explorador, atividade, memória e cartões de modo; colunas somem em telas
+  ≤1180px (a entrada continua pelo painel). Tudo por variáveis de tema.
+
+**Verificação:** `npm run build` (frontend) OK; testes backend 122/122 e
+frontend 7/7 verdes. **Não** houve teste de UI ao vivo (sem Docker/servidor
+neste ambiente).
+
+**Escopo consciente (para as próximas iterações):** editor de código e terminal
+como painéis "de verdade" precisariam de endpoints novos para servir/gravar
+arquivos do host (hoje a execução é num sandbox Docker por conversa) — por isso o
+trabalho real da IA aparece no painel de Atividade e no "Ambiente de Trabalho",
+não num editor que não gravaria nada. Memória por projeto é persistida no
+cliente e injetada em toda tarefa; uma indexação semântica por projeto no backend
+é o passo natural. Ainda em aberto: pontos de restauração/desfazer, permissões
+por ação com toggles e repasse do contexto de desenvolvedor às tarefas em
+segundo plano.
+## 🧩 Sistema Multimodelo — 2+ IAs na mesma mensagem (2026-07-21 — branch `claude/multimodelo-system-h8t0tb`)
+
+**Pedido:** usar dois ou mais modelos de IA simultaneamente na mesma conversa —
+não só duplicar a pergunta, mas colaborar/comparar/revisar/sintetizar — com
+função por modelo, controle de custos e presets de equipes (spec completa do
+usuário em 16 seções).
+
+**O que foi implementado (funcional de ponta a ponta):**
+- **Motor novo** `backend/src/agent/multiModel.js` (`runMultiModel`): cada
+  participante é uma chamada INDEPENDENTE ao provedor (modelo distinto), com
+  streaming individual (eventos SSE `mm_start`/`mm_status`/`mm_delta`/
+  `mm_reset`/`mm_round`/`mm_done`), status por modelo (aguardando → analisando →
+  respondendo/revisando → concluído/interrompido/erro), tokens, custo e tempo.
+  NÃO confundir com o Modo Equipe (`orchestrator.js` = vários ASSISTENTES no
+  mesmo modelo) nem com fallback (disponibilidade) — são recursos separados.
+- **4 modos:** `compare` (paralelo, lado a lado; a mensagem salva é a junção em
+  seções), `council` (paralelo + coordenador consolida concordâncias/
+  divergências/erros; síntese streamada como texto principal), `debate` (até 3
+  rodadas: cada modelo lê os outros, critica e REESCREVE a própria resposta;
+  coordenador fecha) e `pipeline` (sequencial: cada etapa recebe o que as
+  anteriores produziram; no Modo Desenvolvedor a 1ª etapa com papel
+  implementador/código executa DE VERDADE via `runAgent` com ferramentas, e as
+  etapas seguintes revisam — a revisão vira um 2º balão salvo).
+- **12 papéis prontos** (`MULTI_ROLES`): principal, revisor, pesquisador,
+  código, arquiteto, implementador, segurança, testador, tributário, contábil,
+  jurídico, livre — cada um com system prompt próprio; o usuário pode
+  sobrescrever com prompt customizado por participante.
+- **Custos:** estimativa ANTES do envio no frontend (`estimateMultiCost`, usa
+  `price`/`priceOut` do catálogo — `priceOut` é campo NOVO em
+  `modelCapabilities.js`), orçamento máximo em US$ com interrupção automática
+  (`budgetUsd` → `budgetExceeded`), teto de tokens por modelo (`max_tokens`),
+  teto de 6 modelos e 3 rodadas (env `MULTI_MAX_MODELS`/`MULTI_MAX_ROUNDS`),
+  alerta $$$ para modelos caros. Custo REAL por modelo gravado no meta.
+- **Contexto por política** (`context`): `recent` (padrão, ~8 msgs), `full`
+  (~30 msgs), `summary` (usa `conversations.summary_long/short`; sem resumo cai
+  para recent) e `none` — o orquestrador decide o que cada modelo recebe, nunca
+  o histórico inteiro por padrão.
+- **Cancelar UM modelo só:** `POST /conversations/:id/multimodel/cancel {slot}`
+  (registro `slotRegistries` por conversa aborta só os AbortControllers daquele
+  slot); pausar/continuar/parar geral continuam valendo para tudo (mesmo
+  `control` de sempre).
+- **Persistência:** coluna nova `messages.multi_meta` (migração
+  `006_multimodel.sql`) guarda o JSON por modelo (status/texto/usage/custo/
+  tempo) — o GET da conversa devolve como `m.multi` e a interface remonta os
+  cartões ao reabrir. Se o JSON passar de 200k, regrava com textos encurtados
+  (nunca `.slice()` cego que quebraria o JSON).
+- **Presets ("equipes"):** tabela `model_teams` + rotas `GET/POST/DELETE
+  /api/model-teams` (máx. 30 por usuário; config re-normalizada no POST).
+- **Frontend:** `MultiModelPicker.jsx` (botão na topbar ao lado do
+  ContextPicker: modo, modelos+funções, coordenador, rodadas, contexto,
+  orçamento, estimativa, equipes salvas; estado em `localStorage
+  fred_multimodel`; ligar multimodelo DESLIGA o Modo Equipe — o backend dá
+  prioridade ao multimodelo) e `MultiModelBoard.jsx` (cartões por modelo nas
+  mensagens com ações: copiar uma resposta, "continuar com este" (troca o
+  modelo principal e desliga o multi), "pedir revisão" (pré-preenche o campo),
+  "combinar respostas", parar um modelo). No render, modos `compare`/`pipeline`
+  NÃO repetem o `content` (o quadro já mostra tudo); `council`/`debate` mostram
+  quadro + síntese.
+- **Validação:** schema zod `multiModel` no `chat` (validation.js) +
+  normalização de verdade em `normalizeMultiModelConfig` (menos de 2 modelos
+  válidos → null → fluxo normal de 1 modelo segue intacto).
+
+**Testes/validação:** `backend/src/multiModel.test.js` (7 testes: normalização
+e custo); 125 testes de backend passando; build do Vite OK. NÃO houve teste de
+UI ao vivo (sem Docker/Postgres nesta sessão) — validar em produção o fluxo
+completo com chave OpenRouter real.
+
+**Fora do escopo desta entrega:** "escolher automaticamente o melhor modelo"
+(seção 6 da spec) — exigiria um classificador/roteador próprio; o restante da
+spec está coberto.
 
 ## 🔄 Catálogo de modelos por usuário — OpenRouter voltando a aparecer (2026-07-20 — branch `claude/openrouter-models-sync-wp1krw`)
 

@@ -2,11 +2,13 @@ import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Download, FileText, FileSpreadsheet, FilePenLine, Plus, ArrowUp, Upload, Trash2, Bot, Brain, X, BarChart3, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench, CalendarClock, Inbox, Palette, Gauge, SlidersHorizontal, Paperclip, MoreHorizontal, FolderOpen, Code2, ChevronRight, ShieldCheck, LogOut, KeyRound, Camera, Cable } from 'lucide-react';
-import { API, FALLBACK_MODELS, TOOL_INFO, TEMPLATES, QUICK_ACTIONS, THEMES, WORKSPACES, EFFORTS, EFFORT_DESC, ASSISTANT_ICONS, ASSISTANT_COLORS, isAssistantIcon } from './constants.js';
+import { Download, FileText, FileSpreadsheet, FilePenLine, Plus, ArrowUp, Upload, Trash2, Bot, Brain, X, BarChart3, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench, CalendarClock, Inbox, Palette, Gauge, SlidersHorizontal, Paperclip, MoreHorizontal, FolderOpen, Code2, ChevronRight, ShieldCheck, LogOut, KeyRound, Camera, Cable, MessageCircleQuestion, Bug, PanelRight } from 'lucide-react';
+import { API, FALLBACK_MODELS, TOOL_INFO, TEMPLATES, QUICK_ACTIONS, THEMES, WORKSPACES, EFFORTS, EFFORT_DESC, ASSISTANT_ICONS, ASSISTANT_COLORS, isAssistantIcon, DEV_WORK_MODES } from './constants.js';
 import { signOut } from './authClient.js';
 import { Slider, Modal, Drawer, Collapsible, useAppDialog } from './components.jsx';
 import { ExecutionSession } from './components/ExecutionSession.jsx';
+import { DevProjectRail } from './components/DevProjectRail.jsx';
+import { DevActivityRail } from './components/DevActivityRail.jsx';
 import { MemoryPanel } from './MemoryPanel.jsx';
 import { PcFoldersPanel } from './PcFoldersPanel.jsx';
 import { ToolsPanel } from './ToolsPanel.jsx';
@@ -18,6 +20,8 @@ import { ConnectorsPanel } from './ConnectorsPanel.jsx';
 import { PrivacyPanel, ConsentGate } from './PrivacyPanel.jsx';
 import { CameraCapture } from './CameraCapture.jsx';
 import { ContextPicker, AssistantGlyph, AssistantTile, ASSISTANT_ICON, modelHasTools } from './components/ContextPicker.jsx';
+import { MultiModelPicker } from './components/MultiModelPicker.jsx';
+import { MultiModelBoard } from './components/MultiModelBoard.jsx';
 import { ClientPicker } from './components/ClientPicker.jsx';
 import { MemoryTrace } from './components/MemoryTrace.jsx';
 import { useAssistants } from './hooks/useAssistants.js';
@@ -26,15 +30,19 @@ import { useSpeech } from './hooks/useSpeech.js';
 import { useFileUploads } from './hooks/useFileUploads.js';
 import { useChat } from './hooks/useChat.js';
 import { useTasks } from './hooks/useTasks.js';
+import { useDevProjects, projectContextText } from './hooks/useDevProjects.js';
 
 const QUICK_ACTION_ICON = {
   document: FileText,
   spreadsheet: FileSpreadsheet,
   writing: FilePenLine,
   search: Search,
+  ask: MessageCircleQuestion,
   plan: ListTodo,
   build: Code2,
+  fix: Bug,
   review: Check,
+  auto: Bot,
   folder: FolderCog
 };
 
@@ -78,9 +86,9 @@ function dayLabel(v) {
 
 const DEVELOPER_QUICK_ACTIONS = [
   { icon: 'plan', label: 'Planejar uma mudança', desc: 'Entenda o projeto antes de editar', mode: 'plan' },
-  { icon: 'build', label: 'Construir com segurança', desc: 'Aplique alterações no projeto escolhido', mode: 'build' },
-  { icon: 'review', label: 'Revisar alterações', desc: 'Encontre riscos antes de concluir', mode: 'review' },
-  { icon: 'folder', label: 'Conectar um projeto', desc: 'Escolha as pastas liberadas no computador', action: 'folders' }
+  { icon: 'build', label: 'Implementar', desc: 'Aplique alterações no projeto escolhido', mode: 'build' },
+  { icon: 'fix', label: 'Corrigir um erro', desc: 'Investigue a causa raiz e valide a solução', mode: 'fix' },
+  { icon: 'review', label: 'Revisar o projeto', desc: 'Arquitetura, segurança e qualidade', mode: 'review' }
 ];
 
 export default function App({ user } = {}) {
@@ -94,6 +102,9 @@ export default function App({ user } = {}) {
   const [developerOpen, setDeveloperOpen] = useState(false);
   const [developerSession, setDeveloperSession] = useState(null);
   const [developerStartMode, setDeveloperStartMode] = useState('plan');
+  const devProjects = useDevProjects();
+  const [devLeftCollapsed, setDevLeftCollapsed] = useState(() => localStorage.getItem('fred_dev_left') === '1');
+  const [devRightCollapsed, setDevRightCollapsed] = useState(() => localStorage.getItem('fred_dev_right') === '1');
   const [routinesOpen, setRoutinesOpen] = useState(false);
   const [inboxOpen, setInboxOpen] = useState(false);
   const [providerOpen, setProviderOpen] = useState(false);
@@ -105,6 +116,8 @@ export default function App({ user } = {}) {
   const [needsConsent, setNeedsConsent] = useState(false);
   const [team, setTeam] = useState(false);
   const [teamIds, setTeamIds] = useState(() => { try { return JSON.parse(localStorage.getItem('fred_team') || 'null'); } catch { return null; } });
+  // Multimodelo: { enabled, config } — 2+ modelos de IA na mesma mensagem
+  const [multiModel, setMultiModel] = useState(() => { try { return JSON.parse(localStorage.getItem('fred_multimodel') || 'null'); } catch { return null; } });
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
   const [analytics, setAnalytics] = useState(null);
   const [theme, setTheme] = useState(() => localStorage.getItem('fred_theme') || 'dark');
@@ -173,20 +186,45 @@ export default function App({ user } = {}) {
   // Membros ativos da equipe (null = todos)
   const effectiveTeam = assistants.filter(a => !teamIds || teamIds.includes(a.id));
   const uploads = files.filter(f => f.kind === 'upload');
+  // Multimodelo só vale com 2+ modelos selecionados; senão o fluxo é o normal
+  const effectiveMulti = multiModel?.enabled && (multiModel.config?.models?.length || 0) >= 2 ? multiModel.config : null;
   const {
-    busy, busyRef, paused, statusText, controlPending, nowTick, sendMessage, retrySend, control
+    busy, busyRef, paused, statusText, controlPending, nowTick, sendMessage, retrySend, control, cancelMultiSlot
   } = useChat({
     input, setInput, messages, setMessages, uploads, team, effectiveTeam,
     listening, recognitionRef, current, currentRef, setCurrent,
     ensureConversation, fetchConversations, loadFiles,
     developerSession, setDeveloperSession, followActiveRef,
-    model, assistantId, webSearch, effort, setNeedLogin, showToast
+    model, assistantId, webSearch, effort, multiModel: effectiveMulti, setNeedLogin, showToast
   });
   const { tasks, tasksOpen, setTasksOpen, tasksActive, pollTasks, sendAsTask, cancelTask } = useTasks({
     current, busyRef, openConversation, ensureConversation,
     input, setInput, listening, recognitionRef,
     model, assistantId, webSearch, showToast
   });
+
+  function changeMultiModel(next) {
+    setMultiModel(next);
+    try { localStorage.setItem('fred_multimodel', JSON.stringify(next)); } catch {}
+    // Multimodelo e Modo Equipe são mutuamente exclusivos na prática (o backend
+    // dá prioridade ao multimodelo) — desligar a equipe evita confusão.
+    if (next?.enabled) setTeam(false);
+  }
+
+  // Ações dos cartões multimodelo
+  function continueWithModel(card) {
+    setModel(card.id);
+    changeMultiModel({ ...(multiModel || {}), enabled: false });
+    showToast(`A conversa seguirá apenas com ${card.name}.`, 'ok');
+  }
+  function askReviewOfModel(card) {
+    setInput(`Revise criticamente a resposta de ${card.name} (função: ${card.roleLabel}) acima: aponte erros, omissões e riscos, e produza uma versão final melhorada.`);
+    setTimeout(() => inputRef.current?.focus(), 60);
+  }
+  function combineAnswers() {
+    setInput('Combine as melhores partes das respostas dos modelos acima em UMA resposta final, resolvendo as divergências e descartando o que estiver errado.');
+    setTimeout(() => inputRef.current?.focus(), 60);
+  }
 
   function toggleTeamMember(id) {
     const cur = teamIds || assistants.map(a => a.id);
@@ -374,8 +412,10 @@ export default function App({ user } = {}) {
     }
   }
 
-  function openDeveloper(mode = 'plan') {
-    setDeveloperStartMode(mode);
+  function openDeveloper(mode) {
+    // Sem modo explícito (ex.: botão da barra lateral), herda o modo salvo do
+    // projeto ativo para não sobrescrever a preferência do usuário.
+    setDeveloperStartMode(mode || devProjects.active?.mode || 'plan');
     setDeveloperOpen(true);
   }
 
@@ -415,18 +455,36 @@ export default function App({ user } = {}) {
     return true;
   }
 
-  function startDeveloperTask({ mode, projectId, github, brief, rules }) {
+  function startDeveloperTask({ devProjectId, mode, binding, brief }) {
+    const project = devProjects.projects.find(p => p.id === devProjectId) || devProjects.active || null;
     const developerAssistant = assistants.find(assistant => /programa|codigo|codex|desenvolv/i.test(`${assistant.name || ''} ${assistant.system_prompt || ''}`)) || assistants[0];
     if (!startNewChat()) return;
     setTeam(false);
     setWebSearch(false);
     if (developerAssistant) pickAssistant(developerAssistant.id);
-    setDeveloperSession({ mode, projectId, github: github || null, rules, conversationId: null });
+    // O vínculo do projeto vira o par (pasta do PC) OU (repositório GitHub) que
+    // o backend espera. As regras + memória do projeto viajam pelo canal `rules`.
+    const projectId = binding?.type === 'folder' ? (binding.folderId || null) : null;
+    const github = binding?.type === 'github' && binding.repo ? { repo: binding.repo, branch: binding.branch || '' } : null;
+    setDeveloperSession({ mode, projectId, github, rules: projectContextText(project), devProjectId: project?.id || null, conversationId: null });
     setInput(brief);
     setDeveloperOpen(false);
+    setWorkspace('developer'); // revela o ambiente de desenvolvimento (colunas do IDE)
     setTimeout(() => inputRef.current?.focus(), 60);
     showToast('Tarefa de desenvolvimento pronta para enviar.', 'ok');
   }
+
+  // Quando a sessão de desenvolvedor se vincula a uma conversa (1º envio),
+  // registra a conversa no projeto para o histórico.
+  useEffect(() => {
+    if (developerSession?.conversationId && developerSession?.devProjectId) {
+      devProjects.linkConversation(developerSession.devProjectId, developerSession.conversationId);
+    }
+  }, [developerSession?.conversationId, developerSession?.devProjectId]);
+
+  // Colapso das colunas do ambiente de desenvolvimento (guardado entre sessões).
+  function toggleDevLeft() { setDevLeftCollapsed(v => { localStorage.setItem('fred_dev_left', v ? '0' : '1'); return !v; }); }
+  function toggleDevRight() { setDevRightCollapsed(v => { localStorage.setItem('fred_dev_right', v ? '0' : '1'); return !v; }); }
 
   // ---- Clientes / Projetos ----
   async function loadClients() {
@@ -594,7 +652,7 @@ export default function App({ user } = {}) {
         </div>
         <div className="navGroup navGroupDeveloper">
           <div className="navGroupTitle">Desenvolvimento</div>
-          <button className="studio developerBtn" onClick={() => openDeveloper('plan')} title="Planejar, construir ou revisar um projeto"><Code2 size={16}/> Modo desenvolvedor</button>
+          <button className="studio developerBtn" onClick={() => openDeveloper()} title="Perguntar, planejar, implementar, corrigir ou revisar um projeto"><Code2 size={16}/> Modo desenvolvedor</button>
         </div>
         <div className="navGroup navGroupAutomation">
           <div className="navGroupTitle">Automação</div>
@@ -627,6 +685,21 @@ export default function App({ user } = {}) {
       </div>
     </aside>
 
+    {workspace === 'developer' && <DevProjectRail
+      collapsed={devLeftCollapsed}
+      onToggle={toggleDevLeft}
+      projects={devProjects.projects}
+      active={devProjects.active}
+      onSelectProject={devProjects.setActiveId}
+      onNewTask={() => openDeveloper(devProjects.active?.mode || 'plan')}
+      onManageFolders={() => setPcOpen(true)}
+      files={files}
+      onRefreshFiles={() => current?.id && loadFiles(current.id)}
+      filesLoading={false}
+      downloadUrl={(path) => conversationDownloadUrl(current?.id, path)}
+      conversationId={current?.id}
+    />}
+
     <main
       className={`chat ${dragActive ? 'dragActive' : ''}`}
       onPaste={onPasteFiles}
@@ -654,6 +727,7 @@ export default function App({ user } = {}) {
             currentAssistant={currentAssistant} team={team} onTeam={setTeam}
             teamIds={teamIds} onToggleMember={toggleTeamMember} effectiveTeam={effectiveTeam}
             onEditAssistant={() => currentAssistant ? openStudioEdit(currentAssistant) : openStudioNew()}/>
+          <MultiModelPicker models={allModels} value={multiModel} onChange={changeMultiModel} showToast={showToast}/>
         </div>
         <div className="pickers desktopPickers">
           <button className="gear" onClick={openFilesDrawer} title="Arquivos da conversa" aria-label="Arquivos da conversa" disabled={!current?.id}><FolderOpen size={16}/></button>
@@ -690,15 +764,18 @@ export default function App({ user } = {}) {
         <div className="workspaceBarLead">
           <Code2 size={17}/>
           <div>
-            <strong>Área de projeto</strong>
-            <span>{developerSession ? 'Tarefa de desenvolvimento preparada para esta conversa.' : 'Planeje, construa ou revise sem perder o contexto do projeto.'}</span>
+            <strong>{devProjects.active?.name || 'Ambiente de desenvolvimento'}</strong>
+            <span>{developerSession
+              ? `Tarefa preparada · ${DEV_WORK_MODES.find(m => m.id === developerSession.mode)?.label || 'Modo dev'}`
+              : (devProjects.active ? 'Escolha um modo e descreva a missão para começar.' : 'Crie um projeto para trabalhar com contexto, memória e permissões próprias.')}</span>
           </div>
         </div>
         <div className="workspaceBarActions">
           <button type="button" className="workspaceAction" onClick={() => openDeveloper('plan')}><ListTodo size={15}/> Planejar</button>
-          <button type="button" className="workspaceAction primary" onClick={() => openDeveloper('build')}><Code2 size={15}/> Construir</button>
+          <button type="button" className="workspaceAction primary" onClick={() => openDeveloper('build')}><Code2 size={15}/> Implementar</button>
+          <button type="button" className="workspaceAction" onClick={() => openDeveloper('fix')}><Bug size={15}/> Corrigir</button>
           <button type="button" className="workspaceAction" onClick={() => openDeveloper('review')}><Check size={15}/> Revisar</button>
-          <button type="button" className="workspaceIconAction" onClick={() => setPcOpen(true)} title="Gerenciar projetos e pastas" aria-label="Gerenciar projetos e pastas"><FolderCog size={16}/></button>
+          {devRightCollapsed && <button type="button" className="workspaceIconAction" onClick={toggleDevRight} title="Mostrar atividades e memória" aria-label="Mostrar atividades e memória"><PanelRight size={16}/></button>}
         </div>
       </section>}
       {unprotected && !authWarnHidden && <div className="authWarn">
@@ -740,7 +817,19 @@ export default function App({ user } = {}) {
               {m.role === 'user' && <button onClick={() => saveAsTemplate(m)} title="Salvar como template reutilizável" aria-label="Salvar como template"><BookmarkPlus size={13}/></button>}
               <button onClick={() => copyMessage(m, idx)} title="Copiar a mensagem inteira" aria-label="Copiar mensagem">{copiedIdx === idx ? <Check size={13}/> : <Copy size={13}/>}</button>
             </div>
-            {m.blocks
+            {/* Execução multimodelo: um cartão por modelo (status, resposta,
+                tokens, custo) + ações por cartão. No modo Comparação o texto
+                salvo é a própria junção das respostas — o quadro basta. */}
+            {m.role === 'assistant' && m.multi && <MultiModelBoard
+              multi={m.multi}
+              live={Boolean(m.multi.live) || (busy && idx === messages.length - 1)}
+              onCancelSlot={busy ? cancelMultiSlot : null}
+              onContinueWith={continueWithModel}
+              onAskReview={askReviewOfModel}
+              onCombine={combineAnswers}/>}
+            {m.role === 'assistant' && m.multi && ['compare', 'pipeline'].includes(m.multi.mode) && !(m.blocks || []).some(b => b.type === 'tool')
+              ? null
+              : m.blocks
               ? (() => {
                   // Todas as chamadas de ferramenta da resposta são agrupadas numa
                   // única "sessão de execução" (o Ambiente de Trabalho da IA), em vez
@@ -795,7 +884,7 @@ export default function App({ user } = {}) {
       </section>
       <footer className="composerWrap">
         {developerSession && (!developerSession.conversationId || developerSession.conversationId === current?.id) && <div className="devSessionBar">
-          <Code2 size={15}/><span>Modo desenvolvedor</span><b>{{ plan: 'Planejar', build: 'Construir', review: 'Revisar' }[developerSession.mode] || 'Ativo'}</b>
+          <Code2 size={15}/><span>Modo desenvolvedor</span><b>{DEV_WORK_MODES.find(m => m.id === developerSession.mode)?.label || 'Ativo'}</b>
           {developerSession.github?.repo && <span className="muted" title={`Repositório GitHub${developerSession.github.branch ? ` · branch ${developerSession.github.branch}` : ''}`}>· {developerSession.github.repo}{developerSession.github.branch ? ` (${developerSession.github.branch})` : ''}</span>}
           <button onClick={() => setDeveloperSession(null)} title="Sair do modo desenvolvedor" aria-label="Sair do modo desenvolvedor"><X size={14}/></button>
         </div>}
@@ -855,6 +944,16 @@ export default function App({ user } = {}) {
         </div>
       </footer>
     </main>
+
+    {workspace === 'developer' && <DevActivityRail
+      collapsed={devRightCollapsed}
+      onToggle={toggleDevRight}
+      busy={busy}
+      statusText={statusText}
+      messages={messages}
+      project={devProjects.active}
+      onUpdateMemory={(key, value) => devProjects.activeId && devProjects.updateProject(devProjects.activeId, p => ({ ...p, memory: { ...p.memory, [key]: value } }))}
+    />}
 
     {filesDrawerOpen && <Drawer title="Arquivos da conversa" icon={<FolderOpen size={18}/>} onClose={() => setFilesDrawerOpen(false)} className="filesDrawer">
       <p className="muted drawerIntro">Anexos e arquivos gerados nesta conversa ficam reunidos aqui para você encontrar, abrir ou baixar sem procurar no histórico.</p>
@@ -961,7 +1060,7 @@ export default function App({ user } = {}) {
     {memoryOpen && <MemoryPanel assistants={assistants} clients={clients} clientId={clientId} showToast={showToast} askConfirm={askConfirm} askPrompt={askPrompt} onClose={() => setMemoryOpen(false)}/>}
     {pcOpen && <PcFoldersPanel showToast={showToast} askConfirm={askConfirm} onClose={() => setPcOpen(false)}/>}
     {toolsOpen && <ToolsPanel onPick={pickTool} onClose={() => setToolsOpen(false)}/>}
-    {developerOpen && <DeveloperPanel initialMode={developerStartMode} onStart={startDeveloperTask} onManageFolders={() => { setDeveloperOpen(false); setPcOpen(true); }} onOpenConnectors={() => { setDeveloperOpen(false); setConnectorsOpen(true); }} onClose={() => setDeveloperOpen(false)}/>}
+    {developerOpen && <DeveloperPanel devProjects={devProjects} initialMode={developerStartMode} onStart={startDeveloperTask} onManageFolders={() => { setDeveloperOpen(false); setPcOpen(true); }} onOpenConnectors={() => { setDeveloperOpen(false); setConnectorsOpen(true); }} onClose={() => setDeveloperOpen(false)}/>}
     {routinesOpen && <RoutinesPanel assistants={assistants} clients={clients} showToast={showToast} askConfirm={askConfirm} onClose={() => setRoutinesOpen(false)}/>}
     {inboxOpen && <InboxPanel clients={clients} clientId={clientId} showToast={showToast} askConfirm={askConfirm} onOpenConversation={(id) => { fetchConversations(); openConversation(id); }} onClose={() => setInboxOpen(false)}/>}
     {providerOpen && <ProviderPanel showToast={showToast} onClose={() => setProviderOpen(false)}/>}
