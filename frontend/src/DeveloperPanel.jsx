@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowRight, BookOpen, Code2, FileSearch, FolderCog, FolderOpen, GitBranch, Hammer, ListChecks, Lock, ShieldCheck, Unlock } from 'lucide-react';
+import { ArrowRight, BookOpen, Code2, FileSearch, FolderCog, FolderOpen, GitBranch, Hammer, Info, ListChecks, Lock, ShieldCheck, Unlock } from 'lucide-react';
 import { API } from './constants.js';
 import { Drawer } from './components.jsx';
 import { GitHubIcon } from './ConnectorsPanel.jsx';
@@ -29,7 +29,7 @@ const WORK_MODES = [
   }
 ];
 
-export function DeveloperPanel({ onStart, onManageFolders, onOpenConnectors, onClose, initialMode }) {
+export function DeveloperPanel({ onStart, onManageFolders, onOpenConnectors, onClose, initialMode, team = false }) {
   const [folders, setFolders] = useState(null);
   const [githubRepos, setGithubRepos] = useState(null); // null = carregando; [] = sem conector/sem repos
   const [githubConnected, setGithubConnected] = useState(false);
@@ -160,6 +160,10 @@ export function DeveloperPanel({ onStart, onManageFolders, onOpenConnectors, onC
           {githubRepoName && <div className="devProjectStatus">
             <GitHubIcon size={15}/><span title={githubRepoName}>{githubRepoName}</span>
             <b className={canWriteProject ? 'write' : 'read'}>{canWriteProject ? <Unlock size={13}/> : <Lock size={13}/>}{canWriteProject ? 'Pode enviar (push)' : 'Só leitura'}</b>
+          </div>}
+          {githubRepoName && team && <div className="devTeamHint">
+            <Info size={15}/>
+            <span>Modo Equipe ativo: os especialistas do debate <b>analisam e orientam</b>, mas quem lê o código do repositório de fato é o executor, na etapa de execução. Para o modelo <b>ler os arquivos e responder direto</b>, desligue a Equipe e use um assistente único.</span>
           </div>}
           {!githubConnected && githubRepos !== null && <div className="muted small" style={{ marginTop: 6 }}>
             Quer trabalhar num repositório GitHub? <button type="button" className="linklike" onClick={onOpenConnectors} style={{ background: 'none', border: 0, padding: 0, color: 'var(--accent)', cursor: 'pointer', font: 'inherit', textDecoration: 'underline' }}>Conecte a sua conta</button>.
