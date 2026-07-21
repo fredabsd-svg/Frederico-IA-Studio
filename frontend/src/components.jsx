@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Search, ChevronDown, Check, Cpu, Star, SlidersHorizontal, X, Wrench, Eye, Image as ImageIcon, Brain, Video, MessageSquare } from 'lucide-react';
 import { ProviderIcon } from './components/ProviderIcon.jsx';
 import { FamilySelect } from './components/FamilySelect.jsx';
+import { findRanking, tierClass } from './modelRanking.js';
 
 // Ids (ou prefixos) dos modelos mais confiáveis para gerar planilhas/arquivos
 const BEST_FOR_FILES = [
@@ -110,6 +111,8 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
   const isRecommended = model => GENERAL_RECOMMENDATIONS.some(prefix => model.id === prefix || model.id.startsWith(prefix));
   const isFav = id => favs.includes(id);
   const priceValue = model => isFree(model) ? 0 : model.price || Infinity;
+  // Modelo sem classificação vai para o fim ao ordenar por "Minha classificação".
+  const rankValue = model => findRanking(model)?.rank ?? Infinity;
   const purposes = [
     { id: 'general', label: 'Trabalho geral', description: 'Conversa, análise e produção do dia a dia.', matches: model => (isRecommended(model) || model.id === value) && capabilityOf(model, 'tools') !== false && !model.image && !model.video },
     { id: 'files', label: 'Documentos e planilhas', description: 'Modelos mais confiáveis para criar arquivos.', matches: model => capabilityOf(model, 'tools') !== false && isBest(model) },
@@ -170,6 +173,7 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
   const activeFilterCount = flags.length + Number(fam !== 'all') + Number(sort !== 'none');
   const sortFn = (a, b) => sort === 'new' ? (b.created || 0) - (a.created || 0)
     : sort === 'cheap' ? priceValue(a) - priceValue(b)
+    : sort === 'rank' ? rankValue(a) - rankValue(b)
     : String(a.name || a.id).localeCompare(String(b.name || b.id));
   const generalRecommendationRank = model => {
     const index = GENERAL_RECOMMENDATIONS.findIndex(prefix => model.id === prefix || model.id.startsWith(prefix));
@@ -205,18 +209,25 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
   const catalogModels = [...filteredModels].sort(sortFn);
   const displayView = query ? 'search' : view;
 
-  const row = model => (
+  const row = model => {
+    const ranking = findRanking(model);
+    return (
     <div key={model.id} className={'mpItem ' + (model.id === value ? 'sel' : '')}>
       <ProviderIcon id={model.id} size={28}/>
       <button className="mpPick" onClick={() => pick(model.id)}>
-        <span className="mpItemName">{model.name}{model.id === value && <Check size={13} className="mpInlineCheck" aria-label="Modelo em uso"/>}</span>
+        <span className="mpItemName">
+          {model.name}
+          {ranking && <span className={`mpRank ${tierClass(ranking.tier)}`} title={`Classificação de referência: #${ranking.rank} de 100 · Tier ${ranking.tier}`}>{ranking.tier}</span>}
+          {model.id === value && <Check size={13} className="mpInlineCheck" aria-label="Modelo em uso"/>}
+        </span>
         <span className="mpItemId">{model.id}</span>
         <span className="mpItemMeta">{[ctxLabel(model.context), priceLabel(model)].filter(Boolean).join(' · ')}</span>
         <ModelCapabilitySummary model={model}/>
       </button>
       <button className={'mpStar ' + (isFav(model.id) ? 'on' : '')} onClick={event => toggleFav(model.id, event)} title={isFav(model.id) ? 'Remover dos favoritos' : 'Adicionar aos favoritos'} aria-label={isFav(model.id) ? 'Remover dos favoritos' : 'Adicionar aos favoritos'} aria-pressed={isFav(model.id)}><Star size={14} fill={isFav(model.id) ? 'currentColor' : 'none'}/></button>
     </div>
-  );
+    );
+  };
   const section = (title, items, empty) => <section className="mpSection">
     <div className="mpSectionHead"><span>{title}</span><em>{items.length}</em></div>
     {items.length ? items.map(row) : <p className="mpEmpty">{empty}</p>}
@@ -260,6 +271,7 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
               <option value="none">Nome do modelo</option>
               <option value="new">Lançamentos</option>
               <option value="cheap">Menor custo</option>
+              <option value="rank">Classificação de referência</option>
             </select>
           </label>
         </div>
@@ -289,26 +301,6 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
       <ChevronDown size={14}/>
     </button>
     {open && panel}
-  </div>;
-}
-
-// Chip de ferramenta em execução/concluída dentro de uma mensagem.
-// Clique expande e mostra o que foi executado e o resultado.
-export function ToolStep({ step }) {
-  const [open, setOpen] = useState(false);
-  const end = step.ended || Date.now();
-  const secs = Math.max(0, Math.round((end - step.started) / 1000));
-  const hasDetail = !!(step.preview || step.result);
-  return <div className="toolwrap">
-    <button className={`toolstep ${step.status}`} onClick={() => hasDetail && setOpen(o => !o)} title={hasDetail ? 'Clique para ver o que foi executado' : undefined}>
-      <span className="ic">{step.status === 'running' ? <span className="spin sm"/> : (step.status === 'error' ? <X size={13}/> : '✓')}</span>
-      <code>{step.name}</code>
-      <span className="sec">{secs}s</span>
-      {step.status === 'running' && <span className="lbl">executando…</span>}
-      {step.status === 'error' && <span className="lbl">falhou</span>}
-      {hasDetail && <ChevronDown size={12} className={`tchev ${open ? 'up' : ''}`}/>}
-    </button>
-    {open && <pre className="tooldetail">{step.preview ? `▶ Executado:\n${step.preview}` : ''}{step.preview && step.result ? '\n\n' : ''}{step.result ? `◀ Resultado:\n${step.result}` : ''}</pre>}
   </div>;
 }
 

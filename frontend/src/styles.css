@@ -20,6 +20,16 @@
 .mpItem:hover{background:var(--panel2)}
 .mpItem.sel{background:rgba(79,140,255,.14)}
 .mpItemName{font-size:var(--fs-sm);color:var(--text);padding-right:22px}
+/* Selo discreto de classificação de referência no seletor de modelo — só
+   aparece quando o modelo bate com algo da lista (modelRanking.js); some
+   sozinho para todos os outros, sem mudar o layout do item. */
+.mpRank{display:inline-flex;align-items:center;justify-content:center;margin-left:6px;padding:1px 6px;border-radius:var(--r-full);font-size:9px;font-weight:800;letter-spacing:.02em;vertical-align:middle;line-height:1.6}
+.mpRank.tierSp{background:color-mix(in srgb,var(--accent) 24%,transparent);color:var(--accent)}
+.mpRank.tierS{background:color-mix(in srgb,var(--accent) 18%,transparent);color:var(--accent)}
+.mpRank.tierAp{background:color-mix(in srgb,var(--accent) 13%,transparent);color:var(--muted)}
+.mpRank.tierA{background:color-mix(in srgb,var(--accent) 9%,transparent);color:var(--muted)}
+.mpRank.tierBp{background:rgba(127,127,127,.14);color:var(--muted)}
+.mpRank.tierB{background:rgba(127,127,127,.1);color:var(--muted)}
 .mpItemId{font-size:var(--fs-2xs);color:var(--muted);font-family:ui-monospace,Consolas,monospace}.gear{display:flex;align-items:center;justify-content:center;padding:9px 11px}.gear:hover{border-color:var(--accent);color:var(--accent)}.gear:disabled{opacity:.4;cursor:not-allowed}.gear.on{border-color:var(--accent);color:var(--accent)}.pickers select:disabled{opacity:.5;cursor:not-allowed}.messages{flex:1;overflow:auto;padding:26px;display:flex;flex-direction:column;gap:18px}.msg{max-width:900px;line-height:1.55;position:relative}
 .msgActions{position:absolute;top:-13px;right:10px;display:flex;gap:4px;opacity:0;transition:opacity .15s;z-index:5}
 .msg:hover .msgActions,.msgActions:focus-within{opacity:1}
@@ -27,7 +37,7 @@
 .msgActions button:hover{color:var(--accent);border-color:var(--accent)}
 .msg.user .msgActions{right:auto;left:10px}
 @media(hover:none){.msgActions{opacity:.85}}
-@media(prefers-reduced-motion:reduce){.msgActions{transition:none}}.msg.user{align-self:flex-end;background:var(--bubble-user);color:#eef3ff;border-radius:var(--r-lg) var(--r-lg) 3px var(--r-lg);padding:12px 16px}.msg.assistant{align-self:flex-start;background:var(--bubble);border:1px solid var(--line);border-radius:var(--r-lg) var(--r-lg) var(--r-lg) 3px;padding:14px 18px}.msg p{margin:.4em 0}.msg pre{background:var(--code-bg);border:1px solid var(--code-line);border-radius:var(--r-md);padding:14px;overflow:auto}.spin{display:inline-block;width:15px;height:15px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite}.spin.sm{width:12px;height:12px;border-width:2px}@keyframes spin{to{transform:rotate(360deg)}}.working{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:var(--fs-md);padding:2px}.pausedDot{display:inline-block;width:14px;height:14px;border-radius:3px;border:2px solid var(--accent);position:relative}.pausedDot::before,.pausedDot::after{content:"";position:absolute;top:2px;width:2px;height:6px;background:var(--accent)}.pausedDot::before{left:3px}.pausedDot::after{right:3px}.workctl{display:flex;gap:8px;margin-left:6px}.workctl button{display:flex;align-items:center;gap:6px;font-size:var(--fs-xs);padding:6px 11px;border-radius:var(--r-sm)}.workctl button:hover{border-color:var(--accent);color:var(--accent)}.workctl .stopBtn:hover{border-color:var(--danger);color:var(--danger)}.toolstep{display:flex;align-items:center;gap:8px;width:fit-content;max-width:100%;font-family:ui-monospace,Consolas,monospace;font-size:var(--fs-xs);color:var(--muted);background:rgba(127,127,127,.09);border:1px solid var(--line);border-radius:var(--r-sm);padding:5px 10px;margin:7px 0}.toolstep code{font-family:inherit;color:var(--text)}.toolstep .ic{display:flex;align-items:center}.toolstep .sec{opacity:.75;font-variant-numeric:tabular-nums}.toolstep .lbl{opacity:.7}.toolstep.running{border-color:var(--accent);color:var(--accent)}.toolstep.running code{color:var(--accent)}.toolstep.done .ic{color:var(--ok)}.toolwrap{margin:7px 0}.toolwrap .toolstep{margin:0;cursor:pointer}.tchev{opacity:.6;transition:transform .15s}.tchev.up{transform:rotate(180deg)}.tooldetail{margin:6px 0 0;max-width:640px;max-height:260px;overflow:auto;font-size:var(--fs-2xs);line-height:1.5;background:var(--code-bg);border:1px solid var(--code-line);border-radius:var(--r-md);padding:10px 12px;white-space:pre-wrap;word-break:break-word;color:#b9c6dd}@media(prefers-reduced-motion:reduce){.tchev{transition:none}}@media(prefers-reduced-motion:reduce){.spin{animation:none;border-top-color:var(--accent);opacity:.7}}.memoryTrace{margin-top:10px;border:1px solid var(--line);background:rgba(127,127,127,.08);border-radius:var(--r-md);padding:7px 10px;color:var(--muted);font-size:var(--fs-xs);max-width:720px}.memoryTrace.compact{display:flex;align-items:center;gap:7px}.memoryTrace summary{display:flex;align-items:center;gap:7px;cursor:pointer;list-style:none}.memoryTrace summary::-webkit-details-marker{display:none}.memoryTraceBody{display:flex;flex-direction:column;gap:8px;margin-top:9px}.memoryTraceMeta{font-size:var(--fs-xs)}.memoryTraceList{display:flex;flex-direction:column;gap:4px}.memoryTraceList b{color:var(--text);font-size:var(--fs-xs)}.memoryTraceList span{line-height:1.35}.memoryTrace button{align-self:flex-start;font-size:var(--fs-xs);padding:5px 10px;border-radius:var(--r-sm)}.filecards{display:flex;flex-direction:column;gap:8px;margin-top:12px}
+@media(prefers-reduced-motion:reduce){.msgActions{transition:none}}.msg.user{align-self:flex-end;background:var(--bubble-user);color:#eef3ff;border-radius:var(--r-lg) var(--r-lg) 3px var(--r-lg);padding:12px 16px}.msg.assistant{align-self:flex-start;background:var(--bubble);border:1px solid var(--line);border-radius:var(--r-lg) var(--r-lg) var(--r-lg) 3px;padding:14px 18px}.msg p{margin:.4em 0}.msg pre{background:var(--code-bg);border:1px solid var(--code-line);border-radius:var(--r-md);padding:14px;overflow:auto}.spin{display:inline-block;width:15px;height:15px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite}.spin.sm{width:12px;height:12px;border-width:2px}@keyframes spin{to{transform:rotate(360deg)}}.working{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:var(--fs-md);padding:2px}.pausedDot{display:inline-block;width:14px;height:14px;border-radius:3px;border:2px solid var(--accent);position:relative}.pausedDot::before,.pausedDot::after{content:"";position:absolute;top:2px;width:2px;height:6px;background:var(--accent)}.pausedDot::before{left:3px}.pausedDot::after{right:3px}.workctl{display:flex;gap:8px;margin-left:6px}.workctl button{display:flex;align-items:center;gap:6px;font-size:var(--fs-xs);padding:6px 11px;border-radius:var(--r-sm)}.workctl button:hover{border-color:var(--accent);color:var(--accent)}.workctl .stopBtn:hover{border-color:var(--danger);color:var(--danger)}@media(prefers-reduced-motion:reduce){.spin{animation:none;border-top-color:var(--accent);opacity:.7}}.memoryTrace{margin-top:10px;border:1px solid var(--line);background:rgba(127,127,127,.08);border-radius:var(--r-md);padding:7px 10px;color:var(--muted);font-size:var(--fs-xs);max-width:720px}.memoryTrace.compact{display:flex;align-items:center;gap:7px}.memoryTrace summary{display:flex;align-items:center;gap:7px;cursor:pointer;list-style:none}.memoryTrace summary::-webkit-details-marker{display:none}.memoryTraceBody{display:flex;flex-direction:column;gap:8px;margin-top:9px}.memoryTraceMeta{font-size:var(--fs-xs)}.memoryTraceList{display:flex;flex-direction:column;gap:4px}.memoryTraceList b{color:var(--text);font-size:var(--fs-xs)}.memoryTraceList span{line-height:1.35}.memoryTrace button{align-self:flex-start;font-size:var(--fs-xs);padding:5px 10px;border-radius:var(--r-sm)}.filecards{display:flex;flex-direction:column;gap:8px;margin-top:12px}
 .imgcard{display:inline-flex;flex-direction:column;gap:7px;border:1px solid var(--line);border-radius:var(--r-lg);padding:9px;background:var(--panel);max-width:340px;text-decoration:none}
 .imgcard:hover{border-color:var(--accent)}
 .imgcard img{width:100%;border-radius:var(--r-sm);display:block}
@@ -694,6 +704,83 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .devMemoryField{display:flex;flex-direction:column;gap:4px;font-size:var(--fs-2xs);font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
 .devMemoryField textarea{font:inherit;font-size:var(--fs-xs);font-weight:400;text-transform:none;letter-spacing:0;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:var(--r-sm);padding:7px 9px;resize:vertical;min-height:44px}
 .devMemoryField textarea:focus{outline:none;border-color:var(--accent)}
+
+/* ── Abas do painel direito (Atividade / Arquivos / Alterações / Memória) ── */
+.devTabs{display:flex;border-bottom:1px solid var(--line);padding:0 4px;flex:none}
+.devTab{flex:1;display:flex;align-items:center;justify-content:center;gap:5px;padding:9px 3px;border:none;border-bottom:2px solid transparent;background:transparent;color:var(--muted);font-size:var(--fs-2xs);font-weight:700;border-radius:0}
+.devTab svg{flex:none}
+.devTab.sel{color:var(--text);border-bottom-color:var(--accent)}
+.devTab:hover{color:var(--text)}
+
+/* Lista de atividade: passos agrupados por chamadas consecutivas da mesma
+   ferramenta ("3× Comando no terminal" em vez de 3 cartões soltos). */
+.devActList{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:1px}
+.devActGroup{display:flex;flex-direction:column}
+.devActItem{display:flex;align-items:flex-start;gap:8px;width:100%;text-align:left;padding:7px 6px;border:none;background:transparent;border-radius:var(--r-sm);color:var(--text)}
+.devActItem:hover:not(:disabled){background:rgba(127,127,127,.08)}
+.devActItem:disabled{cursor:default}
+.devActItemIc{flex:none;margin-top:1px;display:flex}
+.devActItem.running .devActItemIc{color:var(--accent)}
+.devActItem.error .devActItemIc{color:var(--danger)}
+.devActItem.done .devActItemIc{color:var(--ok)}
+.devActItemCat{flex:none;margin-top:1px;color:var(--muted)}
+.devActItemText{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.devActItemText b{font-size:var(--fs-xs);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.devActItemText small{font-size:var(--fs-2xs);color:var(--muted);font-family:ui-monospace,Consolas,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.devActChev{flex:none;margin-top:3px;color:var(--muted);transition:transform .15s}
+.devActChev.up{transform:rotate(180deg)}
+.devActSub{list-style:none;margin:2px 0 4px 29px;padding:0;display:flex;flex-direction:column;gap:1px;border-left:1px solid var(--line)}
+.devActSub li{display:flex;align-items:flex-start;gap:7px;padding:5px 0 5px 10px}
+.devActSub .devActItemText b{font-size:var(--fs-2xs);font-weight:600}
+.devActSub .devActItemText small{font-family:ui-monospace,Consolas,monospace}
+@media(prefers-reduced-motion:reduce){.devActChev{transition:none}}
+
+/* Arquivos analisados / Alterações — reaproveita .devFileList do explorador */
+.devChangeList .devFileItem{gap:8px}
+.devBadge{flex:none;width:17px;height:17px;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800}
+.devBadge.add{background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok)}
+.devBadge.mod{background:color-mix(in srgb,var(--accent) 18%,transparent);color:var(--accent)}
+.devFileError{cursor:default}
+.devFileError small{margin-left:auto;flex:none;color:var(--danger)}
+
+/* Tarefas recentes do projeto (DevProjectRail) */
+.devTaskList{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:1px}
+.devTaskItem{display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:7px 8px;border:none;background:transparent;border-radius:var(--r-sm);color:var(--muted);font-size:var(--fs-xs)}
+.devTaskItem:hover{background:var(--panel);color:var(--text)}
+.devTaskItem.active{background:color-mix(in srgb,var(--accent) 10%,transparent);color:var(--text)}
+.devTaskDot{flex:none;width:6px;height:6px;border-radius:999px;background:var(--line)}
+.devTaskDot.active{background:var(--accent)}
+.devTaskTitle{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* Pill de status no cabeçalho do Modo Desenvolvedor — só estados reais
+   (aguardando/trabalhando/interrompido/erro/concluído), sem inventar etapas. */
+.devStagePill{display:inline-flex;align-items:center;gap:6px;padding:5px 11px 5px 9px;border-radius:var(--r-full);font-size:var(--fs-2xs);font-weight:700;background:rgba(127,127,127,.12);color:var(--muted);flex:none}
+.devStagePillDot{width:6px;height:6px;border-radius:999px;background:currentColor;flex:none}
+.devStagePill.live{background:color-mix(in srgb,var(--accent) 14%,transparent);color:var(--accent)}
+.devStagePill.live .devStagePillDot{animation:devPillPulse 1.4s ease-in-out infinite}
+.devStagePill.done{background:color-mix(in srgb,var(--ok) 14%,transparent);color:var(--ok)}
+.devStagePill.warn{background:color-mix(in srgb,var(--warn) 16%,transparent);color:var(--warn)}
+.devStagePill.error{background:color-mix(in srgb,var(--danger) 14%,transparent);color:var(--danger)}
+@keyframes devPillPulse{0%,100%{opacity:1}50%{opacity:.35}}
+@media(prefers-reduced-motion:reduce){.devStagePill.live .devStagePillDot{animation:none}}
+
+/* Popover "Permissões" no composer do Modo Desenvolvedor */
+.permissionsPanel{gap:10px;padding:10px}
+.permRow{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:var(--fs-xs);color:var(--text)}
+.permRow span{display:inline-flex;align-items:center;gap:4px;color:var(--muted);font-size:var(--fs-2xs)}
+.permRow span.write{color:var(--ok)}
+
+/* Cores decorativas dos 4 modos na tela vazia do Modo Desenvolvedor (mesmo
+   padrão por posição já usado nos QUICK_ACTIONS de v2.css, escopado aqui para
+   não afetar os cartões do chat comum). */
+.workspace-developer .quickCards .quickCard:nth-child(1) .qcIcon{background:color-mix(in srgb,var(--accent) 14%,transparent)}
+.workspace-developer .quickCards .quickCard:nth-child(1) .qcIcon svg{color:var(--accent)}
+.workspace-developer .quickCards .quickCard:nth-child(2) .qcIcon{background:color-mix(in srgb,var(--ok) 16%,transparent)}
+.workspace-developer .quickCards .quickCard:nth-child(2) .qcIcon svg{color:var(--ok)}
+.workspace-developer .quickCards .quickCard:nth-child(3) .qcIcon{background:color-mix(in srgb,var(--warn) 16%,transparent)}
+.workspace-developer .quickCards .quickCard:nth-child(3) .qcIcon svg{color:var(--warn)}
+.workspace-developer .quickCards .quickCard:nth-child(4) .qcIcon{background:rgba(139,124,255,.16)}
+.workspace-developer .quickCards .quickCard:nth-child(4) .qcIcon svg{color:#8b7cff}
 
 /* ── Novos controles do painel lançador (DeveloperPanel) ─────────────────── */
 .devProjectRow{display:flex;gap:6px}.devProjectRow select{flex:1;min-width:0}
