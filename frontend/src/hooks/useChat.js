@@ -2,6 +2,22 @@ import { useEffect, useRef, useState } from 'react';
 import { API } from '../constants.js';
 import { takeSseEvents } from '../sse.js';
 
+// Watchdog do SSE: o servidor manda um heartbeat (": ping") a cada 15s mesmo
+// quando o modelo está pensando. Se NADA chegar por este tempo, a conexão
+// morreu em silêncio (proxy/rede móvel) — cancelamos o reader e lançamos, e o
+// chamador cai na reconexão automática em vez de exibir "Raciocinando..."
+// para sempre sem entregar a resposta.
+const SSE_STALL_MS = 60000;
+async function readWithTimeout(reader, ms = SSE_STALL_MS) {
+  let timer;
+  try {
+    return await Promise.race([
+      reader.read(),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('SSE_STALLED')), ms); })
+    ]);
+  } finally { clearTimeout(timer); }
+}
+
 const toolResultFailed = content => {
   try {
     const result = JSON.parse(content);
@@ -130,7 +146,14 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
     let buffer = '';
     let sawDone = false, sawError = false;
     while (true) {
-      const { done, value } = await reader.read();
+      let step;
+      try {
+        step = await readWithTimeout(reader);
+      } catch (err) {
+        try { reader.cancel(); } catch {}
+        throw err; // o chamador reconecta ao stream ao vivo
+      }
+      const { done, value } = step;
       if (value) buffer += decoder.decode(value, { stream: true });
       if (done) buffer += decoder.decode();
       const parsed = takeSseEvents(buffer, { flush: done });

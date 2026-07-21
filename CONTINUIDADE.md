@@ -1,5 +1,68 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 🧊 Modelo "travando na execução" — watchdog contra stream parado (2026-07-21 — branch `claude/modelo-travando-execucao-uwatco`)
+
+**Sintoma (recorrente, relatado com prints + .mht):** no meio de uma resposta
+longa (Z.ai GLM 5.2, esforço Máx, ~42 etapas de ferramenta), o texto PARA no
+meio de uma frase e a interface fica em "Raciocinando..." para sempre. O app
+nunca entrega a resposta nem mostra erro — falha grave: "o básico é responder".
+
+**Causa raiz (diferente das anteriores):** nenhuma das 3 vias de streaming do
+backend (`loop.js`, `multiModel.js`, `orchestrator.js`) tinha proteção contra
+um provedor que PARA de enviar dados SEM fechar a conexão (upstream congelado,
+proxy que engoliu a resposta, rede móvel). O `for await (chunk of stream)`
+fica pendurado indefinidamente: nenhum erro é lançado, então TODA a máquina de
+recuperação que já existia (retry com STREAM_RESUME_NOTE, fallback de modelo,
+PROVIDER_TIMEOUT_NOTICE) nunca é acionada. O heartbeat `: ping` de 15s mantém
+o SSE "vivo", então o frontend também não percebe nada. NÃO confundir com os
+bugs anteriores: limite de etapas (PR #58, outro sintoma — mensagem de limite)
+e re-render travando a UI (PR #60, a resposta chegava mas a tela engasgava).
+
+**Correção:**
+- `backend/src/agent/streamGuard.js` — **novo, puro (não importa openai =
+  testável em qualquer ambiente)**. `guardStreamStall(stream, {timeoutMs,
+  onStall})`: repassa os chunks; se NENHUM chegar em `STREAM_STALL_TIMEOUT_MS`
+  (padrão 180s, piso 30s — generoso porque modelos de raciocínio podem ficar
+  minutos "pensando" sem emitir texto), chama `onStall()` (aborta a requisição
+  com reason `'stall'`) e lança `StreamStalledError` (code `STREAM_STALLED`).
+  O timer só corre ENQUANTO se espera o próximo chunk (pausa do usuário e
+  processamento do corpo do loop não contam). No `finally`, fecha o iterator
+  subjacente (break/stop não vaza conexão) e faz catch da promise pendente
+  (sem unhandled rejection). Também exporta `PROVIDER_CONNECT_TIMEOUT_MS`
+  (padrão 180s): passado como `timeout` nas chamadas de streaming `create()`
+  — o padrão do SDK é 10 min até os headers, longo demais.
+- `backend/src/agent/provider.js` — `isRetryableStreamError` reconhece
+  `code==='STREAM_STALLED'` e as mensagens "stream stalled"/"request timed
+  out". Assim o stall cai na recuperação NORMAL: retomar de onde parou (até
+  STREAM_RECOVERY_LIMIT), depois modelo de reserva, depois aviso honesto — a
+  resposta parcial é SEMPRE salva e entregue.
+- `backend/src/agent/loop.js`, `multiModel.js` (participante + coordenador),
+  `orchestrator.js` (coordenador) — os 4 `for await` de streaming embrulhados
+  no guard, com `onStall: () => activeRequest.abort('stall')`; `timeout` de
+  conexão nos `create()` de streaming. O abort com reason `'stall'` NÃO é
+  confundido com pause/stop do usuário (`controlInterruptReason` devolve
+  'abort' → caminho retryável).
+- `frontend/src/hooks/useChat.js` — watchdog espelho no SSE: o servidor manda
+  `: ping` a cada 15s; se NADA chegar por 60s (`SSE_STALL_MS`), a conexão
+  morreu em silêncio → `reader.cancel()` + throw, e o fluxo cai na reconexão
+  automática já existente (`reconnectLiveRun`/`followActiveConversation`), que
+  remonta o balão pelo replay. Antes, um SSE morto sem FIN deixava a tela
+  travada mesmo com o backend saudável.
+- `.env.example` — documenta `STREAM_STALL_TIMEOUT_MS` e
+  `PROVIDER_CONNECT_TIMEOUT_MS`.
+
+**Validação:** `backend/src/agent/streamGuard.test.js` (6 testes: repassa
+chunks, stall lança e chama onStall preservando o texto já recebido, timer não
+corre durante o processamento do chunk, break fecha o stream, erro do provedor
+propaga intacto, pisos de config). Suíte backend completa: **135 passam, 0
+falham, 2 skips pré-existentes** (com `npm install --ignore-scripts`; sharp
+segue bloqueado pelo proxy deste ambiente). Frontend: `node --test` 7/7 +
+`npm run build` OK (dist/ recompilado e commitado — é versionado). NÃO deu para
+reproduzir um stall real de provedor neste ambiente; validar em produção
+deixando uma tarefa longa rodar (o pior caso agora é: 3 min de silêncio →
+retomada automática; se o provedor seguir mudo → modelo de reserva → aviso
+honesto com o parcial salvo, nunca mais "Raciocinando..." infinito).
+
 ## 📸 Miniatura real de página: navegador headless no backend (2026-07-21 — branch `claude/unified-ai-execution-session-25rm4h`, PR #60)
 
 Pedido: "instale um navegador headless" para gerar a MINIATURA real da página

@@ -10,6 +10,7 @@ import { detectToolRequirement } from '../modelCapabilities.js';
 import { runAgent } from './loop.js';
 import { AGENTS, QUALITY_BAR, clipForBriefing, PERSPECTIVE_CHAR_LIMIT, BRIEFING_CHAR_LIMIT, uploadsNote } from './prompts.js';
 import { STREAM_RECOVERY_LIMIT, STREAM_RESUME_NOTE, STREAM_PAUSE_RESUME_NOTE, isRetryableStreamError, openRouterRouting, retryDelay, addUsage, friendlyApiError, applyPromptCache } from './provider.js';
+import { guardStreamStall, PROVIDER_CONNECT_TIMEOUT_MS } from './streamGuard.js';
 import { acquireConversationControl, releaseConversationControl, beginProviderRequest, releaseProviderRequest, controlInterruptReason, gate } from './control.js';
 import { clientScopeFor, memoryNote, saveMessage } from './persistence.js';
 
@@ -70,8 +71,8 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
       let activeRequest;
       try {
         activeRequest = beginProviderRequest(control);
-        const stream = await client.chat.completions.create({ model: coordModel, messages: msgs, temperature: 0.3, ...openRouterRouting(), stream: true, stream_options: { include_usage: true } }, { signal: activeRequest.signal });
-        for await (const chunk of stream) {
+        const stream = await client.chat.completions.create({ model: coordModel, messages: msgs, temperature: 0.3, ...openRouterRouting(), stream: true, stream_options: { include_usage: true } }, { signal: activeRequest.signal, timeout: PROVIDER_CONNECT_TIMEOUT_MS });
+        for await (const chunk of guardStreamStall(stream, { onStall: () => activeRequest.abort('stall') })) {
           if (await gate(control, onEvent)) { stopped = true; return text; }
           if (chunk.usage) addUsage(usage, chunk.usage);
           const d = chunk.choices?.[0]?.delta?.content || '';
