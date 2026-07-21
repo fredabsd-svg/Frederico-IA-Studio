@@ -154,7 +154,7 @@ const SHELL_INVENTORY = [
   'Frontend: node/npm, yarn e pnpm com tsc, vite, sass, postcss, tailwindcss, prettier e eslint.',
   'Browser/testes visuais: Chromium headless, Xvfb/xvfb-run e Playwright. Para Playwright, prefira o Chromium do sistema em /usr/bin/chromium e não baixe outro navegador sem necessidade.',
   'Mobile: não há React Native/Expo pré-instalados, Android SDK, emulador, iOS/Xcode ou Flutter.',
-  'Outras linguagens: dotnet (C#) e kotlinc 2.3.21 (Kotlin JVM atual). Swift, Kotlin Native, Nim, Zig e Odin não estão disponíveis.'
+  'Outras linguagens: dotnet (C#) e kotlinc (Kotlin JVM). Swift, Kotlin Native, Nim, Zig e Odin não estão disponíveis.'
 ];
 
 // Padrão de qualidade aplicado a TODA resposta (assistente geral, customizados
@@ -293,7 +293,7 @@ export function toolAvailabilityNote(tools, { includeInventory = false } = {}) {
   lines.push('Para executar algo — gerar arquivo, rodar código, pesquisar, ler anexo — CHAME a ferramenta certa pelo function-calling da API (ex.: run_python para criar Excel/Word/PDF; web_search para pesquisar; consultar_cnpj para CNPJ). A ferramenta roda de fato e o arquivo salvo em /workspace/outputs vira download; o texto da resposta é só para falar com a pessoa.');
 
   lines.push('Ferramentas do chat habilitadas para você:');
-  if (names.has('run_python')) lines.push('- run_python: executar Python 3.12 real no sandbox.');
+  if (names.has('run_python')) lines.push('- run_python: executar Python 3 real no sandbox.');
   if (names.has('bash')) lines.push('- bash: executar comandos Linux no sandbox.');
   if (names.has('write_file')) lines.push('- write_file: criar ou sobrescrever arquivos no workspace.');
   if (names.has('read_file')) lines.push('- read_file: ler arquivos de texto do workspace.');

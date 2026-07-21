@@ -1,5 +1,46 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 🧹 Varredura de PRs antigos abertos + remoção dos pins de versão do prompt (2026-07-21 — branch `claude/version-pins-cleanup`)
+
+**Pedido:** buscar PRs abertos esquecidos no repositório e mesclar.
+
+Achados 2 PRs de 2026-07-19 (#40 e #43), ambos com conflito contra o `main`
+atual — natural, dado o tanto que mudou desde então (checkpoint/resume,
+multiconversa, modo gratuito, LGPD, antivírus, redesign do Modo Desenvolvedor).
+
+- **PR #40 (correção de SSRF no `web_fetch`)** — conferido: a vulnerabilidade
+  ainda estava presente no `tools.js` atual (bypass por IPv6 entre colchetes +
+  falta de defesa contra DNS rebinding). Fiz `git rebase` da branch sobre o
+  `main` atual — o código aplicou limpo (só o texto do CONTINUIDADE.md teve
+  conflito, resolvido mantendo as duas entradas). Suíte completa: 166 testes,
+  164 passam, 2 pulados (Postgres). **Mesclado.**
+- **PR #43 (consolidação do system prompt)** — este **não deu para simplesmente
+  rebasear**: o `backend/src/agent.js` que ele editava (113 linhas mudadas)
+  virou, depois de 2026-07-19, uma FACHADA de 43 linhas que só reexporta de
+  `backend/src/agent/*.js` (loop, prompts, orchestrator...). Reaplicar o diff
+  original não faz sentido — a estrutura mudou por completo. Da lista de 4
+  melhorias do PR, conferi cada uma contra o código de hoje:
+  1. Mensagem system única — ainda não está assim hoje (`agent/loop.js` monta
+     várias mensagens `system`); precisaria ser refeito do zero contra a
+     arquitetura atual (loop.js + checkpoint/resume), não é um ajuste pequeno.
+  2. Deduplicação de regras — mesma situação.
+  3. Precedência de estilo dos sliders — idem.
+  4. **Pins de versão no prompt** (`Python 3.12`, `kotlinc 2.3.21`) — ainda
+     presentes, e o motivo do PR continua válido: a versão real já é conferida
+     AO VIVO pelo audit de ambiente (`verifiedEnvironmentNote`, ainda existe em
+     `agent/prompts.js`), então o pin é só informação que pode ficar desatualizada
+     silenciosamente. Esta parte É pequena e segura, então apliquei de novo à
+     mão nos arquivos atuais (`agent/prompts.js`, `agent/orchestrator.js`,
+     `tools.js`): "Python 3.12" → "Python 3", "kotlinc 2.3.21" → "kotlinc".
+     Testado: suíte completa (166, 164 passam, 2 pulados) + `prompts.dev.test.js`.
+
+  **PR #43 fechado** como superado pela reorganização do backend, com o pedaço
+  seguro (pins de versão) reaplicado nesta branch. Os itens 1–3 (mensagem
+  system única, dedup de regras, precedência de sliders) ficam como
+  **pendência real** para quem quiser reabrir essa frente — exigem entender a
+  fundo `agent/loop.js` atual (que já ganhou checkpoint/resume no meio) antes
+  de mexer, para não regredir nada.
+
 ## 🏆 Classificação de referência dos modelos no seletor (2026-07-21 — branch `claude/antivirus-vps-42tstn`)
 
 **Pedido:** o usuário tem um ranking pessoal dos 100 melhores modelos (Tier
