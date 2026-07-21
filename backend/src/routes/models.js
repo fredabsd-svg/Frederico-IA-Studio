@@ -25,17 +25,30 @@ router.get('/models', async (req, res) => {
   // conta); quem usa a chave compartilhada do servidor compartilha por base.
   const cacheKey = prov.source === 'user' ? `u:${req.userId}` : `s:${base}`;
   const cached = modelsCache.get(cacheKey);
-  if (cached && Date.now() - cached.at < CACHE_TTL_MS) return res.json({ models: cached.models });
-  try {
-    const r = await fetch(`${base}/models`, { headers: { Authorization: `Bearer ${prov.apiKey || ''}` } });
-    const data = await r.json();
-    const models = registerModelCatalog(data.data || [])
-      .sort((a, b) => a.name.localeCompare(b.name));
-    modelsCache.set(cacheKey, { models, at: Date.now() });
-    res.json({ models });
-  } catch (err) {
-    res.json({ models: [], error: err.message });
+  if (!cached || Date.now() - cached.at >= CACHE_TTL_MS) {
+    try {
+      const r = await fetch(`${base}/models`, { headers: { Authorization: `Bearer ${prov.apiKey || ''}` } });
+      const data = await r.json();
+      const models = registerModelCatalog(data.data || [])
+        .sort((a, b) => a.name.localeCompare(b.name));
+      modelsCache.set(cacheKey, { models, at: Date.now() });
+    } catch (err) {
+      if (prov.source !== 'free') return res.json({ models: [], error: err.message });
+      modelsCache.set(cacheKey, { models: [], at: Date.now() - CACHE_TTL_MS + 60_000 }); // tenta de novo em 1 min
+    }
   }
+  const catalog = modelsCache.get(cacheKey)?.models || [];
+  // MODO GRATUITO: o seletor só oferece a allowlist gratuita — os metadados
+  // (nome/capacidades) vêm do catálogo do provedor quando disponíveis.
+  if (prov.source === 'free') {
+    const byId = new Map(catalog.map(m => [m.id, m]));
+    const models = (prov.freeModels || []).map(id => byId.get(id) || {
+      id, name: id.replace(/:free$/, '') + ' (grátis)', tools: true, vision: false, image: false, video: false, reasoning: false,
+      capabilities: { text: true, tools: true, vision: false, image: false, video: false, reasoning: false }
+    });
+    return res.json({ models, free: true });
+  }
+  res.json({ models: catalog });
 });
 
 export default router;

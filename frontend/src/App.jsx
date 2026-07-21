@@ -16,6 +16,9 @@ import { DeveloperPanel } from './DeveloperPanel.jsx';
 import { RoutinesPanel } from './RoutinesPanel.jsx';
 import { InboxPanel } from './InboxPanel.jsx';
 import { ProviderPanel } from './ProviderPanel.jsx';
+import { FreeOnboarding, FreeModeBadge, FreeModeDrawer, FreeLimitModal, fetchFreeStatus } from './FreeMode.jsx';
+import { KeyWizard } from './KeyWizard.jsx';
+import { FreeAdminPanel } from './FreeAdminPanel.jsx';
 import { ConnectorsPanel } from './ConnectorsPanel.jsx';
 import { PrivacyPanel, ConsentGate } from './PrivacyPanel.jsx';
 import { CameraCapture } from './CameraCapture.jsx';
@@ -108,6 +111,13 @@ export default function App({ user } = {}) {
   const [routinesOpen, setRoutinesOpen] = useState(false);
   const [inboxOpen, setInboxOpen] = useState(false);
   const [providerOpen, setProviderOpen] = useState(false);
+  // ---- Modo gratuito ----
+  const [freeStatus, setFreeStatus] = useState(null);        // GET /api/free-tier/status
+  const [freeOnbOpen, setFreeOnbOpen] = useState(false);     // escolha do 1º acesso
+  const [freeDrawerOpen, setFreeDrawerOpen] = useState(false);
+  const [freeAdminOpen, setFreeAdminOpen] = useState(false);
+  const [keyWizardOpen, setKeyWizardOpen] = useState(false); // assistente de chave própria
+  const [freeLimitInfo, setFreeLimitInfo] = useState(null);  // tela de limite atingido
   const [connectorsOpen, setConnectorsOpen] = useState(false);
   const [privacyOpen, setPrivacyOpen] = useState(false);
   // LGPD: true quando o usuário ainda não aceitou a versão vigente dos
@@ -195,7 +205,10 @@ export default function App({ user } = {}) {
     listening, recognitionRef, current, currentRef, setCurrent,
     ensureConversation, fetchConversations, loadFiles,
     developerSession, setDeveloperSession, followActiveRef,
-    model, assistantId, webSearch, effort, multiModel: effectiveMulti, setNeedLogin, showToast
+    model, assistantId, webSearch, effort, multiModel: effectiveMulti, setNeedLogin, showToast,
+    // Modo gratuito: status ao vivo (restante/renovação) e tela de limite
+    onFreeEvent: ({ type, _seq, ...status }) => setFreeStatus(prev => ({ ...(prev || {}), ...status })),
+    onFreeLimit: (info) => setFreeLimitInfo(info)
   });
   const { tasks, tasksOpen, setTasksOpen, tasksActive, pollTasks, sendAsTask, cancelTask } = useTasks({
     current, busyRef, openConversation, ensureConversation,
@@ -387,10 +400,25 @@ export default function App({ user } = {}) {
       loadClients();
       try { const h = await (await fetch(`${API}/api/health`)).json(); setUnprotected(h && h.auth === false); } catch {}
       try { const m = await (await fetch(`${API}/api/me`)).json(); setMe(m || null); } catch {}
+      refreshFreeStatus();
     } catch (err) {
       if (err?.auth) setNeedLogin(true);
       else setConnError(true);
     }
+  }
+
+  // ---- Modo gratuito: status + onboarding do primeiro acesso ----
+  // Recarrega o status (modelo, restante, fila) e decide se mostra a escolha
+  // "Começar gratuitamente x chave própria" — só quando o usuário ainda não
+  // tem NENHUM caminho para conversar (sem chave própria, sem chave do
+  // servidor e sem adesão ao gratuito).
+  async function refreshFreeStatus() {
+    const status = await fetchFreeStatus();
+    setFreeStatus(status);
+    if (status?.configured && status.enabled && !status.optedIn && !status.hasAnyKey) {
+      setFreeOnbOpen(true);
+    }
+    return status;
   }
 
   // Esconde/mostra a barra lateral (guardado entre sessões)
@@ -669,6 +697,7 @@ export default function App({ user } = {}) {
           <button className="studio" onClick={openStudioNew}><Bot size={16}/> Assistentes</button>
           <button className="studio" onClick={openAnalytics}><BarChart3 size={16}/> Análises</button>
           {me?.isAdmin && <button className="studio" onClick={() => window.open(`${API}/api/backup`, '_blank')} title="Baixa um arquivo com o banco e todos os workspaces (somente administrador)"><HardDriveDownload size={16}/> Backup</button>}
+          {me?.isAdmin && freeStatus?.configured && <button className="studio" onClick={() => setFreeAdminOpen(true)} title="Usuários, consumo, bloqueios e limites do modo gratuito (somente administrador)"><Gauge size={16}/> Modo gratuito</button>}
           <button className="studio" onClick={() => setProviderOpen(true)} title="Cadastre a sua própria chave de API"><KeyRound size={16}/> Provedor de IA</button>
           <button className="studio" onClick={() => setConnectorsOpen(true)} title="Conecte serviços externos, como o GitHub"><Cable size={16}/> Conectores</button>
           <button className="studio" onClick={() => setPrivacyOpen(true)} title="Exportar dados, apagar histórico ou excluir a conta (LGPD)"><ShieldCheck size={16}/> Privacidade e dados</button>
@@ -728,6 +757,7 @@ export default function App({ user } = {}) {
             teamIds={teamIds} onToggleMember={toggleTeamMember} effectiveTeam={effectiveTeam}
             onEditAssistant={() => currentAssistant ? openStudioEdit(currentAssistant) : openStudioNew()}/>
           <MultiModelPicker models={allModels} value={multiModel} onChange={changeMultiModel} showToast={showToast}/>
+          <FreeModeBadge status={freeStatus} onClick={() => { setFreeDrawerOpen(true); refreshFreeStatus(); }}/>
         </div>
         <div className="pickers desktopPickers">
           <button className="gear" onClick={openFilesDrawer} title="Arquivos da conversa" aria-label="Arquivos da conversa" disabled={!current?.id}><FolderOpen size={16}/></button>
@@ -1063,7 +1093,25 @@ export default function App({ user } = {}) {
     {developerOpen && <DeveloperPanel devProjects={devProjects} initialMode={developerStartMode} onStart={startDeveloperTask} onManageFolders={() => { setDeveloperOpen(false); setPcOpen(true); }} onOpenConnectors={() => { setDeveloperOpen(false); setConnectorsOpen(true); }} onClose={() => setDeveloperOpen(false)}/>}
     {routinesOpen && <RoutinesPanel assistants={assistants} clients={clients} showToast={showToast} askConfirm={askConfirm} onClose={() => setRoutinesOpen(false)}/>}
     {inboxOpen && <InboxPanel clients={clients} clientId={clientId} showToast={showToast} askConfirm={askConfirm} onOpenConversation={(id) => { fetchConversations(); openConversation(id); }} onClose={() => setInboxOpen(false)}/>}
-    {providerOpen && <ProviderPanel showToast={showToast} onClose={() => setProviderOpen(false)}/>}
+    {providerOpen && <ProviderPanel showToast={showToast} freeStatus={freeStatus}
+      onOpenWizard={() => { setProviderOpen(false); setKeyWizardOpen(true); }}
+      onFreeChange={refreshFreeStatus}
+      onClose={() => { setProviderOpen(false); refreshFreeStatus(); }}/>}
+    {freeOnbOpen && <FreeOnboarding status={freeStatus} showToast={showToast}
+      onStarted={() => { setFreeOnbOpen(false); refreshFreeStatus(); loadModels(); }}
+      onOpenWizard={() => { setFreeOnbOpen(false); setKeyWizardOpen(true); }}
+      onClose={() => setFreeOnbOpen(false)}/>}
+    {freeDrawerOpen && <FreeModeDrawer status={freeStatus} onRefresh={refreshFreeStatus}
+      onOpenWizard={() => { setFreeDrawerOpen(false); setKeyWizardOpen(true); }}
+      onClose={() => setFreeDrawerOpen(false)}/>}
+    {keyWizardOpen && <KeyWizard showToast={showToast}
+      onDone={() => { refreshFreeStatus(); loadModels(); }}
+      onClose={() => setKeyWizardOpen(false)}/>}
+    {freeLimitInfo && <FreeLimitModal info={freeLimitInfo}
+      onRetry={() => { const t = freeLimitInfo?.retryText; setFreeLimitInfo(null); if (t) sendMessage(t); }}
+      onOpenWizard={() => { setFreeLimitInfo(null); setKeyWizardOpen(true); }}
+      onClose={() => setFreeLimitInfo(null)}/>}
+    {freeAdminOpen && <FreeAdminPanel showToast={showToast} askConfirm={askConfirm} askPrompt={askPrompt} onClose={() => setFreeAdminOpen(false)}/>}
     {connectorsOpen && <ConnectorsPanel showToast={showToast} onClose={() => setConnectorsOpen(false)}/>}
     {privacyOpen && <PrivacyPanel user={user} showToast={showToast} askConfirm={askConfirm} askPrompt={askPrompt}
       onHistoryCleared={() => { startNewChat(); fetchConversations(); }} onClose={() => setPrivacyOpen(false)}/>}

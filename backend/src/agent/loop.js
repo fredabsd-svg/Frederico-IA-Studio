@@ -2,6 +2,7 @@
 // ferramentas, reparos, failover de modelo e entrega de arquivos.
 // Extraído de agent.js (refatoração mecânica, sem mudança de comportamento).
 import { getUserProvider } from '../userProvider.js';
+import { freeTierConfigured } from '../freeTier.js';
 import { nanoid } from 'nanoid';
 import { webToolDefinitions, runTool } from '../tools.js';
 import { buildContext, historyBudgetForModel, selectHistoryForContext } from '../memory/contextBuilder.js';
@@ -25,13 +26,21 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   const provider = await getUserProvider(userId);          // BYOK: chave do usuário
   const client = provider.client;                          // sombreia o cliente global
   let chosenModel = model || assistant?.model || provider.model;
+  // MODO GRATUITO: o modelo precisa estar na allowlist gratuita — a chave da
+  // plataforma nunca atende um modelo pago escolhido no seletor. Fora da lista,
+  // cai no modelo gratuito padrão.
+  if (provider.source === 'free' && !(provider.freeModels || []).includes(chosenModel)) {
+    chosenModel = provider.model;
+  }
   // FAILOVER (MM-04): se o provedor cair no meio da tarefa, antes o app só
   // repetia o MESMO modelo e desistia. Agora há uma cadeia de reserva — os
-  // modelos de MODEL_FALLBACKS (env) e, por padrão, o modelo-base da conta —
-  // acionada só quando o modelo escolhido falha de forma recuperável, sem
-  // perder o trabalho já feito (as mensagens/ferramentas já executadas ficam).
+  // modelos de MODEL_FALLBACKS (env), os modelos gratuitos alternativos (modo
+  // gratuito) e, por padrão, o modelo-base da conta — acionada só quando o
+  // modelo escolhido falha de forma recuperável, sem perder o trabalho já feito
+  // (as mensagens/ferramentas já executadas ficam).
   const fallbackChain = [
-    ...String(process.env.MODEL_FALLBACKS || '').split(',').map(s => s.trim()).filter(Boolean),
+    ...(provider.source === 'free' ? [] : String(process.env.MODEL_FALLBACKS || '').split(',').map(s => s.trim()).filter(Boolean)),
+    ...(provider.fallbackModels || []),
     ...(provider.model && provider.model !== chosenModel ? [provider.model] : [])
   ];
   const triedModels = new Set([chosenModel]);
@@ -84,7 +93,9 @@ export async function runAgent({ userId, conversationId, userText, model, assist
 
   // BYOK: sem chave de API configurada, orienta a cadastrar e encerra.
   if (!provider.hasKey) {
-    const finalText = 'Nenhuma chave de API configurada. Vá em **Configurações → Provedor de IA** e cadastre a sua chave (OpenRouter/DeepSeek) para começar a conversar.';
+    const finalText = freeTierConfigured()
+      ? 'Nenhuma chave de API configurada. Você pode **começar gratuitamente** (Configurações → Provedor de IA → "Começar gratuitamente") ou cadastrar a sua própria chave (OpenRouter/DeepSeek) para conversar.'
+      : 'Nenhuma chave de API configurada. Vá em **Configurações → Provedor de IA** e cadastre a sua chave (OpenRouter/DeepSeek) para começar a conversar.';
     onEvent({ type: 'status', content: 'Chave de API não configurada' });
     onEvent({ type: 'delta', content: finalText });
     const assistantMessageId = await saveMessage(userId, conversationId, 'assistant', finalText);

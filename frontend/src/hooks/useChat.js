@@ -39,7 +39,8 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
                           listening, recognitionRef, current, currentRef, setCurrent,
                           ensureConversation, fetchConversations, loadFiles,
                           developerSession, setDeveloperSession, followActiveRef,
-                          model, assistantId, webSearch, effort, multiModel, setNeedLogin, showToast }) {
+                          model, assistantId, webSearch, effort, multiModel, setNeedLogin, showToast,
+                          onFreeEvent, onFreeLimit }) {
   const [busy, setBusy] = useState(false);
   const [paused, setPaused] = useState(false);
   const [controlPending, setControlPending] = useState(false);
@@ -160,6 +161,14 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
       buffer = parsed.rest;
       for (const ev of parsed.events) {
         if (ev.type === 'status') setStatusText(ev.content || '');
+        // ---- Modo gratuito: estados da fila e status atualizado ----
+        if (ev.type === 'free_queue') {
+          if (ev.state === 'preparing') setStatusText('Preparando solicitação (modo gratuito)...');
+          if (ev.state === 'waiting') setStatusText(`Aguardando na fila do modo gratuito (posição ${ev.position || 1})... Você pode cancelar no botão Parar.`);
+          if (ev.state === 'processing') setStatusText('Processando com o modelo gratuito...');
+          if (ev.state === 'cancelled') setStatusText('Solicitação cancelada.');
+        }
+        if (ev.type === 'free_status') onFreeEvent?.(ev);
         if (ev.type === 'memory_context') update(m => ({ ...m, memory: ev.memory }));
         if (ev.type === 'delta') update(m => {
           const blocks = [...(m.blocks || [])];
@@ -340,7 +349,17 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
       if (res.status === 401) { setChatBusy(false); setStatusText(''); setNeedLogin(true); return; }
       if (!res.ok) {
         let msg = `O servidor respondeu com erro (${res.status}).`;
-        try { const j = await res.json(); if (j?.error) msg = j.error; } catch {}
+        let payload = null;
+        try { payload = await res.json(); if (payload?.error) msg = payload.error; } catch {}
+        // Limite/bloqueio do MODO GRATUITO: em vez de um erro técnico no chat,
+        // abre a tela amigável com as opções (aguardar, chave própria, tutorial).
+        if (payload?.code && String(payload.code).startsWith('free_') && onFreeLimit) {
+          setMessages(prev => prev.filter(m => m.id !== keyRef.key && !(m.role === 'user' && m.created_at === sentAt && m.content === text)));
+          setInput(text); // devolve o texto para reenviar depois
+          onFreeLimit({ ...payload, retryText: text });
+          setChatBusy(false); setPaused(false); setStatusText('');
+          return;
+        }
         update(m => ({ ...m, failed: true, retryText: text, blocks: [...(m.blocks || []), { type: 'text', content: `\n\n**Erro:** ${msg}` }] }));
         showToast(msg);
         setChatBusy(false); setPaused(false); setStatusText('');

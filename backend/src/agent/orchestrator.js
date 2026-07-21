@@ -26,7 +26,17 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
   try {
   const userMsgId = await saveMessage(userId, conversationId, 'user', userText);
   const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
-  const coordModel = model || provider.model;
+  // MODO GRATUITO: o coordenador (e os membros, que herdam via member.model ||
+  // coordModel) fica restrito à allowlist gratuita da plataforma.
+  let coordModel = model || provider.model;
+  if (provider.source === 'free') {
+    const allowed = provider.freeModels || [];
+    if (!allowed.includes(coordModel)) coordModel = provider.model;
+    // Assistentes/executor com modelo próprio fora da allowlist herdam o
+    // coordenador (member.model || coordModel) em vez de gastar modelo pago.
+    assistants = assistants.map(a => allowed.includes(a.model) ? a : { ...a, model: null });
+    if (executor && !allowed.includes(executor.model)) executor = { ...executor, model: null };
+  }
   if (!provider.hasKey) {
     const finalText = 'Nenhuma chave de API configurada. Vá em **Configurações → Provedor de IA** e cadastre a sua chave para usar o Modo Equipe.';
     onEvent({ type: 'delta', content: finalText });
