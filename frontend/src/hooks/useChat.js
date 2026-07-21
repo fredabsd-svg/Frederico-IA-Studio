@@ -13,11 +13,17 @@ const toolResultFailed = content => {
 
 // Envio de mensagem (SSE), controle pausar/continuar/parar e reenvio.
 // Recebe as dependências do App por parâmetro e devolve { estado, ações }.
+// Aplica um patch num cartão (slot) da execução multimodelo da mensagem.
+const mmPatch = (m, slot, fn) => {
+  if (!m.multi?.models) return m;
+  return { ...m, multi: { ...m.multi, models: m.multi.models.map(s => s.slot === slot ? fn(s) : s) } };
+};
+
 export function useChat({ input, setInput, messages, setMessages, uploads, team, effectiveTeam,
                           listening, recognitionRef, current, currentRef, setCurrent,
                           ensureConversation, fetchConversations, loadFiles,
                           developerSession, setDeveloperSession, followActiveRef,
-                          model, assistantId, webSearch, effort, setNeedLogin, showToast }) {
+                          model, assistantId, webSearch, effort, multiModel, setNeedLogin, showToast }) {
   const [busy, setBusy] = useState(false);
   const [paused, setPaused] = useState(false);
   const [controlPending, setControlPending] = useState(false);
@@ -146,6 +152,13 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
           for (let i = blocks.length - 1; i >= 0; i--) { if (blocks[i].type === 'tool' && blocks[i].status === 'running') { blocks[i] = { ...blocks[i], status, ended: Date.now(), result: ev.content }; break; } }
           return { ...m, blocks };
         });
+        // ---- Execução multimodelo: estado ao vivo de cada modelo ----
+        if (ev.type === 'mm_start') update(m => ({ ...m, multi: { mode: ev.mode, live: true, models: (ev.models || []).map(s => ({ ...s, status: 'aguardando', text: '' })) } }));
+        if (ev.type === 'mm_status') update(m => mmPatch(m, ev.slot, s => ({ ...s, status: ev.status })));
+        if (ev.type === 'mm_delta') update(m => mmPatch(m, ev.slot, s => ({ ...s, text: (s.text || '') + ev.content })));
+        if (ev.type === 'mm_reset') update(m => mmPatch(m, ev.slot, s => ({ ...s, text: '' })));
+        if (ev.type === 'mm_round') update(m => m.multi ? { ...m, multi: { ...m.multi, round: ev.round, rounds: ev.total } } : m);
+        if (ev.type === 'mm_done') update(m => ({ ...m, multi: ev.meta }));
         if (ev.type === 'files') update(m => ({ ...m, files: [...(m.files || []), ...ev.files] }));
         if (ev.type === 'file_checks') update(m => ({
           ...m,
@@ -293,6 +306,8 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
       webSearch,
       effort,
       ...(team ? { orchestrate: true, orchestrateIds: effectiveTeam.map(a => a.id) } : {}),
+      // Multimodelo: 2+ modelos na mesma mensagem (tem prioridade no backend)
+      ...(multiModel ? { multiModel } : {}),
       ...(activeDeveloper ? { developer: { mode: activeDeveloper.mode, projectId: activeDeveloper.projectId, github: activeDeveloper.github || null, rules: activeDeveloper.rules } } : {})
     };
     try {
@@ -339,5 +354,22 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
     } catch {}
   }
 
-  return { busy, busyRef, paused, statusText, controlPending, nowTick, sendMessage, retrySend, control };
+  // Interrompe SÓ um modelo da execução multimodelo em andamento (o botão
+  // "Parar" geral continua parando tudo, via control('stop')).
+  async function cancelMultiSlot(slot) {
+    if (!current?.id) return;
+    try {
+      const res = await fetch(`${API}/api/conversations/${current.id}/multimodel/cancel`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ slot })
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d?.error || 'Não foi possível interromper este modelo.');
+      }
+    } catch (err) {
+      showToast(err?.message || 'Não foi possível interromper este modelo.');
+    }
+  }
+
+  return { busy, busyRef, paused, statusText, controlPending, nowTick, sendMessage, retrySend, control, cancelMultiSlot };
 }

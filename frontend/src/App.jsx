@@ -18,6 +18,8 @@ import { ConnectorsPanel } from './ConnectorsPanel.jsx';
 import { PrivacyPanel, ConsentGate } from './PrivacyPanel.jsx';
 import { CameraCapture } from './CameraCapture.jsx';
 import { ContextPicker, AssistantGlyph, AssistantTile, ASSISTANT_ICON, modelHasTools } from './components/ContextPicker.jsx';
+import { MultiModelPicker } from './components/MultiModelPicker.jsx';
+import { MultiModelBoard } from './components/MultiModelBoard.jsx';
 import { ClientPicker } from './components/ClientPicker.jsx';
 import { MemoryTrace } from './components/MemoryTrace.jsx';
 import { useAssistants } from './hooks/useAssistants.js';
@@ -96,6 +98,8 @@ export default function App({ user } = {}) {
   const [needsConsent, setNeedsConsent] = useState(false);
   const [team, setTeam] = useState(false);
   const [teamIds, setTeamIds] = useState(() => { try { return JSON.parse(localStorage.getItem('fred_team') || 'null'); } catch { return null; } });
+  // Multimodelo: { enabled, config } — 2+ modelos de IA na mesma mensagem
+  const [multiModel, setMultiModel] = useState(() => { try { return JSON.parse(localStorage.getItem('fred_multimodel') || 'null'); } catch { return null; } });
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
   const [analytics, setAnalytics] = useState(null);
   const [theme, setTheme] = useState(() => localStorage.getItem('fred_theme') || 'dark');
@@ -164,20 +168,45 @@ export default function App({ user } = {}) {
   // Membros ativos da equipe (null = todos)
   const effectiveTeam = assistants.filter(a => !teamIds || teamIds.includes(a.id));
   const uploads = files.filter(f => f.kind === 'upload');
+  // Multimodelo só vale com 2+ modelos selecionados; senão o fluxo é o normal
+  const effectiveMulti = multiModel?.enabled && (multiModel.config?.models?.length || 0) >= 2 ? multiModel.config : null;
   const {
-    busy, busyRef, paused, statusText, controlPending, nowTick, sendMessage, retrySend, control
+    busy, busyRef, paused, statusText, controlPending, nowTick, sendMessage, retrySend, control, cancelMultiSlot
   } = useChat({
     input, setInput, messages, setMessages, uploads, team, effectiveTeam,
     listening, recognitionRef, current, currentRef, setCurrent,
     ensureConversation, fetchConversations, loadFiles,
     developerSession, setDeveloperSession, followActiveRef,
-    model, assistantId, webSearch, effort, setNeedLogin, showToast
+    model, assistantId, webSearch, effort, multiModel: effectiveMulti, setNeedLogin, showToast
   });
   const { tasks, tasksOpen, setTasksOpen, tasksActive, pollTasks, sendAsTask, cancelTask } = useTasks({
     current, busyRef, openConversation, ensureConversation,
     input, setInput, listening, recognitionRef,
     model, assistantId, webSearch, showToast
   });
+
+  function changeMultiModel(next) {
+    setMultiModel(next);
+    try { localStorage.setItem('fred_multimodel', JSON.stringify(next)); } catch {}
+    // Multimodelo e Modo Equipe são mutuamente exclusivos na prática (o backend
+    // dá prioridade ao multimodelo) — desligar a equipe evita confusão.
+    if (next?.enabled) setTeam(false);
+  }
+
+  // Ações dos cartões multimodelo
+  function continueWithModel(card) {
+    setModel(card.id);
+    changeMultiModel({ ...(multiModel || {}), enabled: false });
+    showToast(`A conversa seguirá apenas com ${card.name}.`, 'ok');
+  }
+  function askReviewOfModel(card) {
+    setInput(`Revise criticamente a resposta de ${card.name} (função: ${card.roleLabel}) acima: aponte erros, omissões e riscos, e produza uma versão final melhorada.`);
+    setTimeout(() => inputRef.current?.focus(), 60);
+  }
+  function combineAnswers() {
+    setInput('Combine as melhores partes das respostas dos modelos acima em UMA resposta final, resolvendo as divergências e descartando o que estiver errado.');
+    setTimeout(() => inputRef.current?.focus(), 60);
+  }
 
   function toggleTeamMember(id) {
     const cur = teamIds || assistants.map(a => a.id);
@@ -645,6 +674,7 @@ export default function App({ user } = {}) {
             currentAssistant={currentAssistant} team={team} onTeam={setTeam}
             teamIds={teamIds} onToggleMember={toggleTeamMember} effectiveTeam={effectiveTeam}
             onEditAssistant={() => currentAssistant ? openStudioEdit(currentAssistant) : openStudioNew()}/>
+          <MultiModelPicker models={allModels} value={multiModel} onChange={changeMultiModel} showToast={showToast}/>
         </div>
         <div className="pickers desktopPickers">
           <button className="gear" onClick={openFilesDrawer} title="Arquivos da conversa" aria-label="Arquivos da conversa" disabled={!current?.id}><FolderOpen size={16}/></button>
@@ -731,7 +761,19 @@ export default function App({ user } = {}) {
               {m.role === 'user' && <button onClick={() => saveAsTemplate(m)} title="Salvar como template reutilizável" aria-label="Salvar como template"><BookmarkPlus size={13}/></button>}
               <button onClick={() => copyMessage(m, idx)} title="Copiar a mensagem inteira" aria-label="Copiar mensagem">{copiedIdx === idx ? <Check size={13}/> : <Copy size={13}/>}</button>
             </div>
-            {m.blocks
+            {/* Execução multimodelo: um cartão por modelo (status, resposta,
+                tokens, custo) + ações por cartão. No modo Comparação o texto
+                salvo é a própria junção das respostas — o quadro basta. */}
+            {m.role === 'assistant' && m.multi && <MultiModelBoard
+              multi={m.multi}
+              live={Boolean(m.multi.live) || (busy && idx === messages.length - 1)}
+              onCancelSlot={busy ? cancelMultiSlot : null}
+              onContinueWith={continueWithModel}
+              onAskReview={askReviewOfModel}
+              onCombine={combineAnswers}/>}
+            {m.role === 'assistant' && m.multi && ['compare', 'pipeline'].includes(m.multi.mode) && !(m.blocks || []).some(b => b.type === 'tool')
+              ? null
+              : m.blocks
               ? (() => {
                   // Todas as chamadas de ferramenta da resposta são agrupadas numa
                   // única "sessão de execução" (o Ambiente de Trabalho da IA), em vez
