@@ -1283,3 +1283,10 @@ input[type=checkbox]:focus-visible,input[type=radio]:focus-visible{outline-offse
 .syncRow b{min-width:120px}
 .syncRow span{color:var(--muted)}
 .syncRow.err span.err,.syncRow span.err{color:var(--danger,#e5484d);display:inline-flex;align-items:center;gap:4px}
+
+/* Versões agrupadas do mesmo modelo (deduplicação): a principal aparece na
+   lista; as anteriores ficam atrás de "Ver outras versões". */
+.mpVersionsToggle{display:block;width:100%;text-align:left;border:none;background:transparent;color:var(--accent);font-size:var(--fs-2xs);font-weight:700;padding:2px 10px 8px 46px;cursor:pointer}
+.mpVersionsToggle:hover{text-decoration:underline}
+.mpVersionsHint{color:var(--muted);font-weight:600}
+.mpItemVersion{margin-left:26px;opacity:.88;border-left:2px solid var(--line);padding-left:8px}

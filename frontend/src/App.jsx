@@ -5,7 +5,7 @@ import rehypeHighlight from 'rehype-highlight';
 import { Download, FileText, FileSpreadsheet, FilePenLine, Plus, ArrowUp, Upload, Trash2, Bot, Brain, X, BarChart3, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench, CalendarClock, Inbox, Palette, Gauge, SlidersHorizontal, Paperclip, MoreHorizontal, FolderOpen, Code2, ChevronRight, ShieldCheck, LogOut, KeyRound, Camera, Cable, MessageCircleQuestion, Bug, PanelRight, Lock, Unlock } from 'lucide-react';
 import { API, TOOL_INFO, TEMPLATES, QUICK_ACTIONS, THEMES, WORKSPACES, EFFORTS, EFFORT_DESC, ASSISTANT_ICONS, ASSISTANT_COLORS, isAssistantIcon, DEV_WORK_MODES, MAX_ASSISTANT_PROFILE_CHARS } from './constants.js';
 import { signOut } from './authClient.js';
-import { Slider, Modal, Drawer, Collapsible, useAppDialog } from './components.jsx';
+import { Slider, Modal, Drawer, Collapsible, useAppDialog, ModelPicker } from './components.jsx';
 import { ExecutionSession } from './components/ExecutionSession.jsx';
 import { DevProjectRail } from './components/DevProjectRail.jsx';
 import { DevActivityRail } from './components/DevActivityRail.jsx';
@@ -1132,11 +1132,12 @@ export default function App({ user } = {}) {
         </div>
       </div>
 
-      <label>Modelo de IA padrão
-        <select value={form.model || model} onChange={e => setForm(f => ({ ...f, model: e.target.value }))}>
-          {allModels.filter(modelHasTools).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-        </select>
-      </label>
+      <div className="field">
+        <span className="fieldLabel">Modelo de IA padrão</span>
+        {/* Seletor completo (busca, filtros, capacidades, classificação, preço)
+            — o mesmo da área de modelos, em vez de um <select> só com nomes. */}
+        <ModelPicker models={allModels.filter(modelHasTools)} value={form.model || model} onChange={id => setForm(f => ({ ...f, model: id }))}/>
+      </div>
 
       <label>Começar de um template
         <select value={form.template || ''} onChange={e => applyTemplate(e.target.value)}>
