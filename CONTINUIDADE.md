@@ -1,5 +1,52 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 🐛 Corrige "conecto o GitHub e a IA diz que não tem acesso" (2026-07-22 — branch `claude/resumo-alteracoes-tres-dias-vukd8t`)
+
+**Sintoma relatado (com print):** no Modo Desenvolvedor, com um repositório
+GitHub selecionado, a IA respondia que **"não tem acesso ao GitHub"** e às vezes
+a execução terminava com o selo **"● Erro"**. O usuário suspeitou (corretamente)
+que era bug do app, não do OpenRouter.
+
+**Causa raiz encontrada (contradição interna do app):**
+1. O prompt do modo desenvolvedor mandava **clonar** (`prompts.js`, "PRIMEIRO
+   PASSO OBRIGATÓRIO: chame github_clone") sempre que um repo estava
+   *selecionado* — independente de haver conexão.
+2. Mas as ferramentas `github_*` só eram entregues ao modelo se
+   `hasGithubConnection(userId)` fosse verdadeiro (`loop.js`).
+3. Quando os dois discordavam (repo selecionado + conexão ausente), o modelo era
+   mandado usar uma ferramenta **que não estava na lista dele** → respondia o
+   "não tenho acesso" genérico.
+4. Agravante: `getGithubConnection` (`connectors/github.js`) engolia **qualquer**
+   erro em silêncio (`catch { return null }`, e `if (!token) return null` quando
+   a descriptografia falhava) — então, se a `ENCRYPTION_KEY` mudou entre deploys,
+   o usuário aparecia "conectado" no banco mas o app o tratava como desconectado,
+   **sem nenhum log** apontando a causa.
+
+**Correções aplicadas:**
+- **`loop.js`**: consulta `hasGithubConnection` UMA vez, passa `{ githubConnected }`
+  para `developerContextFor` e reaproveita no gate das ferramentas (fim da
+  consulta dupla ao banco).
+- **`prompts.js`** (`developerContextFor(request, userId, opts)`): quando há repo
+  selecionado mas **sem conexão**, a nota deixa de mandar clonar e passa a
+  instruir o modelo a explicar objetivamente que o usuário precisa **reconectar
+  em Configurações → Conectores** — em vez do "não tenho acesso" confuso. Default
+  `githubConnected=true` preserva os demais chamadores (orchestrator/multiModel).
+- **`connectors/github.js`**: `getGithubConnection` passa a **logar** os dois
+  casos antes engolidos — token que não descriptografa (ENCRYPTION_KEY mudou) e
+  erro de banco — distinguindo "nunca conectou" de "conexão quebrada".
+
+**Sobre o selo "● Erro" (sintoma separado):** vem de um `throw` de erro de
+provedor no `loop.js` (não é incompatibilidade de ferramentas — essa já é
+tratada sem erro, "respondendo em texto"). Provável erro do provedor do modelo
+escolhido (ex.: Kimi K3) ao receber ferramentas. **Não** foi alterado às cegas —
+depende do texto real do erro para classificar sem regressão; fica registrado
+como próximo passo caso persista com modelos específicos.
+
+**Testes:** `prompts.dev.test.js` ganhou 3 casos (conectado manda clonar; sem
+conexão pede reconexão e não emite o comando de clone; sem opts preserva o
+comportamento antigo). Suíte completa: **179 testes, 177 passam, 0 falham**, 2
+pulados (Postgres).
+
 ## 🔎 Auditoria cruzada Git × CONTINUIDADE + registro de lacunas (2026-07-22 — branch `claude/resumo-alteracoes-tres-dias-vukd8t`)
 
 **Pedido:** o usuário achou o app "muito bugado" e pediu um resumo detalhado de

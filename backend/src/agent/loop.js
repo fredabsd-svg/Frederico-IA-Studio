@@ -60,7 +60,11 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   };
   const chosenPrompt = promptFor(assistant);
   const eff = effortCfg(effort);
-  const developerContext = developerContextFor(developer, userId);
+  // Conexão do GitHub consultada UMA vez: alimenta tanto a nota do modo
+  // desenvolvedor (para não instruir o clone quando não há conexão) quanto o
+  // gate das ferramentas github_* mais abaixo.
+  const githubConnected = await hasGithubConnection(userId);
+  const developerContext = developerContextFor(developer, userId, { githubConnected });
   const lowSignalTurn = isLowSignalTurn(userText);
   // userId viaja junto: o sandbox monta só as pastas do PC DESTE usuário
   // (isolamento multi-tenant) e aplica o limite de sandboxes por usuário.
@@ -72,7 +76,7 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   // Conector GitHub: as ferramentas github_* só são oferecidas a quem conectou
   // a conta (Configurações → Conectores). Em plan/review, as de escrita
   // (push/PR) ficam de fora — esses modos não alteram nada.
-  if (!lowSignalTurn && await hasGithubConnection(userId)) {
+  if (!lowSignalTurn && githubConnected) {
     // Em modo desenvolvedor de leitura (ask/plan/review), as ferramentas de
     // escrita do GitHub (push/PR) ficam de fora — esses modos não alteram nada.
     const githubTools = developerContext && !developerContext.canWrite

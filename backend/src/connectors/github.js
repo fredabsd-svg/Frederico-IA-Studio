@@ -72,11 +72,21 @@ export async function getGithubConnection(userId) {
   if (!userId) return null;
   try {
     const row = await db.prepare("SELECT token_enc, account_login, account_name FROM user_connectors WHERE user_id=? AND provider='github'").get(userId);
-    if (!row?.token_enc) return null;
+    if (!row?.token_enc) return null; // nunca conectou: silêncio é correto
     const token = decryptSecret(row.token_enc);
-    if (!token) return null;
+    if (!token) {
+      // A conexão EXISTE no banco, mas o token não descriptografou — quase
+      // sempre a ENCRYPTION_KEY do servidor mudou entre deploys. Sem este log
+      // o usuário via "não tenho acesso ao GitHub" sem nenhuma pista da causa.
+      console.error(`[github] usuário ${userId} está conectado no banco, mas o token não descriptografou (ENCRYPTION_KEY mudou?). Tratando como desconectado — o usuário precisa reconectar em Configurações → Conectores.`);
+      return null;
+    }
     return { token, login: row.account_login || '', name: row.account_name || '' };
-  } catch { return null; }
+  } catch (e) {
+    // Falha de banco/leitura: também era engolida em silêncio antes.
+    console.error(`[github] falha ao ler a conexão do usuário ${userId}: ${e?.message || e}`);
+    return null;
+  }
 }
 
 export async function hasGithubConnection(userId) {

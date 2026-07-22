@@ -57,3 +57,24 @@ test('modos de leitura orientam a não alterar o repositório', () => {
 test('o modo corrigir erro orienta a causa raiz', () => {
   assert.ok(/CAUSA RAIZ/.test(ctx('fix').note));
 });
+
+// Regressão do bug "conecto e diz que não tem acesso": com repo GitHub
+// selecionado, a nota SÓ manda clonar quando a conexão está ativa.
+test('repo GitHub conectado: manda clonar com github_clone', () => {
+  const c = developerContextFor({ mode: 'build', github: gh, rules: '' }, 'user-1', { githubConnected: true });
+  assert.ok(/PRIMEIRO PASSO OBRIGATÓRIO: chame a ferramenta github_clone/.test(c.note), 'deveria instruir o clone quando conectado');
+  assert.ok(!/reconectar/i.test(c.note), 'não deveria pedir reconexão quando conectado');
+});
+
+test('repo GitHub SEM conexão: não manda clonar, pede reconexão e não dá "não tem acesso" genérico', () => {
+  const c = developerContextFor({ mode: 'build', github: gh, rules: '' }, 'user-1', { githubConnected: false });
+  assert.ok(!/PRIMEIRO PASSO OBRIGATÓRIO/.test(c.note), 'não deveria emitir o comando de clone sem conexão (a ferramenta nem é oferecida)');
+  assert.ok(/NÃO estão disponíveis/.test(c.note), 'deveria dizer que as ferramentas do GitHub estão indisponíveis');
+  assert.ok(/reconectar a conta do GitHub/i.test(c.note), 'deveria orientar a reconectar');
+  assert.ok(/Configurações → Conectores/.test(c.note), 'deveria apontar o caminho da reconexão');
+});
+
+test('sem opts (chamadores existentes) mantém o comportamento de conectado', () => {
+  // Default githubConnected=true preserva orchestrator/multiModel e o caminho antigo.
+  assert.ok(/github_clone/.test(ctx('build').note));
+});
