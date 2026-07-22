@@ -3,7 +3,7 @@ import test from 'node:test';
 import fs from 'node:fs';
 import path from 'node:path';
 
-process.env.WORKSPACE_ROOT = '/tmp/frederico-output-delivery-tests';
+process.env.WORKSPACE_ROOT = path.resolve('.test-workspaces', 'frederico-output-delivery-tests');
 process.env.DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || 'test-key';
 const {
   materializeTextOutput,

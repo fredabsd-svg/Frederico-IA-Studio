@@ -12,7 +12,7 @@ import { isLowSignalTurn, LOW_SIGNAL_TURN_NOTE } from '../memory/retrievalPolicy
 import { buildModelCallPlan, isUnsupportedToolError, isUnsupportedVisionError, isModelUnavailableError, markModelCapabilityUnsupported, modelCompatibilityMessage } from '../modelCapabilities.js';
 import { createToolProtocolStreamGuard, parseTextToolCalls, sanitizeToolProtocolText } from '../toolProtocol.js';
 import { githubToolDefinitions, GITHUB_WRITE_TOOLS, hasGithubConnection } from '../connectors/github.js';
-import { effortCfg, promptFor, toolsFor, temperatureFor, developerContextFor, toolAvailabilityNote, ENVIRONMENT_QUERY_RE, verifiedEnvironmentNote, pcFoldersNote, uploadsNote, clipForBriefing, BRIEFING_CHAR_LIMIT, QUALITY_BAR } from './prompts.js';
+import { effortCfg, promptFor, promptManifestFor, toolsFor, temperatureFor, developerContextFor, toolAvailabilityNote, ENVIRONMENT_QUERY_RE, verifiedEnvironmentNote, pcFoldersNote, uploadsNote, clipForBriefing, BRIEFING_CHAR_LIMIT, QUALITY_BAR } from './prompts.js';
 import { listOutputs, mentionsOutputPath, recoverAlternateOutputs, referencedOutputFiles, fileSignature, validateOutputs } from './outputs.js';
 import { OUTPUT_DELIVERY_REPAIR_NOTE, MISSING_OUTPUT_NOTICE, EXECUTION_COMPLETION_REPAIR_NOTE, EXECUTION_INCOMPLETE_NOTICE, TOOL_PROTOCOL_REPAIR_NOTE, TOOL_PROTOCOL_FAILURE_NOTICE, RESPONSE_TRUNCATED_REPAIR_NOTE, RESPONSE_TRUNCATED_NOTICE, EXECUTION_CONTRACT_NOTE, MACRO_REQUEST_RE, MACRO_LIMITATION_NOTE, DEGEN_CHECK_STEP, looksDegenerate, shouldRepairOutputDelivery, shouldRepairExecution, shouldContinueAfterTruncation, materializeTextOutput, endsAwaitingUserReply } from './repair.js';
 import { normalizeWebFetchUrl, classifyToolOutcome, webResearchStopReason, planToolCallBatch, WEB_TOOL_NAMES, webResearchFinalizationNote, WEB_RESEARCH_FETCH_LIMIT, TOOL_CALLS_PER_STEP_LIMIT } from './webResearch.js';
@@ -22,12 +22,21 @@ import { guardStreamStall, PROVIDER_CONNECT_TIMEOUT_MS } from './streamGuard.js'
 import { acquireConversationControl, releaseConversationControl, beginProviderRequest, releaseProviderRequest, beginToolRequest, releaseToolRequest, controlInterruptReason, gate } from './control.js';
 import { clientScopeFor, memoryNote, saveMessage, persistAssistantReply } from './persistence.js';
 import { saveCheckpoint, clearCheckpoint, isResumableReason, buildResumeMessages, leadingSystemCount } from './checkpoint.js';
+import { untrustedContext } from './promptRegistry.js';
+import { emitExecutionState, finalExecutionState } from './executionState.js';
+
+export function explicitlyAuthorizesGitWrite(text) {
+  const value = String(text || '');
+  return /\b(?:fa(?:ça|ca)|crie|abra|envie|publique|suba|realize)\b[^\n.]{0,80}\b(?:commit|push|pull request|pr)\b/i.test(value)
+    || /\b(?:commit|push|pull request)\b[^\n.]{0,80}\b(?:github|reposit[oó]rio|branch)\b/i.test(value)
+    || /^\s*(?:git\s+)?(?:commit|push|pull request|pr)\b/i.test(value);
+}
 
 // RETOMADA REAL (checkpoint): `resume` (quando presente) traz o estado salvo de
 // um run interrompido — array de mensagens do agente, modelo ativo, cadeia de
 // failover já tentada e o objetivo. Com ele, o loop CONTINUA de onde parou (com
 // orçamento de ciclos NOVO), em vez de recomeçar do zero. Ver checkpoint.js.
-export async function runAgent({ userId, conversationId, userText, model, assistant, webSearch, effort, developer, onEvent, saveUserMessage = true, existingUserMessageId = null, executionBriefing = null, forceExecution = false, control: inheritedControl = null, resume = null }) {
+export async function runAgent({ userId, conversationId, userText, model, assistant, webSearch, effort, developer, onEvent, saveUserMessage = true, existingUserMessageId = null, executionBriefing = null, forceExecution = false, control: inheritedControl = null, resume = null, gitWriteAuthorization = null, persistReply = true }) {
   const provider = await getUserProvider(userId);          // BYOK: chave do usuário
   const client = provider.client;                          // sombreia o cliente global
   const runId = resume?.runId || nanoid();
@@ -64,7 +73,10 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   // desenvolvedor (para não instruir o clone quando não há conexão) quanto o
   // gate das ferramentas github_* mais abaixo.
   const githubConnected = await hasGithubConnection(userId);
-  const developerContext = developerContextFor(developer, userId, { githubConnected });
+  const gitWriteAuthorized = gitWriteAuthorization == null
+    ? explicitlyAuthorizesGitWrite(userText)
+    : Boolean(gitWriteAuthorization);
+  const developerContext = developerContextFor(developer, userId, { githubConnected, gitWriteAuthorized });
   const lowSignalTurn = isLowSignalTurn(userText);
   // userId viaja junto: o sandbox monta só as pastas do PC DESTE usuário
   // (isolamento multi-tenant) e aplica o limite de sandboxes por usuário.
@@ -79,7 +91,7 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   if (!lowSignalTurn && githubConnected) {
     // Em modo desenvolvedor de leitura (ask/plan/review), as ferramentas de
     // escrita do GitHub (push/PR) ficam de fora — esses modos não alteram nada.
-    const githubTools = developerContext && !developerContext.canWrite
+    const githubTools = (!developerContext?.canWrite || !gitWriteAuthorized)
       ? githubToolDefinitions.filter(tool => !GITHUB_WRITE_TOOLS.has(tool.function.name))
       : githubToolDefinitions;
     requestedTools = [...requestedTools, ...githubTools];
@@ -108,6 +120,7 @@ export async function runAgent({ userId, conversationId, userText, model, assist
     : (saveUserMessage || !existingUserMessageId
         ? await saveMessage(userId, conversationId, 'user', userText)
         : existingUserMessageId);
+  emitExecutionState(onEvent, developerContext ? 'planning' : 'analyzing', resume ? 'Retomando do checkpoint seguro' : 'Preparando a execução', { runId });
 
   // BYOK: sem chave de API configurada, orienta a cadastrar e encerra.
   if (!provider.hasKey) {
@@ -116,7 +129,8 @@ export async function runAgent({ userId, conversationId, userText, model, assist
       : 'Nenhuma chave de API configurada. Vá em **Configurações → Provedor de IA** e cadastre a sua chave (OpenRouter/DeepSeek) para começar a conversar.';
     onEvent({ type: 'status', content: 'Chave de API não configurada' });
     onEvent({ type: 'delta', content: finalText });
-    const assistantMessageId = await saveMessage(userId, conversationId, 'assistant', finalText);
+    const execution = emitExecutionState(onEvent, 'awaiting_user', 'Configuração do provedor necessária', { runId });
+    const assistantMessageId = await saveMessage(userId, conversationId, 'assistant', finalText, { executionMeta: execution });
     onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId });
     return { text: finalText, usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }, model: chosenModel, stopped: false };
   }
@@ -128,7 +142,8 @@ export async function runAgent({ userId, conversationId, userText, model, assist
       : 'Este modelo nao responde em texto.';
     onEvent({ type: 'status', content: status });
     onEvent({ type: 'delta', content: finalText });
-    const assistantMessageId = await saveMessage(userId, conversationId, 'assistant', finalText);
+    const execution = emitExecutionState(onEvent, 'fatal_error', status, { runId, compatibility: modelPlan.blocked.capability });
+    const assistantMessageId = await saveMessage(userId, conversationId, 'assistant', finalText, { executionMeta: execution });
     onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId });
     indexAfterReply(userId, conversationId).catch(() => {});
     return {
@@ -156,10 +171,11 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   ];
   if (forceExecution || modelPlan.requirements.required) messages.push({ role: 'system', content: EXECUTION_CONTRACT_NOTE });
   if (MACRO_REQUEST_RE.test(String(userText || ''))) messages.push({ role: 'system', content: MACRO_LIMITATION_NOTE });
-  if (executionBriefing) messages.push({ role: 'system', content: `PARECERES DA EQUIPE PARA ORIENTAR A EXECUÇÃO (use como referência, mas confira tudo com as ferramentas):\n${clipForBriefing(String(executionBriefing), BRIEFING_CHAR_LIMIT)}` });
+  if (executionBriefing) messages.push({ role: 'user', content: untrustedContext('team-briefing', clipForBriefing(String(executionBriefing), BRIEFING_CHAR_LIMIT)) });
   if (lowSignalTurn) messages.push({ role: 'system', content: LOW_SIGNAL_TURN_NOTE });
   if (environmentNote) messages.push({ role: 'system', content: environmentNote });
   if (developerContext) messages.push({ role: 'system', content: developerContext.note });
+  if (developerContext?.userRules) messages.push({ role: 'user', content: untrustedContext('project-rules', developerContext.userRules) });
   if (eff.nudge) messages.push({ role: 'system', content: eff.nudge });
   if (webSearchActive) messages.push({ role: 'system', content: `PESQUISA NA INTERNET — o usuário ativou a busca. Você tem acesso real à web, pelas ferramentas web_search (procurar) e web_fetch (abrir uma página). Nunca diga que "não tem acesso à internet".
 
@@ -189,13 +205,13 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
     memoryMeta = contextPlan.meta || null;
     for (const b of ctxBlocks) {
       const clean = sanitizeToolProtocolText(b);
-      if (clean) messages.push({ role: 'system', content: clean });
+      if (clean) messages.push({ role: 'user', content: untrustedContext('memory', clean) });
     }
   } catch (err) {
     console.error('[memória] contexto indisponível nesta resposta:', err.message);
     const memory = await memoryNote(userId, assistant?.id, await clientScopeFor(userId, conversationId));
     const cleanMemory = sanitizeToolProtocolText(memory);
-    if (cleanMemory) messages.push({ role: 'system', content: cleanMemory });
+    if (cleanMemory) messages.push({ role: 'user', content: untrustedContext('memory-fallback', cleanMemory) });
   }
   const note = uploadsNote(conversationId);
   if (note) messages.push({ role: 'system', content: note });
@@ -224,7 +240,7 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
   // próxima etapa pendente, sem repetir o trabalho já feito.
   let resumePrefixEnd = staticPrefixEnd;
   if (resume) {
-    const seeded = buildResumeMessages(resume.messages, { streamResumeNote: STREAM_RESUME_NOTE });
+    const seeded = buildResumeMessages(resume.messages, { streamResumeNote: STREAM_RESUME_NOTE, objective: resume.objective });
     messages.length = 0;
     for (const m of seeded) messages.push(m);
     resumePrefixEnd = leadingSystemCount(messages);
@@ -243,7 +259,8 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
   // Prompt caching: marca o prefixo estável para o provedor reaproveitá-lo nos
   // próximos passos/mensagens (economia de tokens de entrada + latência). No-op
   // quando o modelo/rota não suporta (ex.: DeepSeek direto já cacheia sozinho).
-  applyPromptCache(messages, chosenModel, resumePrefixEnd);
+  applyPromptCache(messages, chosenModel, resumePrefixEnd, provider.baseURL);
+  onEvent({ type: 'prompt_meta', prompt: promptManifestFor(assistant, developerContext ? ['developer'] : []) });
 
   // Usage: no resume, soma sobre o que já foi consumido no run anterior.
   const usage = {
@@ -332,7 +349,7 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
         ...(tools.length ? { tools, tool_choice: forceNativeToolCall ? 'required' : 'auto' } : {}),
         ...(reasoningEffort ? { reasoning: { effort: reasoningEffort } } : {}),
         temperature,
-        ...openRouterRouting(tools.length > 0),
+        ...openRouterRouting(tools.length > 0, provider.baseURL),
         stream: true,
         stream_options: { include_usage: true }
       }, { signal: activeRequest.signal, timeout: PROVIDER_CONNECT_TIMEOUT_MS });
@@ -658,6 +675,7 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
       // mostrar o que a IA de fato salvou. Limitado para não pesar no stream.
       const detail = name === 'write_file' ? String(args.content || '').slice(0, 4000) : '';
       onEvent({ type: 'tool_start', name, preview, ...(detail ? { detail } : {}) });
+      emitExecutionState(onEvent, 'tool_running', name, { runId, step, tool: name });
       let result;
       const isWebTool = name === 'web_search' || name === 'web_fetch';
       const fetchUrl = name === 'web_fetch' ? normalizeWebFetchUrl(args.url) : '';
@@ -691,6 +709,7 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
       let thumb = '';
       if (name === 'web_fetch') { try { thumb = JSON.parse(result).thumb || ''; } catch {} }
       onEvent({ type: 'tool_result', name, content: result.slice(0, 2000), ...(thumb ? { thumb } : {}) });
+      emitExecutionState(onEvent, 'processing_result', name, { runId, step, tool: name });
       messages.push({ role: 'tool', tool_call_id: call.id, content: result });
       // Freio de loop: conta falhas consecutivas das ferramentas
       const outcome = classifyToolOutcome(name, result);
@@ -704,6 +723,21 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
       if (researchReason && !webResearchStop) webResearchStop = researchReason;
     }
     if (stopped) break;
+    emitExecutionState(onEvent, 'continuing', 'Resultado processado; escolhendo a próxima etapa', { runId, step });
+    // Checkpoint seguro entre lotes: nunca é gravado no meio de uma ferramenta.
+    // Se o backend cair no próximo stream, a retomada parte daqui sem repetir
+    // as chamadas que já terminaram. Uma conclusão limpa apaga este registro.
+    await saveCheckpoint({
+      userId, conversationId, runId,
+      objective: resume?.objective || userText,
+      reason: 'progress',
+      model: chosenModel,
+      triedModels: [...triedModels],
+      step: (resume?.step || 0) + step,
+      messages,
+      usage,
+      meta: { safePoint: 'after_tool_batch', webSearch: Boolean(webSearch), effort: effort || null, developer: developer || null, assistantId: assistant?.id || null }
+    });
     // Etapa produtiva: executou ferramenta(s) e a última não falhou em cadeia.
     // Serve de sinal para permitir passar do orçamento base (ver topo do loop).
     if (consecutiveFailures === 0) lastProductiveStep = step;
@@ -783,20 +817,18 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
       : 'O modelo terminou sem gerar uma resposta. Use **Reenviar** ou escolha outro modelo.';
     onEvent({ type: 'delta', content: finalText });
   }
-  // Primeiro registra a resposta e os arquivos juntos. Assim o card sempre
-  // aponta para uma mensagem que sobreviverá ao recarregamento da conversa.
-  const { msgId, cards } = await persistAssistantReply(userId, conversationId, finalText, memoryMeta, newFiles);
-  // O download é a entrega principal. Não o faça esperar a inspeção de DOCX,
-  // XLSX ou PDF, que pode levar alguns segundos em arquivos maiores.
-  if (cards.length) onEvent({ type: 'files', files: cards });
-  // Informa os ids reais salvos no banco (necessário para editar mensagens)
-  onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId: msgId });
+  let checks = {};
   if (newFiles.length && !stopped) {
-    const checks = await validateOutputs(conversationId, newFiles, onEvent, sandboxOptions);
-    if (Object.keys(checks).length) onEvent({ type: 'file_checks', checks });
+    emitExecutionState(onEvent, 'validating', 'Validando os artefatos antes da entrega', { runId });
+    checks = await validateOutputs(conversationId, newFiles, onEvent, sandboxOptions);
+    if (Object.values(checks).some(check => check?.ok === false)) {
+      incomplete = true;
+      failureMessage ||= 'Um ou mais arquivos gerados falharam na validação automática.';
+      const validationNotice = '\n\n_⚠️ O arquivo foi gerado, mas não passou em toda a validação automática. Confira os detalhes no cartão antes de usá-lo._';
+      finalText += validationNotice;
+      onEvent({ type: 'delta', content: validationNotice });
+    }
   }
-  // Memória: indexa a troca e extrai fatos em segundo plano (não bloqueia)
-  if (!stopped) indexAfterReply(userId, conversationId).catch(() => {});
   // CHECKPOINT: interrompida por limite/infra/parada com progresso real → salva
   // o estado (mesmo mecanismo p/ limite de ciclos E watchdog/provedor). Caso
   // contrário (conclusão limpa, ou falha de qualidade), limpa qualquer
@@ -821,7 +853,28 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
   } else {
     await clearCheckpoint(conversationId);
   }
-  return { text: finalText, usage, model: chosenModel, stopped, providerFailure, incomplete, failureMessage, resumable };
+  const finalState = finalExecutionState({ stopped, awaitingUserReply, resumable, providerFailure, incomplete });
+  const execution = emitExecutionState(onEvent, finalState, failureMessage || null, {
+    runId,
+    model: chosenModel,
+    toolsExecuted: executedToolCalls,
+    resumable,
+    validation: checks
+  });
+  // Persistência e cartões só acontecem depois da validação. O estado gravado
+  // é a fonte de verdade quando a conversa for reaberta.
+  const shouldPersistReply = persistReply || stopped || resumable || providerFailure || incomplete || awaitingUserReply;
+  let msgId = null;
+  if (shouldPersistReply) {
+    const persisted = await persistAssistantReply(userId, conversationId, finalText, memoryMeta, newFiles, { executionMeta: execution });
+    msgId = persisted.msgId;
+    if (persisted.cards.length) onEvent({ type: 'files', files: persisted.cards });
+    if (Object.keys(checks).length) onEvent({ type: 'file_checks', checks });
+    onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId: msgId });
+  }
+  // Memória: indexa a troca e extrai fatos em segundo plano (não bloqueia)
+  if (!stopped && shouldPersistReply) indexAfterReply(userId, conversationId).catch(() => {});
+  return { text: finalText, usage, model: chosenModel, stopped, providerFailure, incomplete, failureMessage, resumable, execution, files: newFiles, checks, messageId: msgId };
   } finally {
     // Mantém a conversa marcada como ativa até o card de download ter sido
     // persistido e emitido. Isso impede uma exclusão concorrente de apagar o

@@ -234,6 +234,8 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
         }
         if (ev.type === 'free_status') onFreeEvent?.(ev);
         if (ev.type === 'memory_context') update(m => ({ ...m, memory: ev.memory }));
+        if (ev.type === 'run_state') update(m => ({ ...m, execution: ev.execution }));
+        if (ev.type === 'prompt_meta') update(m => ({ ...m, prompt: ev.prompt }));
         if (ev.type === 'delta') update(m => {
           const blocks = [...(m.blocks || [])];
           const last = blocks[blocks.length - 1];
@@ -271,10 +273,10 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
           });
         }
         if (ev.type === 'execution_failed') {
-          update(m => ({ ...m, failed: true, retryText: text }));
+          update(m => ({ ...m, failed: true, retryText: text, execution: { state: 'fatal_error', terminal: true, detail: ev.content || 'A execução falhou.' } }));
           if (ev.content) showToast(ev.content);
         }
-        if (ev.type === 'error') { sawError = true; update(m => ({ ...m, failed: true, retryText: text, blocks: [...(m.blocks || []), { type: 'text', content: `\n\n**Erro:** ${ev.content}` }] })); }
+        if (ev.type === 'error') { sawError = true; update(m => ({ ...m, failed: true, retryText: text, execution: { state: 'fatal_error', terminal: true, detail: ev.content || 'Erro inesperado.' }, blocks: [...(m.blocks || []), { type: 'text', content: `\n\n**Erro:** ${ev.content}` }] })); }
         // Checkpoint salvo: a tarefa dá para RETOMAR de onde parou (botão Continuar).
         if (ev.type === 'resumable') update(m => ({ ...m, resumable: Boolean(ev.value) }));
         if (ev.type === 'done') sawDone = true;

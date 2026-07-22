@@ -87,7 +87,7 @@ function CardStats({ card }) {
   return bits.length ? <span className="mmCardStats">{bits.join(' · ')}</span> : <span className="mmCardStats"/>;
 }
 
-export function MultiModelBoard({ multi, live = false, onCancelSlot, onContinueWith, onAskReview, onCombine }) {
+export function MultiModelBoard({ multi, live = false, onCancelSlot, onContinueWith, onAskReview, onCombine, downloadUrl }) {
   const [copiedSlot, setCopiedSlot] = useState(null);
   const [full, setFull] = useState(null); // card em tela cheia
   if (!multi?.models?.length) return null;
@@ -140,7 +140,7 @@ export function MultiModelBoard({ multi, live = false, onCancelSlot, onContinueW
     {mode === 'compare' && <CompareView multi={multi} live={live} cardHead={cardHead} cardActions={cardActions}/>}
     {mode === 'council' && <CouncilView multi={multi} live={live} cardHead={cardHead} cardActions={cardActions} copyText={copyText} copiedSlot={copiedSlot} setFull={setFull}/>}
     {mode === 'debate' && <DebateView multi={multi} live={live} cardHead={cardHead} cardActions={cardActions}/>}
-    {mode === 'pipeline' && <PipelineView multi={multi} live={live} cardActions={cardActions}/>}
+    {mode === 'pipeline' && <PipelineView multi={multi} live={live} cardActions={cardActions} downloadUrl={downloadUrl}/>}
 
     {!live && mode === 'compare' && onCombine && <div className="mmBoardFoot">
       <button className="mmCombineBtn" onClick={onCombine}><Layers size={13}/> Gerar resposta combinada das melhores partes</button>
@@ -265,7 +265,7 @@ function DebateRound({ round, total, entries, live, isLast, defaultOpen, cardHea
 }
 
 // ── Pipeline: linha do tempo vertical numerada; última etapa em destaque ─────
-function PipelineView({ multi, live, cardActions }) {
+function PipelineView({ multi, live, cardActions, downloadUrl }) {
   const total = multi.models.length;
   return <ol className="mmTimeline">
     {multi.models.map((card, i) => {
@@ -273,12 +273,12 @@ function PipelineView({ multi, live, cardActions }) {
       const stepTitle = pipelineStepTitle(i, total);
       const running = live && RUNNING.has(card.status);
       return <PipelineStep key={card.slot} card={card} index={i} total={total} isLast={isLast}
-        stepTitle={stepTitle} running={running} cardActions={cardActions} live={live}/>;
+        stepTitle={stepTitle} running={running} cardActions={cardActions} live={live} downloadUrl={downloadUrl}/>;
     })}
   </ol>;
 }
 
-function PipelineStep({ card, index, total, isLast, stepTitle, running, cardActions, live }) {
+function PipelineStep({ card, index, total, isLast, stepTitle, running, cardActions, live, downloadUrl }) {
   const [open, setOpen] = useState(isLast || running);
   return <li className={`mmStep st-${card.status || 'concluido'} ${isLast ? 'last' : ''} ${open ? 'open' : ''}`}>
     <div className="mmStepMarker"><span className="mmStepNum">{index + 1}</span></div>
@@ -292,6 +292,12 @@ function PipelineStep({ card, index, total, isLast, stepTitle, running, cardActi
         <StatusBadge status={card.status} live={live}/>
       </button>
       {index > 0 && open && <div className="mmStepFeed">Esta etapa recebeu a solicitação original e o resultado das {index} etapa(s) anterior(es).</div>}
+      {open && card.artifactVersion && <div className="mmStepFeed">
+        <b>{card.artifactVersion.id}</b> · {card.artifactVersion.valid ? 'versão validada' : 'versão com pendências'}
+        {(card.artifactVersion.files || []).map(file => downloadUrl
+          ? <a key={file.versionPath} href={downloadUrl(file.versionPath)} target="_blank" rel="noreferrer"> · {file.name}</a>
+          : <span key={file.versionPath}> · {file.name}</span>)}
+      </div>}
       {open && <>
         <CardText text={card.text} running={running} error={card.error} truncated={card.truncated}/>
         <div className="mmCardFoot"><CardStats card={card}/>{cardActions(card, { canContinue: isLast })}</div>

@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import path from 'node:path';
 
 process.env.DB_PATH = ':memory:';
-process.env.WORKSPACE_ROOT = '/tmp/frederico-ssrf-tests';
+process.env.WORKSPACE_ROOT = path.resolve('.test-workspaces', 'frederico-ssrf-tests');
 
 const { isBlockedHost } = await import('./tools.js');
 

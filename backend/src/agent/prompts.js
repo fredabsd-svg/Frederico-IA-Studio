@@ -8,6 +8,7 @@ import path from 'path';
 import { toolDefinitions, imageToolDefinitions, runTool } from '../tools.js';
 import { workspaceFor, pcFolderMounts } from '../sandbox.js';
 import { isValidRepoFullName, repoDirName } from '../connectors/github.js';
+import { COMPLETION_PROTOCOL, promptMeta } from './promptRegistry.js';
 
 // Esforço da IA: controla o raciocínio (reasoning effort — funciona de verdade
 // nos modelos que raciocinam, via OpenRouter), o número máximo de etapas do
@@ -224,7 +225,12 @@ COMO USAR O SANDBOX (importante):
 
 export function promptFor(assistant) {
   const base = assistant ? (assistant.system_prompt || AGENTS.geral.prompt) : AGENTS.geral.prompt;
-  return base + personalitySuffix(assistant?.personality) + EXECUTION_UX_RULES + SANDBOX_RULES;
+  return base + personalitySuffix(assistant?.personality) + EXECUTION_UX_RULES + SANDBOX_RULES + `\n\n${COMPLETION_PROTOCOL}`;
+}
+
+export function promptManifestFor(assistant, extraModules = []) {
+  const content = promptFor(assistant);
+  return promptMeta(['global', 'tools', ...(assistant?.system_prompt ? ['developer'] : []), ...extraModules], content);
 }
 export function toolsFor(assistant) {
   const all = [...toolDefinitions, ...imageToolDefinitions];
@@ -255,6 +261,7 @@ export function developerContextFor(request, userId, opts = {}) {
   // tenho acesso ao GitHub" genérico. Aqui, nesse caso, instruímos a pedir a
   // reconexão de forma objetiva. Default true preserva os demais chamadores.
   const githubConnected = opts.githubConnected !== false;
+  const gitWriteAuthorized = opts.gitWriteAuthorized === true;
   const mode = DEV_MODES.includes(request.mode) ? request.mode : null;
   if (!mode) return null;
   const canWrite = DEV_WRITE_MODES.has(mode);
@@ -270,7 +277,7 @@ export function developerContextFor(request, userId, opts = {}) {
   const readOnlyProject = !canWrite || (github ? false : !project?.writable);
   const projectNote = github
     ? (githubConnected
-      ? `Projeto selecionado: repositório GitHub "${github.repo}"${github.branch ? ` (branch de trabalho: "${github.branch}")` : ''}. PRIMEIRO PASSO OBRIGATÓRIO: chame a ferramenta github_clone com {"repo":"${github.repo}"${github.branch ? `,"branch":"${github.branch}"` : ''}} para trazer (ou atualizar) o código em /workspace/repo/${repoDirName(github.repo)}. Depois trabalhe nos arquivos por bash/run_python; git status/diff/log/commit funcionam pelo bash do sandbox. Push e Pull Request só pelas ferramentas github_push/github_create_pr (a autenticação é do app — nunca peça token nem tente git push pelo bash, não funciona).${canWrite ? ' Ao concluir a missão, faça commit com mensagem descritiva em português e envie com github_push; informe no final a branch e o commit enviados.' : ' Nesta tarefa NÃO altere arquivos nem use github_push/github_create_pr.'}`
+      ? `Projeto selecionado: repositório GitHub "${github.repo}"${github.branch ? ` (branch de trabalho: "${github.branch}")` : ''}. PRIMEIRO PASSO OBRIGATÓRIO: chame a ferramenta github_clone com {"repo":"${github.repo}"${github.branch ? `,"branch":"${github.branch}"` : ''}} para trazer (ou atualizar) o código em /workspace/repo/${repoDirName(github.repo)}. Depois trabalhe nos arquivos por bash/run_python; git status/diff/log funcionam pelo bash do sandbox. Push e Pull Request só pelas ferramentas github_push/github_create_pr (a autenticação é do app — nunca peça token nem tente git push pelo bash, não funciona).${canWrite && gitWriteAuthorized ? ' O usuário autorizou explicitamente publicação nesta tarefa; antes de enviar, confira o diff e publique somente as mudanças dentro do escopo.' : ' Commit, push e Pull Request NÃO estão autorizados nesta tarefa. Não faça publicação automática; só prepare e valide as mudanças locais.'}`
       : `Projeto selecionado: repositório GitHub "${github.repo}", MAS o conector do GitHub NÃO está ativo nesta conversa (a conta não está conectada, ou o token expirou/não pôde ser lido). Por isso as ferramentas github_clone/github_push/github_create_pr NÃO estão disponíveis agora e você NÃO consegue acessar esse repositório. NÃO responda um "não tenho acesso ao GitHub" genérico: explique ao usuário, de forma objetiva e em português, que ele precisa reconectar a conta do GitHub em Configurações → Conectores para você poder clonar e trabalhar no repositório "${github.repo}". Enquanto a conexão não voltar, ajude com o que não depender de acessar esse repositório.`)
     : project
       ? `Projeto selecionado: "${project.label}" em ${project.target}. ${readOnlyProject ? 'Ele está montado somente para leitura nesta tarefa.' : 'Somente esta pasta do PC está autorizada para escrita nesta tarefa.'}`
@@ -290,7 +297,9 @@ export function developerContextFor(request, userId, opts = {}) {
     github,
     readOnlyProject,
     sandboxOptions: project && !readOnlyProject ? { writablePcFolderId: project.id } : { readOnlyPc: true },
-    note: ['MODO DESENVOLVEDOR ATIVO.', projectNote, modeNote, rules ? `REGRAS DO PROJETO:\n${rules}` : null].filter(Boolean).join('\n\n')
+    note: ['MODO DESENVOLVEDOR ATIVO.', projectNote, modeNote].filter(Boolean).join('\n\n'),
+    userRules: rules || null,
+    gitWriteAuthorized
   };
 }
 
@@ -309,11 +318,9 @@ export function developerTeamContextFor(request, userId) {
     ? `repositório GitHub "${github.repo}"${github.branch ? ` (branch "${github.branch}")` : ''}, já conectado à conta do usuário neste app`
     : 'projeto selecionado no painel do modo desenvolvedor';
   const intent = { plan: 'planejar as mudanças', build: 'implementar as mudanças', review: 'revisar o código' }[mode] || 'analisar o projeto';
-  const rules = String(request?.rules || '').trim().slice(0, 6000);
   return [
     `MODO DESENVOLVEDOR ATIVO — a tarefa é ${intent} no ${alvo}.`,
     'O app TEM acesso a esse projeto: o executor do time vai clonar e ler o código de fato na execução. Portanto NÃO peça o link nem o nome do repositório e NÃO diga que não tem acesso ao GitHub. Dê seu parecer já ancorado nesse projeto (UX/usabilidade, arquitetura, riscos, arquivos e caminhos prováveis), deixando claro o que precisa ser confirmado lendo o código na execução — sem inventar detalhes específicos que você ainda não viu.',
-    rules ? `REGRAS DO PROJETO:\n${rules}` : null
   ].filter(Boolean).join('\n\n');
 }
 

@@ -56,6 +56,8 @@ você escolhe é enviado direto ao provedor, sem substituição.
 | 🛡️ | **Privacidade (LGPD)** | Consentimento registrado, Política de Privacidade e Termos publicados, e painel "Privacidade e dados": exportar tudo em JSON, apagar o histórico ou excluir a conta — hard delete, sem soft delete |
 | 🏷️ | **Seletor de modelos com logos** | Catálogo e filtro por fornecedor com o logo oficial de cada provedor, servido localmente (sem CDN); selo opcional de **classificação de referência** (S+ a B) ao lado do nome, quando o modelo bate com a curadoria em `frontend/src/modelRanking.js` — some sozinho para os demais, e dá para ordenar o catálogo por essa classificação |
 
+A arquitetura, o inventário versionado de prompts, os estados de execução e os critérios de recuperação estão documentados em [docs/AUDITORIA_DEV_MULTIMODELO_PROMPTS.md](docs/AUDITORIA_DEV_MULTIMODELO_PROMPTS.md).
+
 ### Execução confiável
 
 Chamadas de ferramenta são validadas antes da execução. Se um provedor devolver

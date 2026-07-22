@@ -923,7 +923,8 @@ export default function App({ user } = {}) {
               onCancelSlot={busy ? cancelMultiSlot : null}
               onContinueWith={continueWithModel}
               onAskReview={askReviewOfModel}
-              onCombine={combineAnswers}/>}
+              onCombine={combineAnswers}
+              downloadUrl={(path) => conversationDownloadUrl(current?.id, path)}/>}
             {/* Com o quadro multimodelo presente, o texto salvo (concatenação das
                 respostas ou a síntese do coordenador) é redundante com o board —
                 que já mostra tudo, inclusive a "Conclusão". Só NÃO suprimimos

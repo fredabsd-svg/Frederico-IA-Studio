@@ -40,6 +40,7 @@ export async function saveMessage(userId, conversationId, role, content, extra =
   // Um .slice() cego quebraria o JSON; se passar do teto, regrava com os textos
   // individuais encurtados (o texto principal da mensagem continua íntegro).
   let multiMeta = null;
+  const executionMeta = extra.executionMeta ? JSON.stringify(extra.executionMeta).slice(0, 20000) : null;
   if (extra.multiMeta) {
     multiMeta = JSON.stringify(extra.multiMeta);
     if (multiMeta.length > 200000) {
@@ -63,15 +64,15 @@ export async function saveMessage(userId, conversationId, role, content, extra =
       multiMeta = JSON.stringify(compact);
     }
   }
-  await db.prepare('INSERT INTO messages (id, conversation_id, role, content, memory_meta, multi_meta, created_at) VALUES (?,?,?,?,?,?,?)')
-    .run(id, conversationId, role, content, memoryMeta, multiMeta, now());
+  await db.prepare('INSERT INTO messages (id, conversation_id, role, content, memory_meta, multi_meta, execution_meta, created_at) VALUES (?,?,?,?,?,?,?,?)')
+    .run(id, conversationId, role, content, memoryMeta, multiMeta, executionMeta, now());
   await db.prepare('UPDATE conversations SET updated_at=? WHERE id=? AND user_id=?').run(now(), conversationId, userId);
   return id;
 }
 
-export async function persistAssistantReply(userId, conversationId, content, memoryMeta, files = []) {
+export async function persistAssistantReply(userId, conversationId, content, memoryMeta, files = [], extra = {}) {
   const persist = db.transaction(async (replyFiles) => {
-    const msgId = await saveMessage(userId, conversationId, 'assistant', content, { memoryMeta });
+    const msgId = await saveMessage(userId, conversationId, 'assistant', content, { memoryMeta, ...extra });
     const stmt = db.prepare('INSERT INTO files (id,conversation_id,message_id,kind,name,path,size,created_at) VALUES (?,?,?,?,?,?,?,?)');
     const cards = [];
     for (const file of replyFiles) {

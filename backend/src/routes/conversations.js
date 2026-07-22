@@ -72,6 +72,10 @@ router.get('/conversations/:id', async (req, res) => {
       try { m.multi = JSON.parse(m.multi_meta); } catch {}
     }
     delete m.multi_meta;
+    if (m.execution_meta) {
+      try { m.execution = JSON.parse(m.execution_meta); } catch {}
+    }
+    delete m.execution_meta;
   });
   // active: há um processamento rodando AGORA nesta conversa? O front usa isso
   // para, ao reabrir a conversa, reconectar ao stream ao vivo (GET /stream) e

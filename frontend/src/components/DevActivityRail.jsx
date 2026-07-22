@@ -27,14 +27,24 @@ const TABS = [
 
 function useActivity(messages) {
   return useMemo(() => {
-    const lastAssistant = [...(messages || [])].reverse().find(m => m.role === 'assistant' && Array.isArray(m.blocks));
+    const lastAssistant = [...(messages || [])].reverse().find(m => m.role === 'assistant');
     const steps = (lastAssistant?.blocks || []).filter(b => b.type === 'tool');
     const running = steps.some(s => s.status === 'running');
     const errors = steps.filter(s => s.status === 'error').length;
     const counts = COUNTERS.map(c => ({ ...c, n: steps.filter(s => c.names.includes(s.name)).length })).filter(c => c.n > 0);
-    return { steps, running, errors, counts, total: steps.length };
+    return { steps, running, errors, counts, total: steps.length, execution: lastAssistant?.execution || null, failed: Boolean(lastAssistant?.failed), resumable: Boolean(lastAssistant?.resumable) };
   }, [messages]);
 }
+
+const LIVE_STATES = new Set(['waiting', 'planning', 'analyzing', 'tool_running', 'tool_waiting', 'processing_result', 'continuing', 'validating']);
+const STATE_LABELS = {
+  completed: 'Tarefa concluída',
+  awaiting_user: 'Aguardando sua resposta',
+  paused: 'Tarefa pausada',
+  stopped: 'Tarefa interrompida',
+  recoverable_error: 'Interrompida, pode continuar',
+  fatal_error: 'Não foi possível concluir'
+};
 
 // Agrupa chamadas CONSECUTIVAS da mesma ferramenta num só item ("3 comandos no
 // terminal" em vez de 3 cartões soltos) — cada item guarda os passos originais
@@ -158,7 +168,11 @@ export function DevActivityRail({ collapsed, onToggle, busy, statusText, message
     </aside>;
   }
 
-  const live = busy || act.running;
+  const state = act.execution?.state;
+  const live = busy || act.running || LIVE_STATES.has(state);
+  const failed = act.failed || ['stopped', 'recoverable_error', 'fatal_error'].includes(state);
+  const resultLabel = STATE_LABELS[state]
+    || (act.resumable ? 'Interrompida, pode continuar' : (failed ? 'Não foi possível concluir' : (act.total ? 'Etapas registradas' : 'Pronto para começar')));
 
   return <aside className="devRail devRailRight" aria-label="Atividade, arquivos, alterações e memória do projeto">
     <div className="devRailHead">
@@ -174,13 +188,13 @@ export function DevActivityRail({ collapsed, onToggle, busy, statusText, message
 
     <div className="devRailScroll">
       {tab === 'atividade' && <div className="devRailSection">
-        <div className={`devActStatus ${live ? 'live' : (act.errors ? 'warn' : (act.total ? 'done' : 'idle'))}`}>
+        <div className={`devActStatus ${live ? 'live' : ((act.errors || failed || act.resumable) ? 'warn' : (state === 'completed' ? 'done' : 'idle'))}`}>
           <span className="devActIcon">
-            {live ? <Loader size={16} className="esSpin"/> : (act.errors ? <AlertCircle size={16}/> : (act.total ? <CheckCircle2 size={16}/> : <Activity size={16}/>))}
+            {live ? <Loader size={16} className="esSpin"/> : ((act.errors || failed || act.resumable) ? <AlertCircle size={16}/> : (state === 'completed' ? <CheckCircle2 size={16}/> : <Activity size={16}/>))}
           </span>
           <div>
-            <b>{live ? 'IA trabalhando no projeto' : (act.total ? (act.errors ? 'Concluído com avisos' : 'Tarefa concluída') : 'Pronto para começar')}</b>
-            <small>{live ? (statusText || 'Executando…') : (act.total ? `${act.total} etapa${act.total > 1 ? 's' : ''} na última resposta` : 'Envie uma missão para começar')}</small>
+            <b>{live ? 'IA trabalhando no projeto' : resultLabel}</b>
+            <small>{live ? (statusText || act.execution?.detail || 'Executando…') : (act.execution?.detail || (act.total ? `${act.total} etapa${act.total > 1 ? 's' : ''} na última resposta` : 'Envie uma missão para começar'))}</small>
           </div>
         </div>
         {act.counts.length > 0 && <div className="devActCounts">
