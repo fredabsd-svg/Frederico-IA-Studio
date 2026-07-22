@@ -1,6 +1,6 @@
 // Rotas de models — movidas do server.js na modularização (mesma lógica,
 // mesmo comportamento). Montado em /api pelo server.js.
-import { registerModelCatalog } from '../modelCapabilities.js';
+import { registerModelCatalog, unverifiedModelProfile } from '../modelCapabilities.js';
 import { getUserProvider } from '../userProvider.js';
 import { makeRouter } from './helpers.js';
 
@@ -42,10 +42,10 @@ router.get('/models', async (req, res) => {
   // (nome/capacidades) vêm do catálogo do provedor quando disponíveis.
   if (prov.source === 'free') {
     const byId = new Map(catalog.map(m => [m.id, m]));
-    const models = (prov.freeModels || []).map(id => byId.get(id) || {
-      id, name: id.replace(/:free$/, '') + ' (grátis)', tools: true, vision: false, image: false, video: false, reasoning: false,
-      capabilities: { text: true, tools: true, vision: false, image: false, video: false, reasoning: false }
-    });
+    const models = (prov.freeModels || []).map(id => byId.get(id) || unverifiedModelProfile(id, {
+      name: id.replace(/:free$/, '') + ' (grátis)',
+      free: true
+    }));
     return res.json({ models, free: true });
   }
   res.json({ models: catalog });

@@ -18,15 +18,15 @@
 // executados e produzem resposta própria (ver docs — seção 15 do pedido).
 import { getUserProvider } from '../userProvider.js';
 import { db } from '../db.js';
-import { getModelProfile, providerLabel } from '../modelCapabilities.js';
+import { detectToolRequirement, getModelProfile, providerLabel, supportsModelParameter } from '../modelCapabilities.js';
 import { indexAfterReply } from '../memory/indexer.js';
 import { runAgent } from './loop.js';
-import { clipForBriefing, developerTeamContextFor } from './prompts.js';
+import { clipForBriefing, developerTeamContextFor, protectedProfilePrompt, uploadsNote } from './prompts.js';
 import { buildRepoDigest } from '../connectors/github.js';
 import { STREAM_RECOVERY_LIMIT, STREAM_RESUME_NOTE, STREAM_PAUSE_RESUME_NOTE, isRetryableStreamError, openRouterRouting, retryDelay, addUsage, friendlyApiError, applyPromptCache } from './provider.js';
 import { guardStreamStall, PROVIDER_CONNECT_TIMEOUT_MS } from './streamGuard.js';
 import { acquireConversationControl, releaseConversationControl, beginProviderRequest, releaseProviderRequest, controlInterruptReason, gate } from './control.js';
-import { saveMessage } from './persistence.js';
+import { persistAssistantReply, saveMessage } from './persistence.js';
 import { MULTI_ARTIFACT_PROTOCOL, untrustedContext } from './promptRegistry.js';
 import { snapshotArtifactVersion } from './artifacts.js';
 import { nanoid } from 'nanoid';
@@ -137,9 +137,11 @@ function memberName(member) {
   return profile?.name || member.id;
 }
 
-function memberSystemPrompt(member, mode) {
+export function memberSystemPrompt(member, mode, { toolsEnabled = false } = {}) {
   const base = member.prompt || roleOf(member).prompt;
-  const shared = 'Você participa de uma execução MULTIMODELO: outros modelos de IA trabalham na mesma solicitação, cada um com a sua função. Responda em português do Brasil, direto ao ponto, sem se apresentar. Nesta etapa você não executa ferramentas: analise e escreva.';
+  const shared = toolsEnabled
+    ? 'Você participa de uma execução MULTIMODELO: outros modelos de IA trabalham na mesma solicitação, cada um com a sua função. Responda em português do Brasil, direto ao ponto, sem se apresentar. Nesta etapa você TEM ferramentas e deve executar a sua função sobre o artefato real, não apenas opinar.'
+    : 'Você participa de uma execução MULTIMODELO: outros modelos de IA trabalham na mesma solicitação, cada um com a sua função. Responda em português do Brasil, direto ao ponto, sem se apresentar. Nesta etapa você não executa ferramentas: analise e escreva.';
   const byMode = {
     compare: 'A sua resposta será exibida lado a lado com as dos demais modelos para comparação. Responda ao pedido de forma completa e independente.',
     council: 'A sua resposta será entregue a um coordenador, que vai comparar todas as contribuições e consolidar a resposta final.',
@@ -157,12 +159,20 @@ function memberSystemPrompt(member, mode) {
 // só o Modo Equipe (orchestrator.js) recebia essa nota; o multimodelo real
 // (compare/council/debate/pipeline) ficava sem contexto do repo.
 export function multiModelSystemBlocks(member, mode, developerTeamNote = null, repoDigest = null) {
-  const blocks = [{ role: 'system', content: memberSystemPrompt(member, mode) }];
+  const blocks = [{ role: 'system', content: protectedProfilePrompt(memberSystemPrompt(member, mode)) }];
   if (developerTeamNote) blocks.push({ role: 'system', content: developerTeamNote });
   // Código REAL do repositório (compare/council/debate não executam ferramentas,
   // então este extrato é a única forma de eles analisarem o código de verdade).
   if (repoDigest) blocks.push({ role: 'user', content: untrustedContext('repository-digest', repoDigest) });
   return blocks;
+}
+
+export function multiModelExecutionPolicy({ mode, requirement, developer = false } = {}) {
+  const needsExecution = Boolean(requirement?.required);
+  return {
+    useAgentPipeline: mode === 'pipeline' && (needsExecution || Boolean(developer)),
+    blockedMode: needsExecution && mode !== 'pipeline' && !developer
+  };
 }
 
 export async function runMultiModel({ userId, conversationId, userText, config, webSearch = false, effort, developer = null, onEvent }) {
@@ -189,6 +199,22 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
       const allowed = provider.freeModels || [];
       for (const member of config.models) if (!allowed.includes(member.id)) member.id = provider.model;
       if (!allowed.includes(config.coordinator)) config.coordinator = provider.model;
+    }
+
+    const multiRequirement = detectToolRequirement({
+      userText,
+      webSearch: Boolean(webSearch),
+      developer: false,
+      hasUploads: Boolean(uploadsNote(conversationId))
+    });
+    const executionPolicy = multiModelExecutionPolicy({ mode: config.mode, requirement: multiRequirement, developer: Boolean(developer) });
+    if (executionPolicy.blockedMode) {
+      const finalText = 'Este pedido precisa ler arquivos, pesquisar ou executar ferramentas. No Multimodelo, selecione **Execução em sequência (Pipeline)** para que os modelos trabalhem no artefato real e possam gerar ou corrigir o arquivo.';
+      onEvent({ type: 'status', content: 'Selecione o modo Pipeline para executar esta tarefa.' });
+      onEvent({ type: 'delta', content: finalText });
+      const assistantMessageId = await saveMessage(userId, conversationId, 'assistant', finalText);
+      onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId });
+      return { text: finalText, usage, model: config.coordinator, incomplete: true, compatibility: 'multimodel_mode' };
     }
 
     // Estado por participante (slot = índice na configuração)
@@ -239,6 +265,9 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
       if (profile?.capabilities?.text === false) {
         state.error = 'Este modelo não está catalogado para conversa em texto.';
         setStatus(state, STATUS.error);
+      } else if (executionPolicy.useAgentPipeline && profile?.capabilities?.tools === false) {
+        state.error = 'Este modelo não oferece ferramentas para trabalhar no artefato real.';
+        setStatus(state, STATUS.error);
       }
     }
 
@@ -277,11 +306,11 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
       const requestParams = {
         model: state.member.id,
         messages: msgs,
-        temperature: 0.3,
+        ...(supportsModelParameter(getModelProfile(state.member.id), 'temperature') ? { temperature: 0.3 } : {}),
         ...openRouterRouting(false, provider.baseURL),
         stream: true,
         stream_options: { include_usage: true },
-        ...(config.maxTokensPerModel ? { max_tokens: config.maxTokensPerModel } : {})
+        ...(config.maxTokensPerModel && supportsModelParameter(getModelProfile(state.member.id), 'max_tokens') ? { max_tokens: config.maxTokensPerModel } : {})
       };
       let text = '';
       for (let attempt = 0; ; attempt++) {
@@ -365,11 +394,11 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
     async function streamCoordinator(taskPrompt) {
       let text = '';
       const msgs = [
-        { role: 'system', content: 'Você é o COORDENADOR de uma execução multimodelo: vários modelos de IA analisaram a mesma solicitação. Compare as respostas, identifique concordâncias, aponte divergências, descarte erros ou afirmações sem fundamento, aproveite os melhores argumentos e produza UMA resposta final consolidada, em português do Brasil, direta e bem organizada. Não descreva o processo — entregue a resposta.' },
+        { role: 'system', content: protectedProfilePrompt('Você é o COORDENADOR de uma execução multimodelo: vários modelos de IA analisaram a mesma solicitação. Compare as respostas, identifique concordâncias, aponte divergências, descarte erros ou afirmações sem fundamento, aproveite os melhores argumentos e produza UMA resposta final consolidada, em português do Brasil, direta e bem organizada. Não descreva o processo — entregue a resposta.') },
         ...(developerTeamNote ? [{ role: 'system', content: developerTeamNote }] : []),
         ...(repoDigest ? [{ role: 'user', content: untrustedContext('repository-digest', repoDigest) }] : []),
         ...(developerRules ? [{ role: 'user', content: untrustedContext('project-rules', developerRules) }] : []),
-        { role: 'user', content: taskPrompt }
+        { role: 'user', content: untrustedContext('multi-coordinator-material', taskPrompt) }
       ];
       const prefixEnd = 1 + (developerTeamNote ? 1 : 0);
       applyPromptCache(msgs, config.coordinator, prefixEnd, provider.baseURL);
@@ -378,7 +407,8 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
         let activeRequest;
         try {
           activeRequest = beginProviderRequest(control);
-          const stream = await client.chat.completions.create({ model: config.coordinator, messages: msgs, temperature: 0.3, ...openRouterRouting(false, provider.baseURL), stream: true, stream_options: { include_usage: true } }, { signal: activeRequest.signal, timeout: PROVIDER_CONNECT_TIMEOUT_MS });
+          const coordinatorProfile = getModelProfile(config.coordinator);
+          const stream = await client.chat.completions.create({ model: config.coordinator, messages: msgs, ...(supportsModelParameter(coordinatorProfile, 'temperature') ? { temperature: 0.3 } : {}), ...openRouterRouting(false, provider.baseURL), stream: true, stream_options: { include_usage: true } }, { signal: activeRequest.signal, timeout: PROVIDER_CONNECT_TIMEOUT_MS });
           for await (const chunk of guardStreamStall(stream, { onStall: () => activeRequest.abort('stall') })) {
             if (control.stopped) return text;
             if (chunk.usage) addUsage(usage, chunk.usage);
@@ -502,8 +532,18 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
       // validar o resultado real da etapa anterior, em vez de apenas comentá-lo.
       const artifactRunId = `pipeline_${nanoid(12)}`;
       const previousOutputs = [];
+      const artifactOutputPaths = new Set();
       let executorResult = null;
-      for (const state of slots) {
+      const executableStates = slots.filter(state => state.status !== STATUS.error && !registry.cancelled.has(state.slot));
+      if (!executableStates.length) {
+        const finalText = '_Nenhum modelo selecionado oferece as capacidades necessárias para executar esta tarefa._';
+        onEvent({ type: 'delta', content: finalText });
+        const assistantMessageId = await saveMessage(userId, conversationId, 'assistant', finalText);
+        onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId });
+        return { text: finalText, usage, model: config.coordinator, incomplete: true, compatibility: 'tools' };
+      }
+      for (let executableIndex = 0; executableIndex < executableStates.length; executableIndex++) {
+        const state = executableStates[executableIndex];
         if (control.stopped || await gate(control, onEvent)) break;
         if (budgetExceeded) { setStatus(state, STATUS.stopped); continue; }
         if (state.status === STATUS.error || registry.cancelled.has(state.slot)) continue;
@@ -511,7 +551,7 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
           ? `O que as etapas anteriores produziram:\n\n${previousOutputs.map(p => `### ${p.name} (função: ${p.roleLabel})\n${clipForBriefing(p.text, 10000)}`).join('\n\n')}`
           : null;
         onEvent({ type: 'status', content: `Etapa ${state.slot + 1} de ${slots.length}: ${state.name} (${state.roleLabel})...` });
-        if (developer) {
+        if (executionPolicy.useAgentPipeline) {
           setStatus(state, STATUS.answering);
           const t0 = Date.now();
           const briefing = prior ? clipForBriefing(prior, 20000) : null;
@@ -524,7 +564,7 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
             model: state.member.id,
             assistant: {
               id: `multi:${state.member.role}:${state.slot}`,
-              system_prompt: `${memberSystemPrompt(state.member, 'pipeline')}\n\n${MULTI_ARTIFACT_PROTOCOL}\n\nVocê é a etapa ${state.slot + 1} de ${slots.length}. Inspecione o estado atual antes de decidir se deve preservar, corrigir ou ampliar o artefato.`,
+              system_prompt: `${memberSystemPrompt(state.member, 'pipeline', { toolsEnabled: true })}\n\n${MULTI_ARTIFACT_PROTOCOL}\n\nVocê é a etapa ${state.slot + 1} de ${slots.length}. Inspecione o estado atual antes de decidir se deve preservar, corrigir ou ampliar o artefato.`,
               personality: null,
               tools: null
             },
@@ -536,12 +576,14 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
             control,
             // Só a última etapa pode receber ferramentas de publicação, e ainda
             // assim runAgent exige que o pedido original as autorize.
-            gitWriteAuthorization: state.slot === slots.length - 1 ? null : false,
-            persistReply: state.slot === slots.length - 1
+            gitWriteAuthorization: executableIndex === executableStates.length - 1 ? null : false,
+            persistReply: executableIndex === executableStates.length - 1,
+            continuationOutputPaths: [...artifactOutputPaths]
           });
           addUsage(usage, executorResult.usage);
           addUsage(state.usage, executorResult.usage);
           state.text = clipForBriefing(String(executorResult.text || ''), META_TEXT_LIMIT);
+          for (const file of executorResult.files || []) artifactOutputPaths.add(file.path);
           state.elapsedMs = Date.now() - t0;
           addSlotCost(state);
           state.artifactVersion = snapshotArtifactVersion(conversationId, {
@@ -567,6 +609,24 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
         }
       }
       if (executorResult) {
+        // O orçamento, um cancelamento de slot ou uma incompatibilidade podem
+        // fazer a etapa efetivamente final ser diferente da prevista no início.
+        // Garante uma única entrega persistida mesmo quando o último executor
+        // rodou com persistReply=false por ainda haver etapas na fila.
+        if (!executorResult.messageId) {
+          const persisted = await persistAssistantReply(
+            userId,
+            conversationId,
+            String(executorResult.text || ''),
+            null,
+            executorResult.files || [],
+            { executionMeta: executorResult.execution || null }
+          );
+          executorResult.messageId = persisted.msgId;
+          if (persisted.cards.length) onEvent({ type: 'files', files: persisted.cards });
+          if (Object.keys(executorResult.checks || {}).length) onEvent({ type: 'file_checks', checks: executorResult.checks });
+          onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId: persisted.msgId });
+        }
         // Fecha o quadro ao vivo mesmo sem mensagem própria do multimodelo
         // (a execução real foi persistida pelo runAgent).
         const meta = buildMeta();

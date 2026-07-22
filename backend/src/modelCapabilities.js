@@ -88,6 +88,7 @@ export function deriveModelCapabilities(model = {}) {
 export function modelProfileFromProvider(model = {}) {
   const id = String(model.id || '');
   const capabilities = deriveModelCapabilities(model);
+  const parameters = asStringList(model.supported_parameters);
   const pricing = model.pricing || {};
   const promptPrice = Number(pricing.prompt ?? model.price ?? 0);
   const completionPrice = Number(pricing.completion ?? 0);
@@ -97,6 +98,10 @@ export function modelProfileFromProvider(model = {}) {
     id,
     name: model.name || id,
     capabilities,
+    // null = o provedor não publicou a lista; nesse caso preservamos o
+    // comportamento compatível e tentamos os parâmetros comuns. Array = fonte
+    // de verdade para não mandar temperature/reasoning/tools a quem não aceita.
+    parameters,
     // Flat aliases keep older clients and saved UI state compatible.
     text: capabilities.text,
     tools: capabilities.tools,
@@ -125,6 +130,24 @@ export function registerModelCatalog(models = []) {
 export function getModelProfile(id) {
   const key = String(id || '');
   return catalog.get(key) || modelProfileFromProvider({ id: key, name: key });
+}
+
+export function unverifiedModelProfile(id, { name = null, free = false } = {}) {
+  const profile = getModelProfile(id);
+  return {
+    ...profile,
+    id: String(id || ''),
+    name: name || profile.name || String(id || ''),
+    free: Boolean(free || profile.free)
+  };
+}
+
+export function supportsModelParameter(profile, parameter) {
+  const parameters = profile?.parameters;
+  if (!Array.isArray(parameters) && parameter === 'temperature' && /(?:^|\/)gpt-5\.6(?:-|$)/i.test(String(profile?.id || ''))) {
+    return false;
+  }
+  return !Array.isArray(parameters) || parameters.includes(String(parameter || '').toLowerCase());
 }
 
 // Nome amigável do PROVEDOR/desenvolvedor do modelo, derivado do prefixo do id
@@ -190,6 +213,26 @@ export function buildModelCallPlan({ modelId, profile, tools = [], userText = ''
     blocked: textUnsupported
       ? { capability: 'text' }
       : (toolsUnsupported && requestedTools.length > 0 && requirements.required ? { capability: 'tools' } : null)
+  };
+}
+
+// Estado recalculável de uma chamada. O loop usa a mesma função tanto no
+// modelo inicial quanto em CADA failover; assim não carrega ferramentas,
+// raciocínio ou parâmetros do modelo que acabou de falhar.
+export function buildModelRuntimeState(input = {}) {
+  const plan = buildModelCallPlan(input);
+  const isGpt56Chat = /(?:^|\/)gpt-5\.6(?:-|$)/i.test(String(plan.profile?.id || input.modelId || ''));
+  const reasoningEffort = isGpt56Chat && plan.tools.length ? 'none' : plan.reasoning;
+  const reasoningParameter = isGpt56Chat
+    || (supportsModelParameter(plan.profile, 'reasoning_effort') && !supportsModelParameter(plan.profile, 'reasoning'))
+    ? 'reasoning_effort'
+    : 'reasoning';
+  return {
+    plan,
+    tools: plan.tools,
+    reasoningEffort,
+    reasoningParameter,
+    acceptsTemperature: supportsModelParameter(plan.profile, 'temperature')
   };
 }
 

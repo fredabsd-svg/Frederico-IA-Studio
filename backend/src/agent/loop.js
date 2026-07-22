@@ -9,7 +9,7 @@ import { buildContext, historyBudgetForModel, selectHistoryForContext } from '..
 import { indexAfterReply } from '../memory/indexer.js';
 import { getSettings } from '../memory/memoryService.js';
 import { isLowSignalTurn, LOW_SIGNAL_TURN_NOTE } from '../memory/retrievalPolicy.js';
-import { buildModelCallPlan, isUnsupportedToolError, isUnsupportedVisionError, isModelUnavailableError, markModelCapabilityUnsupported, modelCompatibilityMessage } from '../modelCapabilities.js';
+import { buildModelRuntimeState, isUnsupportedToolError, isUnsupportedVisionError, isModelUnavailableError, markModelCapabilityUnsupported, modelCompatibilityMessage } from '../modelCapabilities.js';
 import { createToolProtocolStreamGuard, parseTextToolCalls, sanitizeToolProtocolText } from '../toolProtocol.js';
 import { githubToolDefinitions, GITHUB_WRITE_TOOLS, hasGithubConnection } from '../connectors/github.js';
 import { effortCfg, promptFor, promptManifestFor, toolsFor, temperatureFor, developerContextFor, toolAvailabilityNote, ENVIRONMENT_QUERY_RE, verifiedEnvironmentNote, pcFoldersNote, uploadsNote, clipForBriefing, BRIEFING_CHAR_LIMIT, QUALITY_BAR } from './prompts.js';
@@ -17,7 +17,7 @@ import { listOutputs, mentionsOutputPath, recoverAlternateOutputs, referencedOut
 import { OUTPUT_DELIVERY_REPAIR_NOTE, MISSING_OUTPUT_NOTICE, EXECUTION_COMPLETION_REPAIR_NOTE, EXECUTION_INCOMPLETE_NOTICE, TOOL_PROTOCOL_REPAIR_NOTE, TOOL_PROTOCOL_FAILURE_NOTICE, RESPONSE_TRUNCATED_REPAIR_NOTE, RESPONSE_TRUNCATED_NOTICE, EXECUTION_CONTRACT_NOTE, MACRO_REQUEST_RE, MACRO_LIMITATION_NOTE, DEGEN_CHECK_STEP, looksDegenerate, shouldRepairOutputDelivery, shouldRepairExecution, shouldContinueAfterTruncation, materializeTextOutput, endsAwaitingUserReply } from './repair.js';
 import { normalizeWebFetchUrl, classifyToolOutcome, webResearchStopReason, planToolCallBatch, WEB_TOOL_NAMES, webResearchFinalizationNote, WEB_RESEARCH_FETCH_LIMIT, TOOL_CALLS_PER_STEP_LIMIT } from './webResearch.js';
 import { imageUploadParts, attachImagesToLastUserMessage, stripImagePartsFromMessages } from './vision.js';
-import { STREAM_RECOVERY_LIMIT, STREAM_RESUME_NOTE, STREAM_PAUSE_RESUME_NOTE, PROVIDER_TIMEOUT_NOTICE, isRetryableStreamError, openRouterRouting, retryDelay, addUsage, applyPromptCache } from './provider.js';
+import { STREAM_RECOVERY_LIMIT, STREAM_RESUME_NOTE, STREAM_PAUSE_RESUME_NOTE, PROVIDER_TIMEOUT_NOTICE, isRetryableStreamError, openRouterRouting, retryDelay, addUsage, applyPromptCache, clearPromptCache } from './provider.js';
 import { guardStreamStall, PROVIDER_CONNECT_TIMEOUT_MS } from './streamGuard.js';
 import { acquireConversationControl, releaseConversationControl, beginProviderRequest, releaseProviderRequest, beginToolRequest, releaseToolRequest, controlInterruptReason, gate } from './control.js';
 import { clientScopeFor, memoryNote, saveMessage, persistAssistantReply } from './persistence.js';
@@ -33,11 +33,34 @@ export function explicitlyAuthorizesGitWrite(text) {
     || /^\s*(?:git\s+)?(?:commit|push|pull request|pr)\b/i.test(value);
 }
 
+export function buildProviderRequest({ model, messages, tools = [], forceNativeToolCall = false, reasoningEffort = null, reasoningParameter = 'reasoning', temperature = 0.3, acceptsTemperature = true, baseURL } = {}) {
+  return {
+    model,
+    messages,
+    ...(tools.length ? { tools, tool_choice: forceNativeToolCall ? 'required' : 'auto' } : {}),
+    ...(reasoningEffort
+      ? (reasoningParameter === 'reasoning_effort' ? { reasoning_effort: reasoningEffort } : { reasoning: { effort: reasoningEffort } })
+      : {}),
+    ...(acceptsTemperature ? { temperature } : {}),
+    ...openRouterRouting(tools.length > 0, baseURL),
+    stream: true,
+    stream_options: { include_usage: true }
+  };
+}
+
+export function buildOutputBaseline(files = [], { acceptAll = false, continuationPaths = [] } = {}) {
+  if (acceptAll) return new Map();
+  const accepted = new Set((continuationPaths || []).map(value => String(value || '')));
+  return new Map(files
+    .filter(file => !accepted.has(String(file?.path || '')))
+    .map(file => [file.path, fileSignature(file)]));
+}
+
 // RETOMADA REAL (checkpoint): `resume` (quando presente) traz o estado salvo de
 // um run interrompido — array de mensagens do agente, modelo ativo, cadeia de
 // failover já tentada e o objetivo. Com ele, o loop CONTINUA de onde parou (com
 // orçamento de ciclos NOVO), em vez de recomeçar do zero. Ver checkpoint.js.
-export async function runAgent({ userId, conversationId, userText, model, assistant, webSearch, effort, developer, onEvent, saveUserMessage = true, existingUserMessageId = null, executionBriefing = null, forceExecution = false, control: inheritedControl = null, resume = null, gitWriteAuthorization = null, persistReply = true }) {
+export async function runAgent({ userId, conversationId, userText, model, assistant, webSearch, effort, developer, onEvent, saveUserMessage = true, existingUserMessageId = null, executionBriefing = null, forceExecution = false, control: inheritedControl = null, resume = null, gitWriteAuthorization = null, persistReply = true, continuationOutputPaths = [] }) {
   const provider = await getUserProvider(userId);          // BYOK: chave do usuário
   const client = provider.client;                          // sombreia o cliente global
   const runId = resume?.runId || nanoid();
@@ -103,7 +126,7 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   }
   if (lowSignalTurn) requestedTools = [];
 
-  const modelPlan = buildModelCallPlan({
+  const modelPlanInput = () => ({
     modelId: chosenModel,
     tools: requestedTools,
     userText,
@@ -112,8 +135,10 @@ export async function runAgent({ userId, conversationId, userText, model, assist
     hasUploads: !lowSignalTurn && Boolean(uploadsNote(conversationId)),
     reasoningEffort: eff.reasoning
   });
-  let tools = modelPlan.tools;
-  const reasoningEffort = modelPlan.reasoning;
+  let modelRuntime = buildModelRuntimeState(modelPlanInput());
+  let modelPlan = modelRuntime.plan;
+  let tools = modelRuntime.tools;
+  let reasoningEffort = modelRuntime.reasoningEffort;
   const temperature = temperatureFor(assistant?.personality);
   const control = inheritedControl || acquireConversationControl(conversationId, userId);
   const ownsControl = !inheritedControl;
@@ -178,7 +203,7 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   if (MACRO_REQUEST_RE.test(String(userText || ''))) messages.push({ role: 'system', content: MACRO_LIMITATION_NOTE });
   if (executionBriefing) messages.push({ role: 'user', content: untrustedContext('team-briefing', clipForBriefing(String(executionBriefing), BRIEFING_CHAR_LIMIT)) });
   if (lowSignalTurn) messages.push({ role: 'system', content: LOW_SIGNAL_TURN_NOTE });
-  if (environmentNote) messages.push({ role: 'system', content: environmentNote });
+  if (environmentNote) messages.push({ role: 'user', content: untrustedContext('verified-environment-output', environmentNote) });
   if (developerContext) messages.push({ role: 'system', content: developerContext.note });
   if (developerContext?.userRules) messages.push({ role: 'user', content: untrustedContext('project-rules', developerContext.userRules) });
   if (eff.nudge) messages.push({ role: 'system', content: eff.nudge });
@@ -261,6 +286,39 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
     if (visionApplied) onEvent({ type: 'status', content: 'Enviando a imagem para o modelo analisar...' });
   }
 
+  const activateModel = (nextModel) => {
+    const candidateRuntime = buildModelRuntimeState({ ...modelPlanInput(), modelId: nextModel });
+    const candidatePlan = candidateRuntime.plan;
+    if (candidatePlan.blocked) return { ok: false, plan: candidatePlan };
+    clearPromptCache(messages);
+    chosenModel = nextModel;
+    modelRuntime = candidateRuntime;
+    modelPlan = candidatePlan;
+    tools = candidateRuntime.tools;
+    reasoningEffort = candidateRuntime.reasoningEffort;
+    toolFallbackApplied = false;
+    forceNativeToolCall = false;
+    messages[1] = { role: 'system', content: toolAvailabilityNote(tools, { includeInventory: includeEnvironmentInventory, sandboxNetworkEnabled }) };
+    if (!resume) {
+      if (candidatePlan.capabilities?.vision === true) {
+        visionApplied = attachImagesToLastUserMessage(messages, imageUploadParts(conversationId));
+      } else {
+        stripImagePartsFromMessages(messages);
+        visionApplied = false;
+      }
+    }
+    applyPromptCache(messages, chosenModel, resumePrefixEnd, provider.baseURL);
+    return { ok: true, plan: candidatePlan };
+  };
+  const activateNextFallback = () => {
+    for (let candidate = nextFallbackModel(); candidate; candidate = nextFallbackModel()) {
+      const activated = activateModel(candidate);
+      if (activated.ok) return candidate;
+      onEvent({ type: 'status', content: `O modelo de reserva ${candidate} não atende às capacidades desta tarefa; procurando outro...` });
+    }
+    return null;
+  };
+
   // Prompt caching: marca o prefixo estável para o provedor reaproveitá-lo nos
   // próximos passos/mensagens (economia de tokens de entrada + latência). No-op
   // quando o modelo/rota não suporta (ex.: DeepSeek direto já cacheia sozinho).
@@ -298,9 +356,10 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
   // como "entregáveis desta conclusão": assim eles reaparecem como download na
   // resposta final e não disparam o falso alarme de "arquivo não gerado" quando
   // a retomada só finaliza sem recriar o que já estava pronto.
-  const outputsBefore = resume
-    ? new Map()
-    : new Map(listOutputs(conversationId).map(f => [f.path, fileSignature(f)]));
+  const outputsBefore = buildOutputBaseline(listOutputs(conversationId), {
+    acceptAll: Boolean(resume),
+    continuationPaths: continuationOutputPaths
+  });
   let finalText = '';
   let stopped = false;
   let completedNaturally = false;
@@ -348,16 +407,17 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
     let activeRequest;
     try {
       activeRequest = beginProviderRequest(control);
-      stream = await client.chat.completions.create({
+      stream = await client.chat.completions.create(buildProviderRequest({
         model: chosenModel,
         messages,
-        ...(tools.length ? { tools, tool_choice: forceNativeToolCall ? 'required' : 'auto' } : {}),
-        ...(reasoningEffort ? { reasoning: { effort: reasoningEffort } } : {}),
+        tools,
+        forceNativeToolCall,
+        reasoningEffort,
+        reasoningParameter: modelRuntime.reasoningParameter,
         temperature,
-        ...openRouterRouting(tools.length > 0, provider.baseURL),
-        stream: true,
-        stream_options: { include_usage: true }
-      }, { signal: activeRequest.signal, timeout: PROVIDER_CONNECT_TIMEOUT_MS });
+        acceptsTemperature: modelRuntime.acceptsTemperature,
+        baseURL: provider.baseURL
+      }), { signal: activeRequest.signal, timeout: PROVIDER_CONNECT_TIMEOUT_MS });
     } catch (err) {
       const interrupted = controlInterruptReason(control, activeRequest);
       releaseProviderRequest(control, activeRequest);
@@ -389,10 +449,10 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
           continue;
         }
         if (isRetryableStreamError(err)) {
-          const fb = nextFallbackModel();
+          const failedModel = chosenModel;
+          const fb = activateNextFallback();
           if (fb) {
-            onEvent({ type: 'status', content: `O provedor falhou com ${chosenModel}. Tentando o modelo de reserva ${fb}...` });
-            chosenModel = fb;
+            onEvent({ type: 'status', content: `O provedor falhou com ${failedModel}. Tentando o modelo de reserva ${fb}...` });
             streamRecoveryAttempts = 0;
             step -= 1;
             continue;
@@ -410,10 +470,10 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
         // reserva, tenta o próximo em vez de dar erro fatal — só desiste quando
         // a cadeia de reserva se esgota (aí o erro real volta pelo throw).
         if (isModelUnavailableError(err)) {
-          const fb = nextFallbackModel();
+          const failedModel = chosenModel;
+          const fb = activateNextFallback();
           if (fb) {
-            onEvent({ type: 'status', content: `O modelo ${chosenModel} não está disponível no provedor. Tentando o modelo de reserva ${fb}...` });
-            chosenModel = fb;
+            onEvent({ type: 'status', content: `O modelo ${failedModel} não está disponível no provedor. Tentando o modelo de reserva ${fb}...` });
             streamRecoveryAttempts = 0;
             step -= 1;
             continue;
@@ -423,6 +483,14 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
       }
       const profile = markModelCapabilityUnsupported(chosenModel, 'tools') || modelPlan.profile;
       if (modelPlan.requirements.required) {
+        const failedModel = chosenModel;
+        const fb = activateNextFallback();
+        if (fb) {
+          onEvent({ type: 'status', content: `O modelo ${failedModel} não executa ferramentas. Continuando com o modelo de reserva ${fb}...` });
+          streamRecoveryAttempts = 0;
+          step -= 1;
+          continue;
+        }
         const unavailablePlan = { ...modelPlan, profile, capabilities: profile.capabilities, blocked: { capability: 'tools' } };
         finalText = modelCompatibilityMessage(unavailablePlan);
         onEvent({ type: 'status', content: 'Este modelo não executa ferramentas.' });
@@ -503,14 +571,14 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
           step -= 1;
           continue;
         }
-        const fb = nextFallbackModel();
+        const failedModel = chosenModel;
+        const fb = activateNextFallback();
         if (fb) {
           if (content || toolCalls.filter(Boolean).length) {
             messages.push({ role: 'assistant', content: sanitizeToolProtocolText(content) });
             messages.push({ role: 'system', content: STREAM_RESUME_NOTE });
           }
-          onEvent({ type: 'status', content: `Falha no provedor com ${chosenModel}. Continuando com o modelo de reserva ${fb}...` });
-          chosenModel = fb;
+          onEvent({ type: 'status', content: `Falha no provedor com ${failedModel}. Continuando com o modelo de reserva ${fb}...` });
           streamRecoveryAttempts = 0;
           step -= 1;
           continue;

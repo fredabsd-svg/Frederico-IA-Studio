@@ -102,6 +102,25 @@ export function applyPromptCache(messages, model, staticPrefixEnd = 0, baseURL =
   return messages;
 }
 
+// Remove somente os marcadores adicionados por applyPromptCache. É obrigatório
+// antes de trocar para um modelo de reserva: um bloco cache_control aceito pelo
+// Claude/Gemini pode ser rejeitado por DeepSeek, Mistral ou outro endpoint.
+export function clearPromptCache(messages) {
+  if (!Array.isArray(messages)) return messages;
+  for (const message of messages) {
+    if (!Array.isArray(message?.content)) continue;
+    message.content = message.content.map(block => {
+      if (!block || typeof block !== 'object' || !('cache_control' in block)) return block;
+      const { cache_control, ...clean } = block;
+      return clean;
+    });
+    if (message.content.length === 1 && message.content[0]?.type === 'text' && typeof message.content[0].text === 'string') {
+      message.content = message.content[0].text;
+    }
+  }
+  return messages;
+}
+
 // Traduz erros comuns da API do provedor em mensagens claras em português
 export function friendlyApiError(err) {
   const status = err?.status || err?.response?.status;
