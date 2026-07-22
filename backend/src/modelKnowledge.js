@@ -209,6 +209,98 @@ export const MODEL_FAMILIES = [
     capabilities: { text: true, tools: true, functionCalling: true, reasoning: null, code: true, vision: false, audio: false, video: false, image: false, web: false, embeddings: false },
     inputFormats: ['text'], tierHint: 'A',
     source: 'https://www.alibabacloud.com/help/en/model-studio/models', confidence: 'family'
+  },
+  // --- Moonshot Kimi --- texto, ferramentas, raciocínio, código; visão varia
+  // por modelo (K2.5+/multimodal) → null aqui, fixada no curado.
+  {
+    id: 'kimi', label: 'Kimi', provider: 'Moonshot AI',
+    match: /^kimi-/i,
+    capabilities: { text: true, tools: true, functionCalling: true, reasoning: true, code: true, vision: null, audio: false, video: false, image: false, web: false, embeddings: false },
+    inputFormats: ['text'], tierHint: 'A+',
+    source: 'https://platform.kimi.ai/docs/pricing/chat', confidence: 'family'
+  },
+  // --- MiniMax --- texto, ferramentas, raciocínio, código; visão/vídeo só no M3.
+  {
+    id: 'minimax', label: 'MiniMax', provider: 'MiniMax',
+    match: /^minimax-/i,
+    capabilities: { text: true, tools: true, functionCalling: true, reasoning: true, code: true, vision: null, audio: false, video: false, image: false, web: false, embeddings: false },
+    inputFormats: ['text'], tierHint: 'A+',
+    source: 'https://platform.minimax.io/docs/release-notes/models', confidence: 'family'
+  },
+  // --- Meta Llama --- piso: texto, ferramentas, código; visão (Llama 4) e
+  // raciocínio variam → null, fixados no curado.
+  {
+    id: 'llama', label: 'Llama', provider: 'Meta',
+    match: /^llama-?[34]/i,
+    capabilities: { text: true, tools: true, functionCalling: true, code: true, reasoning: null, vision: null, audio: false, video: false, image: false, web: false, embeddings: false },
+    inputFormats: ['text'], tierHint: 'A',
+    source: 'https://www.llama.com/', confidence: 'family'
+  },
+  // --- NVIDIA Nemotron --- texto, ferramentas, raciocínio, código; a variante
+  // Omni é multimodal (curado).
+  {
+    id: 'nemotron', label: 'Nemotron', provider: 'NVIDIA',
+    match: /^nemotron/i,
+    capabilities: { text: true, tools: true, functionCalling: true, reasoning: true, code: true, vision: null, audio: false, video: false, image: false, web: false, embeddings: false },
+    inputFormats: ['text'], tierHint: 'A+',
+    source: 'https://build.nvidia.com/models', confidence: 'family'
+  },
+  // --- Google Gemma (open) --- Gemma 4 é multimodal; piso: texto, ferramentas,
+  // código; visão/raciocínio no curado.
+  {
+    id: 'gemma', label: 'Gemma', provider: 'Google',
+    match: /^gemma-?\d/i,
+    capabilities: { text: true, tools: true, functionCalling: true, code: true, vision: null, reasoning: null, audio: false, video: false, image: false, web: false, embeddings: false },
+    inputFormats: ['text'], tierHint: 'B+',
+    source: 'https://ai.google.dev/gemma/docs/releases', confidence: 'family'
+  },
+  // --- Cohere Command --- texto, ferramentas, pesquisa web (connectors), código.
+  {
+    id: 'command', label: 'Command', provider: 'Cohere',
+    match: /^command-/i,
+    capabilities: { text: true, tools: true, functionCalling: true, web: true, code: true, vision: null, reasoning: null, audio: false, video: false, image: false, embeddings: false },
+    inputFormats: ['text'], tierHint: 'A',
+    source: 'https://docs.cohere.com/docs/models', confidence: 'family'
+  },
+  // --- Amazon Nova --- Lite/Pro/Premier: visão + vídeo + ferramentas; Micro texto.
+  {
+    id: 'nova', label: 'Nova', provider: 'Amazon',
+    match: /nova-(?:micro|lite|pro|premier|2)/i,
+    capabilities: { text: true, tools: true, functionCalling: true, code: true, vision: null, video: null, reasoning: null, audio: false, image: false, web: false, embeddings: false },
+    inputFormats: ['text'], tierHint: 'A',
+    source: 'https://docs.aws.amazon.com/nova/latest/userguide/what-is-nova.html', confidence: 'family'
+  },
+  // --- Perplexity Sonar --- pesquisa web NATIVA; sem visão/áudio/vídeo.
+  {
+    id: 'sonar', label: 'Sonar', provider: 'Perplexity',
+    match: /^sonar\b/i,
+    capabilities: { text: true, web: true, tools: null, code: null, vision: false, audio: false, video: false, image: false, reasoning: null, functionCalling: null, embeddings: false },
+    inputFormats: ['text'], tierHint: 'A',
+    source: 'https://docs.perplexity.ai/getting-started/pricing', confidence: 'family'
+  },
+  // --- Baidu ERNIE --- texto, ferramentas, raciocínio; VL/5.0 multimodal (curado).
+  {
+    id: 'ernie', label: 'ERNIE', provider: 'Baidu',
+    match: /^(?:baidu\/)?ernie-/i,
+    capabilities: { text: true, tools: true, functionCalling: true, reasoning: null, code: null, vision: null, audio: false, video: false, image: false, web: false, embeddings: false },
+    inputFormats: ['text'], tierHint: 'A',
+    source: 'https://cloud.baidu.com/', confidence: 'family'
+  },
+  // --- ByteDance Doubao (Seed) --- multimodal: texto, visão, ferramentas, raciocínio.
+  {
+    id: 'doubao', label: 'Doubao', provider: 'ByteDance',
+    match: /^doubao-/i,
+    capabilities: { text: true, tools: true, functionCalling: true, vision: true, reasoning: true, code: true, files: true, audio: false, video: null, image: false, web: false, embeddings: false },
+    inputFormats: ['text', 'image'], tierHint: 'A',
+    source: 'https://www.volcengine.com/docs/82379', confidence: 'family'
+  },
+  // --- Xiaomi MiMo --- texto, ferramentas, raciocínio, código; V2.5 omnimodal.
+  {
+    id: 'mimo', label: 'MiMo', provider: 'Xiaomi',
+    match: /^mimo-/i,
+    capabilities: { text: true, tools: true, functionCalling: true, reasoning: true, code: true, vision: null, audio: null, video: null, image: false, web: false, embeddings: false },
+    inputFormats: ['text'], tierHint: 'A+',
+    source: 'https://huggingface.co/XiaomiMiMo', confidence: 'family'
   }
 ];
 
@@ -318,7 +410,66 @@ export const CURATED_MODELS = [
   // -- Alibaba Qwen (variantes) --
   { match: /^qwen3\.7-plus/i, apiId: 'qwen3.7-plus', commercialName: 'Qwen3.7 Plus', family: 'Qwen3 Plus', tierHint: 'A+', status: 'active', capabilities: { vision: true, video: true, reasoning: true }, inputFormats: ['text', 'image', 'video'], source: 'https://www.alibabacloud.com/help/en/model-studio/models', verifiedAt: V, confidence: 'medium' },
   { match: /^qwen(?:3(?:\.\d)?)?-?coder/i, commercialName: 'Qwen Coder', family: 'Qwen Coder', tierHint: 'A', context: 1000000, status: 'active', capabilities: { code: true, reasoning: null }, source: 'https://www.alibabacloud.com/help/en/model-studio/model-pricing', verifiedAt: V, confidence: 'medium' },
-  { match: /^qwq/i, commercialName: 'QwQ', family: 'QwQ', tierHint: 'A', inUsd1M: 0.8, outUsd1M: 2.4, status: 'active', capabilities: { reasoning: true }, source: 'https://www.alibabacloud.com/help/en/model-studio/model-pricing', verifiedAt: V, confidence: 'medium' }
+  { match: /^qwq/i, commercialName: 'QwQ', family: 'QwQ', tierHint: 'A', inUsd1M: 0.8, outUsd1M: 2.4, status: 'active', capabilities: { reasoning: true }, source: 'https://www.alibabacloud.com/help/en/model-studio/model-pricing', verifiedAt: V, confidence: 'medium' },
+
+  // ============ FAMÍLIAS NOVAS (rodada 2) ============
+  // -- Moonshot Kimi --
+  { match: /^kimi-k3/i, apiId: 'kimi-k3', commercialName: 'Kimi K3', family: 'Kimi K3', tierHint: 'S', context: 1048576, inUsd1M: 3, outUsd1M: 15, status: 'active', capabilities: { reasoning: true, tools: true, code: true }, source: 'https://platform.kimi.ai/docs/pricing/chat-k3', verifiedAt: V, confidence: 'high' },
+  { match: /^kimi-k2\.7/i, apiId: 'kimi-k2.7-code', commercialName: 'Kimi K2.7 Code', family: 'Kimi K2.7', tierHint: 'A+', context: 262144, inUsd1M: 0.95, outUsd1M: 4, status: 'active', capabilities: { vision: true, reasoning: true, code: true }, inputFormats: ['text', 'image'], source: 'https://platform.kimi.ai/docs/pricing/chat-k27-code', verifiedAt: V, confidence: 'high' },
+  { match: /^kimi-k2\.6/i, apiId: 'kimi-k2.6', commercialName: 'Kimi K2.6', family: 'Kimi K2.6', tierHint: 'A+', context: 262144, inUsd1M: 0.95, outUsd1M: 4, status: 'active', capabilities: { vision: true, reasoning: true, code: true }, inputFormats: ['text', 'image'], source: 'https://platform.kimi.ai/docs/pricing/chat-k26', verifiedAt: V, confidence: 'high' },
+  { match: /^kimi-k2\.5/i, apiId: 'kimi-k2.5', commercialName: 'Kimi K2.5', family: 'Kimi K2.5', tierHint: 'A+', context: 262144, inUsd1M: 0.6, outUsd1M: 3, status: 'active', capabilities: { vision: true, video: true, reasoning: true, code: true }, inputFormats: ['text', 'image', 'video'], source: 'https://platform.kimi.ai/docs/pricing/chat-k25', verifiedAt: V, confidence: 'high' },
+  { match: /^moonshot-v1/i, commercialName: 'Moonshot V1', family: 'moonshot-v1', tierHint: 'B', status: 'legacy', replacement: 'kimi-k2.6', capabilities: { reasoning: false }, source: 'https://platform.kimi.ai/docs/pricing/chat-v1', verifiedAt: V, confidence: 'high' },
+  // -- MiniMax --
+  { match: /^minimax-m3/i, apiId: 'MiniMax-M3', commercialName: 'MiniMax-M3', family: 'MiniMax M3', tierHint: 'S', context: 1000000, inUsd1M: 0.3, outUsd1M: 1.2, status: 'active', capabilities: { vision: true, video: true, reasoning: true }, inputFormats: ['text', 'image', 'video'], source: 'https://www.minimax.io/models/text/m3', verifiedAt: V, confidence: 'high' },
+  { match: /^minimax-m2/i, commercialName: 'MiniMax-M2', family: 'MiniMax M2', tierHint: 'A+', context: 204800, inUsd1M: 0.3, outUsd1M: 1.2, status: 'active', capabilities: { reasoning: true, vision: false }, source: 'https://platform.minimax.io/docs/release-notes/models', verifiedAt: V, confidence: 'medium' },
+  // -- Meta Llama (open-weight: preço fica com a API) --
+  { match: /^llama-4-scout/i, apiId: 'llama-4-scout', commercialName: 'Llama 4 Scout', family: 'Llama 4', tierHint: 'A', context: 1000000, status: 'active', capabilities: { vision: true, reasoning: true, code: true }, inputFormats: ['text', 'image'], source: 'https://ai.meta.com/blog/llama-4-multimodal-intelligence/', verifiedAt: V, confidence: 'medium' },
+  { match: /^llama-4-maverick/i, apiId: 'llama-4-maverick', commercialName: 'Llama 4 Maverick', family: 'Llama 4', tierHint: 'A+', context: 1000000, status: 'active', capabilities: { vision: true, reasoning: true, code: true }, inputFormats: ['text', 'image'], source: 'https://ai.meta.com/blog/llama-4-multimodal-intelligence/', verifiedAt: V, confidence: 'medium' },
+  { match: /^llama-3\.3-70b/i, apiId: 'llama-3.3-70b-instruct', commercialName: 'Llama 3.3 70B', family: 'Llama 3.x', tierHint: 'A', context: 131072, status: 'active', capabilities: { vision: false, code: true }, source: 'https://huggingface.co/meta-llama/Llama-3.3-70B-Instruct', verifiedAt: V, confidence: 'medium' },
+  // -- NVIDIA Nemotron (open-weight) --
+  { match: /nemotron-3-ultra/i, commercialName: 'Nemotron 3 Ultra', family: 'Nemotron 3', tierHint: 'A+', context: 512000, status: 'active', capabilities: { reasoning: true }, source: 'https://build.nvidia.com/models', verifiedAt: V, confidence: 'medium' },
+  { match: /nemotron-3-super/i, commercialName: 'Nemotron 3 Super', family: 'Nemotron 3', tierHint: 'A+', context: 1000000, status: 'active', capabilities: { reasoning: true }, source: 'https://build.nvidia.com/models', verifiedAt: V, confidence: 'medium' },
+  { match: /nemotron-3-nano-omni/i, commercialName: 'Nemotron 3 Nano Omni', family: 'Nemotron 3', tierHint: 'A', context: 262144, status: 'active', capabilities: { vision: true, audio: true, video: true, reasoning: true }, inputFormats: ['text', 'image', 'audio', 'video'], source: 'https://developer.nvidia.com/blog/nvidia-nemotron-3-nano-omni-powers-multimodal-agent-reasoning-in-a-single-efficient-open-model/', verifiedAt: V, confidence: 'medium' },
+  { match: /nemotron-3-nano/i, commercialName: 'Nemotron 3 Nano', family: 'Nemotron 3', tierHint: 'A', context: 262144, status: 'active', capabilities: { reasoning: true, vision: false }, source: 'https://build.nvidia.com/models', verifiedAt: V, confidence: 'medium' },
+  // -- Google Gemma (open-weight) --
+  { match: /^gemma-4-e\d/i, commercialName: 'Gemma 4 (edge)', family: 'Gemma 4', tierHint: 'B+', context: 128000, status: 'active', capabilities: { vision: true, audio: true, reasoning: true }, inputFormats: ['text', 'image', 'audio'], source: 'https://ai.google.dev/gemma/docs/core/model_card_4', verifiedAt: V, confidence: 'high' },
+  { match: /^gemma-4/i, commercialName: 'Gemma 4', family: 'Gemma 4', tierHint: 'A', context: 256000, status: 'active', capabilities: { vision: true, reasoning: true }, inputFormats: ['text', 'image', 'video'], source: 'https://ai.google.dev/gemma/docs/core/model_card_4', verifiedAt: V, confidence: 'high' },
+  { match: /^gemma-3n/i, commercialName: 'Gemma 3n', family: 'Gemma 3n', tierHint: 'B', context: 32000, status: 'active', capabilities: { vision: true, audio: true, reasoning: false }, inputFormats: ['text', 'image', 'audio'], source: 'https://ai.google.dev/gemma/docs/releases', verifiedAt: V, confidence: 'high' },
+  { match: /^gemma-3-(?:1b|270m)/i, commercialName: 'Gemma 3 (small)', family: 'Gemma 3', tierHint: 'C', context: 32000, status: 'active', capabilities: { vision: false, reasoning: false }, source: 'https://ai.google.dev/gemma/docs/core/model_card_3', verifiedAt: V, confidence: 'high' },
+  { match: /^gemma-3/i, commercialName: 'Gemma 3', family: 'Gemma 3', tierHint: 'B+', context: 128000, status: 'active', capabilities: { vision: true, reasoning: false }, inputFormats: ['text', 'image'], source: 'https://ai.google.dev/gemma/docs/core/model_card_3', verifiedAt: V, confidence: 'high' },
+  // -- Cohere Command --
+  { match: /^command-a-plus/i, apiId: 'command-a-plus-05-2026', commercialName: 'Command A+', family: 'Command A', tierHint: 'A+', context: 128000, maxOutput: 64000, status: 'active', capabilities: { vision: true, reasoning: true, web: true }, inputFormats: ['text', 'image'], source: 'https://docs.cohere.com/docs/models', verifiedAt: V, confidence: 'high' },
+  { match: /^command-a-reasoning/i, apiId: 'command-a-reasoning-08-2025', commercialName: 'Command A Reasoning', family: 'Command A', tierHint: 'A', context: 256000, status: 'active', capabilities: { reasoning: true, web: true }, source: 'https://docs.cohere.com/docs/models', verifiedAt: V, confidence: 'high' },
+  { match: /^command-a-vision/i, apiId: 'command-a-vision-07-2025', commercialName: 'Command A Vision', family: 'Command A', tierHint: 'A', status: 'active', capabilities: { vision: true, web: true }, inputFormats: ['text', 'image'], source: 'https://docs.cohere.com/docs/models', verifiedAt: V, confidence: 'high' },
+  { match: /^command-a\b/i, apiId: 'command-a-03-2025', commercialName: 'Command A', family: 'Command A', tierHint: 'A', context: 256000, maxOutput: 8000, inUsd1M: 2.5, outUsd1M: 10, status: 'active', source: 'https://docs.cohere.com/docs/models', verifiedAt: V, confidence: 'high' },
+  { match: /^command-r7b/i, apiId: 'command-r7b-12-2024', commercialName: 'Command R7B', family: 'Command R', tierHint: 'B', context: 128000, inUsd1M: 0.0375, outUsd1M: 0.15, status: 'active', source: 'https://docs.cohere.com/docs/models', verifiedAt: V, confidence: 'high' },
+  { match: /^command-r-plus/i, apiId: 'command-r-plus-08-2024', commercialName: 'Command R+', family: 'Command R', tierHint: 'A', context: 128000, inUsd1M: 2.5, outUsd1M: 10, status: 'active', source: 'https://cohere.com/pricing', verifiedAt: V, confidence: 'high' },
+  { match: /^command-r\b/i, apiId: 'command-r-08-2024', commercialName: 'Command R', family: 'Command R', tierHint: 'B+', context: 128000, inUsd1M: 0.15, outUsd1M: 0.6, status: 'active', source: 'https://docs.cohere.com/docs/models', verifiedAt: V, confidence: 'high' },
+  // -- Amazon Nova --
+  { match: /nova-2-lite/i, apiId: 'amazon.nova-2-lite-v1:0', commercialName: 'Amazon Nova 2 Lite', family: 'Nova 2', tierHint: 'A+', context: 1000000, maxOutput: 65536, status: 'active', capabilities: { vision: true, video: true, reasoning: true, web: true, files: true }, inputFormats: ['text', 'image', 'video'], source: 'https://docs.aws.amazon.com/nova/latest/nova2-userguide/what-is-nova-2.html', verifiedAt: V, confidence: 'high' },
+  { match: /nova-premier/i, apiId: 'amazon.nova-premier-v1:0', commercialName: 'Amazon Nova Premier', family: 'Nova 1', tierHint: 'A+', context: 1000000, maxOutput: 10000, inUsd1M: 2.5, outUsd1M: 12.5, status: 'active', capabilities: { vision: true, video: true, files: true }, inputFormats: ['text', 'image', 'video'], source: 'https://docs.aws.amazon.com/nova/latest/userguide/what-is-nova.html', verifiedAt: V, confidence: 'high' },
+  { match: /nova-pro/i, apiId: 'amazon.nova-pro-v1:0', commercialName: 'Amazon Nova Pro', family: 'Nova 1', tierHint: 'A', context: 300000, maxOutput: 10000, inUsd1M: 0.8, outUsd1M: 3.2, status: 'active', capabilities: { vision: true, video: true, files: true }, inputFormats: ['text', 'image', 'video'], source: 'https://docs.aws.amazon.com/nova/latest/userguide/what-is-nova.html', verifiedAt: V, confidence: 'high' },
+  { match: /nova-lite/i, apiId: 'amazon.nova-lite-v1:0', commercialName: 'Amazon Nova Lite', family: 'Nova 1', tierHint: 'B+', context: 300000, maxOutput: 10000, inUsd1M: 0.06, outUsd1M: 0.24, status: 'active', capabilities: { vision: true, video: true, files: true }, inputFormats: ['text', 'image', 'video'], source: 'https://docs.aws.amazon.com/nova/latest/userguide/what-is-nova.html', verifiedAt: V, confidence: 'high' },
+  { match: /nova-micro/i, apiId: 'amazon.nova-micro-v1:0', commercialName: 'Amazon Nova Micro', family: 'Nova 1', tierHint: 'B', context: 128000, maxOutput: 10000, inUsd1M: 0.035, outUsd1M: 0.14, status: 'active', capabilities: { vision: false }, source: 'https://docs.aws.amazon.com/nova/latest/userguide/what-is-nova.html', verifiedAt: V, confidence: 'high' },
+  // -- Perplexity Sonar --
+  { match: /^sonar-pro\b/i, apiId: 'sonar-pro', commercialName: 'Sonar Pro', family: 'Sonar', tierHint: 'A+', context: 200000, inUsd1M: 3, outUsd1M: 15, status: 'active', capabilities: { web: true }, source: 'https://docs.perplexity.ai/getting-started/pricing', verifiedAt: V, confidence: 'high' },
+  { match: /^sonar-reasoning/i, apiId: 'sonar-reasoning-pro', commercialName: 'Sonar Reasoning Pro', family: 'Sonar', tierHint: 'A+', context: 128000, inUsd1M: 2, outUsd1M: 8, status: 'active', capabilities: { reasoning: true, web: true }, source: 'https://docs.perplexity.ai/getting-started/pricing', verifiedAt: V, confidence: 'high' },
+  { match: /^sonar-deep-research/i, apiId: 'sonar-deep-research', commercialName: 'Sonar Deep Research', family: 'Sonar', tierHint: 'A+', context: 128000, inUsd1M: 2, outUsd1M: 8, status: 'active', capabilities: { reasoning: true, web: true }, source: 'https://docs.perplexity.ai/getting-started/pricing', verifiedAt: V, confidence: 'high' },
+  { match: /^sonar\b/i, apiId: 'sonar', commercialName: 'Sonar', family: 'Sonar', tierHint: 'A', context: 128000, inUsd1M: 1, outUsd1M: 1, status: 'active', capabilities: { web: true }, source: 'https://docs.perplexity.ai/getting-started/pricing', verifiedAt: V, confidence: 'high' },
+  // -- Baidu ERNIE --
+  { match: /ernie-5\.1/i, apiId: 'ernie-5.1', commercialName: 'ERNIE 5.1', family: 'ERNIE 5.x', tierHint: 'S', context: 128000, maxOutput: 65536, inUsd1M: 0.59, outUsd1M: 2.65, status: 'active', capabilities: { reasoning: true, tools: true }, source: 'https://cloud.baidu.com/', verifiedAt: V, confidence: 'medium' },
+  { match: /ernie-5\.0/i, apiId: 'ernie-5.0', commercialName: 'ERNIE 5.0', family: 'ERNIE 5.x', tierHint: 'S', context: 128000, inUsd1M: 0.89, outUsd1M: 3.54, status: 'active', capabilities: { vision: true, audio: true, video: true, reasoning: true }, inputFormats: ['text', 'image', 'audio', 'video'], source: 'https://cloud.baidu.com/', verifiedAt: V, confidence: 'medium' },
+  { match: /ernie-4\.5-(?:turbo-)?vl|ernie-4\.5-vl/i, commercialName: 'ERNIE 4.5 VL', family: 'ERNIE 4.5', tierHint: 'A', status: 'active', capabilities: { vision: true }, inputFormats: ['text', 'image'], source: 'https://openrouter.ai/baidu', verifiedAt: V, confidence: 'medium' },
+  { match: /ernie-4\.5/i, commercialName: 'ERNIE 4.5', family: 'ERNIE 4.5', tierHint: 'A', context: 131072, status: 'active', replacement: 'ernie-5.1', source: 'https://openrouter.ai/baidu', verifiedAt: V, confidence: 'medium' },
+  // -- ByteDance Doubao --
+  { match: /doubao-seed-2/i, commercialName: 'Doubao Seed 2.1 Pro', family: 'Doubao Seed 2.x', tierHint: 'A+', context: 256000, inUsd1M: 0.83, outUsd1M: 4.14, status: 'active', capabilities: { vision: true, reasoning: true }, inputFormats: ['text', 'image'], source: 'https://www.volcengine.com/docs/82379', verifiedAt: V, confidence: 'medium' },
+  { match: /doubao-seed-1[-.]6/i, commercialName: 'Doubao Seed 1.6', family: 'Doubao Seed 1.6', tierHint: 'A', context: 256000, inUsd1M: 0.111, outUsd1M: 1.111, status: 'active', capabilities: { vision: true, video: true, reasoning: true }, inputFormats: ['text', 'image', 'video'], source: 'https://www.volcengine.com/docs/82379', verifiedAt: V, confidence: 'medium' },
+  { match: /doubao-(?:pro|lite)/i, commercialName: 'Doubao 1.5', family: 'Doubao 1.5', tierHint: 'B', status: 'legacy', replacement: 'doubao-seed-2.1-pro', capabilities: { vision: false }, source: 'https://www.volcengine.com/docs/82379', verifiedAt: V, confidence: 'low' },
+  // -- Xiaomi MiMo (open-weight) --
+  { match: /mimo-v2\.5-pro/i, commercialName: 'MiMo V2.5 Pro', family: 'MiMo V2.5', tierHint: 'A+', context: 1048576, status: 'active', capabilities: { reasoning: true, tools: true, code: true, vision: false }, source: 'https://huggingface.co/XiaomiMiMo/MiMo-V2.5-Pro', verifiedAt: V, confidence: 'high' },
+  { match: /mimo-v2\.5-asr/i, commercialName: 'MiMo V2.5 ASR', family: 'MiMo V2.5', tierHint: 'B', status: 'active', capabilities: { audio: true, reasoning: false, tools: false, code: false }, inputFormats: ['audio'], source: 'https://huggingface.co/XiaomiMiMo/MiMo-V2.5-ASR', verifiedAt: V, confidence: 'high' },
+  { match: /mimo-v2\.5(?!-)/i, commercialName: 'MiMo V2.5', family: 'MiMo V2.5', tierHint: 'A+', context: 1048576, status: 'active', capabilities: { vision: true, audio: true, video: true, reasoning: true, code: true }, inputFormats: ['text', 'image', 'audio', 'video'], source: 'https://huggingface.co/XiaomiMiMo/MiMo-V2.5', verifiedAt: V, confidence: 'high' },
+  { match: /mimo-v2-flash/i, commercialName: 'MiMo V2 Flash', family: 'MiMo V2', tierHint: 'A', context: 256000, status: 'active', capabilities: { reasoning: true, vision: false }, source: 'https://huggingface.co/XiaomiMiMo/MiMo-V2-Flash', verifiedAt: V, confidence: 'high' }
 ];
 
 // Índice de busca (montado uma vez).
@@ -423,9 +574,12 @@ function tierFromScore(score) {
 function coherenceCap(caps) {
   const multimodal = caps.vision === true || caps.audio === true || caps.video === true;
   if (caps.text === false && !caps.image && !caps.embeddings) return 'C';
-  // Só-texto, sem ferramentas e sem raciocínio: no máximo B+.
-  if (caps.tools !== true && caps.reasoning !== true && !multimodal) return 'B+';
-  // Só-texto (com ferramentas OU raciocínio) mas sem multimodalidade: no máximo S.
+  // "Profundidade": ferramentas, raciocínio OU pesquisa web nativa contam como
+  // capacidade principal (um modelo Sonar vale pela web, não por ferramentas).
+  const hasDepth = caps.tools === true || caps.reasoning === true || caps.web === true;
+  // Só-texto raso (sem profundidade e sem multimodalidade): no máximo B+.
+  if (!hasDepth && !multimodal) return 'B+';
+  // Texto com profundidade mas sem multimodalidade: no máximo S.
   if (!multimodal) return 'S';
   return 'S+';
 }
@@ -448,14 +602,14 @@ function capScore(caps, context = 0) {
   return Math.min(100, s);
 }
 
-// tierHint (curado) fixa um piso de qualidade para modelos-referência; o score
-// de capacidade dá o resto. O resultado nunca ultrapassa o teto de coerência.
+// A classificação: o tierHint (curadoria/família) é a AVALIAÇÃO de qualidade e
+// tem prioridade — encapsula a análise de desempenho/geração que o mero score
+// de capacidades não captura (um modelo pequeno multimodal não vira S só por
+// marcar muitas caixas). Sem tierHint, cai no score derivado das capacidades.
+// Em ambos os casos o TETO DE COERÊNCIA manda (só-texto raso nunca é S/S+).
 export function classifyModel({ capabilities = {}, context = 0, tierHint = null } = {}) {
   const score = capScore(capabilities, context);
-  let tier = tierFromScore(score);
-  if (tierHint && TIER_RANK[tierHint] != null && TIER_RANK[tierHint] > TIER_RANK[tier]) {
-    tier = tierHint;                             // piso curado de qualidade
-  }
+  let tier = (tierHint && TIER_RANK[tierHint] != null) ? tierHint : tierFromScore(score);
   const cap = coherenceCap(capabilities);
   if (TIER_RANK[tier] > TIER_RANK[cap]) tier = cap;   // coerência manda
   return { tier, rank: TIER_RANK[tier], score };
