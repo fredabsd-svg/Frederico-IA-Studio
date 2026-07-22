@@ -273,7 +273,7 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
   const panel = <div className={inline ? 'mpPanel mpPanelInline' : 'mpPanel'}>
       <div className="mpSearch">
         <Search size={14}/>
-        <input ref={searchRef} value={q} onChange={event => setQ(event.target.value)} placeholder="Buscar modelo pelo nome" aria-label="Buscar modelo pelo nome"/>
+        <input ref={searchRef} value={q} onChange={event => { setQ(event.target.value); if (event.target.value.trim()) setFiltersOpen(false); }} placeholder="Buscar modelo pelo nome" aria-label="Buscar modelo pelo nome"/>
         {q && <button className="mpSearchClear" onClick={() => setQ('')} title="Limpar busca" aria-label="Limpar busca"><X size={14}/></button>}
       </div>
       <div className="mpPrimaryControls">
@@ -288,10 +288,14 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
         </button>
       </div>
       <div className="mpViewTabs" role="tablist" aria-label="Navegação de modelos">
-        {[['recommended', 'Recomendados'], ['favorites', 'Favoritos (' + favs.length + ')'], ['catalog', 'Catálogo']].map(([id, label]) => <button key={id} role="tab" aria-selected={view === id} className={view === id ? 'on' : ''} onClick={() => setView(id)}>{label}</button>)}
+        {/* Trocar de aba fecha os filtros: a pessoa quer VER o resultado. */}
+        {[['recommended', 'Recomendados'], ['favorites', 'Favoritos (' + favs.length + ')'], ['catalog', 'Catálogo']].map(([id, label]) => <button key={id} role="tab" aria-selected={view === id} className={view === id ? 'on' : ''} onClick={() => { setView(id); setFiltersOpen(false); }}>{label}</button>)}
       </div>
-      {filtersOpen && <div className="mpAdvanced" aria-label="Filtros avançados">
-        <div className="mpAdvancedHead"><span>Refinar catálogo</span>{activeFilterCount > 0 && <button onClick={() => { setProvider('all'); setFam('all'); setPrice('all'); setContext('all'); setTier('all'); setModality('all'); setFlags([]); setSort('rank'); }}>Limpar filtros</button>}</div>
+      {/* Filtros são uma VISTA EXCLUSIVA: ocupam o espaço todo e rolam como um
+          bloco único (rótulo nunca separa do campo), com rodapé fixo de ação.
+          Nunca dividem altura com a lista — era isso que cortava o catálogo. */}
+      {filtersOpen && <div className="mpFiltersView" aria-label="Filtros do catálogo">
+        <div className="mpFiltersBody">
         <div className="mpAdvancedFields">
           <label>Provedor configurado
             <select value={provider} onChange={event => setProvider(event.target.value)}>
@@ -359,8 +363,15 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
         <div className="mpFilterChecks" role="group" aria-label="Capacidades">
           {advancedFilters.map(filter => <label key={filter.key}><input type="checkbox" checked={flags.includes(filter.key)} onChange={() => toggleFlag(filter.key)}/><span>{filter.label}</span></label>)}
         </div>
+        </div>
+        <div className="mpFiltersFooter">
+          <button className="mpFiltersClear" onClick={() => { setProvider('all'); setFam('all'); setPrice('all'); setContext('all'); setTier('all'); setModality('all'); setFlags([]); setSort('rank'); }} disabled={activeFilterCount === 0}>Limpar</button>
+          <button className="mpFiltersApply" onClick={() => { setFiltersOpen(false); if (!query) setView('catalog'); }}>
+            Mostrar {filteredModels.length} modelo{filteredModels.length === 1 ? '' : 's'}
+          </button>
+        </div>
       </div>}
-      <div className="mpList" role="tabpanel">
+      {!filtersOpen && <div className="mpList" role="tabpanel">
         {displayView === 'search' && section('Resultados para "' + q.trim() + '"', catalogModels, 'Nenhum modelo encontrado com esta busca.')}
         {displayView === 'recommended' && <>
           <div className="mpPurposeHint"><strong>{selectedPurpose.label}</strong><span>{selectedPurpose.description}</span></div>
@@ -370,7 +381,7 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
         </>}
         {displayView === 'favorites' && section('Favoritos', favoriteModels, 'Adicione modelos aos favoritos para acessá-los rapidamente.')}
         {displayView === 'catalog' && section('Catálogo', catalogModels, 'Nenhum modelo atende aos filtros atuais.')}
-      </div>
+      </div>}
     </div>;
 
   if (inline) return panel;
