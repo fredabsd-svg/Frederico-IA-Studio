@@ -3,6 +3,7 @@ import { decryptSecret } from '../crypto.js';
 import { enrichProviderCatalog, importProviderCatalog } from '../providerCatalog.js';
 import { registerModelCatalog } from '../modelCapabilities.js';
 import { getUserProvider } from '../userProvider.js';
+import { runUserSync } from '../catalogSync.js';
 import { makeRouter } from './helpers.js';
 
 const router = makeRouter();
@@ -79,6 +80,32 @@ router.get('/models', async (req, res) => {
 
   models.sort((a, b) => `${a.providerName} ${a.name}`.localeCompare(`${b.providerName} ${b.name}`));
   res.json({ models });
+});
+
+// Atualização MANUAL do catálogo (botão): sincroniza todos os provedores do
+// usuário e devolve o relatório por provedor (adicionados, atualizados,
+// removidos, incompletos, descontinuados, erros).
+router.post('/models/sync', async (req, res) => {
+  const results = await runUserSync(req.userId, { automatic: false });
+  const totals = results.reduce((acc, r) => {
+    if (!r.ok) { acc.errors += 1; return acc; }
+    acc.added += r.counts?.added || 0;
+    acc.changed += r.counts?.changed || 0;
+    acc.removed += r.counts?.removed || 0;
+    acc.needsReview += (r.counts?.incomplete || 0);
+    return acc;
+  }, { added: 0, changed: 0, removed: 0, needsReview: 0, errors: 0 });
+  res.json({ ok: true, providers: results, totals });
+});
+
+// Histórico das mudanças automáticas do catálogo (antes/depois/fonte/data).
+router.get('/models/history', async (req, res) => {
+  const limit = Math.min(200, Math.max(1, Number.parseInt(req.query?.limit, 10) || 100));
+  const rows = await db.prepare(
+    `SELECT provider_name, model_id, change_type, field, old_value, new_value, source, created_at
+     FROM model_catalog_history WHERE user_id=? ORDER BY created_at DESC, id DESC LIMIT ?`
+  ).all(req.userId, limit).catch(() => []);
+  res.json({ history: rows });
 });
 
 export default router;

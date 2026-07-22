@@ -18,6 +18,8 @@ export function ProviderPanel({ showToast, freeStatus, onOpenWizard, onFreeChang
   const [editingId, setEditingId] = useState('');
   const [busy, setBusy] = useState(false);
   const [activeId, setActiveId] = useState('');
+  const [syncing, setSyncing] = useState(false);
+  const [syncReport, setSyncReport] = useState(null);
   const presets = useMemo(() => [...KEY_PROVIDERS, CUSTOM], []);
   const autoSynced = useRef(new Set());
 
@@ -77,6 +79,22 @@ export function ProviderPanel({ showToast, freeStatus, onOpenWizard, onFreeChang
     finally { setActiveId(''); }
   }
 
+  // Atualização MANUAL de todo o catálogo, com relatório por provedor
+  // (adicionados, atualizados, removidos, itens a revisar, erros).
+  async function syncAll() {
+    setSyncing(true); setSyncReport(null);
+    try {
+      const res = await fetch(`${API}/api/models/sync`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Falha ao atualizar o catálogo.');
+      setSyncReport(data);
+      const t = data.totals || {};
+      showToast(`Catálogo atualizado: ${t.added || 0} novo(s), ${t.changed || 0} alterado(s), ${t.removed || 0} removido(s)${t.errors ? `, ${t.errors} erro(s)` : ''}.`, t.errors ? '' : 'ok');
+      await load(); onProvidersChange?.();
+    } catch (error) { showToast(error.message || 'Não foi possível atualizar o catálogo.'); }
+    finally { setSyncing(false); }
+  }
+
   function editProvider(provider) {
     setEditingId(provider.id);
     setProviderType(provider.providerType);
@@ -112,6 +130,22 @@ export function ProviderPanel({ showToast, freeStatus, onOpenWizard, onFreeChang
 
     {providers === null && <div className="working"><span className="spin"/><span>Carregando...</span></div>}
     {providers?.length === 0 && <div className="pcWarn">Nenhuma chave configurada. Nenhum modelo de IA será exibido até você adicionar e validar um provedor.</div>}
+
+    {providers?.length > 0 && <div className="providerSyncBar">
+      <button className="primary" onClick={syncAll} disabled={syncing}>
+        {syncing ? <><span className="spin"/> Atualizando modelos...</> : <><RefreshCw size={14}/> Atualizar todos os modelos</>}
+      </button>
+      <small>Verifica modelos novos, removidos, mudança de preço, contexto, capacidades e status em todos os provedores. Também roda sozinho 1x/dia.</small>
+    </div>}
+
+    {syncReport && <div className="syncReport" aria-live="polite">
+      {(syncReport.providers || []).map((p, i) => <div key={i} className={'syncRow ' + (p.ok ? 'ok' : 'err')}>
+        <b>{p.provider}</b>
+        {p.ok
+          ? <span>{p.total} modelo(s) · {p.counts?.added || 0} novo(s), {p.counts?.changed || 0} atualizado(s), {p.counts?.removed || 0} removido(s){p.counts?.incomplete ? `, ${p.counts.incomplete} a revisar` : ''}{p.counts?.deprecated ? `, ${p.counts.deprecated} descontinuado(s)` : ''}</span>
+          : <span className="err"><AlertTriangle size={12}/> {p.error}</span>}
+      </div>)}
+    </div>}
 
     <div className="providerList">
       {(providers || []).map(provider => <article className="providerCard" key={provider.id}>

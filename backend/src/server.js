@@ -15,6 +15,7 @@ import { auth, requireAuth } from './auth.js';
 import { toNodeHandler } from 'better-auth/node';
 import { runMigrations } from './migrate.js';
 import { sweepOldConversations, CONVERSATION_RETENTION_DAYS, sweepOldUsage, USAGE_RETENTION_DAYS } from './privacy.js';
+import { runDailyCatalogSync } from './catalogSync.js';
 import accountRouter from './routes/account.js';
 import modelsRouter from './routes/models.js';
 import assistantsRouter from './routes/assistants.js';
@@ -151,6 +152,14 @@ if (CONVERSATION_RETENTION_DAYS > 0) {
 if (USAGE_RETENTION_DAYS > 0) {
   setInterval(() => sweepOldUsage().catch(e => console.error('[retenção-uso]', e.message)), 24 * 60 * 60 * 1000).unref();
   setTimeout(() => sweepOldUsage().catch(e => console.error('[retenção-uso]', e.message)), 90 * 1000).unref();
+}
+
+// Catálogo de modelos: sincronização automática pelo menos 1x/dia (checa modelos
+// novos/removidos, preço, contexto, capacidades, status; registra o histórico).
+// Não faz chamadas pagas de chat. MODEL_CATALOG_SYNC=0 desliga.
+if (process.env.MODEL_CATALOG_SYNC !== '0') {
+  setInterval(() => runDailyCatalogSync().catch(e => console.error('[catálogo]', e.message)), 24 * 60 * 60 * 1000).unref();
+  setTimeout(() => runDailyCatalogSync().catch(e => console.error('[catálogo]', e.message)), 5 * 60 * 1000).unref();
 }
 
 // 404 padrão para rotas de API desconhecidas
