@@ -1,5 +1,122 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 🔎 Auditoria cruzada Git × CONTINUIDADE + registro de lacunas (2026-07-22 — branch `claude/resumo-alteracoes-tres-dias-vukd8t`)
+
+**Pedido:** o usuário achou o app "muito bugado" e pediu um resumo detalhado de
+tudo que foi feito, e depois uma **conferência cruzada** entre o histórico real
+do Git (PRs #18→#77) e este arquivo, para auditar e melhorar o `CONTINUIDADE.md`.
+
+**Método:** listei os 59 PRs do histórico do Git e cruzei um a um contra as 30
+seções deste arquivo (busca por palavra-chave + leitura de contexto).
+**Resultado:** o arquivo não inventa nada e cobre ~90% do trabalho, mas
+encontrei **4 frentes que entraram no código e não tinham registro aqui** — são
+lacunas de OMISSÃO, não de divergência (as features existem no app; só não
+estavam anotadas). Registradas abaixo, com detalhe, para fechar as lacunas.
+
+**Nota de numeração:** o histórico deste repositório **começa no PR #18**
+(18/07/2026, "Câmera no chat"). Os PRs **#1–#17 não existem neste repositório**
+(predatam o histórico atual) e o **#43 foi fechado como superado** pela
+modularização do backend (ver primeira seção de 07-21). Ao auditar cronologia,
+lembrar que datas de seção às vezes são a data de AUTORIA da branch, enquanto o
+merge do PR ocorreu 1 dia depois (ex.: "Catálogo de modelos" rotulado 07-20,
+PR #55 mergeado 07-21).
+
+### 💾 Cache — prompt caching, embeddings, CNPJ e busca web (PR #57, 2026-07-20) — LACUNA PREENCHIDA
+
+A memória de longo prazo já preservava contexto; faltava a camada de **CACHE**
+para reduzir custo de tokens, evitar chamadas externas repetidas e acelerar
+respostas. Utilitário único `backend/src/cache.js` (TTL + LRU, sem dependências)
+aplicado em 4 frentes:
+1. **Prompt caching do LLM** (`provider.applyPromptCache`): marca o preâmbulo
+   estável (prompt-base + notas de sistema) com `cache_control` para o provedor
+   reaproveitar entre mensagens/etapas — menos tokens de ENTRADA e menor
+   latência. Só onde é seguro: via OpenRouter para Anthropic/Gemini. A API
+   direta da DeepSeek já cacheia sozinha (não recebe `cache_control`).
+   `usage.cached_tokens` passa a ser contabilizado. Ligado no agente único e nos
+   3 pontos do Modo Equipe.
+2. **Embeddings** (`memory/embeddings.js`): memoiza por `hash(kind, texto)` — a
+   mesma pergunta não é re-embedada a cada mensagem.
+3. **Consulta de CNPJ** (`tools.js`): TTL longo (12h); guarda só resultados
+   definitivos (sucesso ou "não encontrado"), nunca erros transitórios.
+4. **Busca web** (`tools.js`): TTL curto (10min) contra repetição imediata.
+
+Observabilidade: `GET /api/cache/stats` (tamanho, TTL, taxa de acerto). Tudo
+desligável por env (`PROMPT_CACHE`, `EMBED_CACHE_MAX`, `TOOL_CACHE`,
+`*_CACHE_TTL_MS`). Testes: `cache.test.js`, `provider.promptCache.test.js`.
+
+### 🆓 Modo gratuito para novos usuários sem chave de API (PR #67, 2026-07-21) — LACUNA PREENCHIDA
+
+Primeiro acesso sem barreira: quem não tem chave escolhe entre **"Começar
+gratuitamente"** (chave da plataforma, só no backend) e **"Configurar minha
+própria chave"** (assistente `KeyWizard` para OpenRouter, DeepSeek, Groq, Gemini,
+Mistral). Backend:
+- `freeTier.js`: allowlist de modelos gratuitos (padrão OpenRouter `:free`, com
+  fallback), limite diário por usuário + sobreposição individual, freio por
+  minuto, bloqueio por abuso, registro de consumo/erros, config do admin com
+  efeito imediato (`free_tier_settings`).
+- `freeQueue.js`: fila global com concorrência limitada, posição visível e
+  cancelamento (Parar cancela job ainda na fila).
+- `userProvider.js`: nova fonte `'free'` (usuário > modo gratuito > chave do
+  servidor); loop/orquestrador/multimodelo restringem modelos à allowlist.
+- Rotas `/api/free-tier/status` e `/opt-in`; painel admin `/api/admin/free-tier`
+  (somente `ADMIN_EMAIL`). **Migração 007** (`free_mode` + tabelas `free_tier_*`);
+  **depois renumerada para 008** porque a main já usara a 007 para checkpoints.
+
+Frontend: onboarding com as 2 opções + aviso das limitações; chip "Modo
+gratuito" no chat (modelo, restantes) + gaveta (provedor, fila, renovação);
+tela amigável de limite atingido; `FreeAdminPanel`. **A chave gratuita vive só
+no `.env` do servidor** (nunca no cliente/repo). Pesquisa jul/2026 documentada
+no README: OpenRouter permite servir usuários finais via backend próprio;
+NVIDIA NIM, Cohere trial e GitHub Models **proíbem** — não usar.
+
+### 🔗 Atribuição do app no OpenRouter + failover de modelo 404 (PRs #70–#76, 2026-07-20/21) — LACUNA PREENCHIDA
+
+Frente de estabilidade/identidade do provedor (6 PRs), antes sem registro:
+- **Identificação do app** (`aiClient.js`, PRs #70/#71): as chamadas ao
+  OpenRouter chegavam sem `HTTP-Referer`/`X-Title` — o app aparecia como
+  "desconhecido" nos Registros. Helper único `createAiClient` injeta os
+  cabeçalhos quando a base URL é do OpenRouter; aplicado em TODOS os pontos que
+  criam cliente (BYOK `userProvider.js`, cliente legado, indexador de memória,
+  teste de chave). Nome/URL via `OPENROUTER_APP_TITLE`/`OPENROUTER_APP_URL`.
+- **Prioriza `BETTER_AUTH_URL`** na atribuição (PR #71): em produção o
+  docker-compose define `BETTER_AUTH_URL` a partir do `DOMAIN`, enquanto o
+  `FRONTEND_URL` do `.env.example` ainda é localhost — sem isso o app seria
+  marcado com URL de dev. Fallback reordenado para preferir `BETTER_AUTH_URL`.
+- **404 de modelo faz FAILOVER** em vez de erro fatal (PR #72): vários modelos
+  davam "Modelo não encontrado" (404) e a tarefa encerrava de vez.
+  `isModelUnavailableError` detecta 404 / "not a valid model id" / "no endpoints
+  available" e, no loop do agente, aciona o failover para o próximo modelo de
+  reserva. `friendlyApiError` passa a mostrar o motivo real do provedor. A lista
+  PADRÃO de modelos gratuitos apontava para IDs mortos (gemma-4,
+  nemotron-3-super-120b, openrouter/free) → trocada por IDs `:free` vivos.
+  Testes: `agent.modelUnavailable.test.js`.
+
+### 🧩 Repositório selecionado informado aos modelos no Modo Multimodelo (2026-07-22) — LACUNA PREENCHIDA (mudança mais recente)
+
+O fix anterior (`072884f`, Modo Equipe) só cobriu o `orchestrator.js` (N
+assistentes no MESMO modelo). O **multimodelo real** — N modelos DISTINTOS nos
+modos compare/council/debate/pipeline — roda em `multiModel.js`, que nunca
+recebia o contexto do repositório. Por isso, com um repo GitHub selecionado no
+Modo Desenvolvedor, os modelos ainda respondiam "me mande o link do
+repositório" / "não tenho acesso ao GitHub". Agora `runMultiModel` calcula a nota
+do time uma vez (`developerTeamContextFor`), e `multiModelSystemBlocks` injeta
+papel + nota do repositório como 2º bloco de sistema em `slotMessages` (cobre
+compare/council/debate + etapas não-executoras do pipeline) e no
+`streamCoordinator`. Execução real (clone/leitura) segue no executor via
+`runAgent`. Testes de regressão em `multiModel.test.js`.
+
+### 🔐 Nota: rodada de segurança inicial (PR #21, 2026-07-18) — antes sem parágrafo próprio
+
+Registrado aqui para completar a auditoria. **Críticos:** `/api/backup` virou
+SOMENTE admin (`ADMIN_EMAIL`) — antes qualquer usuário logado baixava o banco
+inteiro + todos os workspaces (incluindo chaves BYOK); "Pastas do PC" desativado
+por padrão (`ENABLE_PC_FOLDERS=false`), `isDangerousHostPath` passa a rejeitar
+qualquer `..`. **Altos:** Multer 1.x → 2.2.0 (DoS) + limite de 20 arquivos;
+fuso `America/Sao_Paulo` por padrão (antes contadores diários ~3h fora no
+Brasil); "pode/sim/não/continua" deixam de ser tratados como baixo sinal (senão
+o agente perdia as ferramentas ao confirmar "posso gerar?"); `POST
+/api/provider/test` passa a testar a chave DIGITADA no corpo.
+
 ## 🧹 Varredura de PRs antigos abertos + remoção dos pins de versão do prompt (2026-07-21 — branch `claude/version-pins-cleanup`)
 
 **Pedido:** buscar PRs abertos esquecidos no repositório e mesclar.
