@@ -353,7 +353,7 @@ export function toolAvailabilityNote(tools, { includeInventory = false, sandboxN
   if (names.has('github_push')) lines.push('- github_push: commitar (opcional) e enviar as mudanças do repositório clonado para o GitHub. git push pelo bash NÃO funciona (sem credenciais no sandbox) — use sempre esta ferramenta.');
   if (names.has('github_create_pr')) lines.push('- github_create_pr: abrir um Pull Request no GitHub (faça github_push antes).');
   if (names.has('github_list_repos')) lines.push('- github_list_repos: listar os repositórios GitHub da conta conectada.');
-  if (!tools.length) lines.push('- Nenhuma ferramenta de execução foi habilitada para este assistente. Responda por texto e avise se a tarefa exigir ferramenta.');
+  if (!tools.length) lines.push('- Este assistente está CONFIGURADO sem ferramentas de execução. Não diga que o modelo ou o aplicativo é incapaz de ler PDFs ou gerar arquivos; explique que as ferramentas deste assistente estão desativadas e oriente o usuário a habilitá-las no Assistant Studio ou escolher outro assistente.');
 
   if (includeInventory && names.has('run_python')) {
     lines.push('Inventário Python instalado via run_python:');

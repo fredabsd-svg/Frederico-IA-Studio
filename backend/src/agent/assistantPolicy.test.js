@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import {
   ASSISTANT_TOOL_NAMES,
   allowedAssistantToolNames,
@@ -34,4 +37,13 @@ test('rede do sandbox exige autorização explícita e atual', () => {
   assert.equal(explicitlyAuthorizesSandboxNetwork('Use o pacote pandas já instalado.'), false);
   assert.equal(explicitlyAuthorizesSandboxNetwork('Não instale pacote nem acesse a internet.'), false);
   assert.equal(explicitlyAuthorizesSandboxNetwork('Analise o arquivo anexado.'), false);
+});
+
+test('migração de compatibilidade restaura ferramentas de todo assistente legado vazio', () => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const sql = fs.readFileSync(path.resolve(here, '../../migrations/011_restore_legacy_assistant_tools.sql'), 'utf8');
+  assert.match(sql, /UPDATE assistants/i);
+  assert.match(sql, /BTRIM\(tools\)/i);
+  assert.doesNotMatch(sql, /WHERE\s+name\s+IN/i);
+  for (const name of ASSISTANT_TOOL_NAMES) assert.ok(sql.includes(`"${name}"`), `migration deveria incluir ${name}`);
 });
