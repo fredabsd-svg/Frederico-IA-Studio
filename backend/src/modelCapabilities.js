@@ -2,6 +2,8 @@
 // `null` means that the provider did not publish enough information. It is
 // intentionally different from `false`: unknown models can still be tried,
 // while known-incompatible models never receive an unsupported parameter.
+import { enrichModelProfile } from './modelKnowledge.js';
+
 export const CAPABILITY_KEYS = Object.freeze(['text', 'tools', 'vision', 'image', 'reasoning', 'video', 'audio', 'web', 'files', 'code', 'embeddings']);
 
 const catalog = new Map();
@@ -97,28 +99,48 @@ export function deriveModelCapabilities(model = {}) {
 
 export function modelProfileFromProvider(model = {}) {
   const id = String(model.id || '');
-  const capabilities = deriveModelCapabilities(model);
+  const apiCaps = deriveModelCapabilities(model);
+  // Quando o provedor NÃO publicou modalidades (nem um objeto capabilities), o
+  // `false` das capacidades de mídia é apenas o default — significa DESCONHECIDO,
+  // não "não tem". Rebaixa para null para a base de conhecimento poder preencher
+  // (senão um false-default bloquearia a visão real de, ex., Gemini/Claude).
+  const publishedModalities = Array.isArray(model.architecture?.input_modalities) || Array.isArray(model.architecture?.output_modalities);
+  if (!publishedModalities && !model.capabilities) {
+    for (const k of ['vision', 'image', 'video', 'audio']) if (apiCaps[k] === false) apiCaps[k] = null;
+  }
   const parameters = asStringList(model.supported_parameters);
   const pricing = model.pricing || {};
   const promptPrice = Number(pricing.prompt ?? model.price ?? 0);
   const completionPrice = Number(pricing.completion ?? 0);
   const hasPricing = Number.isFinite(Number(pricing.prompt)) || Number.isFinite(Number(pricing.completion)) || typeof model.free === 'boolean';
+  const apiName = model.name || model.providerModelId || '';
+  const apiContext = Number(model.context_length || model.top_provider?.context_length || model.context || 0);
+  const apiMaxOutput = Number(model.max_output_tokens || model.max_completion_tokens || model.top_provider?.max_completion_tokens || 0);
+
+  // Enriquecimento com a base de conhecimento curada (capacidades corrigidas,
+  // classificação coerente, contexto/preço/formatos/status/substituto/fonte).
+  const know = enrichModelProfile({
+    id, name: apiName, apiCaps, apiContext, apiMaxOutput,
+    apiPriceIn: Number.isFinite(Number(pricing.prompt)) ? Number(pricing.prompt) : (Number.isFinite(Number(model.price)) ? Number(model.price) : null),
+    apiPriceOut: Number.isFinite(Number(pricing.completion)) ? Number(pricing.completion) : null,
+    apiPricingKnown: hasPricing
+  });
+  const capabilities = know.capabilities;
+  const price = know.pricingKnown ? know.priceIn : (Number.isFinite(promptPrice) ? promptPrice : 0);
+  const priceOut = know.pricingKnown ? know.priceOut : (Number.isFinite(completionPrice) ? completionPrice : 0);
 
   return {
     id,
     // `id` pode ser a referência interna `<provider-id>::<model-id>`. Quando
-    // o provedor não envia um nome, mostramos o ID público do modelo e nunca
-    // vazamos essa referência técnica para a interface.
-    name: model.name || model.providerModelId || id,
+    // o provedor não envia um nome amigável, usamos o nome comercial curado
+    // (quando houver) e nunca vazamos a referência técnica para a interface.
+    name: apiName || know.commercialName || id,
     providerId: model.providerId || null,
     providerName: model.providerName || '',
     providerType: model.providerType || '',
     providerModelId: model.providerModelId || id,
-    family: model.family || String(model.providerModelId || id).split('/')[0].split('-')[0],
+    family: know.knownFamily || model.family || String(model.providerModelId || id).split('/')[0].split('-')[0],
     capabilities,
-    // null = o provedor não publicou a lista; nesse caso preservamos o
-    // comportamento compatível e tentamos os parâmetros comuns. Array = fonte
-    // de verdade para não mandar temperature/reasoning/tools a quem não aceita.
     parameters,
     // Flat aliases keep older clients and saved UI state compatible.
     text: capabilities.text,
@@ -132,21 +154,34 @@ export function modelProfileFromProvider(model = {}) {
     files: capabilities.files,
     code: capabilities.code,
     embeddings: capabilities.embeddings,
+    functionCalling: capabilities.functionCalling ?? capabilities.tools,
+    // --- Classificação coerente com as capacidades reais ---
+    tier: know.tier,
+    tierRank: know.tierRank,
+    tierScore: know.tierScore,
     created: Number(model.created || 0),
-    context: Number(model.context_length || model.top_provider?.context_length || model.context || 0),
-    maxOutput: Number(model.max_output_tokens || model.max_completion_tokens || model.top_provider?.max_completion_tokens || 0),
-    price: Number.isFinite(promptPrice) ? promptPrice : 0,
-    // Preço por token de SAÍDA (completion) — usado na estimativa e no custo
-    // real das execuções multimodelo. `price` acima é o de entrada (prompt).
-    priceOut: Number.isFinite(completionPrice) ? completionPrice : 0,
-    pricingKnown: hasPricing,
-    active: typeof model.active === 'boolean' ? model.active : null,
+    context: know.context || apiContext || 0,
+    maxOutput: know.maxOutput || apiMaxOutput || 0,
+    price: Number.isFinite(price) ? price : 0,
+    priceOut: Number.isFinite(priceOut) ? priceOut : 0,
+    pricingKnown: know.pricingKnown,
+    // --- Campos novos do catálogo ---
+    streaming: know.streaming,
+    inputFormats: know.inputFormats,
+    status: know.status || (model.active === false ? 'inactive' : null),
+    replacement: know.replacement,
+    sunsetOn: know.sunsetOn,
+    active: typeof model.active === 'boolean' ? model.active : (know.status ? know.status === 'active' : null),
     speed: Number.isFinite(Number(model.speed)) ? Number(model.speed) : null,
     latency: Number.isFinite(Number(model.latency)) ? Number(model.latency) : null,
-    metadataSource: model.metadata_source || 'provider_api',
+    // --- Procedência (fonte/data/confiança) ---
+    metadataSource: know.knowledgeSource || model.metadata_source || 'provider_api',
+    source: know.source,
+    verifiedAt: know.verifiedAt,
+    confidence: know.confidence,
     free: typeof model.free === 'boolean'
       ? model.free
-      : id.endsWith(':free') || (hasPricing && promptPrice === 0 && completionPrice === 0)
+      : id.endsWith(':free') || (know.pricingKnown && price === 0 && priceOut === 0)
   };
 }
 

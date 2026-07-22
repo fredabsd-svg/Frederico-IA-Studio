@@ -146,8 +146,13 @@ test('catálogo gratuito indisponível não inventa suporte a ferramentas ou vis
   const fallback = unverifiedModelProfile('free/modelo-ainda-nao-catalogado:free', {
     name: 'Modelo ainda não catalogado (grátis)', free: true
   });
+  // Modelo desconhecido, sem modalidades publicadas: ferramentas E visão ficam
+  // `null` (DESCONHECIDO) — não `false`. Isso não "inventa" suporte (a interface
+  // trata null como sem-visão), e deixa a base de conhecimento preencher quando
+  // o modelo for reconhecido. Coerente com a filosofia do módulo (null = o
+  // provedor não publicou o suficiente).
   assert.equal(fallback.capabilities.tools, null);
-  assert.equal(fallback.capabilities.vision, false);
+  assert.equal(fallback.capabilities.vision, null);
   assert.equal(fallback.free, true);
 });
 
