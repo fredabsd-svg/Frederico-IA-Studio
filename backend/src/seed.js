@@ -12,6 +12,7 @@ import { fileURLToPath } from 'url';
 import { nanoid } from 'nanoid';
 import { db, now } from './db.js';
 import { AGENTS } from './agent.js';
+import { ASSISTANT_TOOL_NAMES } from './agent/assistantPolicy.js';
 
 const promptsDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'prompts', 'docpro');
 export const DOCPRO_PROMPT = fs.readFileSync(path.join(promptsDir, 'atual.txt'), 'utf8');
@@ -19,6 +20,7 @@ export const DOCPRO_PROMPT = fs.readFileSync(path.join(promptsDir, 'atual.txt'),
 const OLD_DOCPRO_PROMPTS = fs.readdirSync(promptsDir)
   .filter((f) => f.endsWith('.txt') && f !== 'atual.txt')
   .map((f) => fs.readFileSync(path.join(promptsDir, f), 'utf8'));
+const DEFAULT_TOOLS_JSON = JSON.stringify(ASSISTANT_TOOL_NAMES);
 
 // Cria os assistentes padrão na primeira execução DE CADA USUÁRIO
 async function seedAssistants(userId) {
@@ -31,7 +33,7 @@ async function seedAssistants(userId) {
   ];
   const stmt = db.prepare('INSERT INTO assistants (id,user_id,name,emoji,model,system_prompt,tools,personality,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)');
   const t = now();
-  for (const d of defaults) await stmt.run(nanoid(), userId, d.name, d.emoji, defaultModel, d.prompt, JSON.stringify([]), JSON.stringify({ form: 50, det: 50, criat: 20 }), t, t);
+  for (const d of defaults) await stmt.run(nanoid(), userId, d.name, d.emoji, defaultModel, d.prompt, DEFAULT_TOOLS_JSON, JSON.stringify({ form: 50, det: 50, criat: 20 }), t, t);
 }
 
 // Cria o assistente "Documentos profissionais" deste usuário com o prompt
@@ -45,7 +47,7 @@ async function seedDocProAssistant(userId) {
       const defaultModel = process.env.DEEPSEEK_MODEL || 'deepseek/deepseek-chat';
       const t = now();
       await db.prepare('INSERT INTO assistants (id,user_id,name,emoji,model,system_prompt,tools,personality,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
-        .run(nanoid(), userId, 'Documentos profissionais', 'file-pen-line', defaultModel, DOCPRO_PROMPT, JSON.stringify([]), JSON.stringify({ form: 60, det: 60, criat: 30 }), t, t);
+        .run(nanoid(), userId, 'Documentos profissionais', 'file-pen-line', defaultModel, DOCPRO_PROMPT, DEFAULT_TOOLS_JSON, JSON.stringify({ form: 60, det: 60, criat: 30 }), t, t);
     } else if (!String(exists.system_prompt || '').trim() || OLD_DOCPRO_PROMPTS.includes(exists.system_prompt)) {
       // Migra dos prompts padrão anteriores (legacy, v2…v9) para o atual —
       // sem tocar em versões personalizadas pelo usuário.

@@ -176,13 +176,16 @@ export async function ensureSandboxImage() {
 // da mesma conversa criem dois containers, deixando um órfão para sempre.
 const creating = new Map();
 
-function sandboxPolicy(options = {}) {
+export function sandboxPolicy(options = {}) {
   const readOnlyPc = !!options.readOnlyPc;
   const writablePcFolderId = readOnlyPc || !options.writablePcFolderId ? null : String(options.writablePcFolderId);
+  const networkEnabled = options.networkEnabled === true;
+  const accessKey = readOnlyPc ? 'read-only' : (writablePcFolderId ? `write:${writablePcFolderId}` : 'default');
   return {
     readOnlyPc,
     writablePcFolderId,
-    key: readOnlyPc ? 'read-only' : (writablePcFolderId ? `write:${writablePcFolderId}` : 'default')
+    networkEnabled,
+    key: `${accessKey}|network:${networkEnabled ? 'on' : 'off'}`
   };
 }
 
@@ -254,12 +257,9 @@ async function createContainer(conversationId, policy, userId = null) {
     Cmd: ['sleep', 'infinity'],
     Tty: false,
     OpenStdin: false,
-    // Rede LIGADA por opção do usuário: o sandbox tem acesso à internet.
-    // ATENÇÃO: isto reduz o isolamento — código gerado pela IA (ou injetado
-    // por um documento malicioso) passa a poder acessar a rede e, em tese,
-    // exfiltrar dados/arquivos montados. Demais proteções seguem ativas
-    // (CapDrop ALL, no-new-privileges, uid 1000, limites de CPU/RAM/PIDs).
-    NetworkDisabled: false,
+    // Rede fechada por padrão. Uma autorização explícita do pedido atual muda
+    // a política e recria o container, evitando que a permissão vaze entre turnos.
+    NetworkDisabled: !policy.networkEnabled,
     HostConfig: {
       Binds: [`${hostBase}:/workspace`],
       Mounts: mounts,

@@ -6,6 +6,7 @@
 // evolução do frontend. Checagens de NEGÓCIO (posse, duplicidade, limites por
 // plano) continuam nos handlers.
 import { z } from 'zod/v4';
+import { ASSISTANT_TOOL_NAMES, MAX_ASSISTANT_PROFILE_CHARS } from './agent/assistantPolicy.js';
 
 // Mensagens de erro do zod em português (o app inteiro fala pt-BR).
 z.config(z.locales.pt());
@@ -29,6 +30,12 @@ export function validate(schema, source = 'body') {
 const id = z.string().trim().max(120);
 const modelId = z.string().trim().max(200);
 const shortText = (max, msg) => z.string({ error: msg }).trim().min(1, msg).max(max);
+const assistantTools = z.array(z.enum(ASSISTANT_TOOL_NAMES, { message: 'Ferramenta de assistente inválida.' })).max(ASSISTANT_TOOL_NAMES.length).optional();
+const assistantPersonality = z.looseObject({
+  form: z.coerce.number().min(0).max(100).optional(),
+  det: z.coerce.number().min(0).max(100).optional(),
+  criat: z.coerce.number().min(0).max(100).optional(),
+}).optional();
 
 // Configuração de uma execução MULTIMODELO (2+ modelos na mesma mensagem).
 // A normalização fina (papéis válidos, tetos de rodadas/orçamento) acontece em
@@ -88,22 +95,22 @@ export const schemas = {
 
   assistantCreate: z.looseObject({
     name: shortText(200, 'Nome e instruções são obrigatórios.'),
-    system_prompt: z.string({ error: 'Nome e instruções são obrigatórios.' }).trim().min(1, 'Nome e instruções são obrigatórios.').max(200_000),
+    system_prompt: z.string({ error: 'Nome e instruções são obrigatórios.' }).trim().min(1, 'Nome e instruções são obrigatórios.').max(MAX_ASSISTANT_PROFILE_CHARS, `As instruções podem ter no máximo ${MAX_ASSISTANT_PROFILE_CHARS} caracteres.`),
     emoji: z.string().trim().max(80).nullish(),
     color: z.string().trim().max(50).nullish(),
     model: modelId.nullish(),
-    tools: z.array(z.string().max(100)).max(50).optional(),
-    personality: z.record(z.string(), z.unknown()).optional(),
+    tools: assistantTools,
+    personality: assistantPersonality,
   }),
 
   assistantUpdate: z.looseObject({
     name: z.string().trim().max(200).nullish(),
-    system_prompt: z.string().max(200_000).nullish(),
+    system_prompt: z.string().max(MAX_ASSISTANT_PROFILE_CHARS, `As instruções podem ter no máximo ${MAX_ASSISTANT_PROFILE_CHARS} caracteres.`).nullish(),
     emoji: z.string().trim().max(80).nullish(),
     color: z.string().trim().max(50).nullish(),
     model: modelId.nullish(),
-    tools: z.array(z.string().max(100)).max(50).optional(),
-    personality: z.record(z.string(), z.unknown()).optional(),
+    tools: assistantTools,
+    personality: assistantPersonality,
   }),
 
   client: z.looseObject({

@@ -27,8 +27,11 @@ export const TOOL_INFO = [
   { name: 'read_file', label: 'Ler arquivos' },
   { name: 'list_files', label: 'Listar arquivos' },
   { name: 'zip_outputs', label: 'Compactar (.zip)' },
+  { name: 'consultar_cnpj', label: 'Consultar CNPJ' },
   { name: 'generate_image', label: 'Gerar/editar imagens (IA)' }
 ];
+
+export const MAX_ASSISTANT_PROFILE_CHARS = 12_000;
 
 // Ícones dos assistentes. O campo continua se chamando `emoji` no banco e na
 // API (ver backend/src/db.js) — o que mudou foi o CONTEÚDO: agora guarda o
@@ -58,7 +61,7 @@ export const TEMPLATES = [
   { key: 'dados', label: 'Análise de dados', emoji: 'bar-chart-3', prompt: 'Você é um assistente de análise de dados. Leia planilhas e arquivos, faça cálculos e resumos, gere tabelas e gráficos e produza planilhas Excel reais quando pedido. Responda em português do Brasil e explique os resultados de forma simples.' },
   { key: 'pesquisa', label: 'Pesquisa e resumo', emoji: 'telescope', prompt: 'Você é um assistente de pesquisa. Busque informações (na internet quando disponível), compare fontes, resuma e organize o conteúdo de forma objetiva. Responda em português do Brasil e cite as fontes usadas.' },
   { key: 'marketing', label: 'Marketing', emoji: 'megaphone', prompt: 'Você é um assistente de marketing e conteúdo. Ajude a criar textos, campanhas, posts, e-mails e estratégias. Responda em português do Brasil, com tom persuasivo e criativo, adaptando a linguagem ao público-alvo.' },
-  { key: 'dev', label: 'Programação', emoji: 'code-2', prompt: 'Você é um engenheiro de software sênior com um sandbox Linux real. Escreva, execute e teste código (Python/shell) usando as ferramentas, verifique o resultado e corrija erros antes de responder. A sandbox NÃO tem internet: use a biblioteca padrão e os pacotes já instalados. Responda em português do Brasil, objetivo e técnico.' }
+  { key: 'dev', label: 'Programação', emoji: 'code-2', prompt: 'Você é um engenheiro de software sênior com um sandbox Linux real. Escreva, execute e teste código (Python/shell) usando as ferramentas, verifique o resultado e corrija erros antes de responder. A rede do sandbox é desligada por padrão e só é aberta quando o pedido atual autoriza claramente baixar, instalar ou acessar um serviço externo. Responda em português do Brasil, objetivo e técnico.' }
 ];
 
 // Cards de ação rápida da tela de boas-vindas (estilo ChatGPT/Claude/Jan.ai)

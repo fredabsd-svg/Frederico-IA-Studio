@@ -23,7 +23,7 @@ const webSearchCache = createCache({ name: 'web_search', max: 500, ttl: WEBSEARC
 
 export const toolDefinitions = [
   { type: 'function', function: { name: 'run_python', description: 'Executa Python 3 real na sandbox Linux isolada. Use para análises, planilhas, Word, PDF, gráficos, OCR, APIs e automações. Pacotes incluem pandas, numpy, openpyxl, python-docx, odfpy (importe odf), reportlab, weasyprint, PyMuPDF/fitz, pdfplumber, camelot, ocrmypdf, pytesseract, duckdb, polars, Flask/FastAPI/Uvicorn, pytest/black/ruff, SQLAlchemy, psycopg (v3), psycopg2 e clientes MySQL/Redis/MongoDB. Para ML em CPU: scikit-learn e onnxruntime para inferência; transformers, sentencepiece e safetensors para tokenização/configuração. Sem PyTorch/TensorFlow, use modelos ONNX com onnxruntime.', parameters: { type: 'object', properties: { code: { type: 'string' } }, required: ['code'] } } },
-  { type: 'function', function: { name: 'bash', description: 'Executa comando bash na sandbox. Disponíveis: LibreOffice, ffmpeg, PDF/OCR, ImageMagick, Inkscape/rsvg-convert, Chromium headless/Xvfb/Playwright, gcc/g++/make/cmake/ninja, go, rustc/cargo, javac, dotnet (C#) e kotlinc (Kotlin JVM), sqlite3/psql/mysql/redis-cli, ssh/rsync/ansible/kubectl, gdb/valgrind/strace/lsof/htop/shellcheck e Node/npm/yarn/pnpm com tsc/vite/sass/postcss/tailwindcss/prettier/eslint. TEM internet: curl/wget e instalações pip/npm funcionam; apt não funciona por ser usuário sem root. Docker/Compose, GPU e Android/iOS nativos são intencionalmente indisponíveis para preservar o isolamento.', parameters: { type: 'object', properties: { command: { type: 'string' } }, required: ['command'] } } },
+  { type: 'function', function: { name: 'bash', description: 'Executa comando bash na sandbox. Disponíveis: LibreOffice, ffmpeg, PDF/OCR, ImageMagick, Inkscape/rsvg-convert, Chromium headless/Xvfb/Playwright, gcc/g++/make/cmake/ninja, go, rustc/cargo, javac, dotnet (C#) e kotlinc (Kotlin JVM), sqlite3/psql/mysql/redis-cli, ssh/rsync/ansible/kubectl, gdb/valgrind/strace/lsof/htop/shellcheck e Node/npm/yarn/pnpm com tsc/vite/sass/postcss/tailwindcss/prettier/eslint. A rede é desligada por padrão e só fica disponível quando o pedido atual a autoriza explicitamente; apt não funciona por ser usuário sem root. Docker/Compose, GPU e Android/iOS nativos são intencionalmente indisponíveis para preservar o isolamento.', parameters: { type: 'object', properties: { command: { type: 'string' } }, required: ['command'] } } },
   { type: 'function', function: { name: 'write_file', description: 'Cria ou sobrescreve arquivo no workspace da sessão.', parameters: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path','content'] } } },
   { type: 'function', function: { name: 'read_file', description: 'Lê um arquivo de texto do workspace da sessão.', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } } },
   { type: 'function', function: { name: 'list_files', description: 'Lista arquivos enviados e gerados na sessão.', parameters: { type: 'object', properties: { folder: { type: 'string', enum: ['uploads','outputs','.'] } } } } },
@@ -32,7 +32,7 @@ export const toolDefinitions = [
 ];
 
 // Ferramentas de busca web (rodam no BACKEND): entregam resultados prontos com
-// fontes. O sandbox também tem rede direta para baixar dados/consumir APIs.
+// fontes. A rede direta do sandbox é uma permissão separada e desligada por padrão.
 // Só são oferecidas ao modelo quando o usuário liga o botão de pesquisa.
 export const webToolDefinitions = [
   { type: 'function', function: { name: 'web_search', description: 'Pesquisa na internet e retorna os principais resultados (título, link e resumo). Use para informações atuais: notícias, legislação, tabelas, cotações, prazos.', parameters: { type: 'object', properties: { query: { type: 'string', description: 'Termos da pesquisa' } }, required: ['query'] } } },
@@ -518,8 +518,8 @@ async function generateImage(ws, args, options = {}) {
   return { ok: true, saved, note: 'Imagem salva em outputs — o sistema exibirá a prévia e o download ao usuário.' };
 }
 
-// Rede ligada: curl/wget e instalações (pip/npm) são permitidos. Continuam
-// bloqueados apenas comandos destrutivos ou que tentam escalar privilégio.
+// A rede é controlada pela política do container (desligada por padrão).
+// Independentemente dela, comandos destrutivos ou de escalada seguem bloqueados.
 // Isto é defesa em profundidade — a fronteira real de segurança é o container
 // (CapDrop ALL, no-new-privileges, uid 1000, mounts limitados). Mesmo assim,
 // bloquear os padrões abaixo evita que código gerado apague os arquivos REAIS

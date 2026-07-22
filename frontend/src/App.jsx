@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import { Download, FileText, FileSpreadsheet, FilePenLine, Plus, ArrowUp, Upload, Trash2, Bot, Brain, X, BarChart3, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench, CalendarClock, Inbox, Palette, Gauge, SlidersHorizontal, Paperclip, MoreHorizontal, FolderOpen, Code2, ChevronRight, ShieldCheck, LogOut, KeyRound, Camera, Cable, MessageCircleQuestion, Bug, PanelRight, Lock, Unlock } from 'lucide-react';
-import { API, FALLBACK_MODELS, TOOL_INFO, TEMPLATES, QUICK_ACTIONS, THEMES, WORKSPACES, EFFORTS, EFFORT_DESC, ASSISTANT_ICONS, ASSISTANT_COLORS, isAssistantIcon, DEV_WORK_MODES } from './constants.js';
+import { API, FALLBACK_MODELS, TOOL_INFO, TEMPLATES, QUICK_ACTIONS, THEMES, WORKSPACES, EFFORTS, EFFORT_DESC, ASSISTANT_ICONS, ASSISTANT_COLORS, isAssistantIcon, DEV_WORK_MODES, MAX_ASSISTANT_PROFILE_CHARS } from './constants.js';
 import { signOut } from './authClient.js';
 import { Slider, Modal, Drawer, Collapsible, useAppDialog } from './components.jsx';
 import { ExecutionSession } from './components/ExecutionSession.jsx';
@@ -1147,8 +1147,9 @@ export default function App({ user } = {}) {
         </select>
       </label>
 
-      <label>Instruções do assistente (system prompt)
-        <textarea rows={7} value={form.system_prompt} onChange={e => setForm(f => ({ ...f, system_prompt: e.target.value }))} placeholder="Descreva em linguagem natural o papel, a especialidade e o comportamento esperado do assistente."/>
+      <label>Perfil e instruções do assistente
+        <textarea rows={7} maxLength={MAX_ASSISTANT_PROFILE_CHARS} value={form.system_prompt} onChange={e => setForm(f => ({ ...f, system_prompt: e.target.value }))} placeholder="Descreva o papel, a especialidade, o estilo e o método do assistente."/>
+        <span className="fieldHint">Este perfil não libera ferramentas, rede ou ações externas. {form.system_prompt.length.toLocaleString('pt-BR')}/{MAX_ASSISTANT_PROFILE_CHARS.toLocaleString('pt-BR')}</span>
       </label>
 
       <div className="field">

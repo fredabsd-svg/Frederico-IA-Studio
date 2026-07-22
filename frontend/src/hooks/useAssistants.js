@@ -37,7 +37,7 @@ export function useAssistants({ model, setModel, showToast, askConfirm }) {
   // ---- Assistant Studio ----
   function openStudioNew() { setForm(emptyForm()); setStudioOpen(true); }
   function openStudioEdit(a) {
-    setForm({ id: a.id, name: a.name, emoji: a.emoji || 'bot', color: a.color || '', model: a.model || model, system_prompt: a.system_prompt || '', template: '', tools: a.tools?.length ? a.tools : TOOL_INFO.map(t => t.name), personality: { form: 50, det: 50, criat: 20, ...(a.personality || {}) } });
+    setForm({ id: a.id, name: a.name, emoji: a.emoji || 'bot', color: a.color || '', model: a.model || model, system_prompt: a.system_prompt || '', template: '', tools: Array.isArray(a.tools) ? a.tools : TOOL_INFO.map(t => t.name), personality: { form: 50, det: 50, criat: 20, ...(a.personality || {}) } });
     setStudioOpen(true);
   }
   function applyTemplate(key) {
