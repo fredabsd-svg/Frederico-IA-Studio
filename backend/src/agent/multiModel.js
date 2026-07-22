@@ -21,7 +21,7 @@ import { db } from '../db.js';
 import { getModelProfile, providerLabel } from '../modelCapabilities.js';
 import { indexAfterReply } from '../memory/indexer.js';
 import { runAgent } from './loop.js';
-import { clipForBriefing } from './prompts.js';
+import { clipForBriefing, developerTeamContextFor } from './prompts.js';
 import { STREAM_RECOVERY_LIMIT, STREAM_RESUME_NOTE, STREAM_PAUSE_RESUME_NOTE, isRetryableStreamError, openRouterRouting, retryDelay, addUsage, friendlyApiError, applyPromptCache } from './provider.js';
 import { guardStreamStall, PROVIDER_CONNECT_TIMEOUT_MS } from './streamGuard.js';
 import { acquireConversationControl, releaseConversationControl, beginProviderRequest, releaseProviderRequest, controlInterruptReason, gate } from './control.js';
@@ -139,6 +139,19 @@ function memberSystemPrompt(member, mode) {
   return `${base}\n\n${shared}\n${byMode[mode] || ''}`;
 }
 
+// Blocos de sistema de um participante do multimodelo. Quando o Modo
+// Desenvolvedor está ativo com um projeto/repositório selecionado, injeta a
+// nota do time (developerTeamContextFor) como um segundo bloco de sistema — é o
+// que ancora os modelos no repositório conectado e impede que respondam
+// "me mande o link do repositório" / "não tenho acesso ao GitHub". Antes disso,
+// só o Modo Equipe (orchestrator.js) recebia essa nota; o multimodelo real
+// (compare/council/debate/pipeline) ficava sem contexto do repo.
+export function multiModelSystemBlocks(member, mode, developerTeamNote = null) {
+  const blocks = [{ role: 'system', content: memberSystemPrompt(member, mode) }];
+  if (developerTeamNote) blocks.push({ role: 'system', content: developerTeamNote });
+  return blocks;
+}
+
 export async function runMultiModel({ userId, conversationId, userText, config, webSearch = false, effort, developer = null, onEvent }) {
   const provider = await getUserProvider(userId);
   const client = provider.client;
@@ -214,6 +227,10 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
     }
 
     // ---- Contexto compartilhado (o orquestrador decide o que cada um recebe) ----
+    // Modo Desenvolvedor: situa TODOS os modelos no repositório/projeto
+    // selecionado, para não pedirem o link nem alegarem falta de acesso ao
+    // GitHub (a execução real de clone/leitura segue no executor via runAgent).
+    const developerTeamNote = developer ? developerTeamContextFor(developer, userId) : null;
     const historyText = await buildHistoryText(conversationId, config.context);
     const baseUserContent = historyText
       ? `Contexto da conversa até aqui:\n${historyText}\n\nNOVA mensagem do usuário:\n${userText}`
@@ -301,7 +318,7 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
     }
 
     function slotMessages(state, extraUserContent = null) {
-      const msgs = [{ role: 'system', content: memberSystemPrompt(state.member, config.mode) }];
+      const msgs = multiModelSystemBlocks(state.member, config.mode, developerTeamNote);
       const prefixEnd = msgs.length;
       msgs.push({ role: 'user', content: extraUserContent ? `${baseUserContent}\n\n${extraUserContent}` : baseUserContent });
       applyPromptCache(msgs, state.member.id, prefixEnd);
@@ -315,9 +332,11 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
       let text = '';
       const msgs = [
         { role: 'system', content: 'Você é o COORDENADOR de uma execução multimodelo: vários modelos de IA analisaram a mesma solicitação. Compare as respostas, identifique concordâncias, aponte divergências, descarte erros ou afirmações sem fundamento, aproveite os melhores argumentos e produza UMA resposta final consolidada, em português do Brasil, direta e bem organizada. Não descreva o processo — entregue a resposta.' },
+        ...(developerTeamNote ? [{ role: 'system', content: developerTeamNote }] : []),
         { role: 'user', content: taskPrompt }
       ];
-      applyPromptCache(msgs, config.coordinator, 1);
+      const prefixEnd = developerTeamNote ? 2 : 1;
+      applyPromptCache(msgs, config.coordinator, prefixEnd);
       for (let attempt = 0; ; attempt++) {
         let segment = '';
         let activeRequest;
