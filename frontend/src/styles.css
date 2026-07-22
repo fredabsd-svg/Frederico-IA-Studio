@@ -12,7 +12,7 @@
 .mpBtn{display:flex;align-items:center;gap:8px;max-width:250px}
 .mpBtn .mpName{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mpPanel{position:absolute;right:0;top:calc(100% + 6px);width:min(380px,92vw);max-height:440px;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:0 14px 44px rgba(0,0,0,.4);z-index:60;overflow:hidden}
-.mpSearch{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line);color:var(--muted)}
+.mpSearch{flex:none;display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line);color:var(--muted)}
 .mpSearch input{flex:1;border:none;background:transparent;color:var(--text);font:inherit;outline:none}
 .mpList{overflow:auto;padding:6px}
 .mpEmpty{color:var(--muted);font-size:var(--fs-sm);text-align:center;padding:14px}
@@ -457,26 +457,35 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .mpSearch{min-height:48px}
 .mpSearchClear{flex:none;border:none;background:transparent;color:var(--muted);padding:4px;display:flex;border-radius:var(--r-sm)}
 .mpSearchClear:hover{color:var(--accent);background:var(--panel2)}
-.mpPrimaryControls{display:flex;align-items:end;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line)}
+.mpPrimaryControls{flex:none;display:flex;align-items:end;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line)}
 .mpPurposeField{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px;color:var(--muted);font-size:var(--fs-2xs);font-weight:800;letter-spacing:.05em;text-transform:uppercase}
 .mpPurposeField select{width:100%;min-width:0;border-radius:var(--r-sm);padding:8px 10px;font-size:var(--fs-sm);font-weight:600;letter-spacing:0;text-transform:none}
 .mpFilterToggle{height:35px;flex:none;display:inline-flex;align-items:center;justify-content:center;gap:6px;border-radius:var(--r-sm);padding:0 10px;font-size:var(--fs-xs);font-weight:700;color:var(--muted)}
 .mpFilterToggle:hover,.mpFilterToggle.on{border-color:var(--accent);color:var(--accent)}
 .mpFilterToggle b{min-width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;border-radius:var(--r-full);background:var(--accent);color:var(--on-accent);font-size:var(--fs-2xs);font-variant-numeric:tabular-nums}
-.mpViewTabs{display:flex;gap:2px;padding:7px 12px 0;border-bottom:1px solid var(--line)}
+.mpViewTabs{flex:none;display:flex;gap:2px;padding:7px 12px 0;border-bottom:1px solid var(--line)}
 .mpViewTabs button{flex:1;min-width:0;border:none;border-radius:var(--r-sm) var(--r-sm) 0 0;background:transparent;color:var(--muted);padding:8px 6px;font-size:var(--fs-xs);font-weight:700;white-space:nowrap}
 .mpViewTabs button:hover{background:var(--panel2);color:var(--text)}
 .mpViewTabs button.on{color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)}
 /* Filtros abertos rolam dentro de si (max-height) em vez de empurrar a lista
    para fora — era a principal causa do "painel espremido". */
-.mpAdvanced{padding:10px 12px 12px;border-bottom:1px solid var(--line);background:var(--panel2);max-height:42vh;overflow:auto}
-.mpAdvancedHead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;font-size:var(--fs-2xs);font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
-.mpAdvancedHead button{border:none;background:transparent;color:var(--accent);padding:0;font-size:var(--fs-xs);font-weight:700;text-transform:none;letter-spacing:0}
-.mpAdvancedFields{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+/* VISTA de filtros: substitui a lista enquanto aberta (nunca divide altura com
+   ela — era o que cortava o catálogo). Corpo rola como bloco único (rótulo e
+   campo juntos, sem rolagem interna que os separe); rodapé fixo com a ação
+   primária "Mostrar N modelos" — o filtro só fecha por ação explícita. */
+.mpFiltersView{flex:1;min-height:0;display:flex;flex-direction:column;background:var(--panel2)}
+.mpFiltersBody{flex:1;min-height:0;overflow:auto;padding:12px;display:flex;flex-direction:column;gap:12px}
+.mpFiltersFooter{flex:none;display:flex;gap:8px;padding:10px 12px;border-top:1px solid var(--line);background:var(--panel)}
+.mpFiltersApply{flex:1;height:40px;border:none;border-radius:var(--r-sm);background:var(--accent);color:var(--on-accent);font-size:var(--fs-xs);font-weight:800}
+.mpFiltersApply:hover{filter:brightness(1.08)}
+.mpFiltersClear{flex:none;height:40px;padding:0 14px;border:1px solid var(--line);border-radius:var(--r-sm);background:transparent;color:var(--muted);font-size:var(--fs-xs);font-weight:700}
+.mpFiltersClear:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+.mpFiltersClear:disabled{opacity:.45}
+.mpAdvancedFields{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px}
 .mpAdvancedFields label{display:flex;flex-direction:column;gap:4px;font-size:var(--fs-2xs);font-weight:700;color:var(--muted)}
 .mpAdvancedFields select{width:100%;min-width:0;border-radius:var(--r-sm);padding:7px 8px;font-size:var(--fs-xs);color:var(--text)}
-.mpFilterChecks{display:grid;grid-template-columns:1fr 1fr;gap:7px 10px;margin-top:10px}
-.mpFilterChecks label{display:flex;align-items:center;gap:7px;min-width:0;color:var(--text);font-size:var(--fs-xs);line-height:1.2}
+.mpFilterChecks{display:grid;grid-template-columns:1fr 1fr;gap:7px 10px}
+.mpFilterChecks label{display:flex;align-items:center;gap:7px;min-width:0;min-height:30px;color:var(--text);font-size:var(--fs-xs);line-height:1.2}
 .mpFilterChecks input{width:15px;height:15px;margin:0;accent-color:var(--accent);flex:none}
 .mpList{padding:6px 6px 10px}
 .mpPurposeHint{display:flex;flex-direction:column;gap:3px;padding:9px 10px 5px;color:var(--muted);font-size:var(--fs-xs);line-height:1.35}
