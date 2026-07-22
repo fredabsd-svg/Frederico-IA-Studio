@@ -24,6 +24,7 @@ import { clientScopeFor, memoryNote, saveMessage, persistAssistantReply } from '
 import { saveCheckpoint, clearCheckpoint, isResumableReason, buildResumeMessages, leadingSystemCount } from './checkpoint.js';
 import { untrustedContext } from './promptRegistry.js';
 import { emitExecutionState, finalExecutionState } from './executionState.js';
+import { explicitlyAuthorizesSandboxNetwork, isToolCallAllowed } from './assistantPolicy.js';
 
 export function explicitlyAuthorizesGitWrite(text) {
   const value = String(text || '');
@@ -78,9 +79,13 @@ export async function runAgent({ userId, conversationId, userText, model, assist
     : Boolean(gitWriteAuthorization);
   const developerContext = developerContextFor(developer, userId, { githubConnected, gitWriteAuthorized });
   const lowSignalTurn = isLowSignalTurn(userText);
+  const sandboxNetworkEnabled = !lowSignalTurn && (resume
+    ? Boolean(resume?.meta?.sandboxNetworkEnabled)
+    : explicitlyAuthorizesSandboxNetwork(userText));
+  const promptManifest = promptManifestFor(assistant, developerContext ? ['developer'] : []);
   // userId viaja junto: o sandbox monta só as pastas do PC DESTE usuário
   // (isolamento multi-tenant) e aplica o limite de sandboxes por usuário.
-  const sandboxOptions = { ...(developerContext?.sandboxOptions || {}), userId };
+  const sandboxOptions = { ...(developerContext?.sandboxOptions || {}), userId, networkEnabled: sandboxNetworkEnabled };
   const webSearchActive = Boolean(webSearch && !lowSignalTurn);
   let requestedTools = toolsFor(assistant);
   if (developerContext?.readOnlyProject) requestedTools = requestedTools.filter(tool => !['write_file', 'zip_outputs', 'generate_image'].includes(tool.function.name));
@@ -166,7 +171,7 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   // com a nota de ferramentas), então não pode ser deslocado.
   const messages = [
     { role: 'system', content: chosenPrompt },
-    { role: 'system', content: toolAvailabilityNote(tools, { includeInventory: includeEnvironmentInventory }) },
+    { role: 'system', content: toolAvailabilityNote(tools, { includeInventory: includeEnvironmentInventory, sandboxNetworkEnabled }) },
     { role: 'system', content: QUALITY_BAR }
   ];
   if (forceExecution || modelPlan.requirements.required) messages.push({ role: 'system', content: EXECUTION_CONTRACT_NOTE });
@@ -192,7 +197,7 @@ Ao trazer o que encontrou:
 - Cite a fonte no meio do texto (nome + link) para o usuário conferir; prefira fontes oficiais e recentes e avise quando algo estiver incerto ou desatualizado.
 - Varie a forma de apresentar: evite começar sempre com "De acordo com a pesquisa…".
 
-O sandbox Python também tem internet: use requests/urllib ou uma API quando precisar de dados estruturados (para CNPJ, use a ferramenta consultar_cnpj). Use web_search/web_fetch para procurar e ler páginas.` });
+O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente a rede direta do sandbox. Para CNPJ, use a ferramenta consultar_cnpj.` });
   // Fim do preâmbulo ESTÁVEL (prompt-base + notas de sistema): tudo daqui pra
   // frente (memória, uploads, histórico) muda a cada turno. É o ponto natural
   // para o breakpoint de prompt caching.
@@ -260,7 +265,7 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
   // próximos passos/mensagens (economia de tokens de entrada + latência). No-op
   // quando o modelo/rota não suporta (ex.: DeepSeek direto já cacheia sozinho).
   applyPromptCache(messages, chosenModel, resumePrefixEnd, provider.baseURL);
-  onEvent({ type: 'prompt_meta', prompt: promptManifestFor(assistant, developerContext ? ['developer'] : []) });
+  onEvent({ type: 'prompt_meta', prompt: promptManifest });
 
   // Usage: no resume, soma sobre o que já foi consumido no run anterior.
   const usage = {
@@ -427,7 +432,7 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
       }
       toolFallbackApplied = true;
       tools = [];
-      messages[1] = { role: 'system', content: toolAvailabilityNote(tools) };
+      messages[1] = { role: 'system', content: toolAvailabilityNote(tools, { sandboxNetworkEnabled }) };
       onEvent({ type: 'status', content: 'Este modelo não oferece ferramentas; respondendo em texto.' });
       step -= 1;
       continue;
@@ -599,7 +604,7 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
       if (webResearchStop && !webResearchConclusionAttempted) {
         webResearchConclusionAttempted = true;
         tools = tools.filter(tool => !WEB_TOOL_NAMES.has(tool.function.name));
-        messages[1] = { role: 'system', content: toolAvailabilityNote(tools) };
+        messages[1] = { role: 'system', content: toolAvailabilityNote(tools, { sandboxNetworkEnabled }) };
         messages.push({ role: 'system', content: webResearchFinalizationNote(webResearchStop) });
         onEvent({ type: 'status', content: 'Reunindo o que encontrei e cruzando as fontes...' });
         step -= 1;
@@ -677,6 +682,7 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
       onEvent({ type: 'tool_start', name, preview, ...(detail ? { detail } : {}) });
       emitExecutionState(onEvent, 'tool_running', name, { runId, step, tool: name });
       let result;
+      const allowedToolCall = isToolCallAllowed(name, tools);
       const isWebTool = name === 'web_search' || name === 'web_fetch';
       const fetchUrl = name === 'web_fetch' ? normalizeWebFetchUrl(args.url) : '';
       const repeatedFetch = Boolean(fetchUrl && seenWebFetches.has(fetchUrl));
@@ -684,7 +690,9 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
         if (fetchUrl) seenWebFetches.add(fetchUrl);
         webFetchAttempts += 1;
       }
-      if (isWebTool && webResearchStop) {
+      if (!allowedToolCall) {
+        result = JSON.stringify({ error: 'Ferramenta não autorizada para esta chamada.', code: 'TOOL_NOT_ALLOWED', tool: name });
+      } else if (isWebTool && webResearchStop) {
         result = JSON.stringify({ error: 'A pesquisa web já atingiu o limite desta tarefa. Conclua com as evidências obtidas.', code: 'WEB_RESEARCH_STOPPED' });
       } else if (repeatedFetch) {
         result = JSON.stringify({ error: 'Esta URL já foi consultada nesta tarefa. Use uma fonte nova ou conclua com as evidências obtidas.', code: 'DUPLICATE_WEB_FETCH', url: args.url });
@@ -744,7 +752,7 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
     if (webResearchStop && !webResearchConclusionAttempted) {
       webResearchConclusionAttempted = true;
       tools = tools.filter(tool => !WEB_TOOL_NAMES.has(tool.function.name));
-      messages[1] = { role: 'system', content: toolAvailabilityNote(tools) };
+      messages[1] = { role: 'system', content: toolAvailabilityNote(tools, { sandboxNetworkEnabled }) };
       messages.push({ role: 'system', content: webResearchFinalizationNote(webResearchStop) });
       onEvent({ type: 'status', content: 'Concluindo a pesquisa com as fontes já verificadas...' });
       step -= 1;
@@ -845,7 +853,7 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
       step: (resume?.step || 0) + reachedStep,
       messages,
       usage,
-      meta: { webSearch: Boolean(webSearch), effort: effort || null, developer: developer || null, assistantId: assistant?.id || null }
+      meta: { webSearch: Boolean(webSearch), effort: effort || null, developer: developer || null, assistantId: assistant?.id || null, sandboxNetworkEnabled, prompt: promptManifest }
     });
     // Avisa a interface AO VIVO que dá para retomar (sem esperar um reload):
     // o botão "Continuar" aparece na mensagem interrompida.
@@ -858,6 +866,9 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
     runId,
     model: chosenModel,
     toolsExecuted: executedToolCalls,
+    toolsAvailable: tools.map(tool => tool.function.name),
+    sandboxNetworkEnabled,
+    prompt: promptManifest,
     resumable,
     validation: checks
   });

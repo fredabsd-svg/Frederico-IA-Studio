@@ -52,3 +52,21 @@ test('ação de controle fora do enum é rejeitada', () => {
   assert.equal(r.status, 400);
   assert.match(r.json.error, /Ação inválida/);
 });
+
+test('perfil de assistente acima de 12 mil caracteres é rejeitado', () => {
+  const r = run(schemas.assistantCreate, { name: 'X', system_prompt: 'x'.repeat(12_001) });
+  assert.equal(r.status, 400);
+  assert.match(r.json.error, /12000|12.000|máximo/i);
+});
+
+test('ferramenta desconhecida no assistente é rejeitada', () => {
+  const r = run(schemas.assistantCreate, { name: 'X', system_prompt: 'Ajude.', tools: ['read_file', 'hack'] });
+  assert.equal(r.status, 400);
+  assert.match(r.json.error, /Ferramenta de assistente inválida/i);
+});
+
+test('lista vazia de ferramentas é aceita sem ser convertida', () => {
+  const r = run(schemas.assistantCreate, { name: 'X', system_prompt: 'Ajude.', tools: [] });
+  assert.equal(r.passed, true);
+  assert.deepEqual(r.body.tools, []);
+});

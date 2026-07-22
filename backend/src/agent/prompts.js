@@ -9,6 +9,8 @@ import { toolDefinitions, imageToolDefinitions, runTool } from '../tools.js';
 import { workspaceFor, pcFolderMounts } from '../sandbox.js';
 import { isValidRepoFullName, repoDirName } from '../connectors/github.js';
 import { COMPLETION_PROTOCOL, promptMeta } from './promptRegistry.js';
+import { allowedAssistantToolNames } from './assistantPolicy.js';
+import { IMMUTABLE_CORE_PROMPT, assistantProfileBlock, profileMeta } from './promptPolicy.js';
 
 // Esforço da IA: controla o raciocínio (reasoning effort — funciona de verdade
 // nos modelos que raciocinam, via OpenRouter), o número máximo de etapas do
@@ -84,7 +86,7 @@ Sempre comece analisando o arquivo antes de responder.`;
 export const AGENTS = {
   geral: {
     label: 'Uso geral',
-    prompt: `Você é o Frederico AI Studio — um assistente pessoal atencioso e competente, que ajuda profissionais brasileiros (muitos das áreas contábil, fiscal e administrativa) no dia a dia. Fale em português do Brasil com um tom próximo, cordial e direto, como um bom colega de trabalho: acessível para quem não é técnico, sem jargão desnecessário e sem soar robótico. Adapte a profundidade ao que a pessoa precisa — explique quando ajudar, seja objetivo quando o pedido for simples.
+    prompt: `Você é o Frederico AI Studio — um assistente versátil, atencioso e competente. Não presuma a profissão, o setor ou o contexto da pessoa; adapte-se apenas ao pedido e às informações que ela fornecer. Fale no idioma do usuário com um tom cordial e direto, acessível para quem não é técnico, sem jargão desnecessário e sem soar robótico. Adapte a profundidade ao que a pessoa precisa — explique quando ajudar, seja objetivo quando o pedido for simples.
 
 Seja proativo e resolva de verdade: você tem um sandbox Linux real e ferramentas para ler documentos, fazer contas, montar planilhas, gerar Word/PDF, consultar CNPJ, pesquisar na web e automatizar tarefas. Quando o pedido envolver uma ação, faça a ação — não descreva como a pessoa faria por conta própria.
 
@@ -104,7 +106,7 @@ Fluxo de trabalho:
 - Ao concluir, informe de forma curta os arquivos alterados, a verificação executada e qualquer limitação que permaneceu.
 
 Limites importantes do sandbox:
-- HÁ internet: você pode baixar dados e instalar pacotes com "pip install --user <pacote>" ou "npm install <pacote>" quando faltar algo. O "apt install" não funciona (sem root). Já vêm instalados pandas, numpy, openpyxl, python-docx, reportlab, matplotlib, pillow, beautifulsoup4, lxml, etc.; prefira-os e instale só o que realmente faltar (instalar leva tempo).
+- A rede do sandbox começa DESLIGADA. Ela só é aberta para a tarefa quando o pedido atual autoriza claramente baixar, instalar ou acessar um serviço externo. O "apt install" não funciona (sem root). Já vêm instalados pandas, numpy, openpyxl, python-docx, reportlab, matplotlib, pillow, beautifulsoup4, lxml, etc.; prefira-os.
 - A execução roda como usuário sem privilégios, com tempo limitado por comando. Divida tarefas longas.
 - Python e shell são executados de verdade. Você também pode compilar e testar C/C++ (gcc/g++), Go, Rust e Java (javac), usando make/cmake/ninja quando fizer sentido.
 - Você também pode criar, compilar e testar C# com dotnet e Kotlin JVM com kotlinc. Para frontend, há Chromium headless, Xvfb e Playwright para validação visual sem monitor.
@@ -218,25 +220,27 @@ COMO USAR O SANDBOX (importante):
 - Se pedirem para GERAR/SALVAR um PROGRAMA ou arquivo de código (ex.: um .py, um projeto), a entrega é o ARQUIVO: escreva-o em /workspace/outputs (write_file ou open(...,'w')). Não confunda com apenas EXECUTAR o código — rodar o script não cria o arquivo de entrega. Só rode para testar se o usuário pedir.
 - DESIGN PROFISSIONAL PRONTO: para documentos bonitos, o sandbox já tem kits testados (mesma identidade visual) — use-os em vez de estilizar na mão: Word → \`from docpro import Relatorio\`; Excel → \`from xlspro import Planilha\`; PDF → \`from pdfpro import RelatorioPDF\`. Dão capa, títulos, tabelas com cabeçalho colorido + zebra + TOTAL, callouts, gráficos (Excel) e rodapé paginado. Nunca deixe placeholders ("DD/MM/AAAA", "Seu Nome"); use dados reais e a data de hoje, ou omita.
 - Antes de uma fase de ferramentas, diga no máximo uma frase curta e natural sobre o que vai fazer. Depois, verifique os resultados sem transformar cada chamada numa nova promessa ao usuário.
-- O sandbox TEM internet: dá para baixar dados, consumir APIs (requests/urllib), usar curl/wget e instalar com "pip install --user <pacote>" ou "npm install <pacote>". O "apt install" não rola (roda sem root). Instalar demora, então prefira o que já vem instalado e só instale o que faltar mesmo.
+- A rede do sandbox é desligada por padrão e o estado real aparece na nota de ferramentas desta chamada. Não tente contornar esse limite. Quando houver autorização e a rede estiver aberta, acesse somente o necessário para a tarefa.
 - Docker e Docker Compose ficam de fora de propósito, para proteger o computador de quem hospeda. Não tente instalar daemon, expor socket nem prometer subir container.
 - Não há GPU/CUDA, systemd, firewall, Android/iOS, Flutter nem servidor que fica no ar. Para IA local, use só modelos que rodam em CPU e deixe claro quando a pessoa precisar fornecer ou baixar os pesos.
 - Cuidado com a internet: acesse ou baixe só o que a tarefa pedir. NUNCA mande arquivos, conteúdo ou dados da pessoa para serviços/endereços externos sem ela ter pedido isso claramente.`;
 
 export function promptFor(assistant) {
-  const base = assistant ? (assistant.system_prompt || AGENTS.geral.prompt) : AGENTS.geral.prompt;
-  return base + personalitySuffix(assistant?.personality) + EXECUTION_UX_RULES + SANDBOX_RULES + `\n\n${COMPLETION_PROTOCOL}`;
+  const profile = assistant?.system_prompt || AGENTS.geral.prompt;
+  return `${IMMUTABLE_CORE_PROMPT}\n\n${assistantProfileBlock(profile)}${personalitySuffix(assistant?.personality)}${EXECUTION_UX_RULES}${SANDBOX_RULES}\n\n${COMPLETION_PROTOCOL}`;
 }
 
 export function promptManifestFor(assistant, extraModules = []) {
   const content = promptFor(assistant);
-  return promptMeta(['global', 'tools', ...(assistant?.system_prompt ? ['developer'] : []), ...extraModules], content);
+  return {
+    ...promptMeta(['global', 'profile', 'tools', ...extraModules], content),
+    ...profileMeta(assistant?.system_prompt || AGENTS.geral.prompt)
+  };
 }
 export function toolsFor(assistant) {
   const all = [...toolDefinitions, ...imageToolDefinitions];
-  const allowed = assistant?.tools;
-  if (!Array.isArray(allowed) || !allowed.length) return all;
-  return all.filter(t => allowed.includes(t.function.name));
+  const allowed = new Set(allowedAssistantToolNames(assistant?.tools));
+  return all.filter(t => allowed.has(t.function.name));
 }
 
 // Modos de trabalho do Modo Desenvolvedor. Os três primeiros (plan/build/review)
@@ -324,11 +328,14 @@ export function developerTeamContextFor(request, userId) {
   ].filter(Boolean).join('\n\n');
 }
 
-export function toolAvailabilityNote(tools, { includeInventory = false } = {}) {
+export function toolAvailabilityNote(tools, { includeInventory = false, sandboxNetworkEnabled = false } = {}) {
   const names = new Set(tools.map(t => t.function.name));
   const lines = ['FERRAMENTAS E AMBIENTE DISPONÍVEIS NESTA CHAMADA:'];
   lines.push('Arquivos da conversa: uploads em /workspace/uploads; resultados finais em /workspace/outputs.');
   lines.push('Para entregar arquivo ao usuário, salve em /workspace/outputs; o chat cria o cartão de download sozinho.');
+  lines.push(sandboxNetworkEnabled
+    ? 'Rede direta do sandbox: HABILITADA somente para o objetivo atual. Não envie arquivos ou dados do usuário a terceiros sem pedido explícito.'
+    : 'Rede direta do sandbox: DESLIGADA. Não tente usar curl/wget, instalar pacotes ou acessar APIs pelo Python/shell. web_search/web_fetch, quando listadas, funcionam separadamente pelo backend.');
   lines.push('Para executar algo — gerar arquivo, rodar código, pesquisar, ler anexo — CHAME a ferramenta certa pelo function-calling da API (ex.: run_python para criar Excel/Word/PDF; web_search para pesquisar; consultar_cnpj para CNPJ). A ferramenta roda de fato e o arquivo salvo em /workspace/outputs vira download; o texto da resposta é só para falar com a pessoa.');
 
   lines.push('Ferramentas do chat habilitadas para você:');
