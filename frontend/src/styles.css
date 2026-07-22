@@ -249,7 +249,7 @@
 .mpStar:hover{opacity:1;color:var(--warn)}
 .mpStar.on{opacity:1;color:var(--warn)}
 /* Família vira lista suspensa (mais fácil de usar que os chips espremidos) */
-.mpList{flex:1;min-height:120px}
+.mpList{flex:1;min-height:300px}
 .mpPanel{max-height:min(560px,72vh)}
 /* Botão reenviar (mensagem que falhou) */
 .retryBtn{display:inline-flex;align-items:center;gap:7px;margin-top:8px;font-size:var(--fs-sm);font-weight:600;border:1px solid var(--accent);color:var(--accent);background:transparent;border-radius:var(--r-md);padding:7px 12px}
@@ -449,7 +449,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 }
 
 /* Seletor de modelos: escolha guiada primeiro, catálogo detalhado depois. */
-.mpPanel{width:min(480px,calc(100vw - 24px));max-height:min(620px,78vh);border-radius:var(--r-md)}
+.mpPanel{width:min(680px,calc(100vw - 24px));max-height:min(760px,86vh);border-radius:var(--r-md)}
 .mpSearch{min-height:48px}
 .mpSearchClear{flex:none;border:none;background:transparent;color:var(--muted);padding:4px;display:flex;border-radius:var(--r-sm)}
 .mpSearchClear:hover{color:var(--accent);background:var(--panel2)}
@@ -463,10 +463,12 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .mpViewTabs button{flex:1;min-width:0;border:none;border-radius:var(--r-sm) var(--r-sm) 0 0;background:transparent;color:var(--muted);padding:8px 6px;font-size:var(--fs-xs);font-weight:700;white-space:nowrap}
 .mpViewTabs button:hover{background:var(--panel2);color:var(--text)}
 .mpViewTabs button.on{color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)}
-.mpAdvanced{padding:10px 12px 12px;border-bottom:1px solid var(--line);background:var(--panel2)}
+/* Filtros abertos rolam dentro de si (max-height) em vez de empurrar a lista
+   para fora — era a principal causa do "painel espremido". */
+.mpAdvanced{padding:10px 12px 12px;border-bottom:1px solid var(--line);background:var(--panel2);max-height:42vh;overflow:auto}
 .mpAdvancedHead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;font-size:var(--fs-2xs);font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
 .mpAdvancedHead button{border:none;background:transparent;color:var(--accent);padding:0;font-size:var(--fs-xs);font-weight:700;text-transform:none;letter-spacing:0}
-.mpAdvancedFields{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.mpAdvancedFields{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
 .mpAdvancedFields label{display:flex;flex-direction:column;gap:4px;font-size:var(--fs-2xs);font-weight:700;color:var(--muted)}
 .mpAdvancedFields select{width:100%;min-width:0;border-radius:var(--r-sm);padding:7px 8px;font-size:var(--fs-xs);color:var(--text)}
 .mpFilterChecks{display:grid;grid-template-columns:1fr 1fr;gap:7px 10px;margin-top:10px}

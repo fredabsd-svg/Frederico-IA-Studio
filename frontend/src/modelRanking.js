@@ -78,13 +78,30 @@ for (const entry of MODEL_RANKING) {
   if (base && !byBase.has(base)) byBase.set(base, entry);
 }
 
-// Devolve a entrada do ranking para um modelo do catálogo real, ou null se
-// nada bater — nunca "chuta" uma posição aproximada.
-export function findRanking(model) {
+// Devolve a entrada do ranking por NOME (lista de referência), ou null.
+export function findRankingByName(model) {
   const label = model?.name || model?.id || '';
   const exact = normalize(label);
   if (byExact.has(exact)) return byExact.get(exact);
   const base = baseOf(exact);
   if (base && byBase.has(base)) return byBase.get(base);
   return null;
+}
+
+// Classificação de um modelo. PRIORIDADE: o `tier` do backend (coerente com as
+// capacidades reais, cobre todos os modelos, com procedência) vence a lista de
+// nomes — que fica só como reserva para catálogos antigos sem `tier`.
+export function findRanking(model) {
+  if (model?.tier) {
+    return { tier: model.tier, rank: Number(model.tierRank ?? 0), name: model.name || model.id, source: 'backend' };
+  }
+  const byName = findRankingByName(model);
+  return byName ? { ...byName, source: 'name' } : null;
+}
+
+const TIER_SCALE = ['B', 'B+', 'A', 'A+', 'S', 'S+'];
+// Índice para ordenar/filtrar por classificação (maior = melhor). 'C' e afins → 0.
+export function tierScore(tier) {
+  const i = TIER_SCALE.indexOf(String(tier || ''));
+  return i < 0 ? 0 : i + 1;
 }

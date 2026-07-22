@@ -2,8 +2,8 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Search, ChevronDown, Check, Cpu, Star, SlidersHorizontal, X, Wrench, Eye, Image as ImageIcon, Brain, Video, MessageSquare, AudioLines, Globe2, FileText, Code2, Database } from 'lucide-react';
 import { ProviderIcon } from './components/ProviderIcon.jsx';
 import { FamilySelect } from './components/FamilySelect.jsx';
-import { findRanking, tierClass } from './modelRanking.js';
-import { capabilityOf, filterModels, modelFamily } from './modelFilters.js';
+import { findRanking, tierClass, tierScore } from './modelRanking.js';
+import { capabilityOf, filterModels, modelFamily, tierOf } from './modelFilters.js';
 
 // Ids (ou prefixos) dos modelos mais confiáveis para gerar planilhas/arquivos
 const BEST_FOR_FILES = [
@@ -93,6 +93,8 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
   const [fam, setFam] = useState('all');
   const [price, setPrice] = useState('all');
   const [context, setContext] = useState('all');
+  const [tier, setTier] = useState('all');
+  const [modality, setModality] = useState('all');
   const [flags, setFlags] = useState([]);
   const [sort, setSort] = useState('none');
   const [favs, setFavs] = useState(loadFavs);
@@ -186,11 +188,13 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
     }
   }
   const families = Object.keys(famCounts).sort((a, b) => famCounts[b] - famCounts[a]);
-  const filteredModels = filterModels(models, { query: q, provider, family: fam, price, context, flags });
-  const activeFilterCount = flags.length + Number(provider !== 'all') + Number(fam !== 'all') + Number(price !== 'all') + Number(context !== 'all') + Number(sort !== 'none');
+  const filteredModels = filterModels(models, { query: q, provider, family: fam, price, context, tier, modality, flags });
+  const activeFilterCount = flags.length + Number(provider !== 'all') + Number(fam !== 'all') + Number(price !== 'all') + Number(context !== 'all') + Number(tier !== 'all') + Number(modality !== 'all') + Number(sort !== 'none');
   const sortFn = (a, b) => sort === 'new' ? (b.created || 0) - (a.created || 0)
     : sort === 'cheap' ? priceValue(a) - priceValue(b)
-    : sort === 'rank' ? rankValue(a) - rankValue(b)
+    // Classificação: maior tier primeiro (usa o tier coerente do backend).
+    : sort === 'rank' ? (tierScore(tierOf(b)) - tierScore(tierOf(a))) || String(a.name || a.id).localeCompare(String(b.name || b.id))
+    : sort === 'relevance' ? recommendedSort(a, b)
     : String(a.name || a.id).localeCompare(String(b.name || b.id));
   const generalRecommendationRank = model => {
     const index = GENERAL_RECOMMENDATIONS.findIndex(prefix => rawId(model) === prefix || rawId(model).startsWith(prefix));
@@ -226,15 +230,29 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
   const catalogModels = [...filteredModels].sort(sortFn);
   const displayView = query ? 'search' : view;
 
+  const STATUS_BADGE = {
+    deprecated: { label: 'Descontinuado', cls: 'no' },
+    legacy: { label: 'Legado', cls: 'no' },
+    inactive: { label: 'Inativo', cls: 'no' },
+    preview: { label: 'Prévia', cls: 'neutral' },
+    experimental: { label: 'Experimental', cls: 'neutral' }
+  };
   const row = model => {
     const ranking = findRanking({ ...model, id: rawId(model) });
+    const status = STATUS_BADGE[model.status];
+    const rankTitle = ranking
+      ? (ranking.source === 'backend'
+          ? `Classificação ${ranking.tier} — coerente com as capacidades reais do modelo`
+          : `Classificação de referência · Tier ${ranking.tier}`)
+      : '';
     return (
     <div key={model.id} className={'mpItem ' + (model.id === value ? 'sel' : '')}>
       <ProviderIcon id={rawId(model)} size={28}/>
       <button className="mpPick" onClick={() => pick(model.id)}>
         <span className="mpItemName">
           {model.name}
-          {ranking && <span className={`mpRank ${tierClass(ranking.tier)}`} title={`Classificação de referência: #${ranking.rank} de 100 · Tier ${ranking.tier}`}>{ranking.tier}</span>}
+          {ranking && <span className={`mpRank ${tierClass(ranking.tier)}`} title={rankTitle}>{ranking.tier}</span>}
+          {status && <span className={`mpCap ${status.cls}`} title={model.replacement ? `${status.label} — substituído por ${model.replacement}` : status.label} style={{ marginLeft: 4 }}>{status.label}</span>}
           {model.id === value && <Check size={13} className="mpInlineCheck" aria-label="Modelo em uso"/>}
         </span>
         <span className="mpItemId">{model.providerName ? `${model.providerName} · ` : ''}{rawId(model)}</span>
@@ -271,7 +289,7 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
         {[['recommended', 'Recomendados'], ['favorites', 'Favoritos (' + favs.length + ')'], ['catalog', 'Catálogo']].map(([id, label]) => <button key={id} role="tab" aria-selected={view === id} className={view === id ? 'on' : ''} onClick={() => setView(id)}>{label}</button>)}
       </div>
       {filtersOpen && <div className="mpAdvanced" aria-label="Filtros avançados">
-        <div className="mpAdvancedHead"><span>Refinar catálogo</span>{activeFilterCount > 0 && <button onClick={() => { setProvider('all'); setFam('all'); setPrice('all'); setContext('all'); setFlags([]); setSort('none'); }}>Limpar filtros</button>}</div>
+        <div className="mpAdvancedHead"><span>Refinar catálogo</span>{activeFilterCount > 0 && <button onClick={() => { setProvider('all'); setFam('all'); setPrice('all'); setContext('all'); setTier('all'); setModality('all'); setFlags([]); setSort('none'); }}>Limpar filtros</button>}</div>
         <div className="mpAdvancedFields">
           <label>Provedor configurado
             <select value={provider} onChange={event => setProvider(event.target.value)}>
@@ -305,12 +323,34 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
               <option value="1m">1 milhão de tokens</option>
             </select>
           </label>
+          <label>Classificação mínima
+            <select value={tier} onChange={event => setTier(event.target.value)}>
+              <option value="all">Qualquer classificação</option>
+              <option value="S+">S+ (topo)</option>
+              <option value="S">S ou acima</option>
+              <option value="A+">A+ ou acima</option>
+              <option value="A">A ou acima</option>
+              <option value="B+">B+ ou acima</option>
+            </select>
+          </label>
+          <label>Modalidade
+            <select value={modality} onChange={event => setModality(event.target.value)}>
+              <option value="all">Qualquer modalidade</option>
+              <option value="multimodal">Multimodal (imagem/áudio/vídeo)</option>
+              <option value="vision">Lê imagens</option>
+              <option value="text">Somente texto</option>
+              <option value="image">Gera imagens</option>
+              <option value="audio">Gera/entende áudio</option>
+              <option value="video">Gera/entende vídeo</option>
+            </select>
+          </label>
           <label>Ordenar
             <select value={sort} onChange={event => setSort(event.target.value)}>
+              <option value="relevance">Relevância</option>
               <option value="none">Nome do modelo</option>
-              <option value="new">Lançamentos</option>
+              <option value="rank">Classificação</option>
+              <option value="new">Mais recentes</option>
               <option value="cheap">Menor custo</option>
-              <option value="rank">Classificação de referência</option>
             </select>
           </label>
         </div>
