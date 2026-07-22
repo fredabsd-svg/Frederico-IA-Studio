@@ -1252,3 +1252,4 @@ input[type=checkbox]:focus-visible,input[type=radio]:focus-visible{outline-offse
 .freeErrorList{max-height:260px;overflow:auto}
 .freeErrorItem{border:1px solid var(--line);border-radius:var(--r-md);padding:8px 11px;font-size:var(--fs-xs);line-height:1.45}
 .freeErrorItem b{text-transform:uppercase;font-size:var(--fs-2xs);letter-spacing:.03em;color:var(--warn)}
+.attachChip.missing{border-color:var(--danger);color:var(--danger);background:color-mix(in srgb,var(--danger) 8%,var(--panel2))}

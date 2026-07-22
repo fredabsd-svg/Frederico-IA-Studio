@@ -8,6 +8,7 @@ export function useFileUploads({ current, ensureConversation, loadFiles, showToa
   const [uploadingFiles, setUploadingFiles] = useState(false);
   const [scanOk, setScanOk] = useState(false); // "✓ verificado pelo antivírus" após upload escaneado
   const dragDepth = useRef(0);
+  const pendingUploads = useRef(new Set());
 
   async function deleteFile(f) {
     if (!current) return;
@@ -30,10 +31,9 @@ export function useFileUploads({ current, ensureConversation, loadFiles, showToa
   async function uploadSelectedFiles(selected, source = 'input') {
     const filesToUpload = [...(selected || [])].filter(Boolean);
     if (!filesToUpload.length) return;
-    let conv = current;
-    if (!conv) { conv = await ensureConversation(); if (!conv) return; }
-    setUploadingFiles(true);
-    try {
+    const task = (async () => {
+      let conv = current;
+      if (!conv) { conv = await ensureConversation(); if (!conv) return []; }
       const fd = new FormData();
       filesToUpload.forEach(f => fd.append('files', f));
       const res = await fetch(`${API}/api/conversations/${conv.id}/upload`, { method: 'POST', body: fd });
@@ -49,11 +49,29 @@ export function useFileUploads({ current, ensureConversation, loadFiles, showToa
         setScanOk(true);
         setTimeout(() => setScanOk(false), 5000);
       }
+      return d.files || [];
+    })();
+    pendingUploads.current.add(task);
+    setUploadingFiles(true);
+    try {
+      return await task;
     } catch (err) {
       showToast(err?.message || 'Falha no envio do arquivo. Verifique o tamanho (máx. 50 MB) e tente de novo.');
+      return [];
     } finally {
-      setUploadingFiles(false);
+      pendingUploads.current.delete(task);
+      setUploadingFiles(pendingUploads.current.size > 0);
     }
+  }
+
+  // O envio da mensagem chama esta barreira antes do POST /chat. Mesmo se o
+  // clique/Enter acontecer no mesmo frame em que o upload começou, a conversa
+  // só segue depois que todos os arquivos foram gravados e relidos do backend.
+  async function waitForUploads(conversationId) {
+    while (pendingUploads.current.size) {
+      await Promise.allSettled([...pendingUploads.current]);
+    }
+    return conversationId ? (await loadFiles(conversationId) || []) : [];
   }
 
   async function uploadFiles(e) {
@@ -97,7 +115,7 @@ export function useFileUploads({ current, ensureConversation, loadFiles, showToa
 
   return {
     dragActive, uploadingFiles, scanOk,
-    deleteFile, uploadSelectedFiles, uploadFiles,
+    deleteFile, uploadSelectedFiles, uploadFiles, waitForUploads,
     onDragEnter, onDragOver, onDragLeave, onDrop, onPasteFiles
   };
 }

@@ -4,16 +4,16 @@
 
 export const PROMPT_RELEASE = Object.freeze({
   id: 'frederico-prompt-core',
-  version: '2026.07.22.3',
+  version: '2026.07.22.4',
   date: '2026-07-22'
 });
 
 export const PROMPT_MODULES = Object.freeze({
   global:       { id: 'global-core',       version: '3.1.0' },
   profile:      { id: 'assistant-profile', version: '1.0.0' },
-  tools:        { id: 'tool-contract',     version: '3.0.0' },
+  tools:        { id: 'tool-contract',     version: '3.1.0' },
   developer:    { id: 'developer-mode',    version: '2.0.0' },
-  multiModel:   { id: 'multi-model',       version: '3.0.0' },
+  multiModel:   { id: 'multi-model',       version: '3.1.0' },
   artifact:     { id: 'artifact-workflow', version: '1.0.0' },
   resume:       { id: 'resume-protocol',   version: '2.0.0' },
   memory:       { id: 'memory-context',    version: '2.0.0' },

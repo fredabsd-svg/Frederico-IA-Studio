@@ -193,7 +193,7 @@ export default function App({ user } = {}) {
     startNewChat, setMessages, setDeveloperSession, setMenuOpen, followActiveRef, setNeedLogin });
   const { listening, recognitionRef, toggleMic } = useSpeech({ input, setInput, showToast });
   const {
-    dragActive, uploadingFiles, scanOk, deleteFile, uploadSelectedFiles, uploadFiles,
+    dragActive, uploadingFiles, scanOk, deleteFile, uploadSelectedFiles, uploadFiles, waitForUploads,
     onDragEnter, onDragOver, onDragLeave, onDrop, onPasteFiles
   } = useFileUploads({ current, ensureConversation, loadFiles, showToast, askConfirm });
   // Membros ativos da equipe (null = todos)
@@ -206,7 +206,7 @@ export default function App({ user } = {}) {
   } = useChat({
     input, setInput, messages, setMessages, uploads, team, effectiveTeam,
     listening, recognitionRef, current, currentRef, setCurrent,
-    ensureConversation, fetchConversations, loadFiles,
+    ensureConversation, fetchConversations, loadFiles, waitForUploads,
     developerSession, setDeveloperSession, followActiveRef,
     model, assistantId, webSearch, effort, multiModel: effectiveMulti, setNeedLogin, showToast,
     // Modo gratuito: status ao vivo (restante/renovação) e tela de limite
@@ -216,7 +216,7 @@ export default function App({ user } = {}) {
   const { tasks, tasksOpen, setTasksOpen, tasksActive, pollTasks, sendAsTask, cancelTask } = useTasks({
     current, busyRef, openConversation, ensureConversation,
     input, setInput, listening, recognitionRef,
-    model, assistantId, webSearch, showToast
+    model, assistantId, webSearch, showToast, waitForUploads
   });
 
   function changeMultiModel(next) {
@@ -502,6 +502,7 @@ export default function App({ user } = {}) {
   function startNewChat() {
     if (blockConversationChange()) return false;
     setCurrent(null);
+    currentRef.current = null;
     setMessages([]);
     setFiles([]);
     setInput('');
@@ -993,8 +994,8 @@ export default function App({ user } = {}) {
           <button onClick={() => setDeveloperSession(null)} title="Sair do modo desenvolvedor" aria-label="Sair do modo desenvolvedor"><X size={14}/></button>
         </div>}
         {uploads.length > 0 && <div className="attachChips">
-          {uploads.map(f => <span className="attachChip" key={f.id}>
-            <FileText size={13}/><span className="chipname" title={f.name}>{f.name}</span>
+          {uploads.map(f => <span className={`attachChip ${f.available === false ? 'missing' : ''}`} key={f.id} title={f.available === false ? 'Este arquivo não está mais disponível no servidor. Remova-o e anexe novamente.' : f.name}>
+            <FileText size={13}/><span className="chipname">{f.name}{f.available === false ? ' · indisponível' : ''}</span>
             <button onClick={() => deleteFile(f)} aria-label="Remover anexo"><X size={12}/></button>
           </span>)}
         </div>}
@@ -1027,7 +1028,7 @@ export default function App({ user } = {}) {
             title={listening ? 'Parar o ditado' : 'Ditar a mensagem por voz'}>
             <Mic size={12}/><span>{listening ? 'Ouvindo...' : 'Ditar por voz'}</span>
           </button>
-          <button type="button" className="cmpChip" disabled={!input.trim() || busy}
+          <button type="button" className="cmpChip" disabled={!input.trim() || busy || uploadingFiles}
             onClick={sendAsTask}
             title="Envia a mensagem como tarefa e libera o chat enquanto ela roda">
             <Hourglass size={12}/><span>Executar em segundo plano</span>
@@ -1052,8 +1053,8 @@ export default function App({ user } = {}) {
           <button className="attachBtn" onClick={() => fileInputRef.current?.click()} title="Anexar arquivo" aria-label="Anexar arquivo"><Paperclip size={19}/></button>
           <input ref={fileInputRef} type="file" multiple onChange={uploadFiles} style={{ display: 'none' }}/>
           <button className="attachBtn" onClick={() => setCameraOpen(true)} title="Tirar foto com a câmera" aria-label="Tirar foto com a câmera"><Camera size={19}/></button>
-          <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)} onInput={e => { e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 160) + 'px'; }} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }} placeholder={listening ? 'Ouvindo... fale agora' : (webSearch ? 'Pesquisa na internet ativada — pergunte algo atual...' : 'Peça para analisar arquivos, gerar Word, Excel, PDF...')} />
-          <button className="sendBtn" onClick={sendMessage} disabled={busy} aria-label="Enviar"><ArrowUp size={18}/></button>
+          <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)} onInput={e => { e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 160) + 'px'; }} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (!uploadingFiles) sendMessage(); } }} placeholder={listening ? 'Ouvindo... fale agora' : (webSearch ? 'Pesquisa na internet ativada — pergunte algo atual...' : 'Peça para analisar arquivos, gerar Word, Excel, PDF...')} />
+          <button className="sendBtn" onClick={sendMessage} disabled={busy || uploadingFiles} aria-label={uploadingFiles ? 'Aguardando anexos' : 'Enviar'}><ArrowUp size={18}/></button>
         </div>
         <div className="composerHints">
           <span>Enter envia · Shift+Enter quebra linha</span>

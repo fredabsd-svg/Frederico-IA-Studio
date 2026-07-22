@@ -105,9 +105,13 @@ O segundo é a preferência adequada quando a entrada inclui imagem/documento vi
 
 ## Execuções realizadas
 
+### Regressão adicional: anexos visíveis, mas ignorados
+
+Uma reprodução posterior encontrou quatro causas combináveis: envio do chat concorrendo com o upload; referência da conversa atrasada em um render do React; verbos como “elabore/prepare/consolide” ausentes do classificador de artefatos; e Pipeline com anexos curtos caindo no caminho somente textual. A correção adicionou barreira de upload, identidade imediata da conversa, manifesto validado no backend, indicação de arquivo indisponível, execução obrigatória do Pipeline quando há anexos e primeira inspeção por ferramenta. Uma resposta textual inválida também é retirada da interface antes da tentativa automática de reparo.
+
 | Verificação | Resultado |
 |---|---:|
-| Backend Node | 224 aprovados de 226, 0 falhas, 2 pulados (3 rodadas consecutivas) |
+| Backend Node | 229 aprovados de 231, 0 falhas, 2 pulados (3 rodadas consecutivas) |
 | Frontend Node | 7 aprovados, 0 falhas |
 | Excel real | 4 aprovados, 0 falhas |
 | Build de produção | aprovado |

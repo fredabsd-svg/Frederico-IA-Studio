@@ -155,6 +155,15 @@ test('pipeline textual continua leve quando a tarefa não precisa executar nada'
   assert.equal(multiModelExecutionPolicy({ mode: 'pipeline', requirement }).useAgentPipeline, false);
 });
 
+test('pipeline com anexos sempre usa o agente mesmo quando a mensagem é curta', () => {
+  const requirement = detectToolRequirement({ userText: 'Pode começar.', hasUploads: true });
+  assert.equal(requirement.required, false, 'a frase isolada não deve virar execução em conversas comuns');
+  assert.deepEqual(multiModelExecutionPolicy({ mode: 'pipeline', requirement, hasUploads: true }), {
+    useAgentPipeline: true,
+    blockedMode: false
+  });
+});
+
 test('todos os participantes multimodelo recebem núcleo neutro e perfil delimitado', () => {
   const blocks = multiModelSystemBlocks({
     id: 'teste/modelo', role: 'livre',

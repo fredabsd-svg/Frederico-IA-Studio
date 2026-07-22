@@ -126,13 +126,15 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   }
   if (lowSignalTurn) requestedTools = [];
 
+  const uploadNoteForRun = !lowSignalTurn ? uploadsNote(conversationId) : null;
+
   const modelPlanInput = () => ({
     modelId: chosenModel,
     tools: requestedTools,
     userText,
     webSearch: webSearchActive,
     developer: Boolean(developerContext && !lowSignalTurn),
-    hasUploads: !lowSignalTurn && Boolean(uploadsNote(conversationId)),
+    hasUploads: Boolean(uploadNoteForRun),
     reasoningEffort: eff.reasoning
   });
   let modelRuntime = buildModelRuntimeState(modelPlanInput());
@@ -243,8 +245,7 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
     const cleanMemory = sanitizeToolProtocolText(memory);
     if (cleanMemory) messages.push({ role: 'user', content: untrustedContext('memory-fallback', cleanMemory) });
   }
-  const note = uploadsNote(conversationId);
-  if (note) messages.push({ role: 'system', content: note });
+  if (uploadNoteForRun) messages.push({ role: 'system', content: uploadNoteForRun });
   const pcNote = pcFoldersNote(sandboxOptions);
   if (pcNote) messages.push({ role: 'system', content: pcNote });
   const historyPlan = await selectHistoryForContext({
@@ -297,7 +298,7 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
     tools = candidateRuntime.tools;
     reasoningEffort = candidateRuntime.reasoningEffort;
     toolFallbackApplied = false;
-    forceNativeToolCall = false;
+    forceNativeToolCall = mustInspectUploads && executedToolCalls === 0;
     messages[1] = { role: 'system', content: toolAvailabilityNote(tools, { includeInventory: includeEnvironmentInventory, sandboxNetworkEnabled }) };
     if (!resume) {
       if (candidatePlan.capabilities?.vision === true) {
@@ -361,13 +362,22 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
     continuationPaths: continuationOutputPaths
   });
   let finalText = '';
+  const resetVisibleResponse = () => {
+    if (!finalText) return;
+    finalText = '';
+    onEvent({ type: 'response_reset' });
+  };
   let stopped = false;
   let completedNaturally = false;
   let consecutiveFailures = 0;
   let toolFallbackApplied = false;
   let executionRepairAttempted = false;
   let protocolRepairAttempted = false;
-  let forceNativeToolCall = false;
+  // Em Pipeline com anexos, a primeira ação precisa ser uma ferramenta. Isso
+  // impede modelos pequenos/gratuitos de responderem "não localizei o PDF"
+  // sem sequer consultar o workspace que o backend acabou de confirmar.
+  const mustInspectUploads = Boolean(uploadNoteForRun && (forceExecution || modelPlan.requirements.reasons.includes('a leitura dos arquivos anexados')));
+  let forceNativeToolCall = mustInspectUploads;
   let executedToolCalls = 0;
   let truncationContinuationAttempts = 0;
   let streamRecoveryAttempts = 0;
@@ -657,6 +667,7 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
       if (!protocolRepairAttempted && tools.length) {
         protocolRepairAttempted = true;
         forceNativeToolCall = true;
+        resetVisibleResponse();
         messages.push({ role: 'system', content: TOOL_PROTOCOL_REPAIR_NOTE });
         onEvent({ type: 'status', content: 'Corrigindo uma chamada de ferramenta inválida...' });
         continue;
@@ -705,6 +716,7 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
       if (!executionRepairAttempted && tools.length && (missingClaimedOutput || incompleteExecution)) {
         executionRepairAttempted = true;
         forceNativeToolCall = true;
+        resetVisibleResponse();
         messages.push({ role: 'system', content: missingClaimedOutput ? OUTPUT_DELIVERY_REPAIR_NOTE : EXECUTION_COMPLETION_REPAIR_NOTE });
         onEvent({ type: 'status', content: missingClaimedOutput ? 'Conferindo o arquivo prometido...' : 'Executando o trabalho solicitado...' });
         continue;

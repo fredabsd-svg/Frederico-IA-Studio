@@ -87,6 +87,18 @@ test('recognizes a document delivery request as execution that must create an ou
   assert.equal(requirement.expectsOutput, true);
 });
 
+test('reconhece verbos usuais de elaboração de Word/PDF como execução de arquivo', () => {
+  for (const userText of [
+    'Elabore um documento Word com base nos PDFs anexados.',
+    'Prepare um relatório PDF profissional.',
+    'Consolide estes documentos em um DOCX.'
+  ]) {
+    const requirement = detectToolRequirement({ userText, hasUploads: true });
+    assert.equal(requirement.required, true, userText);
+    assert.equal(requirement.expectsOutput, true, userText);
+  }
+});
+
 test('recognizes provider tool errors for the runtime fallback', () => {
   assert.equal(isUnsupportedToolError(new Error('No endpoints found that support tool use.')), true);
   assert.equal(isUnsupportedToolError(new Error('Rate limit exceeded')), false);

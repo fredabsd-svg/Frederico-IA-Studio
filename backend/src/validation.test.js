@@ -30,6 +30,17 @@ test('aceita chat válido e aplica trim na mensagem', () => {
   assert.equal(r.body.webSearch, true); // campo desconhecido pelo schema passa adiante (loose)
 });
 
+test('aceita manifesto de anexos e limita a vinte arquivos', () => {
+  const attachment = { id: 'arquivo-1', path: 'uploads/documento.pdf', name: 'documento.pdf', size: 123 };
+  const ok = run(schemas.chat, { message: 'Analise o PDF.', attachments: [attachment] });
+  assert.equal(ok.passed, true);
+  assert.deepEqual(ok.body.attachments, [attachment]);
+
+  const tooMany = run(schemas.chat, { message: 'Analise.', attachments: Array.from({ length: 21 }, (_, index) => ({ path: `uploads/${index}.pdf` })) });
+  assert.equal(tooMany.status, 400);
+  assert.match(tooMany.json.error, /Anexos demais/);
+});
+
 test('campo obrigatório ausente responde 400 com o campo apontado', () => {
   const r = run(schemas.assistantCreate, { name: 'X' });
   assert.equal(r.status, 400);

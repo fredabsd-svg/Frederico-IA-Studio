@@ -37,7 +37,7 @@ const mmPatch = (m, slot, fn) => {
 
 export function useChat({ input, setInput, messages, setMessages, uploads, team, effectiveTeam,
                           listening, recognitionRef, current, currentRef, setCurrent,
-                          ensureConversation, fetchConversations, loadFiles,
+                          ensureConversation, fetchConversations, loadFiles, waitForUploads,
                           developerSession, setDeveloperSession, followActiveRef,
                           model, assistantId, webSearch, effort, multiModel, setNeedLogin, showToast,
                           onFreeEvent, onFreeLimit }) {
@@ -243,6 +243,11 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
           else blocks.push({ type: 'text', content: ev.content });
           return { ...m, blocks, content: (m.content || '') + ev.content };
         });
+        if (ev.type === 'response_reset') update(m => ({
+          ...m,
+          content: '',
+          blocks: (m.blocks || []).filter(block => block.type !== 'text')
+        }));
         if (ev.type === 'tool_start') { patchRun(convId, { status: `Executando ${ev.name}...` }); update(m => ({ ...m, blocks: [...(m.blocks || []), { type: 'tool', name: ev.name, preview: ev.preview, detail: ev.detail || '', status: 'running', started: Date.now() }] })); }
         if (ev.type === 'tool_result') update(m => {
           const blocks = [...(m.blocks || [])];
@@ -373,12 +378,6 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
   async function sendMessage(textArg) {
     const isRetry = typeof textArg === 'string';
     const typed = (isRetry ? textArg : input).trim();
-    // "Zero atrito": se o usuário anexou algo (ex.: uma foto) e não escreveu
-    // nada, usamos um pedido padrão para a IA ler/analisar o anexo sozinha.
-    const text = typed || (!isRetry && uploads.length > 0
-      ? 'Leia e analise o(s) arquivo(s)/foto que enviei e me responda com base no conteúdo.'
-      : '');
-    if (!text) return;
     // MULTICONVERSA: só a conversa ABERTA bloqueia o envio — outras conversas
     // processando em paralelo não impedem esta de receber uma mensagem.
     if (current?.id && runsRef.current[current.id]?.busy) return;
@@ -387,6 +386,22 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
     let conv = current;
     if (!conv) { conv = await ensureConversation(); if (!conv) return; }
     if (runsRef.current[conv.id]?.busy) return; // corrida rara (duplo clique)
+    // Barreira do upload: o POST /chat nunca ultrapassa um POST /upload ainda
+    // em andamento. A leitura autoritativa também evita depender do state do
+    // React, que pode estar um render atrasado logo após anexar.
+    const synchronizedFiles = waitForUploads ? await waitForUploads(conv.id) : uploads;
+    const unavailableUploads = (synchronizedFiles || []).filter(file => file.kind === 'upload' && file.available === false);
+    if (unavailableUploads.length) {
+      showToast('Há anexo indisponível nesta conversa. Remova o item marcado e anexe o arquivo novamente antes de enviar.');
+      return;
+    }
+    const availableUploads = (synchronizedFiles || uploads || []).filter(file => file.kind === 'upload' && file.available !== false);
+    // "Zero atrito": se o usuário anexou algo (ex.: uma foto) e não escreveu
+    // nada, usamos um pedido padrão para a IA ler/analisar o anexo sozinha.
+    const text = typed || (!isRetry && availableUploads.length > 0
+      ? 'Leia e analise o(s) arquivo(s)/foto que enviei e me responda com base no conteúdo.'
+      : '');
+    if (!text) return;
     // currentRef é sincronizado por efeito (roda DEPOIS do render); na 1ª
     // mensagem de uma conversa nova ele ainda apontaria para null e os gates
     // descartariam os primeiros eventos. Atualiza já — mesmo truque do
@@ -426,6 +441,9 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
       ...(team ? { orchestrate: true, orchestrateIds: effectiveTeam.map(a => a.id) } : {}),
       // Multimodelo: 2+ modelos na mesma mensagem (tem prioridade no backend)
       ...(multiModel ? { multiModel } : {}),
+      // Manifesto otimista-concorrente: o backend confirma que estes mesmos
+      // arquivos ainda existem antes de iniciar qualquer modelo.
+      attachments: availableUploads.map(file => ({ id: file.id, path: file.path, name: file.name, size: file.size })),
       ...(activeDeveloper ? { developer: { mode: activeDeveloper.mode, projectId: activeDeveloper.projectId, github: activeDeveloper.github || null, rules: activeDeveloper.rules } } : {})
     };
     let outcome = null;
