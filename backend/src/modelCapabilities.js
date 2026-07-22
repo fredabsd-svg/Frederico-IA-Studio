@@ -2,7 +2,7 @@
 // `null` means that the provider did not publish enough information. It is
 // intentionally different from `false`: unknown models can still be tried,
 // while known-incompatible models never receive an unsupported parameter.
-export const CAPABILITY_KEYS = Object.freeze(['text', 'tools', 'vision', 'image', 'reasoning', 'video']);
+export const CAPABILITY_KEYS = Object.freeze(['text', 'tools', 'vision', 'image', 'reasoning', 'video', 'audio', 'web', 'files', 'code', 'embeddings']);
 
 const catalog = new Map();
 
@@ -36,7 +36,12 @@ function declaredCapabilities(value) {
     vision: capabilityValue(value.vision, false),
     image: capabilityValue(value.image, false),
     reasoning: capabilityValue(value.reasoning, null),
-    video: capabilityValue(value.video, false)
+    video: capabilityValue(value.video, false),
+    audio: capabilityValue(value.audio, null),
+    web: capabilityValue(value.web, null),
+    files: capabilityValue(value.files, null),
+    code: capabilityValue(value.code, null),
+    embeddings: capabilityValue(value.embeddings, null)
   };
 }
 
@@ -81,7 +86,12 @@ export function deriveModelCapabilities(model = {}) {
     vision: input.includes('image'),
     image: output.includes('image'),
     reasoning: supportedParameters ? Boolean(hasReasoningParameter) : null,
-    video: output.includes('video')
+    video: input.includes('video') || output.includes('video'),
+    audio: input.includes('audio') || output.includes('audio'),
+    web: supportedParameters ? supportedParameters.some(p => p === 'web_search' || p === 'search') : null,
+    files: supportedParameters ? supportedParameters.some(p => p === 'files' || p === 'file_ids') : null,
+    code: supportedParameters ? supportedParameters.some(p => p === 'code_interpreter') : null,
+    embeddings: model.type === 'embedding' || output.includes('embeddings')
   }, String(model.id || ''));
 }
 
@@ -104,6 +114,7 @@ export function modelProfileFromProvider(model = {}) {
     providerName: model.providerName || '',
     providerType: model.providerType || '',
     providerModelId: model.providerModelId || id,
+    family: model.family || String(model.providerModelId || id).split('/')[0].split('-')[0],
     capabilities,
     // null = o provedor não publicou a lista; nesse caso preservamos o
     // comportamento compatível e tentamos os parâmetros comuns. Array = fonte
@@ -116,12 +127,23 @@ export function modelProfileFromProvider(model = {}) {
     image: capabilities.image,
     reasoning: capabilities.reasoning,
     video: capabilities.video,
+    audio: capabilities.audio,
+    web: capabilities.web,
+    files: capabilities.files,
+    code: capabilities.code,
+    embeddings: capabilities.embeddings,
     created: Number(model.created || 0),
     context: Number(model.context_length || model.top_provider?.context_length || model.context || 0),
+    maxOutput: Number(model.max_output_tokens || model.max_completion_tokens || model.top_provider?.max_completion_tokens || 0),
     price: Number.isFinite(promptPrice) ? promptPrice : 0,
     // Preço por token de SAÍDA (completion) — usado na estimativa e no custo
     // real das execuções multimodelo. `price` acima é o de entrada (prompt).
     priceOut: Number.isFinite(completionPrice) ? completionPrice : 0,
+    pricingKnown: hasPricing,
+    active: typeof model.active === 'boolean' ? model.active : null,
+    speed: Number.isFinite(Number(model.speed)) ? Number(model.speed) : null,
+    latency: Number.isFinite(Number(model.latency)) ? Number(model.latency) : null,
+    metadataSource: model.metadata_source || 'provider_api',
     free: typeof model.free === 'boolean'
       ? model.free
       : id.endsWith(':free') || (hasPricing && promptPrice === 0 && completionPrice === 0)

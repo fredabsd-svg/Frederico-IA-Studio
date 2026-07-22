@@ -38,7 +38,12 @@ test('declares the Granite micro capabilities from the provider catalog', () => 
     vision: false,
     image: false,
     reasoning: false,
-    video: false
+    video: false,
+    audio: false,
+    web: false,
+    files: false,
+    code: false,
+    embeddings: false
   });
 });
 

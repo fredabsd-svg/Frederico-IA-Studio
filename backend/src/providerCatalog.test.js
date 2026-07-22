@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { enrichProviderCatalog, importProviderCatalog, normalizeBaseURL } from './providerCatalog.js';
+import { enrichProviderCatalog, fetchProviderBalance, importProviderCatalog, normalizeBaseURL } from './providerCatalog.js';
 import { registerModelCatalog } from './modelCapabilities.js';
 
 test('imports only the catalog returned after an authenticated provider request', async () => {
@@ -74,7 +74,8 @@ test('enriches DeepSeek V4 models with official names, capabilities, context and
     providerId: 'deepseek-key-id', providerName: 'DeepSeek', providerType: 'deepseek'
   });
   assert.deepEqual(profile.capabilities, {
-    text: true, tools: true, vision: false, image: false, reasoning: true, video: false
+    text: true, tools: true, vision: false, image: false, reasoning: true, video: false,
+    audio: false, web: false, files: false, code: false, embeddings: false
   });
   assert.equal(flash.pricing.prompt * 1_000_000, 0.14);
   assert.equal(flash.pricing.completion * 1_000_000, 0.28);
@@ -88,4 +89,47 @@ test('enriches an existing DeepSeek catalog without requiring a key refresh', ()
   assert.equal(model.context_length, 1_000_000);
   assert.deepEqual(model.architecture.input_modalities, ['text']);
   assert.equal(model.supported_parameters.includes('tools'), true);
+});
+
+test('normalizes rich metadata published by different provider APIs', () => {
+  const [model] = enrichProviderCatalog([{
+    id: 'acme/vision', display_name: 'Acme Vision', owned_by: 'acme',
+    context_window: 131072, max_completion_tokens: 8192,
+    input_modalities: ['text', 'image'], output_modalities: ['text'],
+    capabilities: { function_calling: true }, input_price: 0.000001, output_price: 0.000002,
+    tokens_per_second: 250, active: true
+  }], 'custom');
+  assert.equal(model.name, 'Acme Vision');
+  assert.equal(model.context_length, 131072);
+  assert.equal(model.max_output_tokens, 8192);
+  assert.deepEqual(model.architecture.input_modalities, ['text', 'image']);
+  assert.equal(model.capabilities.tools, true);
+  assert.equal(model.pricing.completion, 0.000002);
+  assert.equal(model.speed, 250);
+});
+
+test('reads official OpenRouter and DeepSeek balances without inventing values', async () => {
+  const openrouter = await fetchProviderBalance({
+    apiKey: 'key', providerType: 'openrouter',
+    fetchImpl: async () => ({ ok: true, json: async () => ({ data: { total_credits: 20, total_usage: 3.5 } }) })
+  });
+  assert.equal(openrouter.balance, 16.5);
+  const deepseek = await fetchProviderBalance({
+    apiKey: 'key', providerType: 'deepseek',
+    fetchImpl: async () => ({ ok: true, json: async () => ({ is_available: true, balance_infos: [{ currency: 'USD', total_balance: '8.25' }] }) })
+  });
+  assert.equal(deepseek.balance, 8.25);
+  assert.deepEqual(await fetchProviderBalance({ apiKey: 'key', providerType: 'groq' }), { available: false, reason: 'unsupported' });
+});
+
+test('Alibaba unpurchased access is not mislabeled as an invalid key', async () => {
+  await assert.rejects(() => importProviderCatalog({
+    apiKey: 'valid-key', providerType: 'alibaba', modelHint: 'qwen3.7-plus',
+    fetchImpl: async () => ({ ok: false, status: 404, json: async () => ({}) }),
+    clientFactory: () => ({ chat: { completions: { create: async () => {
+      const error = new Error('AccessDenied.Unpurchased: Model service has not been activated');
+      error.status = 403;
+      throw error;
+    } } } })
+  }), /chave foi reconhecida.*não está habilitado\/comprado/i);
 });

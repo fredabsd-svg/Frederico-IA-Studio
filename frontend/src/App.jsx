@@ -1252,6 +1252,16 @@ export default function App({ user } = {}) {
           <div className="stat"><b>{analytics.totals?.messages || 0}</b><span>mensagens</span></div>
           <div className="stat"><b>{(analytics.totals?.tokens || 0).toLocaleString('pt-BR')}</b><span>tokens no total</span></div>
           <div className="stat"><b>{(analytics.totals?.prompt_tokens || 0).toLocaleString('pt-BR')}</b><span>tokens de entrada</span></div>
+          <div className="stat"><b>{(analytics.totals?.completion_tokens || 0).toLocaleString('pt-BR')}</b><span>tokens de saída</span></div>
+          <div className="stat"><b>{Number(analytics.totals?.estimatedCost || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'USD' })}</b><span>custo estimado*</span></div>
+          <div className="stat"><b>{analytics.totals?.freeMessages || 0} / {analytics.totals?.paidMessages || 0}</b><span>usos grátis / pagos</span></div>
+        </div>
+        <div className="field">
+          <span className="fieldLabel">Por provedor</span>
+          <table className="atable"><thead><tr><th>Provedor</th><th>Msgs</th><th>Entrada</th><th>Saída</th><th>Estimativa</th></tr></thead>
+            <tbody>{(analytics.byProvider || []).map((r, i) => <tr key={i}><td>{r.name}</td><td>{r.messages}</td><td>{(r.prompt_tokens || 0).toLocaleString('pt-BR')}</td><td>{(r.completion_tokens || 0).toLocaleString('pt-BR')}</td><td>{r.pricedMessages ? Number(r.estimatedCost || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'USD' }) : 'Não informado'}</td></tr>)}
+            {(!analytics.byProvider || !analytics.byProvider.length) && <tr><td colSpan={5} className="muted">Sem dados ainda.</td></tr>}</tbody>
+          </table>
         </div>
         <div className="field">
           <span className="fieldLabel">Por assistente</span>
@@ -1262,19 +1272,33 @@ export default function App({ user } = {}) {
         </div>
         <div className="field">
           <span className="fieldLabel">Por modelo de IA</span>
-          <table className="atable"><thead><tr><th>Modelo</th><th>Msgs</th><th>Tokens</th></tr></thead>
-            <tbody>{(analytics.byModel || []).map((r, i) => <tr key={i}><td>{r.model}</td><td>{r.messages}</td><td>{(r.tokens || 0).toLocaleString('pt-BR')}</td></tr>)}
-            {(!analytics.byModel || !analytics.byModel.length) && <tr><td colSpan={3} className="muted">Sem dados ainda.</td></tr>}</tbody>
+          <table className="atable"><thead><tr><th>Modelo</th><th>Provedor</th><th>Msgs</th><th>Tokens</th><th>Estimativa</th></tr></thead>
+            <tbody>{(analytics.byModel || []).map((r, i) => <tr key={i}><td>{r.model}</td><td>{r.providerName}</td><td>{r.messages}</td><td>{(r.tokens || 0).toLocaleString('pt-BR')}</td><td>{r.pricedMessages ? Number(r.estimatedCost || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'USD' }) : 'Não informado'}</td></tr>)}
+            {(!analytics.byModel || !analytics.byModel.length) && <tr><td colSpan={5} className="muted">Sem dados ainda.</td></tr>}</tbody>
           </table>
         </div>
         <div className="field">
           <span className="fieldLabel">Por conversa (15 maiores)</span>
-          <table className="atable"><thead><tr><th>Conversa</th><th>Msgs</th><th>Tokens</th></tr></thead>
-            <tbody>{(analytics.byConversation || []).map((r, i) => <tr key={i}><td>{r.title}</td><td>{r.messages}</td><td>{(r.tokens || 0).toLocaleString('pt-BR')}</td></tr>)}
-            {(!analytics.byConversation || !analytics.byConversation.length) && <tr><td colSpan={3} className="muted">Sem dados ainda.</td></tr>}</tbody>
+          <table className="atable"><thead><tr><th>Conversa</th><th>Msgs</th><th>Tokens</th><th>Estimativa</th></tr></thead>
+            <tbody>{(analytics.byConversation || []).map((r, i) => <tr key={i}><td>{r.title}</td><td>{r.messages}</td><td>{(r.tokens || 0).toLocaleString('pt-BR')}</td><td>{r.pricedMessages ? Number(r.estimatedCost || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'USD' }) : 'Não informado'}</td></tr>)}
+            {(!analytics.byConversation || !analytics.byConversation.length) && <tr><td colSpan={4} className="muted">Sem dados ainda.</td></tr>}</tbody>
           </table>
         </div>
-        <p className="muted" style={{ margin: 0, fontSize: 12 }}>Tokens são a medida de consumo dos modelos. O custo em R$/US$ depende do preço de cada modelo no OpenRouter.</p>
+        <div className="field">
+          <span className="fieldLabel">Consumo mensal (12 meses)</span>
+          <table className="atable"><thead><tr><th>Mês</th><th>Msgs</th><th>Entrada</th><th>Saída</th><th>Estimativa</th></tr></thead>
+            <tbody>{(analytics.byMonth || []).map((r, i) => <tr key={i}><td>{r.name}</td><td>{r.messages}</td><td>{(r.prompt_tokens || 0).toLocaleString('pt-BR')}</td><td>{(r.completion_tokens || 0).toLocaleString('pt-BR')}</td><td>{r.pricedMessages ? Number(r.estimatedCost || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'USD' }) : 'Não informado'}</td></tr>)}
+            {(!analytics.byMonth || !analytics.byMonth.length) && <tr><td colSpan={5} className="muted">Sem dados ainda.</td></tr>}</tbody>
+          </table>
+        </div>
+        <div className="field">
+          <span className="fieldLabel">Consumo diário (31 dias com uso)</span>
+          <table className="atable"><thead><tr><th>Dia</th><th>Msgs</th><th>Tokens</th><th>Estimativa</th></tr></thead>
+            <tbody>{(analytics.byDay || []).map((r, i) => <tr key={i}><td>{r.name}</td><td>{r.messages}</td><td>{(r.tokens || 0).toLocaleString('pt-BR')}</td><td>{r.pricedMessages ? Number(r.estimatedCost || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'USD' }) : 'Não informado'}</td></tr>)}
+            {(!analytics.byDay || !analytics.byDay.length) && <tr><td colSpan={4} className="muted">Sem dados ainda.</td></tr>}</tbody>
+          </table>
+        </div>
+        <p className="muted" style={{ margin: 0, fontSize: 12 }}>* A estimativa interna usa os preços publicados no catálogo atual do respectivo provedor. Ela não é uma fatura nem um saldo oficial. Consulte o cartão do provedor para o saldo oficial quando a API o disponibilizar.</p>
       </>}
     </Drawer>}
 

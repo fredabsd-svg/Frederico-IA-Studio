@@ -1,13 +1,13 @@
 import { createAiClient } from './aiClient.js';
 
 export const PROVIDER_PRESETS = Object.freeze({
-  openrouter: { name: 'OpenRouter', baseURL: 'https://openrouter.ai/api/v1' },
-  nvidia: { name: 'NVIDIA', baseURL: 'https://integrate.api.nvidia.com/v1' },
-  deepseek: { name: 'DeepSeek', baseURL: 'https://api.deepseek.com' },
-  alibaba: { name: 'Alibaba Model Studio', baseURL: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1' },
-  groq: { name: 'Groq', baseURL: 'https://api.groq.com/openai/v1' },
-  gemini: { name: 'Google Gemini', baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai' },
-  mistral: { name: 'Mistral AI', baseURL: 'https://api.mistral.ai/v1' },
+  openrouter: { name: 'OpenRouter', baseURL: 'https://openrouter.ai/api/v1', dashboardURL: 'https://openrouter.ai/activity', billingURL: 'https://openrouter.ai/settings/credits', balance: 'openrouter' },
+  nvidia: { name: 'NVIDIA', baseURL: 'https://integrate.api.nvidia.com/v1', dashboardURL: 'https://build.nvidia.com/settings/api-keys', billingURL: 'https://build.nvidia.com/settings/api-keys' },
+  deepseek: { name: 'DeepSeek', baseURL: 'https://api.deepseek.com', dashboardURL: 'https://platform.deepseek.com/usage', billingURL: 'https://platform.deepseek.com/top_up', balance: 'deepseek' },
+  alibaba: { name: 'Alibaba Model Studio', baseURL: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1', dashboardURL: 'https://modelstudio.console.alibabacloud.com/', billingURL: 'https://billing-cost.console.aliyun.com/' },
+  groq: { name: 'Groq', baseURL: 'https://api.groq.com/openai/v1', dashboardURL: 'https://console.groq.com/dashboard/usage', billingURL: 'https://console.groq.com/settings/billing' },
+  gemini: { name: 'Google Gemini', baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai', dashboardURL: 'https://aistudio.google.com/usage', billingURL: 'https://console.cloud.google.com/billing' },
+  mistral: { name: 'Mistral AI', baseURL: 'https://api.mistral.ai/v1', dashboardURL: 'https://console.mistral.ai/usage/', billingURL: 'https://console.mistral.ai/billing/' },
   custom: { name: 'OpenAI compatível', baseURL: '' }
 });
 
@@ -37,6 +37,15 @@ const DEEPSEEK_MODEL_METADATA = Object.freeze({
 export function normalizeProviderType(value) {
   const key = String(value || '').trim().toLowerCase();
   return Object.hasOwn(PROVIDER_PRESETS, key) ? key : 'custom';
+}
+
+export function providerPublicMetadata(providerType) {
+  const preset = PROVIDER_PRESETS[normalizeProviderType(providerType)];
+  return {
+    dashboardURL: preset.dashboardURL || '',
+    billingURL: preset.billingURL || '',
+    officialBalanceSupported: Boolean(preset.balance)
+  };
 }
 
 export function normalizeBaseURL(value, providerType = 'custom') {
@@ -78,6 +87,57 @@ function enrichProviderModel(model, providerType) {
   };
 }
 
+function numberOrNull(...values) {
+  for (const value of values) {
+    if (value === '' || value == null) continue;
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function boolOrNull(...values) {
+  for (const value of values) if (value === true || value === false) return value;
+  return null;
+}
+
+function canonicalModel(model, providerType) {
+  const architecture = model.architecture || {};
+  const capabilities = model.capabilities || {};
+  const pricing = model.pricing || {};
+  const input = architecture.input_modalities || model.input_modalities || model.modalities?.input;
+  const output = architecture.output_modalities || model.output_modalities || model.modalities?.output;
+  const prompt = numberOrNull(pricing.prompt, pricing.input, model.input_price);
+  const completion = numberOrNull(pricing.completion, pricing.output, model.output_price);
+  const family = String(model.family || model.owned_by || model.id || '').split('/')[0].split(':')[0];
+  const normalizedCapabilities = { ...capabilities };
+  const normalizedArchitecture = {
+    ...architecture,
+    ...(Array.isArray(input) ? { input_modalities: input.map(String) } : {}),
+    ...(Array.isArray(output) ? { output_modalities: output.map(String) } : {})
+  };
+  for (const [key, value] of Object.entries({
+    tools: boolOrNull(capabilities.tools, capabilities.function_calling),
+    vision: boolOrNull(capabilities.vision),
+    reasoning: boolOrNull(capabilities.reasoning),
+    embeddings: boolOrNull(capabilities.embeddings, model.type === 'embedding' ? true : null)
+  })) if (value != null) normalizedCapabilities[key] = value;
+  return enrichProviderModel({
+    ...model,
+    name: String(model.name || model.display_name || '').trim(),
+    family,
+    context_length: numberOrNull(model.context_length, model.context_window, model.max_context_length, model.top_provider?.context_length),
+    max_output_tokens: numberOrNull(model.max_output_tokens, model.max_completion_tokens, model.top_provider?.max_completion_tokens),
+    pricing: { ...pricing, ...(prompt != null ? { prompt } : {}), ...(completion != null ? { completion } : {}) },
+    ...(Object.keys(normalizedArchitecture).length ? { architecture: normalizedArchitecture } : {}),
+    ...(Object.keys(normalizedCapabilities).length ? { capabilities: normalizedCapabilities } : {}),
+    active: boolOrNull(model.active, model.status === 'active' ? true : null),
+    speed: numberOrNull(model.speed, model.tokens_per_second),
+    latency: numberOrNull(model.latency, model.latency_ms),
+    metadata_source: 'provider_api'
+  }, providerType);
+}
+
 function normalizedCatalog(data, providerType = 'custom') {
   const source = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : [];
   const seen = new Set();
@@ -85,7 +145,7 @@ function normalizedCatalog(data, providerType = 'custom') {
     .filter(item => item && typeof item === 'object')
     .map(item => ({ ...item, id: String(item.id || '').trim() }))
     .filter(item => item.id && item.id.length <= 300 && !seen.has(item.id) && seen.add(item.id))
-    .map(item => enrichProviderModel(item, providerType));
+    .map(item => canonicalModel(item, providerType));
 }
 
 // Também corrige catálogos já armazenados antes deste enriquecimento, para que
@@ -101,14 +161,20 @@ async function responseError(response, providerType = 'custom') {
     const body = await response.json();
     detail = body?.error?.message || body?.message || body?.error || '';
   } catch {}
-  if (response.status === 401 || response.status === 403) {
+  if (response.status === 401) {
     if (providerType === 'alibaba') return 'A chave foi recusada. Confirme que a URL base é o campo openAiCompatible do mesmo CSV, workspace e região.';
     return 'A chave foi recusada pelo provedor.';
+  }
+  if (response.status === 403) {
+    if (providerType === 'alibaba' && /unpurchased|accessdenied/i.test(String(detail))) {
+      return `A chave foi reconhecida, mas o serviço ou modelo ainda não está habilitado/comprado neste workspace. ${detail}`.slice(0, 300);
+    }
+    return String(detail || 'A chave não tem permissão para este recurso no provedor.').slice(0, 300);
   }
   return String(detail || `O provedor respondeu com HTTP ${response.status}.`).slice(0, 300);
 }
 
-export async function importProviderCatalog({ apiKey, baseURL, providerType = 'custom', modelHint = '', fetchImpl = fetch, clientFactory = createAiClient, timeoutMs = 15000 } = {}) {
+export async function importProviderCatalog({ apiKey, baseURL, providerType = 'custom', modelHint = '', allowModelValidation = true, fetchImpl = fetch, clientFactory = createAiClient, timeoutMs = 15000 } = {}) {
   const key = String(apiKey || '').trim();
   if (!key) throw new Error('Informe a chave de API.');
   const type = normalizeProviderType(providerType);
@@ -131,6 +197,7 @@ export async function importProviderCatalog({ apiKey, baseURL, providerType = 'c
   // casos só aceitamos um modelo explicitamente informado e comprovamos a
   // credencial com uma chamada mínima; não inventamos um catálogo genérico.
   const hinted = String(modelHint || '').trim();
+  if (!allowModelValidation) throw listFailure;
   if (!hinted) throw listFailure;
   try {
     const client = clientFactory({ apiKey: key, baseURL: base });
@@ -142,11 +209,44 @@ export async function importProviderCatalog({ apiKey, baseURL, providerType = 'c
     }, { timeout: timeoutMs });
     return { baseURL: base, models: [{ id: hinted, name: hinted }], validation: 'model' };
   } catch (error) {
-    const message = error?.status === 401 || error?.status === 403
+    const detail = String(error?.message || error?.error?.message || '');
+    const status = Number(error?.status || error?.response?.status || 0);
+    const message = status === 401
       ? (type === 'alibaba'
           ? 'A chave foi recusada. Confirme que a URL base é o campo openAiCompatible do mesmo CSV, workspace e região.'
           : 'A chave foi recusada pelo provedor.')
-      : (error?.message || listFailure?.message || 'Não foi possível validar a chave.');
+      : status === 403 && type === 'alibaba' && /unpurchased|accessdenied/i.test(detail)
+        ? `A chave foi reconhecida, mas o serviço ou modelo ainda não está habilitado/comprado neste workspace. ${detail}`
+        : (detail || listFailure?.message || 'Não foi possível validar a chave.');
     throw new Error(String(message).slice(0, 300));
+  }
+}
+
+async function balanceResponse(response) {
+  if (!response.ok) throw new Error(await responseError(response));
+  return response.json();
+}
+
+export async function fetchProviderBalance({ apiKey, baseURL, providerType, fetchImpl = fetch, timeoutMs = 12000 } = {}) {
+  const type = normalizeProviderType(providerType);
+  const preset = PROVIDER_PRESETS[type];
+  if (!preset.balance) return { available: false, reason: 'unsupported' };
+  const base = normalizeBaseURL(baseURL, type);
+  const endpoint = preset.balance === 'openrouter' ? `${base}/credits` : `${base}/user/balance`;
+  try {
+    const data = await balanceResponse(await fetchImpl(endpoint, {
+      headers: { Authorization: `Bearer ${String(apiKey || '').trim()}`, Accept: 'application/json' },
+      signal: AbortSignal.timeout(timeoutMs)
+    }));
+    if (type === 'openrouter') {
+      const value = data?.data || data;
+      const total = numberOrNull(value?.total_credits);
+      const used = numberOrNull(value?.total_usage);
+      return { available: true, currency: 'USD', total, used, balance: total != null && used != null ? total - used : null };
+    }
+    const entries = Array.isArray(data?.balance_infos) ? data.balance_infos : [];
+    return { available: Boolean(data?.is_available ?? entries.length), currency: entries[0]?.currency || 'USD', balance: numberOrNull(entries[0]?.total_balance), details: entries };
+  } catch (error) {
+    return { available: false, reason: 'provider_error', error: String(error?.message || 'Saldo indisponível.').slice(0, 240) };
   }
 }
