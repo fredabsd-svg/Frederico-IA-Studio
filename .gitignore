@@ -13,3 +13,7 @@ workspaces/
 npm-debug.log*
 .DS_Store
 __pycache__/
+
+# Artefatos gerados ao rodar os testes (workspaces temporários)
+.test-workspaces/
+backend/.test-workspaces/
