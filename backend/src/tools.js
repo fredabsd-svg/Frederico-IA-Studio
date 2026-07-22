@@ -476,10 +476,10 @@ export const imageToolDefinitions = [
 async function generateImage(ws, args, options = {}) {
   const model = process.env.IMAGE_MODEL || 'google/gemini-2.5-flash-image';
   // Usa o MESMO provedor/chave do chat deste usuário (BYOK/gratuito/servidor).
-  // Antes fixava a chave/base do .env: num deploy sem chave própria do servidor
-  // (SaaS com ALLOW_SHARED_KEY=false, ou usuário no modo gratuito) o header saía
+  // Antes fixava a chave/base do .env: num deploy sem chave própria do usuário
+  // (ou usuário no modo gratuito) o header saía
   // "Bearer undefined" → 401, e a imagem nunca era gerada mesmo com o chat OK.
-  const provider = await getUserProvider(options.userId);
+  const provider = await getUserProvider(options.userId, options.model);
   if (!provider.hasKey) {
     return { error: 'Nenhuma chave de API configurada para gerar imagens. Cadastre a sua chave em Configurações → Provedor de IA.', code: 'NO_API_KEY' };
   }

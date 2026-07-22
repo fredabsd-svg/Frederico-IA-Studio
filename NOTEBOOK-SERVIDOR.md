@@ -43,11 +43,12 @@ nano .env
 Preencha no mínimo:
 
 ```env
-DEEPSEEK_API_KEY=sk-or-sua_chave
-DEEPSEEK_BASE_URL=https://openrouter.ai/api/v1
-DEEPSEEK_MODEL=deepseek/deepseek-chat
-APP_PASSWORD=uma_senha_forte      # obrigatório: o app ficará acessível de fora
+BETTER_AUTH_SECRET=gere_com_openssl_rand_hex_32
+ENCRYPTION_KEY=gere_outro_com_openssl_rand_hex_32
 ```
+
+Depois de entrar, cadastre uma ou mais chaves em **Provedores de IA**. Sem uma
+chave validada, nenhum modelo é carregado para a conta.
 
 (`DOMAIN` só é usado na opção B.)
 

@@ -1,4 +1,3 @@
-import { createAiClient } from '../aiClient.js';
 import { db, now } from '../db.js';
 import { nanoid } from 'nanoid';
 import { embed } from './embeddings.js';
@@ -11,14 +10,6 @@ import { untrustedContext } from '../agent/promptRegistry.js';
 // Indexa conversas (chunks + resumo) e extrai fatos importantes para a
 // memória de longo prazo. Roda em segundo plano, sem atrasar as respostas.
 
-let _client = null;
-function client() {
-  if (!_client) _client = createAiClient({
-    apiKey: process.env.DEEPSEEK_API_KEY || 'sem-chave',
-    baseURL: process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com'
-  });
-  return _client;
-}
 // Fallback coerente com a base URL: OpenRouter usa ids com barra; a API
 // nativa da DeepSeek usa 'deepseek-chat'.
 const EXTRACT_MODEL = () => process.env.EXTRACT_MODEL || process.env.DEEPSEEK_MODEL ||

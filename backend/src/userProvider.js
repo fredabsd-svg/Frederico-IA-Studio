@@ -1,69 +1,86 @@
-// BYOK (Bring Your Own Key): resolve o provedor de IA de cada usuário.
-// Ordem de prioridade:
-//   1. chave PRÓPRIA (cifrada em user_settings);
-//   2. MODO GRATUITO (usuário aderiu no primeiro acesso e o servidor tem
-//      FREE_TIER_API_KEY) — chave da plataforma, com limites e allowlist de
-//      modelos (ver freeTier.js);
-//   3. chave do servidor (.env) quando permitido por ALLOW_SHARED_KEY.
-//
-// ALLOW_SHARED_KEY: padrão LIGADO (instância pessoal — a chave do .env vale para
-// quem não cadastrou a própria, sem quebrar nada). Numa SaaS pública, ponha
-// ALLOW_SHARED_KEY=false para que o servidor NÃO pague a conta de ninguém —
-// aí cada usuário usa o modo gratuito ou cadastra a própria chave.
+// Resolve a credencial dona de cada modelo. Um model ref tem a forma
+// "<provider-id>::<model-id-real>"; isso evita colisões entre catálogos e faz
+// os modos mono/multi-modelo usarem a chave correta em cada chamada.
 import { createAiClient } from './aiClient.js';
 import { db } from './db.js';
 import { decryptSecret } from './crypto.js';
 import { getFreeTierConfig, isFreeModeOptedIn } from './freeTier.js';
+import { makeModelRef, parseModelRef } from './modelRef.js';
 
-const SERVER_KEY = process.env.DEEPSEEK_API_KEY || '';
-const SERVER_BASE = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com';
-const SERVER_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
-const ALLOW_SHARED = process.env.ALLOW_SHARED_KEY !== 'false';
+function parsedModels(row) {
+  try { const models = JSON.parse(row?.models || '[]'); return Array.isArray(models) ? models : []; }
+  catch { return []; }
+}
 
-export async function getUserProvider(userId) {
-  let apiKey = '', baseURL = SERVER_BASE, model = SERVER_MODEL, source = 'none';
-  let freeMode = false;
+function none(model = '') {
+  return { hasKey: false, source: 'none', id: null, baseURL: '', model, modelRef: model, apiKey: '', client: null };
+}
+
+async function userRows(userId) {
+  if (!userId) return [];
   try {
-    const row = userId && await db.prepare('SELECT api_key_enc, base_url, model, free_mode FROM user_settings WHERE user_id=?').get(userId);
-    freeMode = Number(row?.free_mode || 0) === 1;
-    if (row?.api_key_enc) {
-      const dec = decryptSecret(row.api_key_enc);
-      if (dec) { apiKey = dec; source = 'user'; if (row.base_url) baseURL = row.base_url; if (row.model) model = row.model; }
-    } else if (row) {
-      // Usuário salvou base_url/model sem chave própria — respeita esses.
-      if (row.base_url) baseURL = row.base_url;
-      if (row.model) model = row.model;
-    }
-  } catch {}
-  // MODO GRATUITO: sem chave própria, quem aderiu usa a chave da plataforma.
-  // O modelo é SEMPRE um da allowlist gratuita (o usuário não escolhe um modelo
-  // pago na conta da casa); os demais habilitados viram cadeia de reserva.
-  if (!apiKey && freeMode) {
-    const free = await getFreeTierConfig();
-    if (free.configured && free.enabled) {
-      return {
-        hasKey: true,
-        source: 'free',
-        baseURL: free.baseURL,
-        model: free.models[0],
-        freeModels: free.models,
-        fallbackModels: free.models.slice(1),
-        providerName: free.providerName,
-        apiKey: free.apiKey,
-        client: createAiClient({ apiKey: free.apiKey, baseURL: free.baseURL }),
-      };
-    }
+    return await db.prepare('SELECT * FROM user_ai_providers WHERE user_id=? ORDER BY created_at ASC').all(userId);
+  } catch {
+    return [];
   }
-  if (!apiKey && ALLOW_SHARED && SERVER_KEY) { apiKey = SERVER_KEY; source = 'server'; }
+}
+
+function providerFromRow(row, requestedModel = '') {
+  const apiKey = decryptSecret(row.api_key_enc);
+  if (!apiKey) return none(requestedModel);
+  const models = parsedModels(row);
+  const model = String(requestedModel || row.default_model || models[0]?.id || '').trim();
   return {
-    hasKey: !!apiKey,
-    source,          // 'user' | 'free' | 'server' | 'none'
-    baseURL,
+    hasKey: true,
+    source: 'user',
+    id: row.id,
+    providerType: row.provider_type,
+    providerName: row.name,
+    baseURL: row.base_url,
     model,
-    apiKey,          // chave crua (uso interno no servidor: ex. listar o catálogo do provedor do usuário)
-    client: apiKey ? createAiClient({ apiKey, baseURL }) : null,
+    modelRef: makeModelRef(row.id, model),
+    models,
+    apiKey,
+    client: createAiClient({ apiKey, baseURL: row.base_url })
   };
 }
 
-// Reexporta a checagem de adesão para os call sites que já importam daqui.
+async function freeProvider(userId, requestedModel = '') {
+  if (!await isFreeModeOptedIn(userId)) return null;
+  const free = await getFreeTierConfig();
+  if (!free.configured || !free.enabled) return null;
+  const raw = (free.models || []).includes(requestedModel) ? requestedModel : free.models[0];
+  return {
+    hasKey: true,
+    source: 'free',
+    id: 'free',
+    providerType: 'free',
+    providerName: free.providerName,
+    baseURL: free.baseURL,
+    model: raw,
+    modelRef: makeModelRef('free', raw),
+    freeModels: free.models.map(model => makeModelRef('free', model)),
+    fallbackModels: free.models.slice(1).map(model => makeModelRef('free', model)),
+    apiKey: free.apiKey,
+    client: createAiClient({ apiKey: free.apiKey, baseURL: free.baseURL })
+  };
+}
+
+export async function getUserProvider(userId, requestedRef = '') {
+  const parsed = parseModelRef(requestedRef);
+  if (parsed.providerId === 'free') return (await freeProvider(userId, parsed.modelId)) || none(requestedRef);
+
+  const rows = await userRows(userId);
+  let row = parsed.providerId ? rows.find(item => item.id === parsed.providerId) : null;
+  if (!row && parsed.modelId) {
+    row = rows.find(item => parsedModels(item).some(model => model.id === parsed.modelId));
+  }
+  if (!row && !parsed.providerId) row = rows[0];
+  if (row) return providerFromRow(row, parsed.modelId);
+
+  // O modo gratuito é uma escolha explícita. Não há mais fallback implícito
+  // para a chave compartilhada do servidor: conta nova sem chave vê zero modelos.
+  return (await freeProvider(userId, parsed.modelId)) || none(requestedRef);
+}
+
 export { isFreeModeOptedIn };

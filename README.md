@@ -36,7 +36,7 @@ você escolhe é enviado direto ao provedor, sem substituição.
 | | Recurso | Descrição |
 |---|---|---|
 | 👤 | **Multiusuário isolado** | Login por conta (Better Auth); cada pessoa só vê os próprios dados, conversas e arquivos |
-| 🔑 | **Cada um com sua chave (BYOK)** | Cada usuário cadastra a própria chave de IA — dá para exigir isso num site público (`ALLOW_SHARED_KEY=false`) |
+| 🔑 | **Múltiplos provedores por pessoa** | Cada usuário cadastra e valida suas próprias chaves; OpenRouter, NVIDIA, DeepSeek, Alibaba e outros catálogos ficam isolados |
 | 🤖 | **Assistentes personalizados** | Instruções, modelos, ferramentas e personalidade próprios |
 | 📄 | **Arquivos reais no chat** | Excel, Word, PDF, CSV, ZIP, imagens, gráficos e OCR |
 | 🎨 | **Documentos com design de agência** | O assistente "Documentos profissionais" usa kits prontos e testados (Word, Excel e PDF) — capa, tabelas estilizadas, gráficos, callouts e rodapé paginado; modo **sóbrio/registrável** (ata, contrato) justificado e sem cor para a Junta Comercial |
@@ -162,14 +162,13 @@ Copy-Item .env.example .env
 Preencha ao menos estes valores no `.env`:
 
 ```env
-DEEPSEEK_API_KEY=sua_chave
-DEEPSEEK_BASE_URL=https://openrouter.ai/api/v1
-DEEPSEEK_MODEL=deepseek/deepseek-chat
-
 BETTER_AUTH_URL=http://localhost:5173
 BETTER_AUTH_SECRET=gere_com_openssl_rand_hex_32
 ENCRYPTION_KEY=gere_outro_com_openssl_rand_hex_32
 ```
+
+Depois de entrar no aplicativo, abra **Provedores de IA** e cadastre uma ou
+mais chaves. Os modelos só aparecem após a validação da respectiva chave.
 
 > GitHub e Google são opcionais — deixe as credenciais OAuth vazias para usar só e-mail/senha.
 
@@ -219,14 +218,12 @@ docker compose up --build -d
 
 | Variável | Padrão | Finalidade |
 |---|---|---|
-| `DEEPSEEK_API_KEY` | — | Chave do provedor de IA |
-| `DEEPSEEK_BASE_URL` | DeepSeek | Base compatível com OpenAI |
-| `DEEPSEEK_MODEL` | deepseek-chat | Modelo principal |
+| `DEEPSEEK_BASE_URL` | DeepSeek | Base usada como referência para tarefas internas legadas |
+| `DEEPSEEK_MODEL` | deepseek-chat | Modelo de referência para tarefas internas legadas |
 | `OPENROUTER_PROVIDER_SORT` | automático | Ordenação opcional de provedores no OpenRouter |
 | `BETTER_AUTH_URL` | http://localhost:5173 | Origem pública do app e callbacks OAuth |
 | `BETTER_AUTH_SECRET` | — | Segredo de sessão do Better Auth |
 | `ENCRYPTION_KEY` | — | Criptografa a chave de IA de cada usuário (BYOK) no banco |
-| `ALLOW_SHARED_KEY` | true | `false` num site público: cada usuário precisa da própria chave |
 | `FREE_TIER_API_KEY` | — | Liga o **modo gratuito**: chave da plataforma (só no servidor) para novos usuários conversarem sem configurar nada |
 | `FREE_TIER_BASE_URL` | OpenRouter | Base OpenAI-compatível do modo gratuito |
 | `FREE_TIER_MODELS` | modelos `:free` | Allowlist de modelos gratuitos, em ordem de preferência (o 1º é o padrão; os demais são reserva) |

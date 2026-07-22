@@ -63,7 +63,7 @@ export function estimateMultiCost(config, models, messageChars = 800) {
     if (!m) { unknown = true; continue; }
     const pIn = Number(m.price || 0);
     const pOut = Number(m.priceOut || 0);
-    if (!pIn && !pOut && !(m.free || m.id.endsWith(':free'))) { unknown = true; continue; }
+    if (!pIn && !pOut && !(m.free || (m.providerModelId || m.id).endsWith(':free'))) { unknown = true; continue; }
     total += callsPerModel * (inTokens * pIn + outTokens * pOut);
   }
   if (config.mode === 'council' || config.mode === 'debate') {
@@ -108,7 +108,7 @@ export function MultiModelPicker({ models, value, onChange, showToast }) {
 
   const sorted = [...models].sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id)));
   const byId = new Map(models.map(m => [m.id, m]));
-  const defaultModelId = sorted.find(m => !m.id.endsWith(':free'))?.id || sorted[0]?.id || '';
+  const defaultModelId = sorted.find(m => !(m.providerModelId || m.id).endsWith(':free'))?.id || sorted[0]?.id || '';
   const estimate = estimateMultiCost(config, models);
   const expensive = config.models.some(mm => Number(byId.get(mm.id)?.price || 0) >= EXPENSIVE_PROMPT_PRICE);
   const needsCoordinator = config.mode === 'council' || config.mode === 'debate';
@@ -196,7 +196,7 @@ export function MultiModelPicker({ models, value, onChange, showToast }) {
                 <span className="mmMemberIdx">{i + 1}</span>
                 <select value={member.id} onChange={e => setMember(i, { id: e.target.value })} title={member.id}>
                   {!byId.has(member.id) && <option value={member.id}>{member.id}</option>}
-                  {sorted.map(m => <option key={m.id} value={m.id} disabled={m.capabilities?.text === false}>{m.name || m.id}{m.free || m.id.endsWith(':free') ? ' · grátis' : ''}</option>)}
+                  {sorted.map(m => <option key={m.id} value={m.id} disabled={m.capabilities?.text === false}>{m.providerName ? `${m.providerName} · ` : ''}{m.name || m.providerModelId || m.id}{m.free || (m.providerModelId || m.id).endsWith(':free') ? ' · grátis' : ''}</option>)}
                 </select>
                 <select value={member.role || 'livre'} onChange={e => setMember(i, { role: e.target.value })}>
                   {MULTI_ROLE_OPTIONS.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
@@ -212,8 +212,8 @@ export function MultiModelPicker({ models, value, onChange, showToast }) {
           {needsCoordinator && <div className="mmFieldRow">
             <label>Coordenador (consolida a resposta final)
               <select value={config.coordinator || config.models[0]?.id || ''} onChange={e => patch({ coordinator: e.target.value })}>
-                {config.models.map((m, i) => <option key={i} value={m.id}>{byId.get(m.id)?.name || m.id}</option>)}
-                {sorted.filter(m => !config.models.some(x => x.id === m.id)).map(m => <option key={m.id} value={m.id}>{m.name || m.id}</option>)}
+                {config.models.map((m, i) => { const info = byId.get(m.id); return <option key={i} value={m.id}>{info?.providerName ? `${info.providerName} · ` : ''}{info?.name || m.id}</option>; })}
+                {sorted.filter(m => !config.models.some(x => x.id === m.id)).map(m => <option key={m.id} value={m.id}>{m.providerName ? `${m.providerName} · ` : ''}{m.name || m.id}</option>)}
               </select>
             </label>
             {config.mode === 'debate' && <label>Rodadas

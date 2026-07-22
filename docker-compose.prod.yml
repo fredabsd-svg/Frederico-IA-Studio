@@ -4,8 +4,8 @@
 #   BETTER_AUTH_URL=https://seu.dominio.com.br
 #   BETTER_AUTH_SECRET=<openssl rand -hex 32>
 #   ENCRYPTION_KEY=<openssl rand -hex 32>
-#   DEEPSEEK_API_KEY / DEEPSEEK_BASE_URL / DEEPSEEK_MODEL  (chave do servidor, opcional se BYOK)
-#   ALLOW_SHARED_KEY=false  (recomendado num site público: cada usuário usa a própria chave)
+#   As chaves de IA são cadastradas e validadas por usuário dentro do aplicativo.
+#   FREE_TIER_API_KEY é opcional, somente para o modo gratuito patrocinado.
 #   GITHUB_/GOOGLE_ OAuth (opcional; e-mail+senha funciona sem eles)
 # O acesso agora é por LOGIN DE USUÁRIO (Better Auth) — não existe mais APP_PASSWORD.
 services:

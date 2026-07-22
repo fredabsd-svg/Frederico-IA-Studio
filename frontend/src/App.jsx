@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import { Download, FileText, FileSpreadsheet, FilePenLine, Plus, ArrowUp, Upload, Trash2, Bot, Brain, X, BarChart3, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench, CalendarClock, Inbox, Palette, Gauge, SlidersHorizontal, Paperclip, MoreHorizontal, FolderOpen, Code2, ChevronRight, ShieldCheck, LogOut, KeyRound, Camera, Cable, MessageCircleQuestion, Bug, PanelRight, Lock, Unlock } from 'lucide-react';
-import { API, FALLBACK_MODELS, TOOL_INFO, TEMPLATES, QUICK_ACTIONS, THEMES, WORKSPACES, EFFORTS, EFFORT_DESC, ASSISTANT_ICONS, ASSISTANT_COLORS, isAssistantIcon, DEV_WORK_MODES, MAX_ASSISTANT_PROFILE_CHARS } from './constants.js';
+import { API, TOOL_INFO, TEMPLATES, QUICK_ACTIONS, THEMES, WORKSPACES, EFFORTS, EFFORT_DESC, ASSISTANT_ICONS, ASSISTANT_COLORS, isAssistantIcon, DEV_WORK_MODES, MAX_ASSISTANT_PROFILE_CHARS } from './constants.js';
 import { signOut } from './authClient.js';
 import { Slider, Modal, Drawer, Collapsible, useAppDialog } from './components.jsx';
 import { ExecutionSession } from './components/ExecutionSession.jsx';
@@ -97,8 +97,8 @@ const DEVELOPER_QUICK_ACTIONS = [
 export default function App({ user } = {}) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
-  const [allModels, setAllModels] = useState(FALLBACK_MODELS);
-  const [model, setModel] = useState(FALLBACK_MODELS[0].id);
+  const [allModels, setAllModels] = useState([]);
+  const [model, setModel] = useState('');
   const [memoryOpen, setMemoryOpen] = useState(false);
   const [pcOpen, setPcOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
@@ -606,10 +606,9 @@ export default function App({ user } = {}) {
     try {
       const res = await fetch(`${API}/api/models`);
       const data = await res.json();
-      if (data.models?.length) {
-        setAllModels(data.models);
-        setModel(prev => data.models.some(m => m.id === prev) ? prev : (data.models.find(modelHasTools)?.id || data.models[0].id));
-      }
+      const models = Array.isArray(data.models) ? data.models : [];
+      setAllModels(models);
+      setModel(prev => models.some(m => m.id === prev) ? prev : (models.find(modelHasTools)?.id || models[0]?.id || ''));
     } catch {}
   }
 
@@ -1188,7 +1187,9 @@ export default function App({ user } = {}) {
     {providerOpen && <ProviderPanel showToast={showToast} freeStatus={freeStatus}
       onOpenWizard={() => { setProviderOpen(false); setKeyWizardOpen(true); }}
       onFreeChange={refreshFreeStatus}
-      onClose={() => { setProviderOpen(false); refreshFreeStatus(); }}/>}
+      onProvidersChange={loadModels}
+      onClose={() => { setProviderOpen(false); refreshFreeStatus(); loadModels(); }}
+    />}
     {freeOnbOpen && <FreeOnboarding status={freeStatus} showToast={showToast}
       onStarted={() => { setFreeOnbOpen(false); refreshFreeStatus(); loadModels(); }}
       onOpenWizard={() => { setFreeOnbOpen(false); setKeyWizardOpen(true); }}

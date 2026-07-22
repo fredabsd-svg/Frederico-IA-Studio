@@ -2,6 +2,7 @@
 // os pareceres pelo coordenador e delega a execução real ao runAgent.
 // Extraído de agent.js (refatoração mecânica, sem mudança de comportamento).
 import { getUserProvider } from '../userProvider.js';
+import { rawModelId } from '../modelRef.js';
 import { db } from '../db.js';
 import { buildContext } from '../memory/contextBuilder.js';
 import { indexAfterReply } from '../memory/indexer.js';
@@ -21,7 +22,7 @@ No Modo Equipe, os especialistas individuais desta etapa NÃO executam ferrament
 
 // Orquestrador: aciona vários assistentes e um coordenador une as respostas
 export async function runOrchestrator({ userId, conversationId, userText, model, assistants = [], executor = null, webSearch = false, effort, developer, onEvent }) {
-  const provider = await getUserProvider(userId);            // BYOK
+  const provider = await getUserProvider(userId, model);     // chave dona do coordenador
   const client = provider.client;                            // sombreia o cliente global
   const control = acquireConversationControl(conversationId, userId);
   try {
@@ -29,10 +30,10 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
   const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
   // MODO GRATUITO: o coordenador (e os membros, que herdam via member.model ||
   // coordModel) fica restrito à allowlist gratuita da plataforma.
-  let coordModel = model || provider.model;
+  let coordModel = model && model.includes('::') ? model : (provider.modelRef || model);
   if (provider.source === 'free') {
     const allowed = provider.freeModels || [];
-    if (!allowed.includes(coordModel)) coordModel = provider.model;
+    if (!allowed.includes(coordModel)) coordModel = provider.modelRef;
     // Assistentes/executor com modelo próprio fora da allowlist herdam o
     // coordenador (member.model || coordModel) em vez de gastar modelo pago.
     assistants = assistants.map(a => allowed.includes(a.model) ? a : { ...a, model: null });
@@ -88,7 +89,7 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
       let activeRequest;
       try {
         activeRequest = beginProviderRequest(control);
-        const stream = await client.chat.completions.create({ model: coordModel, messages: msgs, ...(supportsModelParameter(getModelProfile(coordModel), 'temperature') ? { temperature: 0.3 } : {}), ...openRouterRouting(false, provider.baseURL), stream: true, stream_options: { include_usage: true } }, { signal: activeRequest.signal, timeout: PROVIDER_CONNECT_TIMEOUT_MS });
+        const stream = await client.chat.completions.create({ model: rawModelId(coordModel), messages: msgs, ...(supportsModelParameter(getModelProfile(coordModel), 'temperature') ? { temperature: 0.3 } : {}), ...openRouterRouting(false, provider.baseURL), stream: true, stream_options: { include_usage: true } }, { signal: activeRequest.signal, timeout: PROVIDER_CONNECT_TIMEOUT_MS });
         for await (const chunk of guardStreamStall(stream, { onStall: () => activeRequest.abort('stall') })) {
           if (await gate(control, onEvent)) { stopped = true; return text; }
           if (chunk.usage) addUsage(usage, chunk.usage);
@@ -137,6 +138,10 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
   const TEAM_MEMBER_CONTINUATIONS = Math.max(0, Number(process.env.TEAM_MEMBER_CONTINUATIONS || 2));
   async function askTeamMember(member, baseMsgs) {
     const msgs = [...baseMsgs];
+    const requestedMemberModel = member.model || coordModel;
+    const memberProvider = await getUserProvider(userId, requestedMemberModel);
+    const memberModel = requestedMemberModel.includes('::') ? requestedMemberModel : (memberProvider.modelRef || requestedMemberModel);
+    if (!memberProvider.client) return { error: new Error('A credencial deste provedor não está mais disponível.') };
     const memberUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
     let text = '';
     let truncated = false;
@@ -145,8 +150,7 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
       const activeRequest = beginProviderRequest(control);
       let completion;
       try {
-        const memberModel = member.model || coordModel;
-        completion = await client.chat.completions.create({ model: memberModel, messages: msgs, ...(supportsModelParameter(getModelProfile(memberModel), 'temperature') ? { temperature: 0.3 } : {}), ...openRouterRouting(false, provider.baseURL) }, { signal: activeRequest.signal });
+        completion = await memberProvider.client.chat.completions.create({ model: rawModelId(memberModel), messages: msgs, ...(supportsModelParameter(getModelProfile(memberModel), 'temperature') ? { temperature: 0.3 } : {}), ...openRouterRouting(false, memberProvider.baseURL) }, { signal: activeRequest.signal });
       } catch (err) {
         const interrupted = controlInterruptReason(control, activeRequest);
         if (interrupted === 'stop') return { stopped: true };

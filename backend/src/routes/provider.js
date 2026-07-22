@@ -1,65 +1,150 @@
-// Rotas de provider — movidas do server.js na modularização (mesma lógica,
-// mesmo comportamento). Montado em /api pelo server.js.
-import { createAiClient } from '../aiClient.js';
+import { nanoid } from 'nanoid';
 import { db, now } from '../db.js';
 import { encryptSecret, decryptSecret, maskSecret } from '../crypto.js';
 import { getUserProvider } from '../userProvider.js';
-import { friendlyApiError } from '../agent.js';
+import { importProviderCatalog, normalizeProviderType, PROVIDER_PRESETS } from '../providerCatalog.js';
 import { makeRouter } from './helpers.js';
 
 const router = makeRouter();
 
-// ---- BYOK: provedor de IA por usuário (chave própria, cifrada) ----
-// GET nunca devolve a chave inteira — só uma máscara e o estado.
+function modelCount(row) {
+  try { const models = JSON.parse(row.models || '[]'); return Array.isArray(models) ? models.length : 0; }
+  catch { return 0; }
+}
+
+function publicProvider(row) {
+  const key = decryptSecret(row.api_key_enc);
+  return {
+    id: row.id,
+    providerType: row.provider_type,
+    name: row.name,
+    base_url: row.base_url,
+    keyMask: key ? maskSecret(key) : '',
+    modelCount: modelCount(row),
+    defaultModel: row.default_model || '',
+    lastValidatedAt: row.last_validated_at || null
+  };
+}
+
+async function rowsFor(userId) {
+  return db.prepare('SELECT * FROM user_ai_providers WHERE user_id=? ORDER BY created_at ASC').all(userId);
+}
+
+async function validateBody(body, existing = null) {
+  const type = normalizeProviderType(body.providerType || existing?.provider_type);
+  const preset = PROVIDER_PRESETS[type];
+  const apiKey = String(body.apiKey || (existing ? decryptSecret(existing.api_key_enc) : '') || '').trim();
+  const baseURL = String(body.base_url || existing?.base_url || preset.baseURL || '').trim();
+  const modelHint = String(body.model || body.defaultModel || existing?.default_model || '').trim();
+  const imported = await importProviderCatalog({ apiKey, baseURL, providerType: type, modelHint });
+  return {
+    type,
+    name: String(body.name || existing?.name || preset.name || 'Provedor').trim().slice(0, 80),
+    apiKey,
+    baseURL: imported.baseURL,
+    models: imported.models,
+    defaultModel: modelHint && imported.models.some(model => model.id === modelHint) ? modelHint : imported.models[0]?.id || '',
+    validation: imported.validation
+  };
+}
+
+router.get('/providers', async (req, res) => {
+  const providers = (await rowsFor(req.userId)).map(publicProvider);
+  res.json({ providers });
+});
+
+router.post('/providers', async (req, res) => {
+  try {
+    const checked = await validateBody(req.body || {});
+    const id = nanoid();
+    const t = now();
+    await db.prepare(`INSERT INTO user_ai_providers
+      (id,user_id,provider_type,name,base_url,api_key_enc,models,default_model,last_validated_at,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(id, req.userId, checked.type, checked.name, checked.baseURL, encryptSecret(checked.apiKey), JSON.stringify(checked.models), checked.defaultModel || null, t, t, t);
+    res.status(201).json({ ok: true, provider: publicProvider((await rowsFor(req.userId)).find(row => row.id === id)), imported: checked.models.length, validation: checked.validation });
+  } catch (error) {
+    res.status(400).json({ ok: false, error: error?.message || 'Não foi possível validar a chave.' });
+  }
+});
+
+router.put('/providers/:id', async (req, res) => {
+  const existing = await db.prepare('SELECT * FROM user_ai_providers WHERE id=? AND user_id=?').get(req.params.id, req.userId);
+  if (!existing) return res.status(404).json({ error: 'Provedor não encontrado.' });
+  try {
+    const checked = await validateBody(req.body || {}, existing);
+    const t = now();
+    await db.prepare(`UPDATE user_ai_providers SET provider_type=?,name=?,base_url=?,api_key_enc=?,models=?,default_model=?,last_validated_at=?,updated_at=? WHERE id=? AND user_id=?`)
+      .run(checked.type, checked.name, checked.baseURL, encryptSecret(checked.apiKey), JSON.stringify(checked.models), checked.defaultModel || null, t, t, existing.id, req.userId);
+    res.json({ ok: true, imported: checked.models.length, validation: checked.validation });
+  } catch (error) {
+    res.status(400).json({ ok: false, error: error?.message || 'Não foi possível validar a chave.' });
+  }
+});
+
+router.post('/providers/:id/refresh', async (req, res) => {
+  const existing = await db.prepare('SELECT * FROM user_ai_providers WHERE id=? AND user_id=?').get(req.params.id, req.userId);
+  if (!existing) return res.status(404).json({ error: 'Provedor não encontrado.' });
+  try {
+    const checked = await validateBody({}, existing);
+    const t = now();
+    await db.prepare('UPDATE user_ai_providers SET models=?,default_model=?,last_validated_at=?,updated_at=? WHERE id=? AND user_id=?')
+      .run(JSON.stringify(checked.models), checked.defaultModel || null, t, t, existing.id, req.userId);
+    res.json({ ok: true, imported: checked.models.length });
+  } catch (error) {
+    res.status(400).json({ ok: false, error: error?.message || 'Não foi possível atualizar os modelos.' });
+  }
+});
+
+router.delete('/providers/:id', async (req, res) => {
+  const result = await db.prepare('DELETE FROM user_ai_providers WHERE id=? AND user_id=?').run(req.params.id, req.userId);
+  if (!result.changes) return res.status(404).json({ error: 'Provedor não encontrado.' });
+  res.json({ ok: true });
+});
+
+// Compatibilidade com clientes antigos: o status agora representa o conjunto.
 router.get('/provider', async (req, res) => {
-  const row = await db.prepare('SELECT api_key_enc, base_url, model FROM user_settings WHERE user_id=?').get(req.userId);
-  let keyMask = '';
-  if (row?.api_key_enc) { const dec = decryptSecret(row.api_key_enc); keyMask = dec ? maskSecret(dec) : ''; }
-  const prov = await getUserProvider(req.userId);
+  const providers = (await rowsFor(req.userId)).map(publicProvider);
+  const active = await getUserProvider(req.userId);
   res.json({
-    hasKey: prov.hasKey, source: prov.source, keyMask,
-    base_url: row?.base_url || '', model: row?.model || '',
-    // Modo gratuito ativo: o front mostra provedor/modelo da plataforma.
-    ...(prov.source === 'free' ? { freeProvider: prov.providerName, freeModel: prov.model, freeModels: prov.freeModels } : {})
+    hasKey: providers.length > 0 || active.source === 'free',
+    source: providers.length ? 'user' : active.source,
+    providers,
+    ...(active.source === 'free' ? { freeProvider: active.providerName, freeModel: active.model, freeModels: active.freeModels } : {})
   });
 });
 
-// PUT salva/atualiza. apiKey ausente = mantém a atual; apiKey '' = remove.
-router.put('/provider', async (req, res) => {
-  const b = req.body || {};
+router.post('/provider/test', async (req, res) => {
   try {
-    const existing = await db.prepare('SELECT api_key_enc FROM user_settings WHERE user_id=?').get(req.userId);
-    let api_key_enc = existing?.api_key_enc || null;
-    if (b.apiKey !== undefined) api_key_enc = String(b.apiKey).trim() ? encryptSecret(String(b.apiKey).trim()) : null;
-    const base_url = (b.base_url || '').trim() || null;
-    const model = (b.model || '').trim() || null;
-    const t = now();
-    await db.prepare(`INSERT INTO user_settings (user_id, api_key_enc, base_url, model, created_at, updated_at)
-      VALUES (?,?,?,?,?,?)
-      ON CONFLICT (user_id) DO UPDATE SET api_key_enc=excluded.api_key_enc, base_url=excluded.base_url, model=excluded.model, updated_at=excluded.updated_at`)
-      .run(req.userId, api_key_enc, base_url, model, t, t);
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ error: 'Não foi possível salvar. Verifique se a ENCRYPTION_KEY está configurada no servidor.' });
+    const checked = await validateBody(req.body || {});
+    res.json({ ok: true, imported: checked.models.length, validation: checked.validation });
+  } catch (error) {
+    res.status(400).json({ ok: false, error: error?.message || 'A chave não foi aceita pelo provedor.' });
   }
 });
 
-// POST testa a chave com uma chamada leve (lista de modelos).
-router.post('/provider/test', async (req, res) => {
-  const apiKey = String(req.body?.apiKey || '').trim();
-  const baseURL = String(req.body?.base_url || '').trim() || process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com';
-  let client;
-  if (apiKey) {
-    // Testa a chave que a pessoa acabou de digitar (ainda não salva).
-    client = createAiClient({ apiKey, baseURL });
-  } else {
-    // Sem chave nova no corpo: testa a configuração já salva.
-    const prov = await getUserProvider(req.userId);
-    client = prov.client;
+// PUT legado deixa de salvar sem validar. Se já houver um provedor, atualiza o
+// primeiro; caso contrário cria um novo registro validado.
+router.put('/provider', async (req, res) => {
+  const existing = (await rowsFor(req.userId))[0];
+  if (req.body?.apiKey === '' && existing) {
+    await db.prepare('DELETE FROM user_ai_providers WHERE id=? AND user_id=?').run(existing.id, req.userId);
+    return res.json({ ok: true });
   }
-  if (!client) return res.status(400).json({ ok: false, error: 'Nenhuma chave configurada.' });
-  try { await client.models.list(); res.json({ ok: true }); }
-  catch (e) { res.json({ ok: false, error: friendlyApiError(e) }); }
+  try {
+    const checked = await validateBody(req.body || {}, existing || null);
+    const t = now();
+    if (existing) {
+      await db.prepare('UPDATE user_ai_providers SET provider_type=?,name=?,base_url=?,api_key_enc=?,models=?,default_model=?,last_validated_at=?,updated_at=? WHERE id=? AND user_id=?')
+        .run(checked.type, checked.name, checked.baseURL, encryptSecret(checked.apiKey), JSON.stringify(checked.models), checked.defaultModel || null, t, t, existing.id, req.userId);
+    } else {
+      await db.prepare('INSERT INTO user_ai_providers (id,user_id,provider_type,name,base_url,api_key_enc,models,default_model,last_validated_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
+        .run(nanoid(), req.userId, checked.type, checked.name, checked.baseURL, encryptSecret(checked.apiKey), JSON.stringify(checked.models), checked.defaultModel || null, t, t, t);
+    }
+    res.json({ ok: true, imported: checked.models.length });
+  } catch (error) {
+    res.status(400).json({ ok: false, error: error?.message || 'Não foi possível validar a chave.' });
+  }
 });
 
 export default router;
