@@ -229,6 +229,139 @@ export async function listGithubBranches(token, fullName, { signal } = {}) {
   return { branches: (Array.isArray(r.data) ? r.data : []).map(b => b.name) };
 }
 
+// ---- Extrato do repositório (para dar CÓDIGO REAL aos modelos do multimodelo) ----
+// Diferente do github_clone (que roda no sandbox, só no loop de ferramentas), isto
+// lê a árvore e o conteúdo dos arquivos principais direto pela API do GitHub, no
+// backend, e devolve um texto único pronto para injetar no prompt. Assim os modos
+// compare/council/debate — que NÃO executam ferramentas — analisam o código de
+// verdade em vez do "conhecimento geral" do modelo.
+
+// Pastas e extensões que não ajudam na análise (dependências, binários, gerados).
+const DIGEST_IGNORE_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.next', 'out', 'coverage', 'vendor', '.venv', 'venv', '__pycache__', '.cache', 'target', '.turbo', '.idea', '.vscode', 'bin', 'obj']);
+const DIGEST_SKIP_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'ico', 'webp', 'bmp', 'svg', 'pdf', 'zip', 'gz', 'tgz', 'tar', 'rar', '7z', 'mp4', 'mov', 'avi', 'mp3', 'wav', 'ogg', 'flac', 'woff', 'woff2', 'ttf', 'eot', 'otf', 'map', 'min', 'wasm', 'so', 'dll', 'dylib', 'exe', 'bin', 'class', 'jar', 'pyc', 'lock', 'pack', 'iso', 'db', 'sqlite']);
+const DIGEST_SKIP_FILES = new Set(['package-lock.json', 'yarn.lock', 'pnpm-lock.yaml', 'composer.lock', 'poetry.lock', 'gemfile.lock', 'cargo.lock']);
+const DIGEST_MANIFESTS = new Set(['package.json', 'requirements.txt', 'pyproject.toml', 'setup.py', 'go.mod', 'cargo.toml', 'pom.xml', 'build.gradle', 'dockerfile', 'docker-compose.yml', 'docker-compose.yaml', 'composer.json', 'gemfile', 'makefile', 'tsconfig.json']);
+
+export function isDigestIgnored(p) {
+  const segments = String(p || '').split('/');
+  if (segments.some(seg => DIGEST_IGNORE_DIRS.has(seg))) return true;
+  const base = segments[segments.length - 1].toLowerCase();
+  if (!base) return true;
+  if (DIGEST_SKIP_FILES.has(base)) return true;
+  const dot = base.lastIndexOf('.');
+  const ext = dot > 0 ? base.slice(dot + 1) : '';
+  if (ext && DIGEST_SKIP_EXT.has(ext)) return true;
+  return false;
+}
+
+// Prioriza o que melhor descreve o projeto: README e manifestos no topo, depois
+// pontos de entrada (index/main/app/server), depois o restante do código-fonte.
+// Empate: arquivo mais raso e menor primeiro (cabe mais coisa no orçamento).
+export function digestFileScore(p, size = 0) {
+  const segments = String(p || '').split('/');
+  const base = segments[segments.length - 1].toLowerCase();
+  const depth = segments.length;
+  let score = 200 - depth * 8;
+  if (/^readme/.test(base)) score += 1000;
+  else if (DIGEST_MANIFESTS.has(base)) score += 600;
+  if (/^(index|main|app|server|routes?|api|cli)\.[a-z]+$/.test(base)) score += 120;
+  if (/\.(js|jsx|ts|tsx|py|go|rs|java|rb|php|c|cc|cpp|h|hpp|cs|kt|swift|vue|svelte|sql|sh|yml|yaml|toml)$/.test(base)) score += 40;
+  if (/\.(md|txt|json|env|cfg|conf|ini)$/.test(base)) score += 10;
+  if (/(^|\/)(test|tests|__tests__|spec)(\/|$)/.test(p) || /\.(test|spec)\./.test(base)) score -= 60;
+  score -= Math.min(40, Math.floor((size || 0) / 4000)); // arquivos enormes descem
+  return score;
+}
+
+// Seleção PURA (sem rede) dos arquivos que entram no extrato, respeitando o
+// orçamento total estimado pelos tamanhos da árvore. Testável em isolamento.
+export function pickDigestFiles(tree, { maxFiles = 26, maxChars = 46000, maxFileChars = 5000, maxFileBytes = 120000 } = {}) {
+  const blobs = (Array.isArray(tree) ? tree : [])
+    .filter(n => n?.type === 'blob' && typeof n.path === 'string' && !isDigestIgnored(n.path))
+    .filter(n => !(Number.isFinite(n.size) && n.size > maxFileBytes))
+    .map(n => ({ path: n.path, size: Number(n.size) || 0, score: digestFileScore(n.path, Number(n.size) || 0) }))
+    .sort((a, b) => b.score - a.score || a.size - b.size || a.path.localeCompare(b.path));
+  const picked = [];
+  let estimate = 0;
+  for (const b of blobs) {
+    if (picked.length >= maxFiles || estimate >= maxChars) break;
+    estimate += Math.min(b.size || maxFileChars, maxFileChars);
+    picked.push(b);
+  }
+  return picked;
+}
+
+async function pool(items, size, fn) {
+  const out = [];
+  for (let i = 0; i < items.length; i += size) {
+    out.push(...await Promise.all(items.slice(i, i + size).map(fn)));
+  }
+  return out;
+}
+
+// Monta o extrato (árvore + conteúdo dos arquivos principais) do repositório
+// selecionado. Devolve null quando não há conexão/token ou o repo é inválido —
+// o chamador então segue só com a nota textual (nome do repo), sem código.
+export async function buildRepoDigest({ userId, repo, branch = null, signal, maxChars = 46000, maxFiles = 26, maxFileChars = 5000, treeListCap = 350 } = {}) {
+  if (!isValidRepoFullName(repo)) return null;
+  const conn = await getGithubConnection(userId);
+  if (!conn) return null;
+  const token = conn.token;
+  try {
+    // 1) Resolve a branch (a informada, se válida; senão a padrão do repo).
+    let ref = branch && isValidBranchName(branch) ? branch : null;
+    if (!ref) {
+      const meta = await githubApi(token, `/repos/${repo}`, { signal });
+      if (!meta.ok) return null;
+      ref = meta.data.default_branch || 'main';
+    }
+    // 2) Árvore recursiva.
+    const treeRes = await githubApi(token, `/repos/${repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`, { signal });
+    if (!treeRes.ok) return null;
+    const tree = Array.isArray(treeRes.data?.tree) ? treeRes.data.tree : [];
+    const treeTruncated = !!treeRes.data?.truncated;
+    if (!tree.length) return null;
+
+    // 3) Escolhe os arquivos e busca o conteúdo (paralelismo modesto).
+    const picked = pickDigestFiles(tree, { maxFiles, maxChars, maxFileChars });
+    const fetched = await pool(picked, 6, async (f) => {
+      try {
+        const r = await githubApi(token, `/repos/${repo}/contents/${f.path.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(ref)}`, { signal });
+        if (!r.ok || r.data?.type !== 'file' || r.data?.encoding !== 'base64') return null;
+        const raw = Buffer.from(String(r.data.content || ''), 'base64').toString('utf8');
+        if (/\u0000/.test(raw)) return null; // byte nulo = arquivo binário
+        return { path: f.path, content: raw };
+      } catch { return null; }
+    });
+
+    // 4) Monta o texto, respeitando o orçamento total de caracteres.
+    const allPaths = tree.filter(n => n.type === 'blob' && !isDigestIgnored(n.path)).map(n => n.path).sort();
+    const treeList = allPaths.slice(0, treeListCap).join('\n');
+    const treeNote = allPaths.length > treeListCap || treeTruncated
+      ? `\n… (${allPaths.length > treeListCap ? `${allPaths.length - treeListCap} arquivos a mais` : 'árvore parcial'}; extrato limitado por tamanho)`
+      : '';
+
+    const parts = [];
+    let budget = maxChars;
+    let includedFiles = 0;
+    for (const f of fetched) {
+      if (!f || budget <= 0) continue;
+      const body = f.content.length > maxFileChars ? `${f.content.slice(0, maxFileChars)}\n… [arquivo truncado]` : f.content;
+      const block = `### ${f.path}\n\`\`\`\n${scrubSecrets(body, token)}\n\`\`\``;
+      if (block.length > budget && includedFiles > 0) continue;
+      parts.push(block);
+      budget -= block.length;
+      includedFiles += 1;
+    }
+    if (!includedFiles) return null;
+
+    const header = `EXTRATO REAL DO REPOSITÓRIO GitHub "${repo}" (branch "${ref}") — lido agora pela API do GitHub.\nBaseie sua análise NESTE código de verdade (não no seu conhecimento geral). Se algo não estiver no extrato, diga que precisa ver o arquivo específico, sem inventar.`;
+    const text = `${header}\n\n## Estrutura de arquivos (${allPaths.length})\n${treeList}${treeNote}\n\n## Conteúdo dos arquivos principais (${includedFiles})\n\n${parts.join('\n\n')}`;
+    return { text, ref, filesIncluded: includedFiles, totalFiles: allPaths.length, truncated: treeTruncated };
+  } catch {
+    return null;
+  }
+}
+
 // ---- git no backend (nunca no sandbox: o token não pode vazar para lá) ----
 
 function runGit(cwd, args, { token = null, timeoutMs = GIT_TIMEOUT_MS, signal } = {}) {
