@@ -1,483 +1,139 @@
-# Relatório de Testes Pesados - Frederico IA Studio
-
-**Data do Relatório:** [DATA]  
-**Versão do Sistema:** [VERSÃO]  
-**Responsável pelos Testes:** [RESPONSÁVEL]  
-**Período de Testes:** [DATA_INÍCIO] a [DATA_FIM]
-
----
-
-## 1. Objetivo dos Testes
-
-Realizar testes de carga e desempenho focando em:
-- Geração de documentos em múltiplos formatos (Word, PDF, Excel)
-- Processamento de contexto hyper longo (10K+ tokens)
-- Compatibilidade e desempenho com diferentes modelos de IA
-- Validação de integridade dos documentos gerados
-- Identificação de gargalos e limites do sistema
-
----
-
-## 2. Ambiente de Testes
-
-### 2.1 Configuração do Hardware
-| Componente | Especificação |
-|---|---|
-| Processador | [CPU] |
-| Memória RAM | [GB] |
-| Armazenamento | [SSD/HDD] |
-| Sistema Operacional | [OS] |
-| Versão Node.js | [VERSÃO] |
-
-### 2.2 Configuração de Software
-| Item | Versão/Configuração |
-|---|---|
-| Frederico IA Studio | [VERSÃO] |
-| Docker | [VERSÃO] |
-| Banco de Dados | [TIPO E VERSÃO] |
-| Modelos IA Testados | [LISTAR] |
-
-### 2.3 Modelos de IA Utilizados
-
-```
-Modelo 1: [NOME]
-- Provider: [PROVIDER]
-- Max Tokens: [NÚMERO]
-- Contexto Suportado: [TAMANHO]
-
-Modelo 2: [NOME]
-- Provider: [PROVIDER]
-- Max Tokens: [NÚMERO]
-- Contexto Suportado: [TAMANHO]
-
-Modelo 3: [NOME]
-- Provider: [PROVIDER]
-- Max Tokens: [NÚMERO]
-- Contexto Suportado: [TAMANHO]
-```
-
----
-
-## 3. Cenários de Teste
-
-### 3.1 Teste 1: Geração de Documento Word com Contexto Longo
-
-**Objetivo:** Validar geração de documento Word com texto hyper longo
-
-| Parâmetro | Valor |
-|---|---|
-| Formato de Saída | .docx |
-| Tamanho do Contexto | 15.000 tokens |
-| Número de Iterações | 10 |
-| Modelo(s) Testado(s) | [MODELOS] |
-| Data de Execução | [DATA] |
-
-**Procedimento:**
-1. Preparar contexto com X tokens
-2. Invocar geração de documento Word
-3. Registrar tempo de processamento
-4. Validar integridade do arquivo
-5. Verificar formatação e conteúdo
-
-**Resultados:**
-
-| Iteração | Modelo | Tempo (s) | Sucesso | Tamanho Arquivo | Observações |
-|---|---|---|---|---|---|
-| 1 | [MODELO] | [TEMPO] | ✓/✗ | [SIZE] | [OBS] |
-| 2 | [MODELO] | [TEMPO] | ✓/✗ | [SIZE] | [OBS] |
-| 3 | [MODELO] | [TEMPO] | ✓/✗ | [SIZE] | [OBS] |
-| 4 | [MODELO] | [TEMPO] | ✓/✗ | [SIZE] | [OBS] |
-| 5 | [MODELO] | [TEMPO] | ✓/✗ | [SIZE] | [OBS] |
-| 6 | [MODELO] | [TEMPO] | ✓/✗ | [SIZE] | [OBS] |
-| 7 | [MODELO] | [TEMPO] | ✓/✗ | [SIZE] | [OBS] |
-| 8 | [MODELO] | [TEMPO] | ✓/✗ | [SIZE] | [OBS] |
-| 9 | [MODELO] | [TEMPO] | ✓/✗ | [SIZE] | [OBS] |
-| 10 | [MODELO] | [TEMPO] | ✓/✗ | [SIZE] | [OBS] |
-
-**Análise:**
-- Tempo Médio: [VALOR] segundos
-- Taxa de Sucesso: [PERCENTUAL]%
-- Tempo Mínimo: [VALOR]s
-- Tempo Máximo: [VALOR]s
-- Desvio Padrão: [VALOR]s
-
-**Conclusões:**
-[DESCREVER CONCLUSÕES E OBSERVAÇÕES]
-
----
-
-### 3.2 Teste 2: Geração de PDF com Contexto Hyper Longo
-
-**Objetivo:** Validar geração de PDF com contexto muito extenso
-
-| Parâmetro | Valor |
-|---|---|
-| Formato de Saída | .pdf |
-| Tamanho do Contexto | 20.000 tokens |
-| Número de Iterações | 10 |
-| Modelo(s) Testado(s) | [MODELOS] |
-| Data de Execução | [DATA] |
-
-**Procedimento:**
-1. Preparar contexto com X tokens
-2. Invocar geração de PDF
-3. Registrar tempo de processamento
-4. Validar integridade do arquivo
-5. Verificar renderização e formatação
-
-**Resultados:**
-
-| Iteração | Modelo | Tempo (s) | Sucesso | Tamanho Arquivo | Observações |
-|---|---|---|---|---|---|
-| 1 | [MODELO] | [TEMPO] | ✓/✗ | [SIZE] | [OBS] |
-| 2 | [MODELO] | [TEMPO] | ✓/✗ | [SIZE] | [OBS] |
-| 3 | [MODELO] | [TEMPO] | ✓/✗ | [SIZE] | [OBS] |
-| 4 | [MODELO] | [TEMPO] | ✓/✗ | [SIZE] | [OBS] |
-| 5 | [MODELO] | [TEMPO] | ✓/✗ | [SIZE] | [OBS] |
-| 6 | [MODELO] | [TEMPO] | ✓/✗ | [SIZE] | [OBS] |
-| 7 | [MODELO] | [TEMPO] | ✓/✗ | [SIZE] | [OBS] |
-| 8 | [MODELO] | [TEMPO] | ✓/✗ | [SIZE] | [OBS] |
-| 9 | [MODELO] | [TEMPO] | ✓/✗ | [SIZE] | [OBS] |
-| 10 | [MODELO] | [TEMPO] | ✓/✗ | [SIZE] | [OBS] |
-
-**Análise:**
-- Tempo Médio: [VALOR] segundos
-- Taxa de Sucesso: [PERCENTUAL]%
-- Tempo Mínimo: [VALOR]s
-- Tempo Máximo: [VALOR]s
-- Desvio Padrão: [VALOR]s
-
-**Conclusões:**
-[DESCREVER CONCLUSÕES E OBSERVAÇÕES]
-
----
-
-### 3.3 Teste 3: Geração de Excel com Múltiplas Abas
-
-**Objetivo:** Validar geração de planilhas Excel complexas
-
-| Parâmetro | Valor |
-|---|---|
-| Formato de Saída | .xlsx |
-| Número de Abas | 5 |
-| Linhas por Aba | 1000 |
-| Tamanho do Contexto | 15.000 tokens |
-| Número de Iterações | 10 |
-| Modelo(s) Testado(s) | [MODELOS] |
-| Data de Execução | [DATA] |
-
-**Procedimento:**
-1. Preparar contexto para geração de planilha
-2. Invocar geração de Excel
-3. Registrar tempo de processamento
-4. Validar integridade do arquivo
-5. Verificar dados, fórmulas e formatação
-
-**Resultados:**
-
-| Iteração | Modelo | Tempo (s) | Sucesso | Tamanho Arquivo | Observações |
-|---|---|---|---|---|---|
-| 1 | [MODELO] | [TEMPO] | ✓/✗ | [SIZE] | [OBS] |
-| 2 | [MODELO] | [TEMPO] | ✓/✗ | [SIZE] | [OBS] |
-| 3 | [MODELO] | [TEMPO] | ✓/✗ | [SIZE] | [OBS] |
-| 4 | [MODELO] | [TEMPO] | ✓/✗ | [SIZE] | [OBS] |
-| 5 | [MODELO] | [TEMPO] | ✓/✗ | [SIZE] | [OBS] |
-| 6 | [MODELO] | [TEMPO] | ✓/✗ | [SIZE] | [OBS] |
-| 7 | [MODELO] | [TEMPO] | ✓/✗ | [SIZE] | [OBS] |
-| 8 | [MODELO] | [TEMPO] | ✓/✗ | [SIZE] | [OBS] |
-| 9 | [MODELO] | [TEMPO] | ✓/✗ | [SIZE] | [OBS] |
-| 10 | [MODELO] | [TEMPO] | ✓/✗ | [SIZE] | [OBS] |
-
-**Análise:**
-- Tempo Médio: [VALOR] segundos
-- Taxa de Sucesso: [PERCENTUAL]%
-- Tempo Mínimo: [VALOR]s
-- Tempo Máximo: [VALOR]s
-- Desvio Padrão: [VALOR]s
-
-**Conclusões:**
-[DESCREVER CONCLUSÕES E OBSERVAÇÕES]
-
----
-
-### 3.4 Teste 4: Testes de Compatibilidade entre Modelos
-
-**Objetivo:** Comparar desempenho entre diferentes modelos de IA
-
-| Parâmetro | Valor |
-|---|---|
-| Formatos Testados | Word, PDF, Excel |
-| Tamanho do Contexto | 18.000 tokens |
-| Iterações por Modelo | 5 |
-| Modelos Testados | [LISTAR] |
-| Data de Execução | [DATA] |
-
-**Comparativo de Desempenho:**
-
-| Modelo | Formato | Tempo Médio (s) | Taxa Sucesso | Qualidade | Observações |
-|---|---|---|---|---|---|
-| [MODELO 1] | Word | [TEMPO] | [%] | [NOTA] | [OBS] |
-| [MODELO 1] | PDF | [TEMPO] | [%] | [NOTA] | [OBS] |
-| [MODELO 1] | Excel | [TEMPO] | [%] | [NOTA] | [OBS] |
-| [MODELO 2] | Word | [TEMPO] | [%] | [NOTA] | [OBS] |
-| [MODELO 2] | PDF | [TEMPO] | [%] | [NOTA] | [OBS] |
-| [MODELO 2] | Excel | [TEMPO] | [%] | [NOTA] | [OBS] |
-| [MODELO 3] | Word | [TEMPO] | [%] | [NOTA] | [OBS] |
-| [MODELO 3] | PDF | [TEMPO] | [%] | [NOTA] | [OBS] |
-| [MODELO 3] | Excel | [TEMPO] | [%] | [NOTA] | [OBS] |
-
-**Conclusões:**
-[DESCREVER QUAL MODELO TEVE MELHOR DESEMPENHO]
-
----
-
-### 3.5 Teste 5: Teste de Limite de Contexto
-
-**Objetivo:** Identificar o limite máximo de processamento de contexto
-
-| Parâmetro | Valor |
-|---|---|
-| Tamanho Inicial do Contexto | 10.000 tokens |
-| Incremento | 5.000 tokens |
-| Tamanho Máximo Testado | 50.000 tokens |
-| Modelo(s) Testado(s) | [MODELOS] |
-| Data de Execução | [DATA] |
-
-**Resultados:**
-
-| Tamanho Contexto | Modelo | Tempo (s) | Sucesso | Erro | Observações |
-|---|---|---|---|---|---|
-| 10.000 | [MODELO] | [TEMPO] | ✓/✗ | [TIPO] | [OBS] |
-| 15.000 | [MODELO] | [TEMPO] | ✓/✗ | [TIPO] | [OBS] |
-| 20.000 | [MODELO] | [TEMPO] | ✓/✗ | [TIPO] | [OBS] |
-| 25.000 | [MODELO] | [TEMPO] | ✓/✗ | [TIPO] | [OBS] |
-| 30.000 | [MODELO] | [TEMPO] | ✓/✗ | [TIPO] | [OBS] |
-| 35.000 | [MODELO] | [TEMPO] | ✓/✗ | [TIPO] | [OBS] |
-| 40.000 | [MODELO] | [TEMPO] | ✓/✗ | [TIPO] | [OBS] |
-| 45.000 | [MODELO] | [TEMPO] | ✓/✗ | [TIPO] | [OBS] |
-| 50.000 | [MODELO] | [TEMPO] | ✓/✗ | [TIPO] | [OBS] |
-
-**Conclusões:**
-- Limite Máximo Recomendado: [VALOR] tokens
-- Ponto de Degradação Crítica: [VALOR] tokens
-- Observações: [DESCREVER]
-
----
-
-### 3.6 Teste 6: Testes de Carga Simultânea
-
-**Objetivo:** Validar comportamento do sistema sob múltiplas requisições simultâneas
-
-| Parâmetro | Valor |
-|---|---|
-| Número de Requisições Simultâneas | [NÚMERO] |
-| Duração do Teste | [MINUTOS] minutos |
-| Tipo de Documento | Word, PDF, Excel |
-| Tamanho do Contexto | 15.000 tokens |
-| Modelos Utilizados | [LISTAR] |
-| Data de Execução | [DATA] |
-
-**Resultados:**
-
-| Requisições Simultâneas | Taxa Sucesso | Tempo Médio Resposta (s) | Erro Taxa | Observações |
-|---|---|---|---|---|
-| 1 | [%] | [TEMPO] | [%] | [OBS] |
-| 5 | [%] | [TEMPO] | [%] | [OBS] |
-| 10 | [%] | [TEMPO] | [%] | [OBS] |
-| 15 | [%] | [TEMPO] | [%] | [OBS] |
-| 20 | [%] | [TEMPO] | [%] | [OBS] |
-| 25 | [%] | [TEMPO] | [%] | [OBS] |
-| 30 | [%] | [TEMPO] | [%] | [OBS] |
-
-**Análise de Recursos:**
-- Uso de CPU Máximo: [%]
-- Uso de Memória Máximo: [MB]
-- Disco Utilizado: [GB]
-- Conexões Ativas Máximas: [NÚMERO]
-
-**Conclusões:**
-[DESCREVER LIMITE DE CARGA E RECOMENDAÇÕES]
-
----
-
-## 4. Testes de Qualidade dos Documentos
-
-### 4.1 Validação de Integridade (Word)
-
-| Aspecto | Resultado | Observações |
-|---|---|---|
-| Abertura do arquivo | ✓/✗ | [OBS] |
-| Formatação mantida | ✓/✗ | [OBS] |
-| Conteúdo completo | ✓/✗ | [OBS] |
-| Sem corrupção de dados | ✓/✗ | [OBS] |
-| Compatibilidade MS Office | ✓/✗ | [OBS] |
-
-### 4.2 Validação de Integridade (PDF)
-
-| Aspecto | Resultado | Observações |
-|---|---|---|
-| Abertura do arquivo | ✓/✗ | [OBS] |
-| Renderização correta | ✓/✗ | [OBS] |
-| Conteúdo legível | ✓/✗ | [OBS] |
-| Sem corrupção | ✓/✗ | [OBS] |
-| Compatibilidade leitores | ✓/✗ | [OBS] |
-
-### 4.3 Validação de Integridade (Excel)
-
-| Aspecto | Resultado | Observações |
-|---|---|---|
-| Abertura do arquivo | ✓/✗ | [OBS] |
-| Dados íntegros | ✓/✗ | [OBS] |
-| Fórmulas funcionais | ✓/✗ | [OBS] |
-| Formatação preservada | ✓/✗ | [OBS] |
-| Compatibilidade MS Excel | ✓/✗ | [OBS] |
-
----
-
-## 5. Análise de Desempenho
-
-### 5.1 Gráficos de Desempenho
-
-```
-[Inserir gráficos de:
-- Tempo de processamento por formato
-- Taxa de sucesso por modelo
-- Consumo de recursos durante testes
-- Escalabilidade com aumento de contexto
-- Comparativo entre modelos]
-```
-
-### 5.2 Métricas Principais
-
-| Métrica | Valor | Status |
-|---|---|---|
-| Tempo Médio de Processamento Word | [s] | ✓/✗ |
-| Tempo Médio de Processamento PDF | [s] | ✓/✗ |
-| Tempo Médio de Processamento Excel | [s] | ✓/✗ |
-| Taxa de Sucesso Geral | [%] | ✓/✗ |
-| Contexto Máximo Suportado | [tokens] | ✓/✗ |
-| Carga Máxima Recomendada | [req/s] | ✓/✗ |
-
----
-
-## 6. Problemas Identificados
-
-### 6.1 Críticos
-
-| ID | Descrição | Modelo Afetado | Impacto | Status |
-|---|---|---|---|---|
-| CRÍTICO-01 | [DESCRIÇÃO] | [MODELO] | Alto | [ABERTO/FECHADO] |
-| CRÍTICO-02 | [DESCRIÇÃO] | [MODELO] | Alto | [ABERTO/FECHADO] |
-
-### 6.2 Maiores
-
-| ID | Descrição | Modelo Afetado | Impacto | Status |
-|---|---|---|---|---|
-| MAIOR-01 | [DESCRIÇÃO] | [MODELO] | Médio | [ABERTO/FECHADO] |
-| MAIOR-02 | [DESCRIÇÃO] | [MODELO] | Médio | [ABERTO/FECHADO] |
-
-### 6.3 Menores
-
-| ID | Descrição | Modelo Afetado | Impacto | Status |
-|---|---|---|---|---|
-| MENOR-01 | [DESCRIÇÃO] | [MODELO] | Baixo | [ABERTO/FECHADO] |
-| MENOR-02 | [DESCRIÇÃO] | [MODELO] | Baixo | [ABERTO/FECHADO] |
+# Relatório real de testes — modelos, prompts e artefatos
+
+Data: 22/07/2026
+Base limpa auditada: `main` em `e399370`
+Escopo: mono-modelo, Multimodelo, Modo Equipe, failover, modelos gratuitos/visuais, system prompts e Excel.
+
+## Resultado executivo
 
----
+O teste anterior era insuficiente: validava funções isoladas, mas não cobria a troca de família no failover, o contrato real enviado ao provedor nem um pedido comum de arquivo no pipeline multimodelo. A nova revisão reproduziu e corrigiu nove falhas de arquitetura:
+
+1. o failover mudava o ID do modelo sem recalcular ferramentas, visão, raciocínio ou parâmetros aceitos;
+2. marcadores `cache_control` de Claude/Gemini podiam seguir para uma família incompatível;
+3. o pipeline multimodelo só executava ferramentas quando o Modo Desenvolvedor estava ativo;
+4. o prompt do executor dizia ao mesmo tempo que ele tinha e que não tinha ferramentas;
+5. especialistas e coordenadores do Modo Equipe/Multimodelo não recebiam o mesmo núcleo neutro do mono-modelo;
+6. quando o catálogo gratuito falhava, o fallback inventava `tools: true` e escondia a incerteza;
+7. GPT-5.6 podia receber ferramentas no Chat Completions com raciocínio efetivo diferente de `none`, combinação incompatível com esse endpoint;
+8. uma etapa revisora que preservasse um Excel válido sem modificá-lo podia ser acusada de não ter produzido arquivo;
+9. orçamento ou cancelamento podia mudar a última etapa efetivamente executada sem persistir sua resposta e seus cartões de arquivo.
+
+Todos esses pontos foram corrigidos no backend, com testes de regressão. Não são correções dependentes de uma marca específica: o contrato é recalculado para cada modelo ativo.
+
+## Hierarquia de prompt verificada
 
-## 7. Recomendações
+1. núcleo imutável do aplicativo;
+2. perfil/papel delimitado como configuração de prioridade inferior;
+3. contrato de qualidade e conclusão;
+4. capacidades realmente autorizadas pelo backend;
+5. memória, regras livres, repositório e respostas de outros modelos como contexto não confiável;
+6. pedido atual do usuário;
+7. resultados de ferramentas.
 
-### 7.1 Otimizações Recomendadas
+O núcleo proíbe presumir profissão, setor, ideologia, religião, saúde, identidade, localização, preferências ou intenção. Perfis personalizados continuam podendo definir especialidade e tom, mas não ampliam permissões nem substituem o núcleo. Tentativas de fechar os delimitadores de perfil/contexto são escapadas.
 
-1. **[OTIMIZAÇÃO 1]**
-   - Descrição: [DETALHE]
-   - Prioridade: [ALTA/MÉDIA/BAIXA]
-   - Impacto Esperado: [DESCRIÇÃO]
-   - Esforço: [ALTO/MÉDIO/BAIXO]
+## Matriz mono-modelo
 
-2. **[OTIMIZAÇÃO 2]**
-   - Descrição: [DETALHE]
-   - Prioridade: [ALTA/MÉDIA/BAIXA]
-   - Impacto Esperado: [DESCRIÇÃO]
-   - Esforço: [ALTO/MÉDIO/BAIXO]
+A suíte cobre perfis representativos de:
 
-3. **[OTIMIZAÇÃO 3]**
-   - Descrição: [DETALHE]
-   - Prioridade: [ALTA/MÉDIA/BAIXA]
-   - Impacto Esperado: [DESCRIÇÃO]
-   - Esforço: [ALTO/MÉDIO/BAIXO]
+- OpenAI;
+- Anthropic;
+- Google/Gemini;
+- DeepSeek;
+- Qwen;
+- GLM/Z.AI;
+- Mistral;
+- Meta;
+- xAI;
+- NVIDIA gratuito textual;
+- NVIDIA gratuito visual;
+- modelo conhecido sem ferramentas;
+- modelo de geração de imagem sem ferramentas de função.
 
-### 7.2 Limites Operacionais Recomendados
+Para cada perfil foram verificadas separadamente: conversa textual, pedido de Excel, ferramentas, visão de entrada, geração de imagem, raciocínio, `temperature` e montagem final da requisição ao provedor. Um modelo textual sem ferramentas continua conversando, mas um pedido de arquivo é bloqueado antes de uma falsa promessa de entrega.
 
-| Parâmetro | Limite Recomendado | Justificativa |
-|---|---|---|
-| Contexto Máximo | [VALOR] tokens | [MOTIVO] |
-| Requisições Simultâneas | [NÚMERO] | [MOTIVO] |
-| Tamanho Máximo de Documento | [TAMANHO] | [MOTIVO] |
-| Timeout de Processamento | [TEMPO] s | [MOTIVO] |
+## Matriz multimodelo
 
----
+- configurações com 2, 3 e 5 modelos;
+- compare, conselho, debate e pipeline;
+- pipeline textual sem execução;
+- pipeline de Excel fora do Modo Desenvolvedor;
+- seleção de membro conhecido sem ferramentas;
+- papéis principal, implementador e revisor;
+- contexto de outro modelo delimitado como não confiável;
+- prompt personalizado tentando substituir o núcleo;
+- preservação da ordem dos participantes;
+- persistência da última etapa realmente executada quando orçamento/cancelamento altera a fila.
 
-## 8. Conclusões Gerais
+Pedidos que precisam de arquivo, pesquisa ou ferramenta e chegam em compare/conselho/debate não são mais apresentados como concluídos: o app orienta a selecionar Pipeline. No Pipeline, todas as etapas elegíveis trabalham no mesmo workspace e recebem uma instrução sem contradição para abrir, preservar, corrigir e validar o artefato real.
 
-### 8.1 Resumo Executivo
+## Excel real
 
-[DESCREVER RESUMO DOS RESULTADOS PRINCIPAIS]
+Os testes Python criam um `.xlsx` de verdade com o kit `xlspro`, fecham o arquivo e o reabrem com `openpyxl`. São verificados:
 
-### 8.2 Viabilidade do Sistema
+- pacote XLSX íntegro (ZIP/OOXML);
+- fórmulas preservadas;
+- formato monetário;
+- cabeçalho congelado;
+- grade oculta;
+- gráfico incorporado;
+- linha de total;
+- erro claro para contrato inválido de gráfico;
+- tolerância a linha com mais campos que o cabeçalho;
+- cinco etapas sucessivas reabrindo, modificando e salvando o mesmo artefato sem perder fórmulas nem gráfico.
 
-- **Geração de Word:** ✓ Viável / ✗ Necessita Melhorias
-- **Geração de PDF:** ✓ Viável / ✗ Necessita Melhorias
-- **Geração de Excel:** ✓ Viável / ✗ Necessita Melhorias
-- **Contexto Hyper Longo:** ✓ Suportado / ✗ Com Limitações
-- **Múltiplos Modelos:** ✓ Compatível / ✗ Com Limitações
+Resultado local: 4/4 aprovados.
 
-### 8.3 Pronto para Produção?
+## Catálogo público atual
 
-**Status:** [SIM/NÃO/COM RESSALVAS]
+Consulta executada sem chave em `https://openrouter.ai/api/v1/models` em 22/07/2026:
 
-**Justificativa:** [DESCREVER RAZÃO DO STATUS]
+- 342 modelos catalogados;
+- 17 gratuitos;
+- 14 gratuitos com ferramentas confirmadas;
+- 8 gratuitos com visão;
+- 5 gratuitos com ferramentas e visão simultaneamente.
 
-**Pré-requisitos para Produção:** 
-- [ ] [REQUISITO 1]
-- [ ] [REQUISITO 2]
-- [ ] [REQUISITO 3]
+Modelos gratuitos configurados pelo aplicativo:
 
----
+| Modelo | Presente | Ferramentas | Visão | Contexto |
+|---|---:|---:|---:|---:|
+| `nvidia/nemotron-3-ultra-550b-a55b:free` | sim | sim | não | 1.000.000 |
+| `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free` | sim | sim | sim | 256.000 |
 
-## 9. Próximos Passos
+O segundo é a preferência adequada quando a entrada inclui imagem/documento visual. Modelos que geram imagem são classificados separadamente de modelos que apenas enxergam imagens.
 
-1. [AÇÃO 1] - Prazo: [DATA]
-2. [AÇÃO 2] - Prazo: [DATA]
-3. [AÇÃO 3] - Prazo: [DATA]
-4. [AÇÃO 4] - Prazo: [DATA]
+## Execuções realizadas
 
----
+| Verificação | Resultado |
+|---|---:|
+| Backend Node | 224 aprovados de 226, 0 falhas, 2 pulados (3 rodadas consecutivas) |
+| Frontend Node | 7 aprovados, 0 falhas |
+| Excel real | 4 aprovados, 0 falhas |
+| Build de produção | aprovado |
+| Catálogo público atual | aprovado |
+| `git diff --check` | aprovado |
 
-## 10. Apêndices
+Os 2 testes pulados exigem PostgreSQL por `DATABASE_URL`. O ambiente local desta auditoria não tinha PostgreSQL, Docker nem chave de provedor. Portanto, este relatório não afirma ter feito chamadas pagas/reais nem coletado respostas de cada LLM. A compatibilidade de famílias foi testada com metadados públicos atuais e contratos determinísticos de requisição; o Excel foi gerado e inspecionado de verdade.
 
-### 10.1 Logs de Testes
+## Proteções adicionadas ao CI
 
-```
-[INSERIR LOGS RELEVANTES]
-```
+O CI passa a ter três frentes independentes:
 
-### 10.2 Configurações de Teste
+1. backend Node;
+2. frontend + build;
+3. geração e reabertura de Excel real em Python.
 
-```
-[INSERIR ARQUIVOS DE CONFIGURAÇÃO]
-```
+Assim, uma regressão que volte a transformar o gerador de Excel em resposta apenas textual, que quebre gráficos/fórmulas ou que desative o pipeline de artefatos deixa evidência antes da integração.
 
-### 10.3 Dados Brutos
+## Riscos restantes
 
-[REFERÊNCIA A ARQUIVOS COM DADOS DETALHADOS]
+1. Falta um ambiente de CI com PostgreSQL para eliminar os 2 skips.
+2. Falta um provedor simulado HTTP completo para exercitar SSE e tool calls passando pela rota Express e pelo banco real.
+3. Chamadas ao vivo dependem da chave e da disponibilidade do provedor do usuário; o catálogo pode mudar depois desta data.
+4. A retomada entre etapas do pipeline ainda precisa de cursor durável próprio para continuar automaticamente as etapas restantes após reinício total do backend.
+5. O bundle do frontend continua acima de 500 kB minificado e merece divisão futura.
 
----
+## Parecer
 
-**Documento Preparado Por:** [NOME]  
-**Data de Conclusão:** [DATA]  
-**Assinado Por:** ________________________  
-
----
-
-*Este relatório é confidencial e deve ser armazenado de forma segura.*
+As correções cobrem todos os modelos pelo caminho comum de decisão e eliminam as falsas garantias encontradas. O fluxo está mais seguro para produção, mas a validação não deve ser chamada de “absoluta”: PostgreSQL integrado e um provedor HTTP simulado continuam sendo os próximos testes de maior valor.

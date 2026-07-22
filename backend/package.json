@@ -3,6 +3,7 @@
   "version": "2.0.0",
   "type": "module",
   "scripts": {
+    "audit:models": "node scripts/audit-model-catalog.mjs",
     "start": "node src/server.js",
     "dev": "node --watch src/server.js"
   },

@@ -6,9 +6,9 @@ import { db } from '../db.js';
 import { buildContext } from '../memory/contextBuilder.js';
 import { indexAfterReply } from '../memory/indexer.js';
 import { isLowSignalTurn, LOW_SIGNAL_TURN_NOTE } from '../memory/retrievalPolicy.js';
-import { detectToolRequirement } from '../modelCapabilities.js';
+import { detectToolRequirement, getModelProfile, supportsModelParameter } from '../modelCapabilities.js';
 import { runAgent } from './loop.js';
-import { AGENTS, QUALITY_BAR, clipForBriefing, PERSPECTIVE_CHAR_LIMIT, BRIEFING_CHAR_LIMIT, uploadsNote, developerTeamContextFor } from './prompts.js';
+import { AGENTS, clipForBriefing, PERSPECTIVE_CHAR_LIMIT, BRIEFING_CHAR_LIMIT, uploadsNote, developerTeamContextFor, protectedProfilePrompt } from './prompts.js';
 import { STREAM_RECOVERY_LIMIT, STREAM_RESUME_NOTE, STREAM_PAUSE_RESUME_NOTE, isRetryableStreamError, openRouterRouting, retryDelay, addUsage, friendlyApiError, applyPromptCache } from './provider.js';
 import { guardStreamStall, PROVIDER_CONNECT_TIMEOUT_MS } from './streamGuard.js';
 import { acquireConversationControl, releaseConversationControl, beginProviderRequest, releaseProviderRequest, controlInterruptReason, gate } from './control.js';
@@ -88,7 +88,7 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
       let activeRequest;
       try {
         activeRequest = beginProviderRequest(control);
-        const stream = await client.chat.completions.create({ model: coordModel, messages: msgs, temperature: 0.3, ...openRouterRouting(false, provider.baseURL), stream: true, stream_options: { include_usage: true } }, { signal: activeRequest.signal, timeout: PROVIDER_CONNECT_TIMEOUT_MS });
+        const stream = await client.chat.completions.create({ model: coordModel, messages: msgs, ...(supportsModelParameter(getModelProfile(coordModel), 'temperature') ? { temperature: 0.3 } : {}), ...openRouterRouting(false, provider.baseURL), stream: true, stream_options: { include_usage: true } }, { signal: activeRequest.signal, timeout: PROVIDER_CONNECT_TIMEOUT_MS });
         for await (const chunk of guardStreamStall(stream, { onStall: () => activeRequest.abort('stall') })) {
           if (await gate(control, onEvent)) { stopped = true; return text; }
           if (chunk.usage) addUsage(usage, chunk.usage);
@@ -145,7 +145,8 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
       const activeRequest = beginProviderRequest(control);
       let completion;
       try {
-        completion = await client.chat.completions.create({ model: member.model || coordModel, messages: msgs, temperature: 0.3, ...openRouterRouting(false, provider.baseURL) }, { signal: activeRequest.signal });
+        const memberModel = member.model || coordModel;
+        completion = await client.chat.completions.create({ model: memberModel, messages: msgs, ...(supportsModelParameter(getModelProfile(memberModel), 'temperature') ? { temperature: 0.3 } : {}), ...openRouterRouting(false, provider.baseURL) }, { signal: activeRequest.signal });
       } catch (err) {
         const interrupted = controlInterruptReason(control, activeRequest);
         if (interrupted === 'stop') return { stopped: true };
@@ -219,10 +220,9 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
     // Continuação: o coordenador responde direto, com histórico e memória
     onEvent({ type: 'status', content: 'Coordenador respondendo (equipe consultada no início da conversa — escreva "consulte a equipe" para nova rodada)...' });
     const directMsgs = [
-      { role: 'system', content: 'Você coordena um time de assistentes especializados e a conversa já está rolando. Responda direto à nova mensagem, em português do Brasil, usando o histórico e a memória. Nada de se reapresentar, descrever o time ou repetir o que já foi combinado — é só continuar de onde parou, com naturalidade.' }
+      { role: 'system', content: protectedProfilePrompt('Você coordena um time de assistentes especializados e a conversa já está rolando. Responda direto à nova mensagem, em português do Brasil, usando o histórico e a memória. Nada de se reapresentar, descrever o time ou repetir o que já foi combinado — é só continuar de onde parou, com naturalidade.') }
     ];
-    if (lowSignalTurn) directMsgs[0] = { role: 'system', content: LOW_SIGNAL_TURN_NOTE };
-    directMsgs.push({ role: 'system', content: QUALITY_BAR });
+    if (lowSignalTurn) directMsgs[0] = { role: 'system', content: protectedProfilePrompt(LOW_SIGNAL_TURN_NOTE) };
     directMsgs.push({ role: 'system', content: TEAM_TOOL_AWARENESS });
     if (developerTeamNote) directMsgs.push({ role: 'system', content: developerTeamNote });
     const directPrefixEnd = directMsgs.length; // antes de memória/histórico
@@ -244,7 +244,7 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
       onEvent({ type: 'status', content: `Consultando ${assistants.length} especialista(s) em paralelo...` });
       const results = await Promise.all(assistants.map(async (a) => {
         onEvent({ type: 'tool_start', name: a.name });
-        const sys = `${a.system_prompt}\n\n${TEAM_TOOL_AWARENESS}\n\nVocê faz parte de um time que já está conversando com a pessoa. Olhe o histórico e traga só a sua visão de especialista sobre a nova mensagem, direto ao ponto — sem se apresentar e sem repetir o que o time já disse. Nesta etapa você não gera arquivos nem roda código.`;
+        const sys = protectedProfilePrompt(`${a.system_prompt || ''}\n\n${TEAM_TOOL_AWARENESS}\n\nVocê faz parte de um time que já está conversando com a pessoa. Olhe o histórico e traga só a sua visão de especialista sobre a nova mensagem, direto ao ponto — sem se apresentar e sem repetir o que o time já disse. Nesta etapa você não gera arquivos nem roda código.`);
         const msgs = [{ role: 'system', content: sys }];
         if (developerTeamNote) msgs.push({ role: 'system', content: developerTeamNote });
         const memberPrefixEnd = msgs.length; // antes de memória/histórico
@@ -252,7 +252,7 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
         if (developerRules) msgs.push({ role: 'user', content: untrustedContext('project-rules', developerRules) });
         if (historyText) msgs.push({ role: 'user', content: untrustedContext('conversation-history', historyText) });
         msgs.push({ role: 'user', content: userText });
-        applyPromptCache(msgs, coordModel, memberPrefixEnd, provider.baseURL);
+        applyPromptCache(msgs, a.model || coordModel, memberPrefixEnd, provider.baseURL);
         return { a, memberResult: await askTeamMember(a, msgs) };
       }));
       for (const { a, memberResult } of results) {
@@ -288,8 +288,7 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
     onEvent({ type: 'status', content: 'Compilando a resposta final da equipe...' });
     const combined = perspectives.map(p => `### ${p.emoji || ''} ${p.name}\n${p.text}`).join('\n\n');
     const synthMsgs = [
-      { role: 'system', content: 'Você coordena um time de assistentes especializados, numa conversa em andamento. Junte as perspectivas abaixo em UMA resposta só, coesa e em português do Brasil, que responda direto à nova mensagem da pessoa. Sem se reapresentar, sem descrever o time e sem discurso — vá ao ponto. Use títulos por área quando ajudar e feche com um resumo prático.' },
-      { role: 'system', content: QUALITY_BAR },
+      { role: 'system', content: protectedProfilePrompt('Você coordena um time de assistentes especializados, numa conversa em andamento. Junte as perspectivas abaixo em UMA resposta só, coesa e em português do Brasil, que responda direto à nova mensagem da pessoa. Sem se reapresentar, sem descrever o time e sem discurso — vá ao ponto. Use títulos por área quando ajudar e feche com um resumo prático.') },
       { role: 'system', content: TEAM_TOOL_AWARENESS },
       ...(developerTeamNote ? [{ role: 'system', content: developerTeamNote }] : []),
       ...(developerRules ? [{ role: 'user', content: untrustedContext('project-rules', developerRules) }] : []),
@@ -297,7 +296,8 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
       { role: 'user', content: userText },
       { role: 'user', content: untrustedContext('team-perspectives', combined) }
     ];
-    applyPromptCache(synthMsgs, coordModel, 3, provider.baseURL); // 3 blocos system estáveis antes do user
+    const synthPrefixEnd = synthMsgs.findIndex(message => message.role !== 'system');
+    applyPromptCache(synthMsgs, coordModel, synthPrefixEnd < 0 ? synthMsgs.length : synthPrefixEnd, provider.baseURL);
     try { finalText = await streamCoordinator(synthMsgs); }
     catch (err) { finalText = `Não foi possível compilar a resposta final: ${friendlyApiError(err)}`; onEvent({ type: 'delta', content: finalText }); }
   }

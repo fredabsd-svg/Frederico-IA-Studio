@@ -115,7 +115,7 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
   const rankValue = model => findRanking(model)?.rank ?? Infinity;
   const purposes = [
     { id: 'general', label: 'Trabalho geral', description: 'Conversa, análise e produção do dia a dia.', matches: model => (isRecommended(model) || model.id === value) && capabilityOf(model, 'tools') !== false && !model.image && !model.video },
-    { id: 'files', label: 'Documentos e planilhas', description: 'Modelos mais confiáveis para criar arquivos.', matches: model => capabilityOf(model, 'tools') !== false && isBest(model) },
+    { id: 'files', label: 'Documentos e planilhas', description: 'Modelos com ferramentas confirmadas para criar arquivos.', matches: model => capabilityOf(model, 'tools') === true && isBest(model) },
     { id: 'economy', label: 'Economia', description: 'Opções grátis e de menor custo.', matches: model => isFree(model) || Boolean(model.price) },
     { id: 'vision', label: 'Analisar imagens', description: 'Modelos que leem imagens e documentos visuais.', matches: model => model.vision },
     { id: 'image', label: 'Criar imagens', description: 'Modelos com geração de imagens.', matches: model => model.image },

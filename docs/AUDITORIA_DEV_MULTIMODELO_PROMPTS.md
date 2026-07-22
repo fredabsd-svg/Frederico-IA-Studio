@@ -2,7 +2,7 @@
 
 Data da revisão: 22/07/2026
 
-Base auditada: `main` em `1ed9d15`, incluindo histórico, documentação, rotas, frontend, migrations e testes.
+Base limpa auditada novamente: `main` em `e399370`, incluindo histórico, documentação, rotas, frontend, migrations e testes.
 
 Escopo: execução monoagente, Modo Desenvolvedor, Modo Equipe, Multimodelo, checkpoints, artefatos, memória, contexto, prompts e UX de progresso.
 
@@ -68,18 +68,20 @@ Antes, somente o primeiro `implementador`/`codigo` chamava `runAgent`; as etapas
 6. a etapa valida o resultado antes de declarar sucesso;
 7. uma cópia versionada é gravada em `.multimodel/<run>/vNN/`, com SHA-256, modelo, papel, validação e caminho para recuperação.
 
+Na nova revisão, essa execução sobre o artefato real deixou de depender do Modo Desenvolvedor: qualquer pedido de arquivo/ferramenta no modo Pipeline usa `runAgent` em todas as etapas elegíveis. Compare, Conselho e Debate continuam textuais e recusam de forma explícita um pedido de entrega de arquivo, orientando o usuário a selecionar Pipeline.
+
 Uma falha de etapa fica explícita no cartão e não apaga versões anteriores. Se houver checkpoint retomável, o pipeline para em vez de avançar como se a etapa tivesse terminado.
 
 ## Inventário de prompts ativos
 
-O registro em `backend/src/agent/promptRegistry.js` identifica a release `frederico-prompt-core@2026.07.22.1` e os módulos ativos:
+O registro em `backend/src/agent/promptRegistry.js` identifica a release `frederico-prompt-core@2026.07.22.3` e os módulos ativos:
 
 | Módulo | Versão | Origem principal | Uso |
 |---|---:|---|---|
-| `global-core` | 2.0.0 | `agent/prompts.js` | personalidade/base geral |
+| `global-core` | 3.1.0 | `agent/prompts.js` | núcleo neutro e perfil protegido |
 | `tool-contract` | 2.0.0 | `agent/prompts.js`, `repair.js` | ferramentas, sandbox e execução |
 | `developer-mode` | 2.0.0 | `agent/prompts.js` | modos ask/plan/build/fix/review/auto |
-| `multi-model` | 2.0.0 | `agent/multiModel.js` | papéis e coordenação multimodelo |
+| `multi-model` | 3.0.0 | `agent/multiModel.js` | papéis protegidos, coordenação e pipeline de artefatos |
 | `artifact-workflow` | 1.0.0 | `promptRegistry.js` | inspeção, correção e validação sequencial |
 | `resume-protocol` | 2.0.0 | `agent/checkpoint.js`, `provider.js` | continuidade após pausa/falha |
 | `memory-context` | 2.0.0 | `memory/contextBuilder.js`, `persistence.js` | memória e resumos |
@@ -151,8 +153,9 @@ Regras do projeto, memória ou texto de outro modelo não concedem essa autoriza
 
 ## Verificações executadas
 
-- Backend: 195 testes descobertos; 193 aprovados; 2 pulados porque exigem PostgreSQL (`DATABASE_URL`); 0 falhas.
+- Backend: 226 testes descobertos; 224 aprovados; 2 pulados porque exigem PostgreSQL (`DATABASE_URL`); 0 falhas em 3 rodadas consecutivas.
 - Frontend: 7 testes aprovados; 0 falhas.
+- Excel real: 4 testes aprovados, incluindo cinco etapas de preservação do mesmo XLSX.
 - Build de produção: concluído.
 - Aviso conhecido: bundle principal do frontend com cerca de 859 kB antes de gzip; recomenda-se divisão futura de código.
 

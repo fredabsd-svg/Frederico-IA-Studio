@@ -58,3 +58,19 @@ test('rota BYOK usa a base URL do provedor do usuário, não a global', async ()
   assert.equal(providerSupportsPromptCache('anthropic/claude-3.5-sonnet', 'https://openrouter.ai/api/v1'), true);
   assert.deepEqual(openRouterRouting(true, 'https://openrouter.ai/api/v1'), { provider: { require_parameters: true } });
 });
+
+test('failover remove cache_control antes de trocar para modelo incompatível', async () => {
+  process.env.DEEPSEEK_BASE_URL = 'https://openrouter.ai/api/v1';
+  const { applyPromptCache, clearPromptCache } = await import('./provider.js?failover-cache');
+  const msgs = [
+    { role: 'system', content: 'núcleo' },
+    { role: 'system', content: 'ferramentas' },
+    { role: 'user', content: 'gere uma planilha' }
+  ];
+  applyPromptCache(msgs, 'anthropic/claude-sonnet-4.6', 2, 'https://openrouter.ai/api/v1');
+  assert.ok(Array.isArray(msgs[0].content));
+  clearPromptCache(msgs);
+  assert.equal(msgs[0].content, 'núcleo');
+  assert.equal(msgs[1].content, 'ferramentas');
+  assert.equal(msgs[2].content, 'gere uma planilha');
+});
