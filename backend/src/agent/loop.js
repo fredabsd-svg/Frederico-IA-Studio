@@ -628,8 +628,22 @@ O sandbox Python também tem internet: use requests/urllib ou uma API quando pre
       completedNaturally = true;
       break;
     }
-    for (const call of stepToolCalls) {
-      if (await gate(control, onEvent)) { stopped = true; break; }
+    for (let callIdx = 0; callIdx < stepToolCalls.length; callIdx++) {
+      const call = stepToolCalls[callIdx];
+      if (await gate(control, onEvent)) {
+        stopped = true;
+        // Parada ENTRE chamadas do mesmo lote: o assistant já foi empilhado com
+        // TODAS as tool_calls (acima), mas as ainda NÃO executadas ficariam sem
+        // o `tool` result correspondente. Um array assim é inválido para a API
+        // (a retomada do checkpoint falharia com 400 — "an assistant message
+        // with tool_calls must be followed by tool messages"). Registramos um
+        // resultado "cancelado" para cada chamada restante, mantendo o par
+        // tool_call/tool_result íntegro e o checkpoint retomável.
+        for (let k = callIdx; k < stepToolCalls.length; k++) {
+          messages.push({ role: 'tool', tool_call_id: stepToolCalls[k].id, content: JSON.stringify({ error: 'Execução interrompida pelo usuário antes desta ferramenta.', code: 'CANCELED' }) });
+        }
+        break;
+      }
       const name = call.function.name;
       let args = {};
       try { args = JSON.parse(call.function.arguments || '{}'); } catch {}

@@ -400,7 +400,12 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
     // servidor (server.js) substitui. Sem isto, a mensagem recem-enviada nao
     // tem hora e o separador de data nao consegue agrupa-la.
     const sentAt = new Date().toISOString();
-    setMessages(prev => [...prev, { role: 'user', content: text, created_at: sentAt }, { id: assistantMsgId, role: 'assistant', content: '', blocks: [], created_at: sentAt }]);
+    // _key: chave de render ESTÁVEL, independente do id. Sem ela, quando o evento
+    // "saved" troca o id temporário pelo id real do banco, a chave React mudava e
+    // a bolha remontava no meio do streaming — recolhendo o painel de execução e
+    // reprocessando o markdown. As mensagens vindas do servidor não têm _key e
+    // seguem usando o id (também estável).
+    setMessages(prev => [...prev, { _key: `u-${assistantMsgId}`, role: 'user', content: text, created_at: sentAt }, { _key: assistantMsgId, id: assistantMsgId, role: 'assistant', content: '', blocks: [], created_at: sentAt }]);
     // keyRef é mutável e compartilhado com consumeChatStream/reconnectLiveRun:
     // quando o servidor manda "saved", a chave passa a apontar para o id real.
     const keyRef = { key: assistantMsgId };

@@ -7,6 +7,7 @@ import { execInSandbox, workspaceFor, safeJoin, pcFolderMounts } from './sandbox
 import { runGithubTool } from './connectors/github.js';
 import { createCache } from './cache.js';
 import { captureThumbnail } from './agent/pageShot.js';
+import { getUserProvider } from './userProvider.js';
 
 // Cache de chamadas EXTERNAS caras/repetidas. Desligável com TOOL_CACHE=0
 // (usado nos testes para isolar cada caso). Chaves e TTLs por tipo:
@@ -474,7 +475,15 @@ export const imageToolDefinitions = [
 
 async function generateImage(ws, args, options = {}) {
   const model = process.env.IMAGE_MODEL || 'google/gemini-2.5-flash-image';
-  const base = (process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com').replace(/\/$/, '');
+  // Usa o MESMO provedor/chave do chat deste usuário (BYOK/gratuito/servidor).
+  // Antes fixava a chave/base do .env: num deploy sem chave própria do servidor
+  // (SaaS com ALLOW_SHARED_KEY=false, ou usuário no modo gratuito) o header saía
+  // "Bearer undefined" → 401, e a imagem nunca era gerada mesmo com o chat OK.
+  const provider = await getUserProvider(options.userId);
+  if (!provider.hasKey) {
+    return { error: 'Nenhuma chave de API configurada para gerar imagens. Cadastre a sua chave em Configurações → Provedor de IA.', code: 'NO_API_KEY' };
+  }
+  const base = String(provider.baseURL || 'https://api.deepseek.com').replace(/\/$/, '');
   const content = [];
   if (args.input_image) {
     const src = safeJoin(ws.base, args.input_image);
@@ -486,7 +495,7 @@ async function generateImage(ws, args, options = {}) {
   const r = await fetchWithTimeout(`${base}/chat/completions`, 120000, {
     method: 'POST',
     signal: options.signal,
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}` },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${provider.apiKey}` },
     body: JSON.stringify({ model, messages: [{ role: 'user', content }], modalities: ['image', 'text'] })
   });
   const data = await r.json().catch(() => ({}));
@@ -617,7 +626,7 @@ export async function runTool(conversationId, name, args = {}, sandboxOptions = 
   const ws = workspaceFor(conversationId);
   // Pastas do PC deste usuário (isolamento multi-tenant): sem userId, nenhuma.
   const pcMounts = pcFolderMounts(sandboxOptions.userId);
-  if (name === 'generate_image') return JSON.stringify(await generateImage(ws, args, { signal }));
+  if (name === 'generate_image') return JSON.stringify(await generateImage(ws, args, { signal, userId: sandboxOptions.userId }));
   if (name === 'run_python') {
     const script = safeJoin(ws.base, `.tmp_${Date.now()}_${nanoid(8)}.py`);
     fs.writeFileSync(script, args.code || '', 'utf8');

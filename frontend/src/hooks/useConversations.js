@@ -4,7 +4,7 @@ import { API } from '../constants.js';
 // Lista, seleção e CRUD de conversas + arquivos da conversa aberta.
 // Recebe as dependências do App por parâmetro e devolve { estado, ações }.
 export function useConversations({ clientId, model, setModel, showToast, blockConversationChange, askConfirm,
-                                   startNewChat, setMessages, setDeveloperSession, setMenuOpen, followActiveRef }) {
+                                   startNewChat, setMessages, setDeveloperSession, setMenuOpen, followActiveRef, setNeedLogin }) {
   const [conversations, setConversations] = useState([]);
   const [allConvs, setAllConvs] = useState([]);
   const [current, setCurrent] = useState(null);
@@ -63,6 +63,11 @@ export function useConversations({ clientId, model, setModel, showToast, blockCo
     setMenuOpen(false);
     try {
       const res = await fetch(`${API}/api/conversations/${id}`);
+      // Sessão expirada: sem este guard, um 401 caía no setCurrent(undefined) e a
+      // tela mostrava uma conversa em branco ("Nova conversa"), sem caminho de
+      // volta para o login. Igual ao fetchConversations, sinaliza a re-autenticação.
+      if (res.status === 401) { setNeedLogin?.(true); return; }
+      if (!res.ok) throw new Error('Não foi possível abrir a conversa.');
       const data = await res.json();
       setCurrent(data.conversation);
       setMessages(data.messages || []);

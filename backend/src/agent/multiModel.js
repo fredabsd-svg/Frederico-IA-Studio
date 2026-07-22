@@ -402,9 +402,18 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
       const note = flags.length ? `\n\n_[${flags.join(' · ')}]_` : '';
       return `### ${state.name} — ${state.roleLabel}\n${state.text || '_Sem resposta._'}${note}`;
     };
-    const contributions = () => runnable()
-      .filter(s => s.text)
-      .map(s => `### ${s.name} (função: ${s.roleLabel})\n${clipForBriefing(s.text, 12000)}`)
+    // Melhor texto de um participante: o atual ou, se ele FALHOU numa rodada de
+    // debate depois de já ter respondido, a última resposta boa guardada no
+    // histórico. Sem este fallback, uma falha pontual de rede na 2ª rodada
+    // (state.text é zerado no início da rodada) descartava a contribuição
+    // INTEIRA do modelo na síntese do coordenador, mesmo com a resposta da
+    // rodada 1 preservada em s.history.
+    const bestText = (s) => s.text || (s.history || []).slice().reverse().map(h => h.text).find(Boolean) || '';
+    const contributions = () => slots
+      .filter(s => !registry.cancelled.has(s.slot))
+      .map(s => ({ s, text: bestText(s) }))
+      .filter(x => x.text)
+      .map(({ s, text }) => `### ${s.name} (função: ${s.roleLabel})\n${clipForBriefing(text, 12000)}`)
       .join('\n\n');
 
     let finalText = '';
