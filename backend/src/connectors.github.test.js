@@ -3,7 +3,7 @@
 // foco é o que protege contra injeção de argumento e vazamento de token.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isValidRepoFullName, isValidBranchName, repoDirName, scrubSecrets, GITHUB_WRITE_TOOLS, githubToolDefinitions } from './connectors/github.js';
+import { isValidRepoFullName, isValidBranchName, repoDirName, scrubSecrets, GITHUB_WRITE_TOOLS, githubToolDefinitions, isDigestIgnored, digestFileScore, pickDigestFiles } from './connectors/github.js';
 
 test('isValidRepoFullName aceita nomes reais de owner/repo', () => {
   assert.equal(isValidRepoFullName('fredabsd-svg/Frederico-IA-Studio'), true);
@@ -52,6 +52,56 @@ test('scrubSecrets remove o token e a sua forma base64 da saída', () => {
   assert.equal(limpa.includes('***'), true);
   // sem token, o texto passa intacto
   assert.equal(scrubSecrets('texto normal', null), 'texto normal');
+});
+
+// ---- Extrato do repositório (buildRepoDigest) — seleção PURA de arquivos ----
+
+test('isDigestIgnored pula dependências, binários e lockfiles; mantém código', () => {
+  assert.equal(isDigestIgnored('node_modules/react/index.js'), true);
+  assert.equal(isDigestIgnored('backend/dist/bundle.js'), true);
+  assert.equal(isDigestIgnored('assets/logo.png'), true);
+  assert.equal(isDigestIgnored('package-lock.json'), true);
+  assert.equal(isDigestIgnored('.git/config'), true);
+  assert.equal(isDigestIgnored('backend/src/agent/multiModel.js'), false);
+  assert.equal(isDigestIgnored('README.md'), false);
+  assert.equal(isDigestIgnored('frontend/src/App.jsx'), false);
+});
+
+test('digestFileScore prioriza README e manifestos acima do código comum', () => {
+  const readme = digestFileScore('README.md', 2000);
+  const pkg = digestFileScore('package.json', 1000);
+  const src = digestFileScore('backend/src/util/helpers.js', 3000);
+  const test = digestFileScore('backend/src/util/helpers.test.js', 3000);
+  assert.ok(readme > pkg, 'README acima de manifesto');
+  assert.ok(pkg > src, 'manifesto acima de código comum');
+  assert.ok(src > test, 'código de produção acima de teste');
+});
+
+test('pickDigestFiles respeita limites e ignora binários/dependências', () => {
+  const tree = [
+    { type: 'blob', path: 'README.md', size: 1500 },
+    { type: 'blob', path: 'package.json', size: 800 },
+    { type: 'blob', path: 'node_modules/x/index.js', size: 500 },   // ignorado
+    { type: 'blob', path: 'assets/foto.png', size: 40000 },         // ignorado
+    { type: 'blob', path: 'src/index.js', size: 2000 },
+    { type: 'blob', path: 'src/enorme.js', size: 999999 },          // grande demais
+    { type: 'tree', path: 'src', size: 0 }                          // não é blob
+  ];
+  const picked = pickDigestFiles(tree, { maxFiles: 10, maxChars: 46000, maxFileChars: 5000, maxFileBytes: 120000 });
+  const paths = picked.map(p => p.path);
+  assert.ok(paths.includes('README.md') && paths.includes('package.json') && paths.includes('src/index.js'));
+  assert.ok(!paths.includes('node_modules/x/index.js'));
+  assert.ok(!paths.includes('assets/foto.png'));
+  assert.ok(!paths.includes('src/enorme.js'), 'arquivo acima de maxFileBytes fica de fora');
+  assert.ok(!paths.includes('src'), 'entradas do tipo tree não entram');
+  // README vem primeiro (maior prioridade)
+  assert.equal(paths[0], 'README.md');
+});
+
+test('pickDigestFiles corta pela quantidade máxima de arquivos', () => {
+  const tree = Array.from({ length: 50 }, (_, i) => ({ type: 'blob', path: `src/mod${i}.js`, size: 300 }));
+  const picked = pickDigestFiles(tree, { maxFiles: 5, maxChars: 999999, maxFileChars: 5000 });
+  assert.equal(picked.length, 5);
 });
 
 test('ferramentas de escrita do GitHub estão marcadas para o filtro de plan/review', () => {

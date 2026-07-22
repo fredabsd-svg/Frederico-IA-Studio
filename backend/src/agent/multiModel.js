@@ -22,6 +22,7 @@ import { getModelProfile, providerLabel } from '../modelCapabilities.js';
 import { indexAfterReply } from '../memory/indexer.js';
 import { runAgent } from './loop.js';
 import { clipForBriefing, developerTeamContextFor } from './prompts.js';
+import { buildRepoDigest } from '../connectors/github.js';
 import { STREAM_RECOVERY_LIMIT, STREAM_RESUME_NOTE, STREAM_PAUSE_RESUME_NOTE, isRetryableStreamError, openRouterRouting, retryDelay, addUsage, friendlyApiError, applyPromptCache } from './provider.js';
 import { guardStreamStall, PROVIDER_CONNECT_TIMEOUT_MS } from './streamGuard.js';
 import { acquireConversationControl, releaseConversationControl, beginProviderRequest, releaseProviderRequest, controlInterruptReason, gate } from './control.js';
@@ -146,9 +147,12 @@ function memberSystemPrompt(member, mode) {
 // "me mande o link do repositório" / "não tenho acesso ao GitHub". Antes disso,
 // só o Modo Equipe (orchestrator.js) recebia essa nota; o multimodelo real
 // (compare/council/debate/pipeline) ficava sem contexto do repo.
-export function multiModelSystemBlocks(member, mode, developerTeamNote = null) {
+export function multiModelSystemBlocks(member, mode, developerTeamNote = null, repoDigest = null) {
   const blocks = [{ role: 'system', content: memberSystemPrompt(member, mode) }];
   if (developerTeamNote) blocks.push({ role: 'system', content: developerTeamNote });
+  // Código REAL do repositório (compare/council/debate não executam ferramentas,
+  // então este extrato é a única forma de eles analisarem o código de verdade).
+  if (repoDigest) blocks.push({ role: 'system', content: repoDigest });
   return blocks;
 }
 
@@ -231,6 +235,21 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
     // selecionado, para não pedirem o link nem alegarem falta de acesso ao
     // GitHub (a execução real de clone/leitura segue no executor via runAgent).
     const developerTeamNote = developer ? developerTeamContextFor(developer, userId) : null;
+    // Extrato do CÓDIGO REAL do repositório. Os modos compare/council/debate não
+    // executam ferramentas — sem isto os modelos analisariam de "conhecimento
+    // geral". Lido uma vez pela API do GitHub e reaproveitado por todos os slots
+    // (o prompt-cache mantém o custo sob controle entre rodadas/participantes).
+    let repoDigest = null;
+    if (developer?.github?.repo) {
+      onEvent({ type: 'status', content: 'Lendo o código do repositório para embasar os modelos...' });
+      try {
+        const digest = await buildRepoDigest({ userId, repo: developer.github.repo, branch: developer.github.branch || null });
+        if (digest?.text) {
+          repoDigest = digest.text;
+          onEvent({ type: 'status', content: `Código carregado: ${digest.filesIncluded} de ${digest.totalFiles} arquivos do repositório.` });
+        }
+      } catch { /* segue só com a nota textual (nome do repo) */ }
+    }
     const historyText = await buildHistoryText(conversationId, config.context);
     const baseUserContent = historyText
       ? `Contexto da conversa até aqui:\n${historyText}\n\nNOVA mensagem do usuário:\n${userText}`
@@ -318,7 +337,7 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
     }
 
     function slotMessages(state, extraUserContent = null) {
-      const msgs = multiModelSystemBlocks(state.member, config.mode, developerTeamNote);
+      const msgs = multiModelSystemBlocks(state.member, config.mode, developerTeamNote, repoDigest);
       const prefixEnd = msgs.length;
       msgs.push({ role: 'user', content: extraUserContent ? `${baseUserContent}\n\n${extraUserContent}` : baseUserContent });
       applyPromptCache(msgs, state.member.id, prefixEnd);
@@ -333,9 +352,10 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
       const msgs = [
         { role: 'system', content: 'Você é o COORDENADOR de uma execução multimodelo: vários modelos de IA analisaram a mesma solicitação. Compare as respostas, identifique concordâncias, aponte divergências, descarte erros ou afirmações sem fundamento, aproveite os melhores argumentos e produza UMA resposta final consolidada, em português do Brasil, direta e bem organizada. Não descreva o processo — entregue a resposta.' },
         ...(developerTeamNote ? [{ role: 'system', content: developerTeamNote }] : []),
+        ...(repoDigest ? [{ role: 'system', content: repoDigest }] : []),
         { role: 'user', content: taskPrompt }
       ];
-      const prefixEnd = developerTeamNote ? 2 : 1;
+      const prefixEnd = 1 + (developerTeamNote ? 1 : 0) + (repoDigest ? 1 : 0);
       applyPromptCache(msgs, config.coordinator, prefixEnd);
       for (let attempt = 0; ; attempt++) {
         let segment = '';
