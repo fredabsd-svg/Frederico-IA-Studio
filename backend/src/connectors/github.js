@@ -432,6 +432,39 @@ function toolError(error, extra = {}) {
   return { error, recoverable: true, ...extra };
 }
 
+// Erro clássico de CA/TLS ausente: o git do backend não confia no certificado do
+// github.com (falta ca-certificates na imagem). É o que dispara o reflexo do
+// modelo de tentar GIT_SSL_NO_VERIFY. Não é transitório — é config do servidor.
+const TLS_CERT_RE = /SSL certificate problem|unable to get local issuer certificate|server certificate verification failed|self.signed certificate|CERTIFICATE_VERIFY_FAILED|SSL_ERROR|schannel|certificate has expired/i;
+// git ausente no servidor (ENOENT) — também config, não adianta insistir.
+const GIT_MISSING_RE = /não está instalado|not installed|ENOENT/i;
+
+// Nota anexada a TODA falha de operação de rede do GitHub: impede o modelo de
+// "contornar" com caminhos que NUNCA funcionam (o sandbox não tem rede nem o
+// token) e que só queimam ciclos/limite de pesquisa — foi o loop de 7 min com
+// git clone no bash + abrir o github.com no navegador visto em produção.
+const NO_WORKAROUND_NOTE = 'IMPORTANTE: o acesso ao GitHub é feito SÓ por estas ferramentas (github_clone/github_push/github_create_pr), que rodam no backend com a autenticação do app. NÃO tente contornar: "git clone"/"git pull"/"git push" pelo bash do sandbox NÃO funcionam (sem rede e sem credenciais), GIT_SSL_NO_VERIFY não resolve, e abrir github.com no navegador (web_fetch) para ler o código também não. Se a operação falhou, RELATE a falha ao usuário de forma objetiva e PARE — não fique tentando alternativas.';
+
+// PURA (testável): uma falha de git em rede (clone/fetch/push) é de
+// CONFIGURAÇÃO DO SERVIDOR — em que insistir (ou contornar pelo bash/navegador)
+// nunca resolve? Devolve 'tls' (git sem ca-certificates), 'git-missing' (git
+// ausente/ENOENT) ou null (falha comum: rede, auth, conflito — tratada à parte).
+export function serverConfigGitFailure(detail) {
+  const s = String(detail || '');
+  if (TLS_CERT_RE.test(s)) return 'tls';
+  if (GIT_MISSING_RE.test(s)) return 'git-missing';
+  return null;
+}
+
+// Mensagem de ferramenta (com o aviso anti-contorno) para uma falha de
+// configuração do servidor. `verb` só ajusta o texto (clone/atualização/push).
+function serverConfigGitError(kind, verb = 'clone') {
+  const cause = kind === 'tls'
+    ? `erro de certificado TLS: o git do servidor não confia no certificado do github.com — falta o pacote ca-certificates na imagem do backend. O administrador precisa reconstruir a imagem do backend (com ca-certificates) e reiniciar`
+    : `o git não está disponível no servidor. O administrador precisa reconstruir a imagem do backend`;
+  return toolError(`A ${verb === 'clone' ? 'clonagem' : verb === 'push' ? 'publicação (push)' : 'atualização'} falhou por ${cause}. É uma falha de CONFIGURAÇÃO DO SERVIDOR. ${NO_WORKAROUND_NOTE}`, { recoverable: false });
+}
+
 const NOT_CONNECTED =
   'O GitHub não está conectado. Peça ao usuário para conectar a conta em Configurações → Conectores (token do GitHub).';
 
@@ -453,7 +486,12 @@ async function githubClone(conn, conversationId, args, signal) {
       return toolError(`A pasta ${sandboxPath} já contém outro repositório (${url || 'desconhecido'}). Use o nome correto ou uma nova conversa.`);
     }
     const fetch_ = await runGit(dir, ['fetch', 'origin', '--prune'], { token: conn.token, timeoutMs: CLONE_TIMEOUT_MS, signal });
-    if (fetch_.code !== 0) return toolError(`Não consegui atualizar o repositório: ${fetch_.stderr || fetch_.stdout}`.trim());
+    if (fetch_.code !== 0) {
+      const upErr = `${fetch_.stderr || fetch_.stdout || ''}`.trim();
+      const cfg = serverConfigGitFailure(upErr);
+      if (cfg) return serverConfigGitError(cfg, 'fetch');
+      return toolError(`Não consegui atualizar o repositório: ${upErr}\n\n${NO_WORKAROUND_NOTE}`);
+    }
     if (branch) {
       const sw = await runGit(dir, ['checkout', branch], { signal });
       if (sw.code !== 0) {
@@ -497,13 +535,18 @@ async function githubClone(conn, conversationId, args, signal) {
   }
   if (clone.code !== 0) {
     const detail = (clone.stderr || clone.stdout || '').trim().slice(0, 400);
+    // Falhas de CONFIGURAÇÃO DO SERVIDOR ou de CREDENCIAL: insistir (ou tentar
+    // pelo bash/navegador) não resolve. Marcadas recoverable:false para o freio
+    // de falhas do loop parar rápido, em vez de o modelo flailar por minutos.
+    const cfg = serverConfigGitFailure(detail);
+    if (cfg) return serverConfigGitError(cfg, 'clone');
     if (/Authentication failed|could not read Username|403/i.test(detail)) {
-      return toolError('O GitHub recusou a autenticação para este repositório. O token conectado precisa de acesso de leitura/escrita a ele (escopo "repo").');
+      return toolError(`O GitHub recusou a autenticação para este repositório. O token conectado precisa de acesso de leitura/escrita a ele (escopo "repo"). ${NO_WORKAROUND_NOTE}`, { recoverable: false });
     }
     if (/not found|Repository not found/i.test(detail)) {
-      return toolError(`Repositório ${fullName} não encontrado — confira o nome e se o token tem acesso a ele.`);
+      return toolError(`Repositório ${fullName} não encontrado — confira o nome e se o token tem acesso a ele. ${NO_WORKAROUND_NOTE}`, { recoverable: false });
     }
-    return toolError(`O clone falhou: ${detail}`);
+    return toolError(`O clone falhou: ${detail}\n\n${NO_WORKAROUND_NOTE}`);
   }
   // Identidade local do git: os commits feitos pelo modelo (no sandbox) e pelo
   // github_push saem em nome da conta conectada, com o e-mail noreply do GitHub.
@@ -553,13 +596,15 @@ async function githubPush(conn, conversationId, args, signal) {
   await chownTree(repoRoot(conversationId));
   if (push.code !== 0) {
     const detail = (push.stderr || push.stdout || '').trim().slice(0, 400);
+    const cfg = serverConfigGitFailure(detail);
+    if (cfg) return serverConfigGitError(cfg, 'push');
     if (/non-fast-forward|fetch first|rejected/i.test(detail)) {
       return toolError(`O GitHub rejeitou o push (a branch "${branch}" avançou por fora). Rode github_clone de novo para atualizar (ou envie para outra branch) e tente outra vez.`);
     }
     if (/Authentication failed|403|permission/i.test(detail)) {
-      return toolError('O token conectado não tem permissão de escrita neste repositório (escopo "repo" com acesso de escrita).');
+      return toolError(`O token conectado não tem permissão de escrita neste repositório (escopo "repo" com acesso de escrita). ${NO_WORKAROUND_NOTE}`, { recoverable: false });
     }
-    return toolError(`O push falhou: ${detail}`);
+    return toolError(`O push falhou: ${detail}\n\n${NO_WORKAROUND_NOTE}`);
   }
   const sha = await runGit(dir, ['rev-parse', '--short', 'HEAD'], { signal });
   return {

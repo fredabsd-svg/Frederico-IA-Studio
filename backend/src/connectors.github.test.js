@@ -3,7 +3,7 @@
 // foco é o que protege contra injeção de argumento e vazamento de token.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isValidRepoFullName, isValidBranchName, repoDirName, scrubSecrets, GITHUB_WRITE_TOOLS, githubToolDefinitions, isDigestIgnored, digestFileScore, pickDigestFiles } from './connectors/github.js';
+import { isValidRepoFullName, isValidBranchName, repoDirName, scrubSecrets, GITHUB_WRITE_TOOLS, githubToolDefinitions, isDigestIgnored, digestFileScore, pickDigestFiles, serverConfigGitFailure } from './connectors/github.js';
 
 test('isValidRepoFullName aceita nomes reais de owner/repo', () => {
   assert.equal(isValidRepoFullName('fredabsd-svg/Frederico-IA-Studio'), true);
@@ -102,6 +102,26 @@ test('pickDigestFiles corta pela quantidade máxima de arquivos', () => {
   const tree = Array.from({ length: 50 }, (_, i) => ({ type: 'blob', path: `src/mod${i}.js`, size: 300 }));
   const picked = pickDigestFiles(tree, { maxFiles: 5, maxChars: 999999, maxFileChars: 5000 });
   assert.equal(picked.length, 5);
+});
+
+test('serverConfigGitFailure reconhece falha de CA/TLS do git (bug do github_clone no Modo Desenvolvedor)', () => {
+  // Erro clássico de ca-certificates ausente: o git do backend não confia no
+  // certificado do github.com, enquanto o fetch do Node (CA embutido) funciona.
+  assert.equal(serverConfigGitFailure("fatal: unable to access 'https://github.com/a/b.git/': server certificate verification failed. CAfile: none"), 'tls');
+  assert.equal(serverConfigGitFailure('fatal: unable to get local issuer certificate'), 'tls');
+  assert.equal(serverConfigGitFailure('SSL certificate problem: unable to get local issuer certificate'), 'tls');
+});
+
+test('serverConfigGitFailure reconhece git ausente e ignora falhas comuns (rede/auth/conflito)', () => {
+  assert.equal(serverConfigGitFailure('O git não está instalado no servidor.'), 'git-missing');
+  assert.equal(serverConfigGitFailure('spawn git ENOENT'), 'git-missing');
+  // Falhas transitórias/de credencial NÃO são config do servidor — tratadas à
+  // parte, para não marcar como não-recuperável o que uma nova tentativa resolve.
+  assert.equal(serverConfigGitFailure('fatal: Authentication failed for ...'), null);
+  assert.equal(serverConfigGitFailure('fatal: Could not resolve host: github.com'), null);
+  assert.equal(serverConfigGitFailure('! [rejected] main -> main (non-fast-forward)'), null);
+  assert.equal(serverConfigGitFailure(''), null);
+  assert.equal(serverConfigGitFailure(null), null);
 });
 
 test('ferramentas de escrita do GitHub estão marcadas para o filtro de plan/review', () => {
