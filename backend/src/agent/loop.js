@@ -754,7 +754,8 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
       }
       const name = call.function.name;
       let args = {};
-      try { args = JSON.parse(call.function.arguments || '{}'); } catch {}
+      try { args = JSON.parse(call.function.arguments || '{}'); }
+      catch (err) { console.warn(`[agent] argumentos malformados da ferramenta "${name}" (seguindo com {}):`, err.message); }
       // Prévia do que a ferramenta vai executar (exibida na interface)
       const preview = String(args.code || args.command || args.prompt || args.path || args.query || args.url || '').slice(0, 400);
       // Prévia rica p/ o Ambiente de Trabalho: ao gravar arquivo, manda também o

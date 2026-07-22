@@ -367,7 +367,10 @@ export async function buildRepoDigest({ userId, repo, branch = null, signal, max
     const header = `EXTRATO REAL DO REPOSITÓRIO GitHub "${repo}" (branch "${ref}") — lido agora pela API do GitHub.\nBaseie sua análise NESTE código de verdade (não no seu conhecimento geral). Se algo não estiver no extrato, diga que precisa ver o arquivo específico, sem inventar.`;
     const text = `${header}\n\n## Estrutura de arquivos (${allPaths.length})\n${treeList}${treeNote}\n\n## Conteúdo dos arquivos principais (${includedFiles})\n\n${parts.join('\n\n')}`;
     return { text, ref, filesIncluded: includedFiles, totalFiles: allPaths.length, truncated: treeTruncated };
-  } catch {
+  } catch (err) {
+    // Sem extrato (rede, permissão, repo grande demais): o multimodelo segue só
+    // com a nota textual. Logamos para não mascarar token revogado / API fora.
+    console.warn(`[github] buildRepoDigest falhou para "${repo}":`, err.message);
     return null;
   }
 }
