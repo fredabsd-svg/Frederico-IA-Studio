@@ -17,6 +17,7 @@
 // Fallback NÃO é multimodelo: aqui todos os modelos selecionados são de fato
 // executados e produzem resposta própria (ver docs — seção 15 do pedido).
 import { getUserProvider } from '../userProvider.js';
+import { rawModelId } from '../modelRef.js';
 import { db } from '../db.js';
 import { detectToolRequirement, getModelProfile, providerLabel, supportsModelParameter } from '../modelCapabilities.js';
 import { indexAfterReply } from '../memory/indexer.js';
@@ -76,7 +77,7 @@ export function normalizeMultiModelConfig(raw) {
   const models = (Array.isArray(raw.models) ? raw.models : [])
     .map(m => {
       const id = String(m?.id || '').trim();
-      if (!id || id.length > 200) return null;
+      if (!id || id.length > 360) return null;
       const role = MULTI_ROLES[m?.role] ? m.role : 'livre';
       const prompt = typeof m?.prompt === 'string' ? m.prompt.trim().slice(0, 4000) : '';
       const label = typeof m?.label === 'string' ? m.label.trim().slice(0, 80) : '';
@@ -178,8 +179,14 @@ export function multiModelExecutionPolicy({ mode, requirement, developer = false
 }
 
 export async function runMultiModel({ userId, conversationId, userText, config, webSearch = false, effort, developer = null, onEvent }) {
-  const provider = await getUserProvider(userId);
-  const client = provider.client;
+  const memberProviders = await Promise.all(config.models.map(member => getUserProvider(userId, member.id)));
+  const coordinatorProvider = await getUserProvider(userId, config.coordinator);
+  config.models.forEach((member, index) => {
+    if (!member.id.includes('::') && memberProviders[index]?.modelRef) member.id = memberProviders[index].modelRef;
+  });
+  if (config.coordinator && !config.coordinator.includes('::') && coordinatorProvider.modelRef) {
+    config.coordinator = coordinatorProvider.modelRef;
+  }
   const control = acquireConversationControl(conversationId, userId);
   const registry = { cancelled: new Set(), requests: new Map() };
   slotRegistries.set(conversationId, registry);
@@ -187,20 +194,12 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
   try {
     const userMsgId = await saveMessage(userId, conversationId, 'user', userText);
     const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
-    if (!provider.hasKey) {
+    if (!coordinatorProvider.hasKey && !memberProviders.some(provider => provider.hasKey)) {
       const finalText = 'Nenhuma chave de API configurada. Vá em **Configurações → Provedor de IA** e cadastre a sua chave para usar o modo Multimodelo.';
       onEvent({ type: 'delta', content: finalText });
       const assistantMessageId = await saveMessage(userId, conversationId, 'assistant', finalText);
       onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId });
       return { text: finalText, usage, model: config.coordinator };
-    }
-
-    // MODO GRATUITO: todos os participantes precisam estar na allowlist
-    // gratuita — a chave da plataforma não atende modelo pago escolhido à mão.
-    if (provider.source === 'free') {
-      const allowed = provider.freeModels || [];
-      for (const member of config.models) if (!allowed.includes(member.id)) member.id = provider.model;
-      if (!allowed.includes(config.coordinator)) config.coordinator = provider.model;
     }
 
     const hasUploads = Boolean(uploadsNote(conversationId));
@@ -224,8 +223,9 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
     const slots = config.models.map((member, slot) => ({
       slot,
       member,
+      runtime: memberProviders[slot],
       name: memberName(member),
-      provider: providerLabel(member.id),
+      provider: memberProviders[slot]?.providerName || providerLabel(rawModelId(member.id)),
       role: member.role,
       roleLabel: roleOf(member).label,
       status: STATUS.waiting,
@@ -265,7 +265,10 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
     // texto são marcados com erro e ficam de fora (sem derrubar os demais).
     for (const state of slots) {
       const profile = getModelProfile(state.member.id);
-      if (profile?.capabilities?.text === false) {
+      if (!state.runtime?.hasKey) {
+        state.error = 'A credencial deste provedor não está mais disponível.';
+        setStatus(state, STATUS.error);
+      } else if (profile?.capabilities?.text === false) {
         state.error = 'Este modelo não está catalogado para conversa em texto.';
         setStatus(state, STATUS.error);
       } else if (executionPolicy.useAgentPipeline && profile?.capabilities?.tools === false) {
@@ -307,10 +310,10 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
       const t0 = Date.now();
       setStatus(state, STATUS.thinking);
       const requestParams = {
-        model: state.member.id,
+        model: rawModelId(state.member.id),
         messages: msgs,
         ...(supportsModelParameter(getModelProfile(state.member.id), 'temperature') ? { temperature: 0.3 } : {}),
-        ...openRouterRouting(false, provider.baseURL),
+        ...openRouterRouting(false, state.runtime.baseURL),
         stream: true,
         stream_options: { include_usage: true },
         ...(config.maxTokensPerModel && supportsModelParameter(getModelProfile(state.member.id), 'max_tokens') ? { max_tokens: config.maxTokensPerModel } : {})
@@ -323,7 +326,7 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
           activeRequest = beginProviderRequest(control);
           if (!registry.requests.has(state.slot)) registry.requests.set(state.slot, new Set());
           registry.requests.get(state.slot).add(activeRequest);
-          const stream = await client.chat.completions.create(requestParams, { signal: activeRequest.signal, timeout: PROVIDER_CONNECT_TIMEOUT_MS });
+          const stream = await state.runtime.client.chat.completions.create(requestParams, { signal: activeRequest.signal, timeout: PROVIDER_CONNECT_TIMEOUT_MS });
           let finish = null;
           for await (const chunk of guardStreamStall(stream, { onStall: () => activeRequest.abort('stall') })) {
             if (control.stopped) { setStatus(state, STATUS.stopped); return { stopped: true, text }; }
@@ -387,7 +390,7 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
       const staticPrefixEnd = prefixEnd < 0 ? msgs.length : prefixEnd;
       if (developerRules) msgs.push({ role: 'user', content: untrustedContext('project-rules', developerRules) });
       msgs.push({ role: 'user', content: extraUserContent ? `${baseUserContent}\n\n${untrustedContext('previous-model-output', extraUserContent)}` : baseUserContent });
-      applyPromptCache(msgs, state.member.id, staticPrefixEnd, provider.baseURL);
+      applyPromptCache(msgs, state.member.id, staticPrefixEnd, state.runtime.baseURL);
       return msgs;
     }
 
@@ -404,14 +407,15 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
         { role: 'user', content: untrustedContext('multi-coordinator-material', taskPrompt) }
       ];
       const prefixEnd = 1 + (developerTeamNote ? 1 : 0);
-      applyPromptCache(msgs, config.coordinator, prefixEnd, provider.baseURL);
+      applyPromptCache(msgs, config.coordinator, prefixEnd, coordinatorProvider.baseURL);
       for (let attempt = 0; ; attempt++) {
         let segment = '';
         let activeRequest;
         try {
           activeRequest = beginProviderRequest(control);
           const coordinatorProfile = getModelProfile(config.coordinator);
-          const stream = await client.chat.completions.create({ model: config.coordinator, messages: msgs, ...(supportsModelParameter(coordinatorProfile, 'temperature') ? { temperature: 0.3 } : {}), ...openRouterRouting(false, provider.baseURL), stream: true, stream_options: { include_usage: true } }, { signal: activeRequest.signal, timeout: PROVIDER_CONNECT_TIMEOUT_MS });
+          if (!coordinatorProvider.client) throw new Error('A credencial do provedor coordenador não está disponível.');
+          const stream = await coordinatorProvider.client.chat.completions.create({ model: rawModelId(config.coordinator), messages: msgs, ...(supportsModelParameter(coordinatorProfile, 'temperature') ? { temperature: 0.3 } : {}), ...openRouterRouting(false, coordinatorProvider.baseURL), stream: true, stream_options: { include_usage: true } }, { signal: activeRequest.signal, timeout: PROVIDER_CONNECT_TIMEOUT_MS });
           for await (const chunk of guardStreamStall(stream, { onStall: () => activeRequest.abort('stall') })) {
             if (control.stopped) return text;
             if (chunk.usage) addUsage(usage, chunk.usage);
@@ -520,7 +524,7 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
         const budgetNote = budgetExceeded ? '\n\nATENÇÃO: o orçamento definido pelo usuário foi atingido — parte das rodadas pode não ter acontecido. Deixe isso claro em uma nota curta ao final.' : '';
         try {
           finalText = await streamCoordinator(`${historyText ? `Contexto da conversa:\n${clipForBriefing(historyText, 6000)}\n\n` : ''}Solicitação do usuário:\n${userText}\n\nRespostas dos modelos:\n${body || '_nenhum modelo conseguiu responder_'}${budgetNote}`);
-          synthesis = { text: clipForBriefing(finalText, META_TEXT_LIMIT), model: config.coordinator, name: memberName({ id: config.coordinator }), provider: providerLabel(config.coordinator) };
+          synthesis = { text: clipForBriefing(finalText, META_TEXT_LIMIT), model: config.coordinator, name: memberName({ id: config.coordinator }), provider: coordinatorProvider.providerName || providerLabel(rawModelId(config.coordinator)) };
         } catch (err) {
           finalText = `Não foi possível consolidar a resposta final: ${friendlyApiError(err)}`;
           onEvent({ type: 'delta', content: finalText });

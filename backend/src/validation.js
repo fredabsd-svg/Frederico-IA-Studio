@@ -28,7 +28,9 @@ export function validate(schema, source = 'body') {
 }
 
 const id = z.string().trim().max(120);
-const modelId = z.string().trim().max(200);
+// Inclui a referência interna "provider-id::model-id". Alguns catálogos usam
+// ids longos; o id bruto é limitado a 300 no importador.
+const modelId = z.string().trim().max(360);
 const shortText = (max, msg) => z.string({ error: msg }).trim().min(1, msg).max(max);
 const assistantTools = z.array(z.enum(ASSISTANT_TOOL_NAMES, { message: 'Ferramenta de assistente inválida.' })).max(ASSISTANT_TOOL_NAMES.length).optional();
 const assistantPersonality = z.looseObject({

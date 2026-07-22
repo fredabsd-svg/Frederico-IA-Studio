@@ -2,6 +2,7 @@
 // ferramentas, reparos, failover de modelo e entrega de arquivos.
 // Extraído de agent.js (refatoração mecânica, sem mudança de comportamento).
 import { getUserProvider } from '../userProvider.js';
+import { rawModelId } from '../modelRef.js';
 import { freeTierConfigured } from '../freeTier.js';
 import { nanoid } from 'nanoid';
 import { webToolDefinitions, runTool } from '../tools.js';
@@ -61,17 +62,18 @@ export function buildOutputBaseline(files = [], { acceptAll = false, continuatio
 // failover já tentada e o objetivo. Com ele, o loop CONTINUA de onde parou (com
 // orçamento de ciclos NOVO), em vez de recomeçar do zero. Ver checkpoint.js.
 export async function runAgent({ userId, conversationId, userText, model, assistant, webSearch, effort, developer, onEvent, saveUserMessage = true, existingUserMessageId = null, executionBriefing = null, forceExecution = false, control: inheritedControl = null, resume = null, gitWriteAuthorization = null, persistReply = true, continuationOutputPaths = [] }) {
-  const provider = await getUserProvider(userId);          // BYOK: chave do usuário
+  const requestedModel = resume?.model || model || assistant?.model || '';
+  const provider = await getUserProvider(userId, requestedModel); // chave dona do modelo
   const client = provider.client;                          // sombreia o cliente global
   const runId = resume?.runId || nanoid();
   // No resume, o modelo ativo é o que estava rodando quando parou (pode ser um
   // de reserva já acionado) — não voltamos ao modelo original.
-  let chosenModel = resume?.model || model || assistant?.model || provider.model;
+  let chosenModel = requestedModel && requestedModel.includes('::') ? requestedModel : (provider.modelRef || requestedModel);
   // MODO GRATUITO: o modelo precisa estar na allowlist gratuita — a chave da
   // plataforma nunca atende um modelo pago escolhido no seletor. Fora da lista,
   // cai no modelo gratuito padrão.
   if (provider.source === 'free' && !(provider.freeModels || []).includes(chosenModel)) {
-    chosenModel = provider.model;
+    chosenModel = provider.modelRef;
   }
   // FAILOVER (MM-04): se o provedor cair no meio da tarefa, antes o app só
   // repetia o MESMO modelo e desistia. Agora há uma cadeia de reserva — os
@@ -82,7 +84,7 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   const fallbackChain = [
     ...(provider.source === 'free' ? [] : String(process.env.MODEL_FALLBACKS || '').split(',').map(s => s.trim()).filter(Boolean)),
     ...(provider.fallbackModels || []),
-    ...(provider.model && provider.model !== chosenModel ? [provider.model] : [])
+    ...(provider.modelRef && provider.modelRef !== chosenModel ? [provider.modelRef] : [])
   ];
   // No resume, preserva a cadeia de failover já tentada (não retenta modelos
   // que já falharam nesta tarefa).
@@ -108,7 +110,7 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   const promptManifest = promptManifestFor(assistant, developerContext ? ['developer'] : []);
   // userId viaja junto: o sandbox monta só as pastas do PC DESTE usuário
   // (isolamento multi-tenant) e aplica o limite de sandboxes por usuário.
-  const sandboxOptions = { ...(developerContext?.sandboxOptions || {}), userId, networkEnabled: sandboxNetworkEnabled };
+  const sandboxOptions = { ...(developerContext?.sandboxOptions || {}), userId, model: chosenModel, networkEnabled: sandboxNetworkEnabled };
   const webSearchActive = Boolean(webSearch && !lowSignalTurn);
   let requestedTools = toolsFor(assistant);
   if (developerContext?.readOnlyProject) requestedTools = requestedTools.filter(tool => !['write_file', 'zip_outputs', 'generate_image'].includes(tool.function.name));
@@ -418,7 +420,7 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
     try {
       activeRequest = beginProviderRequest(control);
       stream = await client.chat.completions.create(buildProviderRequest({
-        model: chosenModel,
+        model: rawModelId(chosenModel),
         messages,
         tools,
         forceNativeToolCall,

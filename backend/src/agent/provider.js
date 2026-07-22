@@ -2,18 +2,9 @@
 // de stream interrompido, roteamento OpenRouter, acumulação de usage e
 // tradução de erros da API em mensagens amigáveis.
 // Extraído de agent.js (refatoração mecânica, sem mudança de comportamento).
-import { createAiClient } from '../aiClient.js';
 import { isUnsupportedToolError } from '../modelCapabilities.js';
 
 const modelApiBaseUrl = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com';
-// Cliente "legado" de nível de módulo. No BYOK ele é SEMPRE sombreado pelo
-// provider.client do usuário (getUserProvider). O fallback 'sem-chave' evita
-// que o construtor da OpenAI derrube o boot quando o servidor não tem chave
-// própria (caso da SaaS pura, com ALLOW_SHARED_KEY=false) — igual ao indexer.
-const client = createAiClient({
-  apiKey: process.env.DEEPSEEK_API_KEY || 'sem-chave',
-  baseURL: modelApiBaseUrl
-});
 
 export const STREAM_RECOVERY_LIMIT = Math.max(0, Number(process.env.MODEL_STREAM_RECOVERY_LIMIT || 2));
 export const STREAM_RESUME_NOTE = 'A resposta anterior do provedor foi interrompida temporariamente. Continue exatamente do ponto em que parou, sem repetir texto nem desfazer as ferramentas ja executadas. Conclua a tarefa.';

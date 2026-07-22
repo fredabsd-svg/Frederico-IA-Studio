@@ -1,138 +1,143 @@
-import React, { useEffect, useState } from 'react';
-import { KeyRound, Check, X, RefreshCw, Sparkles, Wand2 } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { KeyRound, Check, X, RefreshCw, Sparkles, Wand2, Plus, Trash2 } from 'lucide-react';
 import { API } from './constants.js';
 import { Drawer } from './components.jsx';
+import { KEY_PROVIDERS } from './KeyWizard.jsx';
 
-// Provedor de IA (BYOK): cada pessoa cadastra a própria chave de API. A chave
-// fica criptografada no servidor e nunca é exibida por completo. Quem preferir
-// pode usar o MODO GRATUITO (chave da plataforma, com limites) ou o assistente
-// passo a passo para criar a própria chave.
-export function ProviderPanel({ showToast, freeStatus, onOpenWizard, onFreeChange, onClose }) {
-  const [status, setStatus] = useState(null);
+const CUSTOM = { id: 'custom', name: 'Outro (OpenAI compatível)', base: '', modelExample: '' };
+
+export function ProviderPanel({ showToast, freeStatus, onOpenWizard, onFreeChange, onProvidersChange, onClose }) {
+  const [providers, setProviders] = useState(null);
+  const [formOpen, setFormOpen] = useState(false);
+  const [providerType, setProviderType] = useState('openrouter');
+  const [name, setName] = useState('OpenRouter');
   const [apiKey, setApiKey] = useState('');
-  const [baseUrl, setBaseUrl] = useState('');
-  const [model, setModel] = useState('');
+  const [baseUrl, setBaseUrl] = useState('https://openrouter.ai/api/v1');
+  const [model, setModel] = useState('deepseek/deepseek-chat');
   const [busy, setBusy] = useState(false);
-  const [testing, setTesting] = useState(false);
-  const [test, setTest] = useState(null);
+  const [activeId, setActiveId] = useState('');
+  const presets = useMemo(() => [...KEY_PROVIDERS, CUSTOM], []);
 
   useEffect(() => { load(); }, []);
+
   async function load() {
-    setStatus(null);
     try {
-      const d = await (await fetch(`${API}/api/provider`)).json();
-      setStatus(d || {});
-      setBaseUrl(d?.base_url || '');
-      setModel(d?.model || '');
-    } catch { setStatus({}); }
+      const res = await fetch(`${API}/api/providers`);
+      const data = await res.json();
+      setProviders(Array.isArray(data.providers) ? data.providers : []);
+    } catch { setProviders([]); }
   }
 
-  async function runTest() {
-    setTesting(true); setTest(null);
-    try {
-      const body = { base_url: baseUrl.trim(), model: model.trim() };
-      if (apiKey) body.apiKey = apiKey;
-      const res = await fetch(`${API}/api/provider/test`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      const d = await res.json().catch(() => ({}));
-      if (res.ok && d.ok !== false) setTest({ ok: true });
-      else setTest({ ok: false, error: d.error || 'A chave não foi aceita pelo provedor.' });
-    } catch (e) { setTest({ ok: false, error: e.message || 'Não foi possível testar a chave.' }); }
-    finally { setTesting(false); }
+  function chooseType(id) {
+    const preset = presets.find(item => item.id === id) || CUSTOM;
+    setProviderType(preset.id);
+    setName(preset.name.replace('Outro (OpenAI compatível)', 'Meu provedor'));
+    setBaseUrl(preset.base || '');
+    setModel(preset.modelExample || '');
   }
 
-  async function save() {
+  async function addProvider() {
+    if (!apiKey.trim()) { showToast('Informe a chave de API.'); return; }
     setBusy(true);
     try {
-      const body = { base_url: baseUrl.trim(), model: model.trim() };
-      if (apiKey) body.apiKey = apiKey; // só envia se a pessoa digitou uma nova
-      const res = await fetch(`${API}/api/provider`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      const d = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(d.error || '');
-      setApiKey(''); setTest(null);
-      showToast('Provedor de IA salvo.', 'ok');
-      load();
-    } catch (e) { showToast(e.message || 'Não foi possível salvar o provedor.'); }
+      const res = await fetch(`${API}/api/providers`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ providerType, name: name.trim(), apiKey: apiKey.trim(), base_url: baseUrl.trim(), model: model.trim() })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'A chave não foi aceita.');
+      setApiKey(''); setFormOpen(false);
+      showToast(`${data.imported || 0} modelo(s) importado(s) do ${name}.`, 'ok');
+      await load(); onProvidersChange?.();
+    } catch (error) { showToast(error.message || 'Não foi possível adicionar o provedor.'); }
     finally { setBusy(false); }
   }
 
-  async function removeKey() {
-    setBusy(true);
+  async function refreshProvider(provider) {
+    setActiveId(provider.id);
     try {
-      const res = await fetch(`${API}/api/provider`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ apiKey: '', base_url: baseUrl.trim(), model: model.trim() }) });
-      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || ''); }
-      setApiKey(''); setTest(null);
-      showToast('Chave removida.', 'ok');
-      load();
-    } catch (e) { showToast(e.message || 'Não foi possível remover a chave.'); }
-    finally { setBusy(false); }
+      const res = await fetch(`${API}/api/providers/${provider.id}/refresh`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Não foi possível atualizar.');
+      showToast(`${data.imported || 0} modelo(s) atualizado(s) do ${provider.name}.`, 'ok');
+      await load(); onProvidersChange?.();
+    } catch (error) { showToast(error.message || 'Não foi possível atualizar os modelos.'); }
+    finally { setActiveId(''); }
   }
 
-  return <Drawer title="Provedor de IA" icon={<KeyRound size={18}/>} onClose={onClose} className="providerDrawer">
-    <p className="drawerIntro">Cadastre a sua própria chave de API para conversar com a IA. Cada pessoa usa a sua chave, com o seu limite e a sua conta no provedor.</p>
+  async function removeProvider(provider) {
+    if (!window.confirm(`Remover a chave e os modelos de ${provider.name}?`)) return;
+    setActiveId(provider.id);
+    try {
+      const res = await fetch(`${API}/api/providers/${provider.id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Não foi possível remover.');
+      showToast(`Provedor ${provider.name} removido.`, 'ok');
+      await load(); onProvidersChange?.();
+    } catch (error) { showToast(error.message || 'Não foi possível remover o provedor.'); }
+    finally { setActiveId(''); }
+  }
 
-    {status === null && <div className="working"><span className="spin"/><span>Carregando...</span></div>}
+  return <Drawer title="Provedores de IA" icon={<KeyRound size={18}/>} onClose={onClose} className="providerDrawer">
+    <p className="drawerIntro">Cada chave mantém seu próprio catálogo. Um modelo só aparece depois que a chave do respectivo provedor é validada.</p>
 
-    {status && (status.hasKey
-      ? <div className="pcHint" style={{ color: 'var(--text)' }}>
-          <b style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            {status.source === 'free' ? <Sparkles size={14} style={{ color: 'var(--accent)' }}/> : <Check size={14} style={{ color: 'var(--ok)' }}/>}
-            {status.source === 'free' ? 'Modo gratuito ativo' : 'Chave configurada'}
-          </b>
-          <div className="muted small" style={{ marginTop: 4 }}>
-            {status.source === 'free'
-              ? <>via {status.freeProvider || 'plataforma'} · modelo {String(status.freeModel || '').replace(/:free$/, '')} · a chave fica só no servidor</>
-              : <>{status.keyMask && <code>{status.keyMask}</code>}{' · '}{status.source === 'user' ? 'chave própria' : 'chave do servidor'}</>}
-          </div>
+    {providers === null && <div className="working"><span className="spin"/><span>Carregando...</span></div>}
+    {providers?.length === 0 && <div className="pcWarn">Nenhuma chave configurada. Nenhum modelo de IA será exibido até você adicionar e validar um provedor.</div>}
+
+    <div className="providerList">
+      {(providers || []).map(provider => <div className="providerCard" key={provider.id}>
+        <div className="providerCardInfo">
+          <b><Check size={14}/>{provider.name}</b>
+          <span>{provider.modelCount} modelo(s) · <code>{provider.keyMask}</code></span>
+          <small>{provider.base_url}</small>
         </div>
-      : <div className="pcWarn">Nenhuma chave configurada. Use o assistente abaixo, cadastre uma chave manualmente{freeStatus?.configured ? ' ou ative o modo gratuito' : ''} para conversar com a IA.</div>
-    )}
-
-    {onOpenWizard && <button className="wizardEntry" onClick={onOpenWizard}>
-      <Wand2 size={15}/> <b>Assistente passo a passo</b> — te guia para criar e testar a sua chave (recomendado para iniciantes)
-    </button>}
-
-    {freeStatus?.configured && status && status.source !== 'user' && (
-      status.source === 'free'
-        ? <button className="freeToggleBtn" disabled={busy} onClick={async () => {
-            setBusy(true);
-            try {
-              await fetch(`${API}/api/free-tier/opt-in`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enable: false }) });
-              showToast('Modo gratuito desativado.', 'ok'); load(); onFreeChange?.();
-            } finally { setBusy(false); }
-          }}><X size={14}/> Sair do modo gratuito</button>
-        : <button className="freeToggleBtn primaryish" disabled={busy || !freeStatus.enabled} onClick={async () => {
-            setBusy(true);
-            try {
-              await fetch(`${API}/api/free-tier/opt-in`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enable: true }) });
-              showToast('Modo gratuito ativado!', 'ok'); load(); onFreeChange?.();
-            } finally { setBusy(false); }
-          }}><Sparkles size={14}/> {freeStatus.enabled ? 'Começar gratuitamente (sem chave)' : 'Modo gratuito indisponível no momento'}</button>
-    )}
-
-    <label>Chave de API
-      <input type="password" value={apiKey} onChange={e => { setApiKey(e.target.value); setTest(null); }} placeholder="sk-or-v1-..." autoComplete="off"/>
-    </label>
-    <p className="muted small" style={{ margin: '-8px 0 0' }}>Deixe em branco para manter a chave atual.</p>
-
-    <label>URL base <span className="muted">(opcional)</span>
-      <input value={baseUrl} onChange={e => setBaseUrl(e.target.value)} placeholder="https://openrouter.ai/api/v1" autoComplete="off"/>
-    </label>
-    <label>Modelo <span className="muted">(opcional)</span>
-      <input value={model} onChange={e => setModel(e.target.value)} placeholder="deepseek/deepseek-chat" autoComplete="off"/>
-    </label>
-
-    {test && (test.ok
-      ? <div className="pcHint" style={{ color: 'var(--ok)' }}><Check size={14}/> Chave válida</div>
-      : <div className="pcHint" style={{ color: 'var(--danger)' }}><X size={14}/> {test.error}</div>
-    )}
-
-    <div className="modalActions">
-      <button onClick={runTest} disabled={testing || busy}>{testing ? <><span className="spin sm"/> Testando...</> : <><RefreshCw size={15}/> Testar</>}</button>
-      <div className="spacer"/>
-      {status?.hasKey && status?.source === 'user' && <button className="danger" onClick={removeKey} disabled={busy}>Remover chave</button>}
-      <button className="primary" onClick={save} disabled={busy}>{busy ? 'Salvando...' : 'Salvar'}</button>
+        <div className="providerCardActions">
+          <button onClick={() => refreshProvider(provider)} disabled={activeId === provider.id} title="Validar novamente e atualizar modelos"><RefreshCw size={14}/></button>
+          <button className="danger" onClick={() => removeProvider(provider)} disabled={activeId === provider.id} title="Remover provedor"><Trash2 size={14}/></button>
+        </div>
+      </div>)}
     </div>
 
-    <div className="pcHint">🔒 Sua chave fica criptografada no servidor e nunca é exibida por completo. Pegue uma em <code>openrouter.ai</code>.</div>
+    {!formOpen && <button className="primary providerAdd" onClick={() => setFormOpen(true)}><Plus size={15}/> Adicionar provedor</button>}
+
+    {formOpen && <div className="providerForm">
+      <label>Provedor
+        <select value={providerType} onChange={event => chooseType(event.target.value)}>
+          {presets.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+        </select>
+      </label>
+      <label>Nome para identificar
+        <input value={name} onChange={event => setName(event.target.value)} placeholder="Ex.: NVIDIA trabalho"/>
+      </label>
+      <label>Chave de API
+        <input type="password" value={apiKey} onChange={event => setApiKey(event.target.value)} placeholder="Cole a chave do provedor" autoComplete="off"/>
+      </label>
+      <label>URL base
+        <input value={baseUrl} onChange={event => setBaseUrl(event.target.value)} placeholder="https://.../v1" autoComplete="off"/>
+      </label>
+      <label>Modelo para validação <span className="muted">(usado somente se o provedor não listar modelos)</span>
+        <input value={model} onChange={event => setModel(event.target.value)} placeholder="Ex.: qwen3.7-plus" autoComplete="off"/>
+      </label>
+      <div className="modalActions">
+        <button onClick={() => { setFormOpen(false); setApiKey(''); }} disabled={busy}>Cancelar</button>
+        <div className="spacer"/>
+        <button className="primary" onClick={addProvider} disabled={busy}>{busy ? <><span className="spin sm"/> Validando...</> : 'Validar e importar modelos'}</button>
+      </div>
+    </div>}
+
+    {onOpenWizard && <button className="wizardEntry" onClick={onOpenWizard}>
+      <Wand2 size={15}/> <b>Assistente passo a passo</b> — ajuda a obter uma nova chave
+    </button>}
+
+    {freeStatus?.configured && providers?.length === 0 && (
+      freeStatus.active
+        ? <button className="freeToggleBtn" disabled={busy} onClick={async () => {
+            setBusy(true); try { await fetch(`${API}/api/free-tier/opt-in`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enable: false }) }); showToast('Modo gratuito desativado.', 'ok'); onFreeChange?.(); onProvidersChange?.(); } finally { setBusy(false); }
+          }}><X size={14}/> Sair do modo gratuito</button>
+        : <button className="freeToggleBtn primaryish" disabled={busy || !freeStatus.enabled} onClick={async () => {
+            setBusy(true); try { await fetch(`${API}/api/free-tier/opt-in`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enable: true }) }); showToast('Modo gratuito ativado!', 'ok'); onFreeChange?.(); onProvidersChange?.(); } finally { setBusy(false); }
+          }}><Sparkles size={14}/> {freeStatus.enabled ? 'Começar gratuitamente' : 'Modo gratuito indisponível'}</button>
+    )}
+
+    <div className="pcHint">🔒 As chaves ficam criptografadas no servidor. O aplicativo nunca as devolve por completo.</div>
   </Drawer>;
 }

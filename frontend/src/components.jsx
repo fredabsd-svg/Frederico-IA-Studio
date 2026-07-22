@@ -105,10 +105,11 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
 
   const current = models.find(model => model.id === value);
   const query = q.trim().toLowerCase();
-  const match = model => !query || (model.name || '').toLowerCase().includes(query) || model.id.toLowerCase().includes(query);
-  const isFree = model => model.free || model.id.endsWith(':free');
-  const isBest = model => BEST_FOR_FILES.some(prefix => model.id === prefix || model.id.startsWith(prefix));
-  const isRecommended = model => GENERAL_RECOMMENDATIONS.some(prefix => model.id === prefix || model.id.startsWith(prefix));
+  const rawId = model => model.providerModelId || model.id;
+  const match = model => !query || (model.name || '').toLowerCase().includes(query) || rawId(model).toLowerCase().includes(query) || (model.providerName || '').toLowerCase().includes(query);
+  const isFree = model => model.free || rawId(model).endsWith(':free');
+  const isBest = model => BEST_FOR_FILES.some(prefix => rawId(model) === prefix || rawId(model).startsWith(prefix));
+  const isRecommended = model => GENERAL_RECOMMENDATIONS.some(prefix => rawId(model) === prefix || rawId(model).startsWith(prefix));
   const isFav = id => favs.includes(id);
   const priceValue = model => isFree(model) ? 0 : model.price || Infinity;
   // Modelo sem classificação vai para o fim ao ordenar por "Minha classificação".
@@ -158,7 +159,7 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
 
   const famCounts = {};
   for (const model of models) {
-    const key = familyKey(model.id);
+    const key = familyKey(rawId(model));
     famCounts[key] = (famCounts[key] || 0) + 1;
   }
   const families = Object.keys(famCounts).sort((a, b) => famCounts[b] - famCounts[a]);
@@ -169,14 +170,14 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
     (!flags.includes('vision') || model.vision) &&
     (!flags.includes('image') || model.image) &&
     (!flags.includes('video') || model.video);
-  const filteredModels = models.filter(model => match(model) && (fam === 'all' || familyKey(model.id) === fam) && passFlags(model));
+  const filteredModels = models.filter(model => match(model) && (fam === 'all' || familyKey(rawId(model)) === fam) && passFlags(model));
   const activeFilterCount = flags.length + Number(fam !== 'all') + Number(sort !== 'none');
   const sortFn = (a, b) => sort === 'new' ? (b.created || 0) - (a.created || 0)
     : sort === 'cheap' ? priceValue(a) - priceValue(b)
     : sort === 'rank' ? rankValue(a) - rankValue(b)
     : String(a.name || a.id).localeCompare(String(b.name || b.id));
   const generalRecommendationRank = model => {
-    const index = GENERAL_RECOMMENDATIONS.findIndex(prefix => model.id === prefix || model.id.startsWith(prefix));
+    const index = GENERAL_RECOMMENDATIONS.findIndex(prefix => rawId(model) === prefix || rawId(model).startsWith(prefix));
     return index === -1 ? GENERAL_RECOMMENDATIONS.length : index;
   };
   const recommendedSort = (a, b) => {
@@ -193,7 +194,7 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
   const matchingPurposeModels = filteredModels.filter(selectedPurpose.matches);
   const recommendationFamily = model => {
     const curatedPrefixes = purpose === 'general' ? GENERAL_RECOMMENDATIONS : purpose === 'files' ? BEST_FOR_FILES : [];
-    return curatedPrefixes.find(prefix => model.id === prefix || model.id.startsWith(prefix)) || familyKey(model.id);
+    return curatedPrefixes.find(prefix => rawId(model) === prefix || rawId(model).startsWith(prefix)) || familyKey(rawId(model));
   };
   const familyRepresentativeSort = (a, b) => purpose === 'economy'
     ? priceValue(a) - priceValue(b) || (b.created || 0) - (a.created || 0)
@@ -210,17 +211,17 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
   const displayView = query ? 'search' : view;
 
   const row = model => {
-    const ranking = findRanking(model);
+    const ranking = findRanking({ ...model, id: rawId(model) });
     return (
     <div key={model.id} className={'mpItem ' + (model.id === value ? 'sel' : '')}>
-      <ProviderIcon id={model.id} size={28}/>
+      <ProviderIcon id={rawId(model)} size={28}/>
       <button className="mpPick" onClick={() => pick(model.id)}>
         <span className="mpItemName">
           {model.name}
           {ranking && <span className={`mpRank ${tierClass(ranking.tier)}`} title={`Classificação de referência: #${ranking.rank} de 100 · Tier ${ranking.tier}`}>{ranking.tier}</span>}
           {model.id === value && <Check size={13} className="mpInlineCheck" aria-label="Modelo em uso"/>}
         </span>
-        <span className="mpItemId">{model.id}</span>
+        <span className="mpItemId">{model.providerName ? `${model.providerName} · ` : ''}{rawId(model)}</span>
         <span className="mpItemMeta">{[ctxLabel(model.context), priceLabel(model)].filter(Boolean).join(' · ')}</span>
         <ModelCapabilitySummary model={model}/>
       </button>
@@ -297,7 +298,7 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
   return <div className="mpicker" ref={ref}>
     <button className="mpBtn" onClick={() => setOpen(isOpen => !isOpen)} title="Escolher o modelo de IA" aria-expanded={open}>
       <Cpu size={15} className="mpIco"/>
-      <span className="mpName">{current?.name || value}</span>
+      <span className="mpName">{current?.name || (models.length ? value : 'Configurar provedor')}</span>
       <ChevronDown size={14}/>
     </button>
     {open && panel}

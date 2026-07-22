@@ -34,13 +34,43 @@ export const KEY_PROVIDERS = [
     price: 'Pré-pago, sem mensalidade. O modelo deepseek-chat custa centavos por milhão de tokens.',
     keyUrl: 'https://platform.deepseek.com/api_keys',
     base: 'https://api.deepseek.com',
-    modelExample: 'deepseek-chat',
+    modelExample: 'deepseek-v4-flash',
     keyPrefix: 'sk-',
     steps: [
       'Entre em platform.deepseek.com e crie a conta (e-mail e senha).',
       'Adicione um pequeno crédito em "Billing" (aceita cartão internacional).',
       'Abra a página de chaves (botão abaixo) e clique em "Create new API key".',
       'Copie a chave exibida (começa com "sk-...") — ela aparece uma vez só.'
+    ]
+  },
+  {
+    id: 'nvidia',
+    name: 'NVIDIA',
+    desc: 'Catálogo NIM com modelos de texto, raciocínio e visão em API compatível com OpenAI.',
+    price: 'A NVIDIA oferece uma cota de testes; limites e preços dependem do modelo escolhido.',
+    keyUrl: 'https://build.nvidia.com/settings/api-keys',
+    base: 'https://integrate.api.nvidia.com/v1',
+    modelExample: 'nvidia/nemotron-3-ultra-550b-a55b',
+    keyPrefix: 'nvapi-',
+    steps: [
+      'Entre em build.nvidia.com com a sua conta NVIDIA.',
+      'Abra as configurações de API e gere uma nova chave.',
+      'Copie a chave completa — ela começa normalmente com "nvapi-".'
+    ]
+  },
+  {
+    id: 'alibaba',
+    name: 'Alibaba Model Studio',
+    desc: 'Modelos Qwen e outros modelos pelo endpoint internacional compatível com OpenAI.',
+    price: 'Cobrança e cotas variam por região. A chave precisa pertencer à mesma região da URL base.',
+    keyUrl: 'https://modelstudio.console.alibabacloud.com/',
+    base: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
+    modelExample: 'qwen3.7-plus',
+    keyPrefix: 'sk-',
+    steps: [
+      'Entre no Alibaba Cloud Model Studio e selecione a região da sua conta.',
+      'Crie uma API Key no espaço de trabalho da região escolhida.',
+      'Para outra região, ajuste depois a URL base na tela de provedores.'
     ]
   },
   {
@@ -106,7 +136,7 @@ export function KeyWizard({ showToast, onDone, onClose }) {
     try {
       const res = await fetch(`${API}/api/provider/test`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ apiKey: apiKey.trim(), base_url: prov.base })
+        body: JSON.stringify({ apiKey: apiKey.trim(), providerType: prov.id, base_url: prov.base, model: prov.modelExample })
       });
       const d = await res.json().catch(() => ({}));
       if (res.ok && d.ok !== false) setTest({ ok: true });
@@ -118,9 +148,9 @@ export function KeyWizard({ showToast, onDone, onClose }) {
   async function save() {
     setSaving(true);
     try {
-      const res = await fetch(`${API}/api/provider`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ apiKey: apiKey.trim(), base_url: prov.base, model: prov.modelExample })
+      const res = await fetch(`${API}/api/providers`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ providerType: prov.id, name: prov.name, apiKey: apiKey.trim(), base_url: prov.base, model: prov.modelExample })
       });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(d.error || '');
@@ -183,8 +213,8 @@ export function KeyWizard({ showToast, onDone, onClose }) {
     {step === 3 && prov && <>
       <div className="pcHint" style={{ color: 'var(--ok)' }}><Check size={16}/> <b>Tudo pronto!</b></div>
       <p className="muted" style={{ margin: 0 }}>
-        Sua chave do {prov.name} foi salva e o modelo <code>{prov.modelExample}</code> ficou como padrão.
-        Você pode trocar de modelo a qualquer momento no seletor do chat, e ajustar a chave em
+        Sua chave do {prov.name} foi validada e os modelos disponíveis foram importados.
+        Você pode trocar de modelo a qualquer momento no seletor do chat, adicionar outros provedores e ajustar as chaves em
         Configurações → Provedor de IA.
       </p>
       <div className="modalActions">

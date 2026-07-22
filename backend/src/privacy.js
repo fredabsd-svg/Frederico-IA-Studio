@@ -99,6 +99,7 @@ export async function exportUserData(userId, user = {}) {
     },
     consentimentos: await db.prepare('SELECT version, accepted_at FROM user_consents WHERE user_id=? ORDER BY accepted_at ASC').all(userId),
     configuracoes: settings ? { ...settings, prefs: safeJson(settings.prefs) } : null,
+    provedores_ia: await db.prepare('SELECT provider_type, name, base_url, default_model, last_validated_at, created_at FROM user_ai_providers WHERE user_id=? ORDER BY created_at ASC').all(userId),
     conectores: await db.prepare('SELECT provider, account_login, account_name, created_at FROM user_connectors WHERE user_id=?').all(userId),
     clientes: await db.prepare('SELECT id, name, created_at FROM clients WHERE user_id=? ORDER BY created_at ASC').all(userId),
     assistentes: await db.prepare('SELECT name, emoji, model, system_prompt, tools, personality, created_at FROM assistants WHERE user_id=? ORDER BY created_at ASC').all(userId),

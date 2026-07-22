@@ -7,8 +7,22 @@ import {
   isUnsupportedVisionError,
   modelCompatibilityMessage,
   modelProfileFromProvider,
+  registerModelCatalog,
+  getModelProfile,
   deriveModelCapabilities
 } from './modelCapabilities.js';
+
+test('catálogos de provedores diferentes não colidem quando o model id é igual', () => {
+  registerModelCatalog([{ id: 'shared/model', name: 'Modelo na NVIDIA' }], {
+    providerId: 'nvidia-key', providerName: 'NVIDIA', providerType: 'nvidia'
+  });
+  registerModelCatalog([{ id: 'shared/model', name: 'Modelo na OpenRouter' }], {
+    providerId: 'openrouter-key', providerName: 'OpenRouter', providerType: 'openrouter'
+  });
+  assert.equal(getModelProfile('nvidia-key::shared/model').name, 'Modelo na NVIDIA');
+  assert.equal(getModelProfile('openrouter-key::shared/model').name, 'Modelo na OpenRouter');
+  assert.equal(getModelProfile('nvidia-key::shared/model').providerModelId, 'shared/model');
+});
 
 const granite = modelProfileFromProvider({
   id: 'ibm-granite/granite-4.0-h-micro',

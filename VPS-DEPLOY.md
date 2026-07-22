@@ -9,14 +9,10 @@ primeira vez.
 
 ## Antes de começar: uma decisão importante
 
-Como o app usa IA paga, decida **quem paga a conta da IA**:
-
-- **Site pessoal / equipe de confiança** → você pode deixar uma chave no servidor
-  e todos usam ela. (`ALLOW_SHARED_KEY=true`, com a `DEEPSEEK_API_KEY` preenchida.)
-- **Site público (qualquer um pode se cadastrar)** → **cada usuário usa a própria
-  chave** (BYOK). Assim você não paga a conta de estranhos.
-  Coloque `ALLOW_SHARED_KEY=false`. Cada pessoa cadastra a chave dela em
-  **Configurações → Provedor de IA** dentro do app.
+Como o app usa IA paga, cada pessoa cadastra suas próprias chaves em
+**Configurações → Provedores de IA**. Uma conta nova não recebe modelos até uma
+chave ser validada. Se você quiser oferecer uso patrocinado, configure o
+**Modo gratuito**, que tem opt-in, allowlist, limites e fila próprios.
 
 > 💡 Você também pode limitar o uso com `RATE_MSGS_PER_DAY=50` (máx. de mensagens
 > por usuário por dia) — útil se compartilhar a sua chave.
@@ -96,14 +92,9 @@ BETTER_AUTH_URL=https://ia.suaempresa.com.br
 BETTER_AUTH_SECRET=cole_o_1o_valor
 ENCRYPTION_KEY=cole_o_2o_valor
 
-# ---- Quem paga a IA (veja a decisão lá em cima) ----
-# Site público (cada usuário usa a própria chave):
-ALLOW_SHARED_KEY=false
-# Site pessoal (chave do servidor para todos): deixe ALLOW_SHARED_KEY sem definir
-# e preencha:
-# DEEPSEEK_API_KEY=sk-or-sua_chave
-# DEEPSEEK_BASE_URL=https://openrouter.ai/api/v1
-# DEEPSEEK_MODEL=deepseek/deepseek-chat
+# ---- IA ----
+# Cada usuário cadastra e valida suas próprias chaves dentro do aplicativo.
+# Para oferecer uma cota patrocinada, configure FREE_TIER_API_KEY e a allowlist.
 ```
 
 Salve com `Ctrl+O`, `Enter`, e saia com `Ctrl+X`.
@@ -277,10 +268,9 @@ scp root@SEU_IP:~/Frederico-IA-Studio/workspaces-*.tar.gz ./
   acessar a rede — por isso use uma **VPS dedicada só a este app**, sem outros
   serviços sensíveis. O backend precisa do Docker do servidor (para criar os
   sandboxes), então não é uma VPS para compartilhar com outras coisas.
-- **Custo da IA:** se deixar a chave do servidor num site público, qualquer
-  cadastrado gasta a sua conta. Prefira `ALLOW_SHARED_KEY=false` (BYOK) ou defina
-  `RATE_MSGS_PER_DAY`.
-- **LGPD:** o texto do chat vai para o provedor de IA configurado (o do servidor
-  ou o do próprio usuário). Avise seus usuários.
+- **Custo da IA:** cada usuário usa as próprias chaves validadas. Se você ativar
+  o Modo gratuito patrocinado, defina a allowlist e os limites diários.
+- **LGPD:** o texto do chat vai para o provedor de IA escolhido pelo próprio
+  usuário. Avise seus usuários.
 - **HTTPS não saiu?** Confira se o DNS já propagou (`ping`) e se as portas 80/443
   estão liberadas no firewall do **provedor** (além do `ufw`).

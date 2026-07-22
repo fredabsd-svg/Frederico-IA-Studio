@@ -97,6 +97,10 @@ export function modelProfileFromProvider(model = {}) {
   return {
     id,
     name: model.name || id,
+    providerId: model.providerId || null,
+    providerName: model.providerName || '',
+    providerType: model.providerType || '',
+    providerModelId: model.providerModelId || id,
     capabilities,
     // null = o provedor não publicou a lista; nesse caso preservamos o
     // comportamento compatível e tentamos os parâmetros comuns. Array = fonte
@@ -121,8 +125,15 @@ export function modelProfileFromProvider(model = {}) {
   };
 }
 
-export function registerModelCatalog(models = []) {
-  const profiles = models.map(modelProfileFromProvider).filter(model => model.id);
+export function registerModelCatalog(models = [], owner = null) {
+  const profiles = models.map(model => modelProfileFromProvider(owner ? {
+    ...model,
+    id: `${owner.providerId}::${model.id}`,
+    providerId: owner.providerId,
+    providerName: owner.providerName,
+    providerType: owner.providerType,
+    providerModelId: model.id
+  } : model)).filter(model => model.id);
   for (const profile of profiles) catalog.set(profile.id, profile);
   return profiles;
 }
