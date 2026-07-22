@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { MAX_ASSISTANT_PROFILE_CHARS } from './assistantPolicy.js';
 import { IMMUTABLE_CORE_PROMPT, assistantProfileBlock, profileMeta } from './promptPolicy.js';
-import { promptFor, toolsFor } from './prompts.js';
+import { promptFor, toolAvailabilityNote, toolsFor } from './prompts.js';
 
 test('núcleo imutável precede o perfil personalizado', () => {
   const prompt = promptFor({ system_prompt: 'Fale como especialista em jardinagem.' });
@@ -36,4 +36,11 @@ test('lista vazia de ferramentas não libera tudo', () => {
   assert.deepEqual(toolsFor({ tools: [] }), []);
   assert.ok(toolsFor({}).length > 0);
   assert.deepEqual(toolsFor({ tools: ['read_file', 'inexistente'] }).map(tool => tool.function.name), ['read_file']);
+});
+
+test('assistente sem ferramentas informa configuração sem negar capacidade do aplicativo', () => {
+  const note = toolAvailabilityNote([]);
+  assert.match(note, /CONFIGURADO sem ferramentas/);
+  assert.match(note, /não diga que o modelo ou o aplicativo é incapaz/i);
+  assert.match(note, /Assistant Studio/);
 });
