@@ -1,7 +1,30 @@
+import { findRanking, tierScore } from './modelRanking.js';
+
 export function capabilityOf(model, key) {
   const declared = model?.capabilities;
   if (declared && Object.prototype.hasOwnProperty.call(declared, key)) return declared[key];
   return model?.[key];
+}
+
+// Classificação efetiva do modelo (backend > lista de nomes). null se sem selo.
+export function tierOf(model) {
+  return findRanking(model)?.tier || null;
+}
+
+// Modalidade macro do modelo, para o filtro por modalidade.
+//   multimodal = entende imagem/áudio/vídeo na entrada
+//   image/audio/video = GERA aquela mídia
+//   text = conversa por texto (sem multimodalidade de entrada)
+export function matchesModality(model, modality) {
+  if (!modality || modality === 'all') return true;
+  const cap = k => capabilityOf(model, k) === true;
+  if (modality === 'multimodal') return cap('vision') || cap('audio') || cap('video');
+  if (modality === 'text') return !(cap('vision') || cap('audio') || cap('video') || cap('image'));
+  if (modality === 'image') return cap('image');       // geração de imagem
+  if (modality === 'audio') return cap('audio');
+  if (modality === 'video') return cap('video');
+  if (modality === 'vision') return cap('vision');     // lê imagens
+  return true;
 }
 
 export function modelFamily(model) {
@@ -26,6 +49,12 @@ export function filterModels(models, filters = {}) {
     if (filters.context === '32k' && Number(model.context || 0) < 32_000) return false;
     if (filters.context === '100k' && Number(model.context || 0) < 100_000) return false;
     if (filters.context === '1m' && Number(model.context || 0) < 1_000_000) return false;
+    // Classificação mínima (ex.: 'A+' mostra A+, S e S+). Sem selo → fica de fora.
+    if (filters.tier && filters.tier !== 'all') {
+      if (tierScore(tierOf(model)) < tierScore(filters.tier)) return false;
+    }
+    // Modalidade (multimodal / texto / gera imagem·áudio·vídeo / lê imagens).
+    if (filters.modality && filters.modality !== 'all' && !matchesModality(model, filters.modality)) return false;
     if (flags.includes('free') && !free) return false;
     if (flags.includes('configured') && !model.providerId) return false;
     for (const capability of ['tools', 'vision', 'image', 'reasoning', 'video', 'audio', 'web', 'files', 'code', 'embeddings']) {
