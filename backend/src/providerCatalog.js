@@ -40,13 +40,24 @@ export function normalizeProviderType(value) {
 }
 
 export function normalizeBaseURL(value, providerType = 'custom') {
-  const preset = PROVIDER_PRESETS[normalizeProviderType(providerType)];
+  const type = normalizeProviderType(providerType);
+  const preset = PROVIDER_PRESETS[type];
   const raw = String(value || preset.baseURL || '').trim().replace(/\/+$/, '');
   if (!raw || raw.length > 500) throw new Error('Informe uma URL base válida para o provedor.');
   let url;
   try { url = new URL(raw); } catch { throw new Error('A URL base do provedor é inválida.'); }
   if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || url.hash || url.search) {
     throw new Error('A URL base deve usar HTTP/HTTPS e não pode conter credenciais, parâmetros ou fragmentos.');
+  }
+  if (type === 'alibaba') {
+    const host = url.hostname.toLowerCase();
+    const path = url.pathname.replace(/\/+$/, '');
+    const officialHost = /^dashscope(?:-[a-z0-9-]+)?\.aliyuncs\.com$/.test(host)
+      || host.endsWith('.dashscope.aliyuncs.com')
+      || host.endsWith('.maas.aliyuncs.com');
+    if (url.protocol !== 'https:' || !officialHost || !['/compatible-mode/v1', '/v1'].includes(path)) {
+      throw new Error('Use o endpoint OpenAI compatível oficial do Alibaba, no mesmo workspace e região da chave.');
+    }
   }
   return raw;
 }
@@ -84,13 +95,16 @@ export function enrichProviderCatalog(models, providerType = 'custom') {
   return normalizedCatalog(models, normalizeProviderType(providerType));
 }
 
-async function responseError(response) {
+async function responseError(response, providerType = 'custom') {
   let detail = '';
   try {
     const body = await response.json();
     detail = body?.error?.message || body?.message || body?.error || '';
   } catch {}
-  if (response.status === 401 || response.status === 403) return 'A chave foi recusada pelo provedor.';
+  if (response.status === 401 || response.status === 403) {
+    if (providerType === 'alibaba') return 'A chave foi recusada. Confirme que a URL base é o campo openAiCompatible do mesmo CSV, workspace e região.';
+    return 'A chave foi recusada pelo provedor.';
+  }
   return String(detail || `O provedor respondeu com HTTP ${response.status}.`).slice(0, 300);
 }
 
@@ -105,7 +119,7 @@ export async function importProviderCatalog({ apiKey, baseURL, providerType = 'c
       headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' },
       signal: AbortSignal.timeout(timeoutMs)
     });
-    if (!response.ok) throw new Error(await responseError(response));
+    if (!response.ok) throw new Error(await responseError(response, type));
     const models = normalizedCatalog(await response.json(), type);
     if (models.length) return { baseURL: base, models, validation: 'catalog' };
     listFailure = new Error('O provedor não retornou nenhum modelo para esta chave.');
@@ -129,7 +143,9 @@ export async function importProviderCatalog({ apiKey, baseURL, providerType = 'c
     return { baseURL: base, models: [{ id: hinted, name: hinted }], validation: 'model' };
   } catch (error) {
     const message = error?.status === 401 || error?.status === 403
-      ? 'A chave foi recusada pelo provedor.'
+      ? (type === 'alibaba'
+          ? 'A chave foi recusada. Confirme que a URL base é o campo openAiCompatible do mesmo CSV, workspace e região.'
+          : 'A chave foi recusada pelo provedor.')
       : (error?.message || listFailure?.message || 'Não foi possível validar a chave.');
     throw new Error(String(message).slice(0, 300));
   }

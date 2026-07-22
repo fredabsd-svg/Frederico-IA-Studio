@@ -114,6 +114,7 @@ export function ProviderPanel({ showToast, freeStatus, onOpenWizard, onFreeChang
       <label>URL base
         <input value={baseUrl} onChange={event => setBaseUrl(event.target.value)} placeholder="https://.../v1" autoComplete="off"/>
       </label>
+      {providerType === 'alibaba' && <div className="pcHint">No Alibaba, use o campo <code>openAiCompatible</code> do CSV baixado junto com a chave. O endpoint varia por workspace e região.</div>}
       <label>Modelo para validação <span className="muted">(usado somente se o provedor não listar modelos)</span>
         <input value={model} onChange={event => setModel(event.target.value)} placeholder="Ex.: qwen3.7-plus" autoComplete="off"/>
       </label>

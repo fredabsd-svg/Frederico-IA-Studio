@@ -2,9 +2,10 @@
 // para quem nunca ouviu falar de "API": escolhe o provedor, abre a página
 // oficial, segue instruções simples, cola a chave, testa e salva.
 import React, { useState } from 'react';
-import { KeyRound, Check, X, RefreshCw, ExternalLink, ArrowLeft, ArrowRight, ShieldCheck } from 'lucide-react';
+import { KeyRound, Check, X, RefreshCw, ExternalLink, ArrowLeft, ArrowRight, ShieldCheck, FileUp } from 'lucide-react';
 import { API } from './constants.js';
 import { Modal } from './components.jsx';
+import { isAlibabaOpenAIBaseURL, parseAlibabaCredentialCsv } from './alibabaCredentialCsv.js';
 
 // Provedores sugeridos (pesquisa jul/2026). Preços e páginas podem mudar —
 // os links levam sempre à página oficial de chaves de cada provedor.
@@ -61,7 +62,7 @@ export const KEY_PROVIDERS = [
   {
     id: 'alibaba',
     name: 'Alibaba Model Studio',
-    desc: 'Modelos Qwen e outros modelos pelo endpoint internacional compatível com OpenAI.',
+    desc: 'Modelos Qwen e outros modelos pelo endpoint do workspace compatível com OpenAI.',
     price: 'Cobrança e cotas variam por região. A chave precisa pertencer à mesma região da URL base.',
     keyUrl: 'https://modelstudio.console.alibabacloud.com/',
     base: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
@@ -70,7 +71,8 @@ export const KEY_PROVIDERS = [
     steps: [
       'Entre no Alibaba Cloud Model Studio e selecione a região da sua conta.',
       'Crie uma API Key no espaço de trabalho da região escolhida.',
-      'Para outra região, ajuste depois a URL base na tela de provedores.'
+      'Baixe o CSV da chave. Ele traz juntos a API Key e o endpoint correto do workspace.',
+      'Na próxima etapa, importe esse CSV ou preencha manualmente o campo openAiCompatible.'
     ]
   },
   {
@@ -126,17 +128,45 @@ export function KeyWizard({ showToast, onDone, onClose }) {
   const [step, setStep] = useState(0);              // 0 provedor · 1 instruções · 2 colar/testar · 3 pronto
   const [prov, setProv] = useState(null);
   const [apiKey, setApiKey] = useState('');
+  const [baseUrl, setBaseUrl] = useState('');
   const [testing, setTesting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [test, setTest] = useState(null);
 
+  function chooseProvider(provider) {
+    setProv(provider);
+    setApiKey('');
+    setBaseUrl(provider.base || '');
+    setTest(null);
+    setStep(1);
+  }
+
+  async function importAlibabaCsv(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    try {
+      const parsed = parseAlibabaCredentialCsv(await file.text());
+      setApiKey(parsed.apiKey);
+      setBaseUrl(parsed.baseURL);
+      setTest(null);
+      showToast('CSV Alibaba importado. Agora clique em Testar.', 'ok');
+    } catch (error) {
+      setTest({ ok: false, error: error.message || 'Não foi possível ler o CSV Alibaba.' });
+    }
+  }
+
   async function runTest() {
     if (!apiKey.trim()) { setTest({ ok: false, error: 'Cole a chave no campo acima antes de testar.' }); return; }
+    if (prov.id === 'alibaba' && !isAlibabaOpenAIBaseURL(baseUrl)) {
+      setTest({ ok: false, error: 'Importe o CSV Alibaba ou informe o endpoint openAiCompatible do mesmo workspace.' });
+      return;
+    }
     setTesting(true); setTest(null);
     try {
       const res = await fetch(`${API}/api/provider/test`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ apiKey: apiKey.trim(), providerType: prov.id, base_url: prov.base, model: prov.modelExample })
+        body: JSON.stringify({ apiKey: apiKey.trim(), providerType: prov.id, base_url: baseUrl.trim() || prov.base, model: prov.modelExample })
       });
       const d = await res.json().catch(() => ({}));
       if (res.ok && d.ok !== false) setTest({ ok: true });
@@ -150,7 +180,7 @@ export function KeyWizard({ showToast, onDone, onClose }) {
     try {
       const res = await fetch(`${API}/api/providers`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ providerType: prov.id, name: prov.name, apiKey: apiKey.trim(), base_url: prov.base, model: prov.modelExample })
+        body: JSON.stringify({ providerType: prov.id, name: prov.name, apiKey: apiKey.trim(), base_url: baseUrl.trim() || prov.base, model: prov.modelExample })
       });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(d.error || '');
@@ -168,7 +198,7 @@ export function KeyWizard({ showToast, onDone, onClose }) {
       </p>
       <div className="freeOptionList">
         {KEY_PROVIDERS.map(p => (
-          <button key={p.id} className="freeOptionCard" onClick={() => { setProv(p); setStep(1); }}>
+          <button key={p.id} className="freeOptionCard" onClick={() => chooseProvider(p)}>
             <span className="freeOptionHead"><b>{p.name}</b>{p.badge && <span className="badge">{p.badge}</span>}</span>
             <small>{p.desc}</small>
           </button>
@@ -197,6 +227,17 @@ export function KeyWizard({ showToast, onDone, onClose }) {
         <input type="password" value={apiKey} onChange={e => { setApiKey(e.target.value); setTest(null); }}
           placeholder={prov.keyPrefix ? `${prov.keyPrefix}...` : 'cole a chave aqui'} autoComplete="off" autoFocus/>
       </label>
+      {prov.id === 'alibaba' && <>
+        <label className="wizardCsvImport">
+          <FileUp size={15}/> Importar o CSV baixado do Alibaba Model Studio
+          <input type="file" accept=".csv,text/csv" onChange={importAlibabaCsv}/>
+        </label>
+        <label>Endpoint OpenAI compatível do workspace
+          <input value={baseUrl} onChange={event => { setBaseUrl(event.target.value); setTest(null); }}
+            placeholder="https://...maas.aliyuncs.com/compatible-mode/v1" autoComplete="off"/>
+        </label>
+        <div className="pcHint"><ShieldCheck size={14}/> Use exatamente o campo <code>openAiCompatible</code> do mesmo CSV da chave. Chave e endpoint precisam pertencer ao mesmo workspace e região.</div>
+      </>}
       {test && (test.ok
         ? <div className="pcHint" style={{ color: 'var(--ok)' }}><Check size={14}/> Chave válida! Pode salvar.</div>
         : <div className="pcHint" style={{ color: 'var(--danger)' }}><X size={14}/> {test.error}</div>
