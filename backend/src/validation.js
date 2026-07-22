@@ -65,6 +65,12 @@ export const schemas = {
     orchestrateIds: z.array(id).max(100, 'A equipe tem assistentes demais para uma única mensagem (máximo 100).').optional(),
     effort: z.string().trim().max(30).nullish(),
     multiModel: multiModelConfig.nullish(),
+    attachments: z.array(z.looseObject({
+      id: id.nullish(),
+      path: z.string().trim().max(500),
+      name: z.string().trim().max(500).nullish(),
+      size: z.coerce.number().nonnegative().nullish(),
+    })).max(20, 'Anexos demais para uma única mensagem.').optional(),
   }),
 
   multiModelCancelSlot: z.looseObject({

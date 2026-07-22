@@ -3,10 +3,9 @@
 // uploads, pastas do PC, modo desenvolvedor, ambiente verificado) e limites do
 // briefing da equipe.
 // Extraído de agent.js (refatoração mecânica, sem mudança de comportamento).
-import fs from 'fs';
-import path from 'path';
 import { toolDefinitions, imageToolDefinitions, runTool } from '../tools.js';
-import { workspaceFor, pcFolderMounts } from '../sandbox.js';
+import { pcFolderMounts } from '../sandbox.js';
+import { listWorkspaceUploads } from '../attachments.js';
 import { isValidRepoFullName, repoDirName } from '../connectors/github.js';
 import { COMPLETION_PROTOCOL, promptMeta } from './promptRegistry.js';
 import { allowedAssistantToolNames } from './assistantPolicy.js';
@@ -60,10 +59,9 @@ Como usar (via run_python ou bash, com os caminhos acima):
 // existem no sandbox (senão o modelo pede para "reenviar" um arquivo que já
 // está lá). Retorna null se não houver uploads.
 export function uploadsNote(conversationId) {
-  let files = [];
-  try { files = fs.readdirSync(workspaceFor(conversationId).uploads); } catch {}
+  const files = listWorkspaceUploads(conversationId);
   if (!files.length) return null;
-  const list = files.map(f => `- ${safeLabel(`/workspace/uploads/${f}`)}`).join('\n');
+  const list = files.map(file => `- ${safeLabel(`/workspace/${file.path}`)} (${file.size} bytes)`).join('\n');
   return `O usuário JÁ enviou os arquivos abaixo — eles estão disponíveis no sandbox agora:
 ${list}
 

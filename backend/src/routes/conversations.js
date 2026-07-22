@@ -16,6 +16,7 @@ import { getUserProvider } from '../userProvider.js';
 import { enforceFreeTierLimits, bumpFreeTierUsage, logFreeTierEvent, freeTierStatusFor } from '../freeTier.js';
 import { acquireFreeSlot, cancelFreeJob, freeQueueSnapshot } from '../freeQueue.js';
 import { makeRouter, upload, scanOrReject, decodeUploadName, loadAssistant, ensureConversation, enforceDailyLimit, looksLikeFailedAssistantReply } from './helpers.js';
+import { validateAttachmentManifest } from '../attachments.js';
 
 const router = makeRouter();
 
@@ -138,7 +139,11 @@ router.get('/conversations/:id/files', async (req, res) => {
     return { id: Buffer.from(rel).toString('base64url'), kind: 'output', name: path.basename(p), path: rel, size };
   }).filter(Boolean);
   const uploaded = await db.prepare('SELECT id,kind,name,path,size,created_at FROM files WHERE conversation_id=?').all(req.params.id);
-  res.json([...uploaded, ...outputFiles]);
+  const availablePaths = new Set(validateAttachmentManifest(req.params.id, uploaded).valid.map(file => file.path));
+  res.json([
+    ...uploaded.map(file => ({ ...file, available: availablePaths.has(String(file.path || '').replaceAll('\\', '/')) })),
+    ...outputFiles
+  ]);
 });
 
 router.delete('/conversations/:id/files/*', async (req, res) => {
@@ -331,6 +336,18 @@ router.post('/conversations/:id/chat', validate(schemas.chat), async (req, res) 
     return res.status(429).json({ error: `Você já tem ${maxRuns} conversas processando ao mesmo tempo. Aguarde alguma terminar (o indicador na barra lateral para de girar) ou pare uma delas antes de iniciar outra.` });
   }
   if (!await ensureConversation(req.userId, req.params.id, req.body?.model)) return res.status(404).json({ error: 'Não encontrado' });
+  // O frontend envia o manifesto que estava visível no compositor. Conferimos
+  // os mesmos caminhos ANTES de abrir o stream/modelo: se o upload ainda está
+  // terminando ou o arquivo sumiu do disco, não deixamos a IA concluir
+  // falsamente que "não recebeu anexo".
+  const attachmentCheck = validateAttachmentManifest(req.params.id, req.body?.attachments || []);
+  if (attachmentCheck.missing.length) {
+    return res.status(409).json({
+      error: 'Um ou mais anexos ainda não estão disponíveis nesta conversa. Aguarde o envio terminar ou remova o anexo indisponível e envie-o novamente.',
+      code: 'attachments_not_ready',
+      missing: attachmentCheck.missing.map(file => file.name || file.path)
+    });
+  }
   const limitMsg = await enforceDailyLimit(req.userId);
   if (limitMsg) return res.status(429).json({ error: limitMsg });
   // MODO GRATUITO: limites próprios (diário/por minuto/bloqueio) checados ANTES

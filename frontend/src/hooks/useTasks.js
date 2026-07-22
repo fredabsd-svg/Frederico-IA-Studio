@@ -5,7 +5,7 @@ import { API } from '../constants.js';
 // Recebe as dependências do App por parâmetro e devolve { estado, ações }.
 export function useTasks({ current, busyRef, openConversation, ensureConversation,
                            input, setInput, listening, recognitionRef,
-                           model, assistantId, webSearch, showToast }) {
+                           model, assistantId, webSearch, showToast, waitForUploads }) {
   const [tasks, setTasks] = useState([]);
   const [tasksOpen, setTasksOpen] = useState(false);
   const prevTasksRef = useRef([]);
@@ -43,6 +43,11 @@ export function useTasks({ current, busyRef, openConversation, ensureConversatio
     if (busyRef.current) { showToast('Aguarde a resposta atual terminar antes de enviar uma tarefa em segundo plano.'); return; }
     let conv = current;
     if (!conv) { conv = await ensureConversation(); if (!conv) return; }
+    const synchronizedFiles = waitForUploads ? await waitForUploads(conv.id) : [];
+    if (synchronizedFiles.some(file => file.kind === 'upload' && file.available === false)) {
+      showToast('Há anexo indisponível nesta conversa. Remova-o e anexe novamente antes de criar a tarefa.');
+      return;
+    }
     if (listening) recognitionRef.current?.stop();
     setInput('');
     try {

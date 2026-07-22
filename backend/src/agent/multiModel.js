@@ -167,10 +167,12 @@ export function multiModelSystemBlocks(member, mode, developerTeamNote = null, r
   return blocks;
 }
 
-export function multiModelExecutionPolicy({ mode, requirement, developer = false } = {}) {
+export function multiModelExecutionPolicy({ mode, requirement, developer = false, hasUploads = false } = {}) {
   const needsExecution = Boolean(requirement?.required);
   return {
-    useAgentPipeline: mode === 'pipeline' && (needsExecution || Boolean(developer)),
+    // Pipeline + anexo é uma execução real mesmo quando a mensagem é curta
+    // ("pode começar", "faça conforme combinado") e não contém outro verbo.
+    useAgentPipeline: mode === 'pipeline' && (needsExecution || Boolean(developer) || Boolean(hasUploads)),
     blockedMode: needsExecution && mode !== 'pipeline' && !developer
   };
 }
@@ -201,13 +203,14 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
       if (!allowed.includes(config.coordinator)) config.coordinator = provider.model;
     }
 
+    const hasUploads = Boolean(uploadsNote(conversationId));
     const multiRequirement = detectToolRequirement({
       userText,
       webSearch: Boolean(webSearch),
       developer: false,
-      hasUploads: Boolean(uploadsNote(conversationId))
+      hasUploads
     });
-    const executionPolicy = multiModelExecutionPolicy({ mode: config.mode, requirement: multiRequirement, developer: Boolean(developer) });
+    const executionPolicy = multiModelExecutionPolicy({ mode: config.mode, requirement: multiRequirement, developer: Boolean(developer), hasUploads });
     if (executionPolicy.blockedMode) {
       const finalText = 'Este pedido precisa ler arquivos, pesquisar ou executar ferramentas. No Multimodelo, selecione **Execução em sequência (Pipeline)** para que os modelos trabalhem no artefato real e possam gerar ou corrigir o arquivo.';
       onEvent({ type: 'status', content: 'Selecione o modo Pipeline para executar esta tarefa.' });
@@ -557,6 +560,7 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
           const briefing = prior ? clipForBriefing(prior, 20000) : null;
           const stageEvent = event => {
             if (event?.type === 'delta') onEvent({ type: 'mm_delta', slot: state.slot, content: event.content || '' });
+            else if (event?.type === 'response_reset') onEvent({ type: 'mm_reset', slot: state.slot });
             else onEvent(event);
           };
           executorResult = await runAgent({

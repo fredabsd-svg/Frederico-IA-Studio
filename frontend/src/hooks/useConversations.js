@@ -33,6 +33,10 @@ export function useConversations({ clientId, model, setModel, showToast, blockCo
   // Cria o registro da conversa só quando ele é realmente necessário (1ª
   // mensagem, anexo ou tarefa). Evita acumular conversas vazias no histórico.
   async function ensureConversation(cid = clientId) {
+    // O ref é atualizado imediatamente ao criar/abrir uma conversa, enquanto o
+    // state do React só muda no próximo render. Consultá-lo primeiro evita que
+    // "anexar + enviar" crie duas conversas no pequeno intervalo entre ambos.
+    if (currentRef.current) return currentRef.current;
     if (current) return current;
     // Single-flight: se duas ações "primeiras" (ex.: anexar + enviar) dispararem
     // quase juntas, ambas veem current=null; sem isso, criariam 2 conversas.
@@ -44,6 +48,7 @@ export function useConversations({ clientId, model, setModel, showToast, blockCo
         const c = await res.json();
         setConversations(prev => [c, ...prev]);
         setCurrent(c);
+        currentRef.current = c;
         setFiles([]);
         return c;
       } catch {
@@ -70,6 +75,7 @@ export function useConversations({ clientId, model, setModel, showToast, blockCo
       if (!res.ok) throw new Error('Não foi possível abrir a conversa.');
       const data = await res.json();
       setCurrent(data.conversation);
+      currentRef.current = data.conversation;
       setMessages(data.messages || []);
       // Restaura o MODELO que estava em uso nesta conversa. Sem isto, ao reabrir
       // (sair e voltar / recarregar) o seletor voltava ao modelo padrão e parecia
@@ -81,7 +87,6 @@ export function useConversations({ clientId, model, setModel, showToast, blockCo
       // funcionando — como se nunca tivesse saído. currentRef é atualizado por um
       // efeito; setamos aqui também para o followActiveConversation não abortar.
       if (data.active && followActiveRef?.current) {
-        currentRef.current = data.conversation;
         const lastUser = [...(data.messages || [])].reverse().find(m => m.role === 'user');
         followActiveRef.current(id, lastUser?.content || '');
       }
@@ -119,8 +124,10 @@ export function useConversations({ clientId, model, setModel, showToast, blockCo
     try {
       const res = await fetch(`${API}/api/conversations/${id}/files`);
       const d = await res.json();
-      setFiles(Array.isArray(d) ? d : []);
-    } catch {}
+      const rows = Array.isArray(d) ? d : [];
+      setFiles(rows);
+      return rows;
+    } catch { return []; }
   }
 
   return {
