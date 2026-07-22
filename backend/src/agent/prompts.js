@@ -246,8 +246,15 @@ const PLAN_BEFORE = 'ANTES DE QUALQUER EDIÇÃO, apresente em cinco tópicos cur
 // (item 10 da especificação).
 const FINAL_SUMMARY = 'AO CONCLUIR, entregue um resumo profissional com: o que foi alterado; arquivos modificados; arquivos criados ou removidos; testes executados e seus resultados; problemas encontrados; pendências; e sugestões de próximas etapas.';
 
-export function developerContextFor(request, userId) {
+export function developerContextFor(request, userId, opts = {}) {
   if (!request || typeof request !== 'object') return null;
+  // Conexão do GitHub confirmada pelo chamador (loop.js). Quando um repositório
+  // está selecionado mas o conector NÃO está ativo, as ferramentas github_* não
+  // são oferecidas ao modelo — então mandar "clone o repositório" (como era
+  // antes) fazia o modelo tentar uma ferramenta inexistente e responder um "não
+  // tenho acesso ao GitHub" genérico. Aqui, nesse caso, instruímos a pedir a
+  // reconexão de forma objetiva. Default true preserva os demais chamadores.
+  const githubConnected = opts.githubConnected !== false;
   const mode = DEV_MODES.includes(request.mode) ? request.mode : null;
   if (!mode) return null;
   const canWrite = DEV_WRITE_MODES.has(mode);
@@ -262,7 +269,9 @@ export function developerContextFor(request, userId) {
   // gravável); "somente leitura" vale para os modos que não editam (ask/plan/review).
   const readOnlyProject = !canWrite || (github ? false : !project?.writable);
   const projectNote = github
-    ? `Projeto selecionado: repositório GitHub "${github.repo}"${github.branch ? ` (branch de trabalho: "${github.branch}")` : ''}. PRIMEIRO PASSO OBRIGATÓRIO: chame a ferramenta github_clone com {"repo":"${github.repo}"${github.branch ? `,"branch":"${github.branch}"` : ''}} para trazer (ou atualizar) o código em /workspace/repo/${repoDirName(github.repo)}. Depois trabalhe nos arquivos por bash/run_python; git status/diff/log/commit funcionam pelo bash do sandbox. Push e Pull Request só pelas ferramentas github_push/github_create_pr (a autenticação é do app — nunca peça token nem tente git push pelo bash, não funciona).${canWrite ? ' Ao concluir a missão, faça commit com mensagem descritiva em português e envie com github_push; informe no final a branch e o commit enviados.' : ' Nesta tarefa NÃO altere arquivos nem use github_push/github_create_pr.'}`
+    ? (githubConnected
+      ? `Projeto selecionado: repositório GitHub "${github.repo}"${github.branch ? ` (branch de trabalho: "${github.branch}")` : ''}. PRIMEIRO PASSO OBRIGATÓRIO: chame a ferramenta github_clone com {"repo":"${github.repo}"${github.branch ? `,"branch":"${github.branch}"` : ''}} para trazer (ou atualizar) o código em /workspace/repo/${repoDirName(github.repo)}. Depois trabalhe nos arquivos por bash/run_python; git status/diff/log/commit funcionam pelo bash do sandbox. Push e Pull Request só pelas ferramentas github_push/github_create_pr (a autenticação é do app — nunca peça token nem tente git push pelo bash, não funciona).${canWrite ? ' Ao concluir a missão, faça commit com mensagem descritiva em português e envie com github_push; informe no final a branch e o commit enviados.' : ' Nesta tarefa NÃO altere arquivos nem use github_push/github_create_pr.'}`
+      : `Projeto selecionado: repositório GitHub "${github.repo}", MAS o conector do GitHub NÃO está ativo nesta conversa (a conta não está conectada, ou o token expirou/não pôde ser lido). Por isso as ferramentas github_clone/github_push/github_create_pr NÃO estão disponíveis agora e você NÃO consegue acessar esse repositório. NÃO responda um "não tenho acesso ao GitHub" genérico: explique ao usuário, de forma objetiva e em português, que ele precisa reconectar a conta do GitHub em Configurações → Conectores para você poder clonar e trabalhar no repositório "${github.repo}". Enquanto a conexão não voltar, ajude com o que não depender de acessar esse repositório.`)
     : project
       ? `Projeto selecionado: "${project.label}" em ${project.target}. ${readOnlyProject ? 'Ele está montado somente para leitura nesta tarefa.' : 'Somente esta pasta do PC está autorizada para escrita nesta tarefa.'}`
       : 'Nenhuma pasta do PC foi selecionada. Trabalhe apenas no workspace temporário e entregue arquivos em /workspace/outputs quando necessário.';
