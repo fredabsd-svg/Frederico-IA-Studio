@@ -33,6 +33,25 @@ def _num(v):
     return isinstance(v, (int, float)) and not isinstance(v, bool)
 
 
+def _texto_exibido(val, kind):
+    """Comprimento aproximado do TEXTO que o Excel realmente mostra na célula,
+    já considerando o formato de número. Sem isso, uma coluna de moeda cujo
+    valor bruto é 15015.0 (5 chars) ganhava largura de 5 e aparecia como
+    ###### — porque o exibido é "R$ 15.015,00" (12 chars). O separador de
+    milhar do Python é "," e o decimal ".", mas o COMPRIMENTO é o mesmo do
+    padrão pt-BR ("1.234,50"), então serve para dimensionar a coluna."""
+    if isinstance(val, bool) or not isinstance(val, (int, float)):
+        return len(str(val))
+    neg = 1 if val < 0 else 0
+    if kind == "moeda":
+        return len("R$ " + format(abs(val), ",.2f")) + neg
+    if kind == "pct":
+        return len(format(val * 100, ".1f")) + 1  # "15.6" + "%"
+    if kind == "milhar":
+        return len(format(abs(val), ",.0f")) + neg
+    return len(str(val))
+
+
 class Planilha:
     def __init__(self, cor_marca=None):
         self.wb = Workbook()
@@ -62,9 +81,15 @@ class Planilha:
         linha. Retorna dict com {ws, r0 (linha do cabeçalho), r1 (última linha de
         dados), c0, c1, cols} para uso em gráficos."""
         moeda = set(moeda or []); pct = set(pct or []); milhar = set(milhar or [])
-        r0 = inicio or (ws.max_row + 1 if ws.max_row > 1 else (ws.max_row + 1))
-        if ws.max_row == 1 and ws.cell(row=1, column=1).value is None:
+        # Onde a tabela começa. Se `inicio` não vier: aba vazia → linha 1; caso
+        # contrário (já tem título ou tabela acima) deixa UMA linha de respiro em
+        # branco em vez de colar o cabeçalho no conteúdo anterior.
+        if inicio:
+            r0 = inicio
+        elif ws.max_row == 1 and ws.cell(row=1, column=1).value is None:
             r0 = 1
+        else:
+            r0 = ws.max_row + 2
         ncols = len(cabecalho)
         thin = Side(style="thin", color=self.pal["borda"])
         # cabeçalho
@@ -108,14 +133,29 @@ class Planilha:
                     c.number_format = MILHAR_FMT
                 c.alignment = Alignment(horizontal="right" if _num(val) else "left",
                                         vertical="center")
-        # largura automática (aproximada)
+        # largura automática (aproximada), considerando o FORMATO de cada coluna
+        # (moeda/%/milhar) — senão a coluna fica curta e o Excel mostra ######.
+        def _kind(nome):
+            if nome in moeda: return "moeda"
+            if nome in pct: return "pct"
+            if nome in milhar: return "milhar"
+            return None
         for j, nome in enumerate(cabecalho, start=1):
-            largura = len(str(nome))
-            for i, linha in enumerate(linhas):
+            kind = _kind(nome)
+            largura = len(str(nome)) + 2  # cabeçalho em negrito ocupa um pouco mais
+            for linha in linhas:
                 if j - 1 < len(linha):
-                    largura = max(largura, len(str(linha[j - 1])))
-            ws.column_dimensions[get_column_letter(j)].width = min(48, max(10, largura + 4))
-        if congelar:
+                    largura = max(largura, _texto_exibido(linha[j - 1], kind))
+            L = get_column_letter(j)
+            nova = min(52, max(10, largura + 3))
+            # No Excel a largura é UMA por coluna: se outra tabela já usa esta
+            # coluna acima, mantém a maior das duas em vez de encolher a anterior.
+            atual = ws.column_dimensions[L].width
+            ws.column_dimensions[L].width = max(atual or 0, nova)
+        # Congela o cabeçalho só da PRIMEIRA tabela da aba: se uma segunda tabela
+        # chamasse tabela() de novo, o freeze_panes (propriedade única da aba)
+        # pulava para o cabeçalho dela e escondia a primeira. Não sobrescreve.
+        if congelar and ws.freeze_panes is None:
             ws.freeze_panes = ws.cell(row=r0 + 1, column=1)
         return {"ws": ws, "r0": r0, "r1": r0 + n, "c0": 1, "c1": ncols,
                 "cols": list(cabecalho), "total": bool(total)}

@@ -160,7 +160,22 @@ class RelatorioPDF:
         for linha in linhas:
             dados.append([Paragraph(str(v), self.s_cell) for v in linha])
         if not larguras:
-            larguras = [17.0 * cm / ncols] * ncols
+            # Larguras PROPORCIONAIS ao conteúdo (cabeçalho vs. maior célula), com
+            # piso e soma travada em 17 cm (área útil A4/margem 2 cm). Antes eram
+            # colunas de largura igual: uma "Descrição" longa ficava espremida do
+            # mesmo tamanho de uma "Valor" curta, quebrando em muitas linhas.
+            total_w = 17.0 * cm
+            piso = 1.8 * cm
+            pesos = []
+            for j in range(ncols):
+                m = len(str(cabecalho[j]))
+                for linha in linhas:
+                    m = max(m, len(str(linha[j])))
+                pesos.append(max(4, m))
+            soma = sum(pesos)
+            larguras = [max(piso, total_w * w / soma) for w in pesos]
+            fator = total_w / sum(larguras)  # renormaliza (o piso pode ter estourado)
+            larguras = [w * fator for w in larguras]
         t = Table(dados, colWidths=larguras, repeatRows=1)
         ts = [
             ("BACKGROUND", (0, 0), (-1, 0), p["primaria"]),

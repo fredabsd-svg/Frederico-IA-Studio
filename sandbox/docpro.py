@@ -38,6 +38,34 @@ def _el(tag, **attrs):
     return e
 
 
+# Ordem canônica dos filhos de <w:tblPr> (CT_TblPr). O Word até tolera fora de
+# ordem, mas python-docx e validadores estritos não — inserir tblW/tblBorders/
+# tblLayout na posição certa evita um .docx que "abre corrompido" ou perde o
+# estilo. Só listamos os elementos que este kit realmente usa.
+_TBLPR_ORDER = [
+    "tblStyle", "tblpPr", "tblOverlap", "bidiVisual", "tblStyleRowBandSize",
+    "tblStyleColBandSize", "tblW", "jc", "tblCellSpacing", "tblInd",
+    "tblBorders", "shd", "tblLayout", "tblCellMar", "tblLook",
+]
+
+
+def _tblpr_put(tblPr, el):
+    """Substitui/insere `el` em `tblPr` respeitando a ordem do schema OOXML."""
+    tag = el.tag.split("}")[-1]
+    for existente in tblPr.findall(qn("w:" + tag)):
+        tblPr.remove(existente)
+    posteriores = set(_TBLPR_ORDER[_TBLPR_ORDER.index(tag) + 1:]) if tag in _TBLPR_ORDER else set()
+    ref = None
+    for filho in tblPr:
+        if filho.tag.split("}")[-1] in posteriores:
+            ref = filho
+            break
+    if ref is None:
+        tblPr.append(el)
+    else:
+        ref.addprevious(el)
+
+
 def _shade(elem, fill):
     elem.append(_el("w:shd", val="clear", fill=fill))
 
@@ -98,6 +126,30 @@ class Relatorio:
             s.left_margin = s.right_margin = Cm(margem_cm)
 
     # ---------- blocos ----------
+    def _fit(self, t, pct=5000):
+        """Faz a tabela ocupar a largura útil da página (100% = pct 5000). Sem
+        isso o python-docx cria a tabela com largura "auto", e conteúdo largo
+        empurra as colunas PARA FORA da margem direita — o clássico "tabela
+        vazando". Com tblW=100% + layout autofit, o Word ajusta as colunas ao
+        conteúdo mas mantém a tabela dentro da área de texto."""
+        tblPr = t._tbl.tblPr
+        _tblpr_put(tblPr, _el("w:tblW", w=pct, type="pct"))
+        _tblpr_put(tblPr, _el("w:tblLayout", type="autofit"))
+        t.autofit = True
+        return t
+
+    def _gap(self, cm_):
+        """Espaço vertical de altura EXATA (para a capa não depender de contar
+        parágrafos em branco, que estouram para uma 2ª página quando o título
+        quebra em duas linhas)."""
+        p = self.doc.add_paragraph()
+        pf = p.paragraph_format
+        pf.space_before = Pt(0)
+        pf.space_after = Cm(cm_)
+        pf.line_spacing = Pt(2)
+        r = p.add_run(""); r.font.size = Pt(2)
+        return p
+
     def _barra(self, cor=None, tamanho=48):
         p = self.doc.add_paragraph()
         p.paragraph_format.space_before = Pt(2)
@@ -108,21 +160,21 @@ class Relatorio:
         return p
 
     def capa(self):
-        for _ in range(2):
-            self.doc.add_paragraph()
+        # A capa (1ª página) não leva o rodapé "Página X de Y": ativa o
+        # cabeçalho/rodapé de primeira página diferente e deixa o dela vazio.
+        self.doc.sections[0].different_first_page_header_footer = True
         if self.emissor:
             p = self.doc.add_paragraph(); _run(p, self.emissor, size=11, cor=self.pal["cinza"], bold=True)
-        for _ in range(6):
-            self.doc.add_paragraph()
+        self._gap(5.2)
         self._barra(tamanho=40)
         p = self.doc.add_paragraph(); _run(p, self.tipo, size=12, cor=self.pal["apoio"], bold=True, caps=True, spacing=30)
         p = self.doc.add_paragraph(); p.paragraph_format.space_after = Pt(4)
+        p.paragraph_format.keep_with_next = True
         _run(p, self.titulo_doc, size=27, cor=self.pal["primaria"], bold=True)
         if self.subtitulo:
             p = self.doc.add_paragraph(); _run(p, self.subtitulo, size=14, cor=self.pal["cinza"])
         self._barra(cor=self.pal["apoio"], tamanho=12)
-        for _ in range(10):
-            self.doc.add_paragraph()
+        self._gap(5.0)
         for rot, val in (("Cliente", self.cliente), ("Data", self.data_str), ("Emitido por", self.emissor)):
             if val:
                 p = self.doc.add_paragraph(); p.paragraph_format.space_after = Pt(2)
@@ -152,7 +204,6 @@ class Relatorio:
         return p
 
     def _bordas_tabela(self, t):
-        tblPr = t._tbl.tblPr
         b = _el("w:tblBorders")
         b.append(_el("w:top", val="single", sz=4, color=self.pal["borda"]))
         b.append(_el("w:bottom", val="single", sz=4, color=self.pal["borda"]))
@@ -160,7 +211,7 @@ class Relatorio:
         b.append(_el("w:left", val="nil"))
         b.append(_el("w:right", val="nil"))
         b.append(_el("w:insideV", val="nil"))
-        tblPr.append(b)
+        _tblpr_put(t._tbl.tblPr, b)
 
     def tabela(self, cabecalho, linhas, total=False):
         # Robustez: a tabela tem exatamente len(cabecalho) colunas. Normaliza
@@ -208,6 +259,7 @@ class Relatorio:
                     bd = _el("w:tcBorders")
                     bd.append(_el("w:top", val="single", sz=14, color=self.pal["primaria"]))
                     tcPr.append(bd)
+        self._fit(t)
         self.doc.add_paragraph().paragraph_format.space_after = Pt(6)
         return t
 
@@ -231,6 +283,7 @@ class Relatorio:
         else:
             p = cell.paragraphs[0]
         _run(p, texto)
+        self._fit(t)
         self.doc.add_paragraph().paragraph_format.space_after = Pt(6)
         return t
 
@@ -244,6 +297,14 @@ class Relatorio:
             cr = t.rows[1].cells[i]; sombrear_celula(cr, self.pal["suave"]); _cell_pad(cr, 0, 120, 120, 120)
             cr.paragraphs[0].text = ""; cr.paragraphs[0].alignment = 1
             _run(cr.paragraphs[0], rot, size=9, cor=self.pal["cinza"], caps=True)
+        # Separa os cartões: linha branca grossa entre colunas (senão os KPIs
+        # coladas com o mesmo fundo suave viram um bloco único, sem respiro).
+        b = _el("w:tblBorders")
+        for e in ("top", "bottom", "left", "right", "insideH"):
+            b.append(_el("w:" + e, val="nil"))
+        b.append(_el("w:insideV", val="single", sz=36, color=self.pal["branco"]))
+        _tblpr_put(t._tbl.tblPr, b)
+        self._fit(t)
         self.doc.add_paragraph().paragraph_format.space_after = Pt(6)
         return t
 
