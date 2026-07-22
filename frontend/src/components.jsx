@@ -96,7 +96,9 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
   const [tier, setTier] = useState('all');
   const [modality, setModality] = useState('all');
   const [flags, setFlags] = useState([]);
-  const [sort, setSort] = useState('none');
+  // Padrão: melhores primeiro (classificação). Sem isto o catálogo abre em ordem
+  // alfabética e enche o topo de modelos obscuros (ALLaM, Antigravity...).
+  const [sort, setSort] = useState('rank');
   const [favs, setFavs] = useState(loadFavs);
   const [recent, setRecent] = useState(loadRecent);
   const ref = useRef(null);
@@ -189,7 +191,7 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
   }
   const families = Object.keys(famCounts).sort((a, b) => famCounts[b] - famCounts[a]);
   const filteredModels = filterModels(models, { query: q, provider, family: fam, price, context, tier, modality, flags });
-  const activeFilterCount = flags.length + Number(provider !== 'all') + Number(fam !== 'all') + Number(price !== 'all') + Number(context !== 'all') + Number(tier !== 'all') + Number(modality !== 'all') + Number(sort !== 'none');
+  const activeFilterCount = flags.length + Number(provider !== 'all') + Number(fam !== 'all') + Number(price !== 'all') + Number(context !== 'all') + Number(tier !== 'all') + Number(modality !== 'all') + Number(sort !== 'rank');
   const sortFn = (a, b) => sort === 'new' ? (b.created || 0) - (a.created || 0)
     : sort === 'cheap' ? priceValue(a) - priceValue(b)
     // Classificação: maior tier primeiro (usa o tier coerente do backend).
@@ -224,7 +226,7 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
     .filter((model, index, items) => !items.slice(0, index).some(previous => recommendationFamily(previous) === recommendationFamily(model)));
   const recommendedModels = diverseRecommendedModels
     .filter(model => !recentIds.has(model.id))
-    .sort(sort === 'none' ? recommendedSort : sortFn)
+    .sort(sort === 'rank' ? recommendedSort : sortFn)
     .slice(0, 6);
   const favoriteModels = [...filteredModels].filter(model => isFav(model.id)).sort(sortFn);
   const catalogModels = [...filteredModels].sort(sortFn);
@@ -289,7 +291,7 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
         {[['recommended', 'Recomendados'], ['favorites', 'Favoritos (' + favs.length + ')'], ['catalog', 'Catálogo']].map(([id, label]) => <button key={id} role="tab" aria-selected={view === id} className={view === id ? 'on' : ''} onClick={() => setView(id)}>{label}</button>)}
       </div>
       {filtersOpen && <div className="mpAdvanced" aria-label="Filtros avançados">
-        <div className="mpAdvancedHead"><span>Refinar catálogo</span>{activeFilterCount > 0 && <button onClick={() => { setProvider('all'); setFam('all'); setPrice('all'); setContext('all'); setTier('all'); setModality('all'); setFlags([]); setSort('none'); }}>Limpar filtros</button>}</div>
+        <div className="mpAdvancedHead"><span>Refinar catálogo</span>{activeFilterCount > 0 && <button onClick={() => { setProvider('all'); setFam('all'); setPrice('all'); setContext('all'); setTier('all'); setModality('all'); setFlags([]); setSort('rank'); }}>Limpar filtros</button>}</div>
         <div className="mpAdvancedFields">
           <label>Provedor configurado
             <select value={provider} onChange={event => setProvider(event.target.value)}>
