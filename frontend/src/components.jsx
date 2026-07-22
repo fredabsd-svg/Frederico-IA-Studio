@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Search, ChevronDown, Check, Cpu, Star, SlidersHorizontal, X, Wrench, Eye, Image as ImageIcon, Brain, Video, MessageSquare } from 'lucide-react';
+import { Search, ChevronDown, Check, Cpu, Star, SlidersHorizontal, X, Wrench, Eye, Image as ImageIcon, Brain, Video, MessageSquare, AudioLines, Globe2, FileText, Code2, Database } from 'lucide-react';
 import { ProviderIcon } from './components/ProviderIcon.jsx';
 import { FamilySelect } from './components/FamilySelect.jsx';
 import { findRanking, tierClass } from './modelRanking.js';
+import { capabilityOf, filterModels, modelFamily } from './modelFilters.js';
 
 // Ids (ou prefixos) dos modelos mais confiáveis para gerar planilhas/arquivos
 const BEST_FOR_FILES = [
@@ -26,8 +27,7 @@ const FAMILY_META = {
 };
 const familyKey = id => { const s = String(id); return s.includes('/') ? s.split('/')[0] : s.split('-')[0]; };
 const familyLabel = key => FAMILY_META[key] || (key.charAt(0).toUpperCase() + key.slice(1));
-const BIG_CTX = 100000;
-const ctxLabel = n => !n ? '' : n >= 1000 ? `${Math.round(n / 1000)}k contexto` : `${n} contexto`;
+const ctxLabel = n => !n ? 'contexto não informado' : n >= 1000000 ? `${(n / 1000000).toLocaleString('pt-BR')}M contexto` : n >= 1000 ? `${Math.round(n / 1000)}k contexto` : `${n} contexto`;
 const usdPerMillion = value => Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 6 });
 const priceLabel = m => {
   if (m.free) return 'grátis';
@@ -36,7 +36,7 @@ const priceLabel = m => {
   if (input && output) return `$${usdPerMillion(input * 1e6)} entrada · $${usdPerMillion(output * 1e6)} saída / 1M`;
   if (input) return `$${usdPerMillion(input * 1e6)} entrada / 1M`;
   if (output) return `$${usdPerMillion(output * 1e6)} saída / 1M`;
-  return '';
+  return m.pricingKnown ? 'sem custo informado' : 'preço não informado pelo provedor';
 };
 const FAV_KEY = 'fred_fav_models';
 const RECENT_KEY = 'fred_recent_models';
@@ -50,12 +50,6 @@ const loadStoredIds = key => {
 };
 const loadFavs = () => loadStoredIds(FAV_KEY);
 const loadRecent = () => loadStoredIds(RECENT_KEY);
-
-const capabilityOf = (model, key) => {
-  const declared = model?.capabilities;
-  if (declared && Object.prototype.hasOwnProperty.call(declared, key)) return declared[key];
-  return model?.[key];
-};
 
 function ModelCapabilitySummary({ model }) {
   const text = capabilityOf(model, 'text');
@@ -71,6 +65,11 @@ function ModelCapabilitySummary({ model }) {
   if (capabilityOf(model, 'image') === true) entries.push({ key: 'image', label: 'Imagem', Icon: ImageIcon, tone: 'yes' });
   if (capabilityOf(model, 'reasoning') === true) entries.push({ key: 'reasoning', label: 'Raciocínio', Icon: Brain, tone: 'yes' });
   if (capabilityOf(model, 'video') === true) entries.push({ key: 'video', label: 'Vídeo', Icon: Video, tone: 'yes' });
+  if (capabilityOf(model, 'audio') === true) entries.push({ key: 'audio', label: 'Áudio', Icon: AudioLines, tone: 'yes' });
+  if (capabilityOf(model, 'web') === true) entries.push({ key: 'web', label: 'Web', Icon: Globe2, tone: 'yes' });
+  if (capabilityOf(model, 'files') === true) entries.push({ key: 'files', label: 'Arquivos', Icon: FileText, tone: 'yes' });
+  if (capabilityOf(model, 'code') === true) entries.push({ key: 'code', label: 'Código', Icon: Code2, tone: 'yes' });
+  if (capabilityOf(model, 'embeddings') === true) entries.push({ key: 'embeddings', label: 'Embeddings', Icon: Database, tone: 'yes' });
 
   return <span className="mpItemCaps" aria-label="Capacidades do modelo">
     {entries.map(({ key, label, Icon, tone }) => <span key={key} className={`mpCap ${tone}`} title={label}><Icon size={12}/><span>{label}</span></span>)}
@@ -90,7 +89,10 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
   const [view, setView] = useState('recommended');
   const [purpose, setPurpose] = useState('general');
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [provider, setProvider] = useState('all');
   const [fam, setFam] = useState('all');
+  const [price, setPrice] = useState('all');
+  const [context, setContext] = useState('all');
   const [flags, setFlags] = useState([]);
   const [sort, setSort] = useState('none');
   const [favs, setFavs] = useState(loadFavs);
@@ -115,7 +117,6 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
   const current = models.find(model => model.id === value);
   const query = q.trim().toLowerCase();
   const rawId = model => model.providerModelId || model.id;
-  const match = model => !query || (model.name || '').toLowerCase().includes(query) || rawId(model).toLowerCase().includes(query) || (model.providerName || '').toLowerCase().includes(query);
   const isFree = model => model.free || rawId(model).endsWith(':free');
   const isBest = model => BEST_FOR_FILES.some(prefix => rawId(model) === prefix || rawId(model).startsWith(prefix));
   const isRecommended = model => GENERAL_RECOMMENDATIONS.some(prefix => rawId(model) === prefix || rawId(model).startsWith(prefix));
@@ -133,11 +134,17 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
   ];
   const advancedFilters = [
     { key: 'free', label: 'Apenas grátis' },
-    { key: 'ctx', label: 'Contexto amplo' },
     { key: 'tools', label: 'Ferramentas' },
+    { key: 'reasoning', label: 'Raciocínio' },
     { key: 'vision', label: 'Lê imagens' },
     { key: 'image', label: 'Cria imagens' },
-    { key: 'video', label: 'Cria vídeo' }
+    { key: 'video', label: 'Vídeo' },
+    { key: 'audio', label: 'Áudio' },
+    { key: 'web', label: 'Pesquisa web' },
+    { key: 'files', label: 'Arquivos' },
+    { key: 'code', label: 'Código' },
+    { key: 'embeddings', label: 'Embeddings' },
+    { key: 'configured', label: 'Provedor configurado' }
   ];
   const selectedPurpose = purposes.find(item => item.id === purpose) || purposes[0];
   const toggleFlag = key => setFlags(active => active.includes(key) ? active.filter(item => item !== key) : [...active, key]);
@@ -167,20 +174,20 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
   }
 
   const famCounts = {};
+  const providerCounts = {};
+  const providerNames = {};
   for (const model of models) {
-    const key = familyKey(rawId(model));
+    const key = modelFamily(model);
     famCounts[key] = (famCounts[key] || 0) + 1;
+    const providerKey = model.providerId || '';
+    if (providerKey) {
+      providerCounts[providerKey] = (providerCounts[providerKey] || 0) + 1;
+      providerNames[providerKey] = model.providerName || providerKey;
+    }
   }
   const families = Object.keys(famCounts).sort((a, b) => famCounts[b] - famCounts[a]);
-  const passFlags = model =>
-    (!flags.includes('free') || isFree(model)) &&
-    (!flags.includes('ctx') || (model.context || 0) >= BIG_CTX) &&
-    (!flags.includes('tools') || capabilityOf(model, 'tools') !== false) &&
-    (!flags.includes('vision') || model.vision) &&
-    (!flags.includes('image') || model.image) &&
-    (!flags.includes('video') || model.video);
-  const filteredModels = models.filter(model => match(model) && (fam === 'all' || familyKey(rawId(model)) === fam) && passFlags(model));
-  const activeFilterCount = flags.length + Number(fam !== 'all') + Number(sort !== 'none');
+  const filteredModels = filterModels(models, { query: q, provider, family: fam, price, context, flags });
+  const activeFilterCount = flags.length + Number(provider !== 'all') + Number(fam !== 'all') + Number(price !== 'all') + Number(context !== 'all') + Number(sort !== 'none');
   const sortFn = (a, b) => sort === 'new' ? (b.created || 0) - (a.created || 0)
     : sort === 'cheap' ? priceValue(a) - priceValue(b)
     : sort === 'rank' ? rankValue(a) - rankValue(b)
@@ -231,7 +238,7 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
           {model.id === value && <Check size={13} className="mpInlineCheck" aria-label="Modelo em uso"/>}
         </span>
         <span className="mpItemId">{model.providerName ? `${model.providerName} · ` : ''}{rawId(model)}</span>
-        <span className="mpItemMeta">{[ctxLabel(model.context), priceLabel(model)].filter(Boolean).join(' · ')}</span>
+        <span className="mpItemMeta">{[ctxLabel(model.context), model.maxOutput ? `${model.maxOutput.toLocaleString('pt-BR')} saída máx.` : '', priceLabel(model)].filter(Boolean).join(' · ')}</span>
         <ModelCapabilitySummary model={model}/>
       </button>
       <button className={'mpStar ' + (isFav(model.id) ? 'on' : '')} onClick={event => toggleFav(model.id, event)} title={isFav(model.id) ? 'Remover dos favoritos' : 'Adicionar aos favoritos'} aria-label={isFav(model.id) ? 'Remover dos favoritos' : 'Adicionar aos favoritos'} aria-pressed={isFav(model.id)}><Star size={14} fill={isFav(model.id) ? 'currentColor' : 'none'}/></button>
@@ -264,9 +271,15 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
         {[['recommended', 'Recomendados'], ['favorites', 'Favoritos (' + favs.length + ')'], ['catalog', 'Catálogo']].map(([id, label]) => <button key={id} role="tab" aria-selected={view === id} className={view === id ? 'on' : ''} onClick={() => setView(id)}>{label}</button>)}
       </div>
       {filtersOpen && <div className="mpAdvanced" aria-label="Filtros avançados">
-        <div className="mpAdvancedHead"><span>Refinar catálogo</span>{activeFilterCount > 0 && <button onClick={() => { setFam('all'); setFlags([]); setSort('none'); }}>Limpar filtros</button>}</div>
+        <div className="mpAdvancedHead"><span>Refinar catálogo</span>{activeFilterCount > 0 && <button onClick={() => { setProvider('all'); setFam('all'); setPrice('all'); setContext('all'); setFlags([]); setSort('none'); }}>Limpar filtros</button>}</div>
         <div className="mpAdvancedFields">
-          <label>Fornecedor
+          <label>Provedor configurado
+            <select value={provider} onChange={event => setProvider(event.target.value)}>
+              <option value="all">Todos ({models.length})</option>
+              {Object.keys(providerCounts).sort((a, b) => providerNames[a].localeCompare(providerNames[b])).map(key => <option key={key} value={key}>{providerNames[key]} ({providerCounts[key]})</option>)}
+            </select>
+          </label>
+          <label>Família
             <FamilySelect
               value={fam}
               onChange={setFam}
@@ -275,6 +288,22 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
                 ...families.map(key => ({ key, label: `${familyLabel(key)} (${famCounts[key]})` }))
               ]}
             />
+          </label>
+          <label>Preço
+            <select value={price} onChange={event => setPrice(event.target.value)}>
+              <option value="all">Qualquer preço</option>
+              <option value="free">Somente grátis</option>
+              <option value="paid">Pagos com preço informado</option>
+              <option value="known">Preço informado</option>
+            </select>
+          </label>
+          <label>Contexto mínimo
+            <select value={context} onChange={event => setContext(event.target.value)}>
+              <option value="all">Qualquer contexto</option>
+              <option value="32k">32 mil tokens</option>
+              <option value="100k">100 mil tokens</option>
+              <option value="1m">1 milhão de tokens</option>
+            </select>
           </label>
           <label>Ordenar
             <select value={sort} onChange={event => setSort(event.target.value)}>

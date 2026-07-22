@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { KeyRound, Check, X, RefreshCw, Sparkles, Wand2, Plus, Trash2 } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { KeyRound, Check, X, RefreshCw, Sparkles, Wand2, Plus, Trash2, Pencil, ExternalLink, CreditCard, Activity, AlertTriangle, Clock3, ShieldCheck } from 'lucide-react';
 import { API } from './constants.js';
 import { Drawer } from './components.jsx';
 import { KEY_PROVIDERS } from './KeyWizard.jsx';
@@ -14,11 +14,22 @@ export function ProviderPanel({ showToast, freeStatus, onOpenWizard, onFreeChang
   const [apiKey, setApiKey] = useState('');
   const [baseUrl, setBaseUrl] = useState('https://openrouter.ai/api/v1');
   const [model, setModel] = useState('deepseek/deepseek-chat');
+  const [billingUrl, setBillingUrl] = useState('');
+  const [editingId, setEditingId] = useState('');
   const [busy, setBusy] = useState(false);
   const [activeId, setActiveId] = useState('');
   const presets = useMemo(() => [...KEY_PROVIDERS, CUSTOM], []);
+  const autoSynced = useRef(new Set());
 
   useEffect(() => { load(); }, []);
+  useEffect(() => {
+    for (const provider of providers || []) {
+      if (provider.syncDue && !autoSynced.current.has(provider.id)) {
+        autoSynced.current.add(provider.id);
+        refreshProvider(provider, true);
+      }
+    }
+  }, [providers]);
 
   async function load() {
     try {
@@ -34,36 +45,55 @@ export function ProviderPanel({ showToast, freeStatus, onOpenWizard, onFreeChang
     setName(preset.name.replace('Outro (OpenAI compatível)', 'Meu provedor'));
     setBaseUrl(preset.base || '');
     setModel(preset.modelExample || '');
+    setBillingUrl('');
   }
 
-  async function addProvider() {
-    if (!apiKey.trim()) { showToast('Informe a chave de API.'); return; }
+  async function saveProvider() {
+    if (!editingId && !apiKey.trim()) { showToast('Informe a chave de API.'); return; }
     setBusy(true);
     try {
-      const res = await fetch(`${API}/api/providers`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ providerType, name: name.trim(), apiKey: apiKey.trim(), base_url: baseUrl.trim(), model: model.trim() })
+      const res = await fetch(`${API}/api/providers${editingId ? `/${editingId}` : ''}`, {
+        method: editingId ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ providerType, name: name.trim(), apiKey: apiKey.trim(), base_url: baseUrl.trim(), model: model.trim(), billing_url: billingUrl.trim() })
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'A chave não foi aceita.');
-      setApiKey(''); setFormOpen(false);
-      showToast(`${data.imported || 0} modelo(s) importado(s) do ${name}.`, 'ok');
+      setApiKey(''); setFormOpen(false); setEditingId('');
+      showToast(`${data.imported || 0} modelo(s) sincronizado(s) do ${name}.`, 'ok');
       await load(); onProvidersChange?.();
     } catch (error) { showToast(error.message || 'Não foi possível adicionar o provedor.'); }
     finally { setBusy(false); }
   }
 
-  async function refreshProvider(provider) {
+  async function refreshProvider(provider, automatic = false) {
     setActiveId(provider.id);
     try {
-      const res = await fetch(`${API}/api/providers/${provider.id}/refresh`, { method: 'POST' });
+      const res = await fetch(`${API}/api/providers/${provider.id}/refresh`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ automatic }) });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Não foi possível atualizar.');
-      showToast(`${data.imported || 0} modelo(s) atualizado(s) do ${provider.name}.`, 'ok');
+      if (!automatic) showToast(`${data.imported || 0} modelo(s) atualizado(s) do ${provider.name}.`, 'ok');
       await load(); onProvidersChange?.();
-    } catch (error) { showToast(error.message || 'Não foi possível atualizar os modelos.'); }
+    } catch (error) { if (!automatic) showToast(error.message || 'Não foi possível atualizar os modelos.'); }
     finally { setActiveId(''); }
   }
+
+  function editProvider(provider) {
+    setEditingId(provider.id);
+    setProviderType(provider.providerType);
+    setName(provider.name);
+    setApiKey('');
+    setBaseUrl(provider.base_url);
+    setModel(provider.defaultModel || '');
+    setBillingUrl(provider.billingURL || '');
+    setFormOpen(true);
+  }
+
+  function closeForm() {
+    setFormOpen(false); setEditingId(''); setApiKey(''); setBillingUrl('');
+  }
+
+  const dateLabel = value => value ? new Date(value).toLocaleString('pt-BR') : 'ainda não sincronizado';
+  const moneyLabel = (value, currency = 'USD') => Number(value).toLocaleString('pt-BR', { style: 'currency', currency: currency || 'USD' });
 
   async function removeProvider(provider) {
     if (!window.confirm(`Remover a chave e os modelos de ${provider.name}?`)) return;
@@ -84,24 +114,40 @@ export function ProviderPanel({ showToast, freeStatus, onOpenWizard, onFreeChang
     {providers?.length === 0 && <div className="pcWarn">Nenhuma chave configurada. Nenhum modelo de IA será exibido até você adicionar e validar um provedor.</div>}
 
     <div className="providerList">
-      {(providers || []).map(provider => <div className="providerCard" key={provider.id}>
-        <div className="providerCardInfo">
-          <b><Check size={14}/>{provider.name}</b>
-          <span>{provider.modelCount} modelo(s) · <code>{provider.keyMask}</code></span>
-          <small>{provider.base_url}</small>
+      {(providers || []).map(provider => <article className="providerCard" key={provider.id}>
+        <div className="providerCardHead">
+          <div className="providerIdentity"><span className="providerLogo">{provider.name.slice(0, 2).toUpperCase()}</span><div><b>{provider.name}</b><small>{provider.providerType}</small></div></div>
+          <span className={`providerStatus ${provider.syncStatus === 'error' ? 'error' : 'ok'}`}>{provider.syncStatus === 'error' ? <AlertTriangle size={13}/> : <ShieldCheck size={13}/>} {provider.syncStatus === 'error' ? 'Atenção' : 'Chave validada'}</span>
+        </div>
+        <div className="providerMetrics">
+          <div><span>Modelos</span><b>{provider.modelCount}</b></div>
+          <div><span>Uso interno</span><b>{(provider.usage?.tokens || 0).toLocaleString('pt-BR')} tokens</b></div>
+          <div><span>Custo estimado*</span><b>{provider.usage?.pricedMessages ? moneyLabel(provider.usage.estimatedCost) : 'Não informado'}</b></div>
+          <div><span>Saldo oficial</span><b>{provider.officialBalance?.available && provider.officialBalance?.balance != null ? moneyLabel(provider.officialBalance.balance, provider.officialBalance.currency) : 'Indisponível'}</b></div>
+        </div>
+        <div className="providerDetails">
+          <span><KeyRound size={13}/><code>{provider.keyMask}</code> · validade não informada pelo provedor</span>
+          <span><Clock3 size={13}/>Sincronização: {dateLabel(provider.lastValidatedAt)}</span>
+          {provider.syncError && <span className="providerError"><AlertTriangle size={13}/>{provider.syncError}</span>}
+          {!provider.officialBalance?.available && <span>Este provedor não disponibiliza saldo por API para esta chave. Consulte o painel oficial.</span>}
+          <span>* Estimativa interna pelo preço atual do catálogo; não é saldo nem fatura oficial.</span>
         </div>
         <div className="providerCardActions">
-          <button onClick={() => refreshProvider(provider)} disabled={activeId === provider.id} title="Validar novamente e atualizar modelos"><RefreshCw size={14}/></button>
+          <button onClick={() => refreshProvider(provider)} disabled={activeId === provider.id} title="Sincronizar modelos e saldo"><RefreshCw size={14}/> Sincronizar</button>
+          <button onClick={() => editProvider(provider)} disabled={activeId === provider.id}><Pencil size={14}/> Editar</button>
+          {provider.dashboardURL && <a href={provider.dashboardURL} target="_blank" rel="noreferrer"><Activity size={14}/> Painel <ExternalLink size={11}/></a>}
+          {provider.billingURL && <a href={provider.billingURL} target="_blank" rel="noreferrer"><CreditCard size={14}/> Cobrança <ExternalLink size={11}/></a>}
           <button className="danger" onClick={() => removeProvider(provider)} disabled={activeId === provider.id} title="Remover provedor"><Trash2 size={14}/></button>
         </div>
-      </div>)}
+      </article>)}
     </div>
 
-    {!formOpen && <button className="primary providerAdd" onClick={() => setFormOpen(true)}><Plus size={15}/> Adicionar provedor</button>}
+    {!formOpen && <button className="primary providerAdd" onClick={() => { setEditingId(''); setFormOpen(true); }}><Plus size={15}/> Adicionar provedor</button>}
 
     {formOpen && <div className="providerForm">
+      <div className="providerFormTitle">{editingId ? 'Editar provedor' : 'Novo provedor'}</div>
       <label>Provedor
-        <select value={providerType} onChange={event => chooseType(event.target.value)}>
+        <select value={providerType} onChange={event => chooseType(event.target.value)} disabled={Boolean(editingId)}>
           {presets.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
         </select>
       </label>
@@ -109,7 +155,7 @@ export function ProviderPanel({ showToast, freeStatus, onOpenWizard, onFreeChang
         <input value={name} onChange={event => setName(event.target.value)} placeholder="Ex.: NVIDIA trabalho"/>
       </label>
       <label>Chave de API
-        <input type="password" value={apiKey} onChange={event => setApiKey(event.target.value)} placeholder="Cole a chave do provedor" autoComplete="off"/>
+        <input type="password" value={apiKey} onChange={event => setApiKey(event.target.value)} placeholder={editingId ? 'Deixe em branco para manter a chave atual' : 'Cole a chave do provedor'} autoComplete="off"/>
       </label>
       <label>URL base
         <input value={baseUrl} onChange={event => setBaseUrl(event.target.value)} placeholder="https://.../v1" autoComplete="off"/>
@@ -118,10 +164,13 @@ export function ProviderPanel({ showToast, freeStatus, onOpenWizard, onFreeChang
       <label>Modelo para validação <span className="muted">(usado somente se o provedor não listar modelos)</span>
         <input value={model} onChange={event => setModel(event.target.value)} placeholder="Ex.: qwen3.7-plus" autoComplete="off"/>
       </label>
+      <label>Link de cobrança <span className="muted">(opcional)</span>
+        <input value={billingUrl} onChange={event => setBillingUrl(event.target.value)} placeholder="Painel de saldo/cobrança do provedor" autoComplete="off"/>
+      </label>
       <div className="modalActions">
-        <button onClick={() => { setFormOpen(false); setApiKey(''); }} disabled={busy}>Cancelar</button>
+        <button onClick={closeForm} disabled={busy}>Cancelar</button>
         <div className="spacer"/>
-        <button className="primary" onClick={addProvider} disabled={busy}>{busy ? <><span className="spin sm"/> Validando...</> : 'Validar e importar modelos'}</button>
+        <button className="primary" onClick={saveProvider} disabled={busy}>{busy ? <><span className="spin sm"/> Validando...</> : editingId ? 'Salvar e sincronizar' : 'Validar e importar modelos'}</button>
       </div>
     </div>}
 
