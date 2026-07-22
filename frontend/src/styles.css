@@ -1236,6 +1236,9 @@ input[type=checkbox]:focus-visible,input[type=radio]:focus-visible{outline-offse
 .wizardSteps{margin:0;padding-left:22px;display:flex;flex-direction:column;gap:8px;line-height:1.5}
 .wizardLink{display:inline-flex;align-items:center;gap:8px;font-weight:600;color:var(--on-accent);background:var(--accent);border-radius:var(--r-md);padding:11px 14px;text-decoration:none;width:fit-content}
 .wizardLink:hover{filter:brightness(1.08)}
+.wizardCsvImport{display:flex;align-items:center;justify-content:center;gap:8px;border:1px dashed var(--accent);color:var(--accent);background:rgba(79,140,255,.06);border-radius:var(--r-md);padding:10px 12px;cursor:pointer;font-size:var(--fs-sm);font-weight:600}
+.wizardCsvImport:hover{background:rgba(79,140,255,.14)}
+.wizardCsvImport input{display:none}
 .wizardEntry{display:flex;align-items:center;gap:8px;text-align:left;border:1px dashed var(--accent);color:var(--accent);background:rgba(79,140,255,.06);border-radius:var(--r-md);padding:11px 13px;font-weight:400;line-height:1.4}
 .wizardEntry:hover{background:rgba(79,140,255,.14)}
 .freeToggleBtn{display:flex;align-items:center;gap:8px;justify-content:center}

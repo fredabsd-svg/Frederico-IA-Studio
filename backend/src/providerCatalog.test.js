@@ -47,6 +47,14 @@ test('provider base URLs are normalized and unsafe URL shapes are rejected', () 
   assert.equal(normalizeBaseURL('', 'deepseek'), 'https://api.deepseek.com');
   assert.throws(() => normalizeBaseURL('ftp://example.com/v1'), /HTTP\/HTTPS/);
   assert.throws(() => normalizeBaseURL('https://user:pass@example.com/v1'), /credenciais/);
+  assert.equal(
+    normalizeBaseURL('https://workspace.us-east-1.maas.aliyuncs.com/compatible-mode/v1', 'alibaba'),
+    'https://workspace.us-east-1.maas.aliyuncs.com/compatible-mode/v1'
+  );
+  assert.throws(
+    () => normalizeBaseURL('https://example.com/compatible-mode/v1', 'alibaba'),
+    /oficial do Alibaba/
+  );
 });
 
 test('enriches DeepSeek V4 models with official names, capabilities, context and prices', async () => {
