@@ -84,6 +84,32 @@ test('a API que AFIRMA um recurso ainda vence (não é engessado pelo curado)', 
   assert.equal(p.tools, false, 'declaração explícita da API prevalece');
 });
 
+test('famílias novas: capacidades e classificação coerentes', () => {
+  // Sonar (Perplexity): a pesquisa web é a capacidade principal — conta como
+  // profundidade, então não fica preso em B+.
+  const sonar = bare('sonar-pro');
+  assert.equal(sonar.web, true);
+  assert.ok(['A', 'A+'].includes(sonar.tier), `Sonar Pro coerente, veio ${sonar.tier}`);
+  // Nova Pro (Amazon): multimodal (visão + vídeo).
+  const nova = bare('amazon.nova-pro-v1:0');
+  assert.equal(nova.vision, true);
+  assert.equal(nova.video, true);
+  assert.equal(nova.family, 'Nova 1');
+  // MiMo V2.5 (Xiaomi): omnimodal.
+  const mimo = bare('XiaomiMiMo/MiMo-V2.5');
+  assert.equal(mimo.vision, true);
+  assert.equal(mimo.audio, true);
+  // Kimi K3 flagship.
+  assert.equal(bare('kimi-k3').tier, 'S');
+});
+
+test('tierHint é autoritativo: amplitude de capacidades não infla o tier', () => {
+  // Um modelo pequeno multimodal (hint A) não vira S só por marcar caixas.
+  const nano = bare('nvidia/nemotron-3-nano-omni-30b-a3b');
+  assert.equal(nano.vision, true);
+  assert.equal(nano.tier, 'A', `hint A respeitado, veio ${nano.tier}`);
+});
+
 test('contexto e preço da API têm prioridade quando presentes; senão entra o curado', () => {
   // Sem dados da API → usa o curado (Gemini 2.5 Pro: 1.048.576 ctx).
   const curado = bare('gemini-2.5-pro');
