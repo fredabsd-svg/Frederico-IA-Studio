@@ -27,6 +27,9 @@ import { STREAM_RECOVERY_LIMIT, STREAM_RESUME_NOTE, STREAM_PAUSE_RESUME_NOTE, is
 import { guardStreamStall, PROVIDER_CONNECT_TIMEOUT_MS } from './streamGuard.js';
 import { acquireConversationControl, releaseConversationControl, beginProviderRequest, releaseProviderRequest, controlInterruptReason, gate } from './control.js';
 import { saveMessage } from './persistence.js';
+import { MULTI_ARTIFACT_PROTOCOL, untrustedContext } from './promptRegistry.js';
+import { snapshotArtifactVersion } from './artifacts.js';
+import { nanoid } from 'nanoid';
 
 export const MULTI_MODES = ['compare', 'council', 'debate', 'pipeline'];
 export const MULTI_CONTEXTS = ['full', 'recent', 'summary', 'none'];
@@ -104,6 +107,12 @@ export function usageCostUsd(modelId, usage) {
   return (usage.prompt_tokens || 0) * priceIn + (usage.completion_tokens || 0) * priceOut;
 }
 
+export function accumulateCumulativeCost(total, previous, current) {
+  const before = Number.isFinite(previous) ? previous : 0;
+  const now = Number.isFinite(current) ? current : before;
+  return Math.max(0, Number(total) || 0) + Math.max(0, now - before);
+}
+
 // ---- Cancelamento de UM modelo só (sem derrubar a execução inteira) ----
 const slotRegistries = new Map(); // conversationId -> { cancelled:Set, requests:Map(slot -> Set<AbortController>) }
 
@@ -152,7 +161,7 @@ export function multiModelSystemBlocks(member, mode, developerTeamNote = null, r
   if (developerTeamNote) blocks.push({ role: 'system', content: developerTeamNote });
   // Código REAL do repositório (compare/council/debate não executam ferramentas,
   // então este extrato é a única forma de eles analisarem o código de verdade).
-  if (repoDigest) blocks.push({ role: 'system', content: repoDigest });
+  if (repoDigest) blocks.push({ role: 'user', content: untrustedContext('repository-digest', repoDigest) });
   return blocks;
 }
 
@@ -197,7 +206,9 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
       costUsd: null,
       elapsedMs: 0,
       error: null,
-      truncated: false
+      truncated: false,
+      accountedCostUsd: 0,
+      artifactVersion: null
     }));
 
     let totalCostUsd = 0;
@@ -205,7 +216,8 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
     const addSlotCost = (state) => {
       const cost = usageCostUsd(state.member.id, state.usage);
       state.costUsd = cost;
-      if (cost) totalCostUsd += cost;
+      totalCostUsd = accumulateCumulativeCost(totalCostUsd, state.accountedCostUsd, cost);
+      if (Number.isFinite(cost)) state.accountedCostUsd = cost;
       if (config.budgetUsd && totalCostUsd >= config.budgetUsd) budgetExceeded = true;
     };
 
@@ -235,6 +247,7 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
     // selecionado, para não pedirem o link nem alegarem falta de acesso ao
     // GitHub (a execução real de clone/leitura segue no executor via runAgent).
     const developerTeamNote = developer ? developerTeamContextFor(developer, userId) : null;
+    const developerRules = String(developer?.rules || '').trim().slice(0, 6000);
     // Extrato do CÓDIGO REAL do repositório. Os modos compare/council/debate não
     // executam ferramentas — sem isto os modelos analisariam de "conhecimento
     // geral". Lido uma vez pela API do GitHub e reaproveitado por todos os slots
@@ -265,7 +278,7 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
         model: state.member.id,
         messages: msgs,
         temperature: 0.3,
-        ...openRouterRouting(),
+        ...openRouterRouting(false, provider.baseURL),
         stream: true,
         stream_options: { include_usage: true },
         ...(config.maxTokensPerModel ? { max_tokens: config.maxTokensPerModel } : {})
@@ -338,9 +351,11 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
 
     function slotMessages(state, extraUserContent = null) {
       const msgs = multiModelSystemBlocks(state.member, config.mode, developerTeamNote, repoDigest);
-      const prefixEnd = msgs.length;
-      msgs.push({ role: 'user', content: extraUserContent ? `${baseUserContent}\n\n${extraUserContent}` : baseUserContent });
-      applyPromptCache(msgs, state.member.id, prefixEnd);
+      const prefixEnd = msgs.findIndex(message => message.role !== 'system');
+      const staticPrefixEnd = prefixEnd < 0 ? msgs.length : prefixEnd;
+      if (developerRules) msgs.push({ role: 'user', content: untrustedContext('project-rules', developerRules) });
+      msgs.push({ role: 'user', content: extraUserContent ? `${baseUserContent}\n\n${untrustedContext('previous-model-output', extraUserContent)}` : baseUserContent });
+      applyPromptCache(msgs, state.member.id, staticPrefixEnd, provider.baseURL);
       return msgs;
     }
 
@@ -352,17 +367,18 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
       const msgs = [
         { role: 'system', content: 'Você é o COORDENADOR de uma execução multimodelo: vários modelos de IA analisaram a mesma solicitação. Compare as respostas, identifique concordâncias, aponte divergências, descarte erros ou afirmações sem fundamento, aproveite os melhores argumentos e produza UMA resposta final consolidada, em português do Brasil, direta e bem organizada. Não descreva o processo — entregue a resposta.' },
         ...(developerTeamNote ? [{ role: 'system', content: developerTeamNote }] : []),
-        ...(repoDigest ? [{ role: 'system', content: repoDigest }] : []),
+        ...(repoDigest ? [{ role: 'user', content: untrustedContext('repository-digest', repoDigest) }] : []),
+        ...(developerRules ? [{ role: 'user', content: untrustedContext('project-rules', developerRules) }] : []),
         { role: 'user', content: taskPrompt }
       ];
-      const prefixEnd = 1 + (developerTeamNote ? 1 : 0) + (repoDigest ? 1 : 0);
-      applyPromptCache(msgs, config.coordinator, prefixEnd);
+      const prefixEnd = 1 + (developerTeamNote ? 1 : 0);
+      applyPromptCache(msgs, config.coordinator, prefixEnd, provider.baseURL);
       for (let attempt = 0; ; attempt++) {
         let segment = '';
         let activeRequest;
         try {
           activeRequest = beginProviderRequest(control);
-          const stream = await client.chat.completions.create({ model: config.coordinator, messages: msgs, temperature: 0.3, ...openRouterRouting(), stream: true, stream_options: { include_usage: true } }, { signal: activeRequest.signal, timeout: PROVIDER_CONNECT_TIMEOUT_MS });
+          const stream = await client.chat.completions.create({ model: config.coordinator, messages: msgs, temperature: 0.3, ...openRouterRouting(false, provider.baseURL), stream: true, stream_options: { include_usage: true } }, { signal: activeRequest.signal, timeout: PROVIDER_CONNECT_TIMEOUT_MS });
           for await (const chunk of guardStreamStall(stream, { onStall: () => activeRequest.abort('stall') })) {
             if (control.stopped) return text;
             if (chunk.usage) addUsage(usage, chunk.usage);
@@ -481,14 +497,11 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
 
     // ---- Pipeline (definida aqui para reutilizar streamSlot/slotMessages) ----
     async function runPipeline() {
-      // No Modo Desenvolvedor, a PRIMEIRA etapa com função implementador/código
-      // executa de verdade (runAgent, com ferramentas); as etapas seguintes
-      // revisam o que foi feito.
-      const executorSlot = developer
-        ? slots.findIndex(s => ['implementador', 'codigo'].includes(s.role))
-        : -1;
+      // Em tarefas de artefato/desenvolvimento, TODAS as etapas operam no mesmo
+      // workspace com ferramentas. Assim um revisor pode abrir, corrigir e
+      // validar o resultado real da etapa anterior, em vez de apenas comentá-lo.
+      const artifactRunId = `pipeline_${nanoid(12)}`;
       const previousOutputs = [];
-      const postExecutorOutputs = [];
       let executorResult = null;
       for (const state of slots) {
         if (control.stopped || await gate(control, onEvent)) break;
@@ -498,31 +511,52 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
           ? `O que as etapas anteriores produziram:\n\n${previousOutputs.map(p => `### ${p.name} (função: ${p.roleLabel})\n${clipForBriefing(p.text, 10000)}`).join('\n\n')}`
           : null;
         onEvent({ type: 'status', content: `Etapa ${state.slot + 1} de ${slots.length}: ${state.name} (${state.roleLabel})...` });
-        if (state.slot === executorSlot) {
-          // Modo Desenvolvedor: a etapa implementadora EXECUTA de verdade, com
-          // ferramentas e sandbox, via runAgent — que também persiste a resposta.
+        if (developer) {
           setStatus(state, STATUS.answering);
           const t0 = Date.now();
           const briefing = prior ? clipForBriefing(prior, 20000) : null;
+          const stageEvent = event => {
+            if (event?.type === 'delta') onEvent({ type: 'mm_delta', slot: state.slot, content: event.content || '' });
+            else onEvent(event);
+          };
           executorResult = await runAgent({
             userId, conversationId, userText,
             model: state.member.id,
-            assistant: null,
-            webSearch, effort, developer, onEvent,
+            assistant: {
+              id: `multi:${state.member.role}:${state.slot}`,
+              system_prompt: `${memberSystemPrompt(state.member, 'pipeline')}\n\n${MULTI_ARTIFACT_PROTOCOL}\n\nVocê é a etapa ${state.slot + 1} de ${slots.length}. Inspecione o estado atual antes de decidir se deve preservar, corrigir ou ampliar o artefato.`,
+              personality: null,
+              tools: null
+            },
+            webSearch, effort, developer, onEvent: stageEvent,
             saveUserMessage: false,
             existingUserMessageId: userMsgId,
             executionBriefing: briefing,
             forceExecution: true,
-            control
+            control,
+            // Só a última etapa pode receber ferramentas de publicação, e ainda
+            // assim runAgent exige que o pedido original as autorize.
+            gitWriteAuthorization: state.slot === slots.length - 1 ? null : false,
+            persistReply: state.slot === slots.length - 1
           });
           addUsage(usage, executorResult.usage);
           addUsage(state.usage, executorResult.usage);
           state.text = clipForBriefing(String(executorResult.text || ''), META_TEXT_LIMIT);
           state.elapsedMs = Date.now() - t0;
           addSlotCost(state);
-          setStatus(state, executorResult.stopped ? STATUS.stopped : STATUS.done);
+          state.artifactVersion = snapshotArtifactVersion(conversationId, {
+            runId: artifactRunId,
+            stage: state.slot,
+            model: state.member.id,
+            role: state.role,
+            valid: !executorResult.stopped && !executorResult.providerFailure && !executorResult.incomplete,
+            checks: executorResult.checks
+          });
+          if (executorResult.failureMessage) state.error = executorResult.failureMessage;
+          const stageFailed = executorResult.incomplete || executorResult.providerFailure || executorResult.resumable;
+          setStatus(state, executorResult.stopped ? STATUS.stopped : (stageFailed ? STATUS.error : STATUS.done));
           previousOutputs.push({ name: state.name, roleLabel: state.roleLabel, text: state.text });
-          if (executorResult.stopped) break;
+          if (executorResult.stopped || executorResult.resumable) break;
           continue;
         }
         const extra = prior ? `${prior}\n\nAgora execute a SUA função (${state.roleLabel}) sobre esse material e o pedido original.` : null;
@@ -530,24 +564,17 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
         if (state.text) {
           const output = { name: state.name, roleLabel: state.roleLabel, text: state.text };
           previousOutputs.push(output);
-          if (executorResult) postExecutorOutputs.push(output);
         }
       }
       if (executorResult) {
-        // A execução real já foi salva pelo runAgent. Se houve etapas de revisão
-        // DEPOIS do implementador, salvamos um segundo balão com os pareceres.
-        if (postExecutorOutputs.length) {
-          // Segundo balão só com as revisões, em TEXTO. Não anexamos multiMeta
-          // aqui: a execução real (com o board ao vivo) já é a mensagem principal;
-          // anexar o board de novo fazia os cartões aparecerem DUPLICADOS ao
-          // reabrir a conversa.
-          const reviewText = `## Revisão da equipe de modelos\n\n${postExecutorOutputs.map(p => `### ${p.name} — ${p.roleLabel}\n${p.text}`).join('\n\n')}`;
-          const reviewMsgId = await saveMessage(userId, conversationId, 'assistant', reviewText);
-          onEvent({ type: 'mm_review_saved', assistantMessageId: reviewMsgId });
-        }
         // Fecha o quadro ao vivo mesmo sem mensagem própria do multimodelo
         // (a execução real foi persistida pelo runAgent).
-        onEvent({ type: 'mm_done', meta: buildMeta() });
+        const meta = buildMeta();
+        onEvent({ type: 'mm_done', meta });
+        if (executorResult.messageId) {
+          await db.prepare('UPDATE messages SET multi_meta=? WHERE id=? AND conversation_id=?')
+            .run(JSON.stringify(meta), executorResult.messageId, conversationId);
+        }
         return { delegated: true, value: { ...executorResult, usage } };
       }
       const last = [...slots].reverse().find(s => s.text);
@@ -576,7 +603,8 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
             ? s.history.map(h => ({ round: h.round, text: clipForBriefing(h.text, META_TEXT_LIMIT) }))
             : undefined,
           usage: s.usage, costUsd: s.costUsd, elapsedMs: s.elapsedMs,
-          error: s.error, truncated: s.truncated || undefined
+          error: s.error, truncated: s.truncated || undefined,
+          artifactVersion: s.artifactVersion || undefined
         })),
         totals: { costUsd: totalCostUsd || null, tokens: usage.total_tokens }
       };

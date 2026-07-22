@@ -51,3 +51,10 @@ test('addUsage soma cached_tokens de prompt_tokens_details', async () => {
   addUsage(acc, { prompt_tokens: 50, cached_tokens: 20 }); // formato alternativo
   assert.equal(acc.cached_tokens, 100);
 });
+
+test('rota BYOK usa a base URL do provedor do usuário, não a global', async () => {
+  process.env.DEEPSEEK_BASE_URL = 'https://api.deepseek.com';
+  const { openRouterRouting, providerSupportsPromptCache } = await import('./provider.js?byok');
+  assert.equal(providerSupportsPromptCache('anthropic/claude-3.5-sonnet', 'https://openrouter.ai/api/v1'), true);
+  assert.deepEqual(openRouterRouting(true, 'https://openrouter.ai/api/v1'), { provider: { require_parameters: true } });
+});

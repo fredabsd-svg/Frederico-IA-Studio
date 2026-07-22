@@ -13,6 +13,7 @@ import { STREAM_RECOVERY_LIMIT, STREAM_RESUME_NOTE, STREAM_PAUSE_RESUME_NOTE, is
 import { guardStreamStall, PROVIDER_CONNECT_TIMEOUT_MS } from './streamGuard.js';
 import { acquireConversationControl, releaseConversationControl, beginProviderRequest, releaseProviderRequest, controlInterruptReason, gate } from './control.js';
 import { clientScopeFor, memoryNote, saveMessage } from './persistence.js';
+import { untrustedContext } from './promptRegistry.js';
 
 const TEAM_TOOL_AWARENESS = `CAPACIDADES DO APP:
 O Frederico AI Studio tem sandbox com Python 3, bash, LibreOffice/soffice, ffmpeg, OCR/PDF, vetores headless, Chromium/Playwright/Xvfb, toolchains C/C++/Go/Rust/Java/.NET/Kotlin, ML leve em CPU, qualidade e diagnóstico, bancos/clients remotos, Node com toolchain frontend, geração de arquivos e ferramentas de imagem/web quando habilitadas. Docker/Compose, GPU e builds nativos Android/iOS continuam deliberadamente fora do sandbox.
@@ -56,6 +57,7 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
   // GitHub — senão respondem "me mande o link do repositório". (A execução real
   // continua no executor, via runAgent, que clona e lê o código.)
   const developerTeamNote = !lowSignalTurn ? developerTeamContextFor(developer, userId) : null;
+  const developerRules = String(developer?.rules || '').trim().slice(0, 6000);
   let memory = null;
   let memoryMeta = null;
   try {
@@ -86,7 +88,7 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
       let activeRequest;
       try {
         activeRequest = beginProviderRequest(control);
-        const stream = await client.chat.completions.create({ model: coordModel, messages: msgs, temperature: 0.3, ...openRouterRouting(), stream: true, stream_options: { include_usage: true } }, { signal: activeRequest.signal, timeout: PROVIDER_CONNECT_TIMEOUT_MS });
+        const stream = await client.chat.completions.create({ model: coordModel, messages: msgs, temperature: 0.3, ...openRouterRouting(false, provider.baseURL), stream: true, stream_options: { include_usage: true } }, { signal: activeRequest.signal, timeout: PROVIDER_CONNECT_TIMEOUT_MS });
         for await (const chunk of guardStreamStall(stream, { onStall: () => activeRequest.abort('stall') })) {
           if (await gate(control, onEvent)) { stopped = true; return text; }
           if (chunk.usage) addUsage(usage, chunk.usage);
@@ -143,7 +145,7 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
       const activeRequest = beginProviderRequest(control);
       let completion;
       try {
-        completion = await client.chat.completions.create({ model: member.model || coordModel, messages: msgs, temperature: 0.3, ...openRouterRouting() }, { signal: activeRequest.signal });
+        completion = await client.chat.completions.create({ model: member.model || coordModel, messages: msgs, temperature: 0.3, ...openRouterRouting(false, provider.baseURL) }, { signal: activeRequest.signal });
       } catch (err) {
         const interrupted = controlInterruptReason(control, activeRequest);
         if (interrupted === 'stop') return { stopped: true };
@@ -224,10 +226,11 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
     directMsgs.push({ role: 'system', content: TEAM_TOOL_AWARENESS });
     if (developerTeamNote) directMsgs.push({ role: 'system', content: developerTeamNote });
     const directPrefixEnd = directMsgs.length; // antes de memória/histórico
-    if (memory) directMsgs.push({ role: 'system', content: memory });
+    if (memory) directMsgs.push({ role: 'user', content: untrustedContext('memory', memory) });
+    if (developerRules) directMsgs.push({ role: 'user', content: untrustedContext('project-rules', developerRules) });
     for (const m of histRows) directMsgs.push({ role: m.role, content: String(m.content).slice(0, 2000) });
     directMsgs.push({ role: 'user', content: userText });
-    applyPromptCache(directMsgs, coordModel, directPrefixEnd);
+    applyPromptCache(directMsgs, coordModel, directPrefixEnd, provider.baseURL);
     try { finalText = await streamCoordinator(directMsgs); }
     catch (err) { finalText = `Não foi possível responder: ${friendlyApiError(err)}`; onEvent({ type: 'delta', content: finalText }); }
   } else {
@@ -245,9 +248,11 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
         const msgs = [{ role: 'system', content: sys }];
         if (developerTeamNote) msgs.push({ role: 'system', content: developerTeamNote });
         const memberPrefixEnd = msgs.length; // antes de memória/histórico
-        if (memory) msgs.push({ role: 'system', content: memory });
-        msgs.push({ role: 'user', content: historyText ? `Histórico recente da conversa:\n${historyText}\n\nNOVA mensagem do usuário:\n${userText}` : userText });
-        applyPromptCache(msgs, coordModel, memberPrefixEnd);
+        if (memory) msgs.push({ role: 'user', content: untrustedContext('memory', memory) });
+        if (developerRules) msgs.push({ role: 'user', content: untrustedContext('project-rules', developerRules) });
+        if (historyText) msgs.push({ role: 'user', content: untrustedContext('conversation-history', historyText) });
+        msgs.push({ role: 'user', content: userText });
+        applyPromptCache(msgs, coordModel, memberPrefixEnd, provider.baseURL);
         return { a, memberResult: await askTeamMember(a, msgs) };
       }));
       for (const { a, memberResult } of results) {
@@ -287,9 +292,12 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
       { role: 'system', content: QUALITY_BAR },
       { role: 'system', content: TEAM_TOOL_AWARENESS },
       ...(developerTeamNote ? [{ role: 'system', content: developerTeamNote }] : []),
-      { role: 'user', content: `${historyText ? `Histórico recente:\n${historyText}\n\n` : ''}NOVA mensagem do usuário:\n${userText}\n\nPerspectivas da equipe:\n${combined}` }
+      ...(developerRules ? [{ role: 'user', content: untrustedContext('project-rules', developerRules) }] : []),
+      ...(historyText ? [{ role: 'user', content: untrustedContext('conversation-history', historyText) }] : []),
+      { role: 'user', content: userText },
+      { role: 'user', content: untrustedContext('team-perspectives', combined) }
     ];
-    applyPromptCache(synthMsgs, coordModel, 3); // 3 blocos system estáveis antes do user
+    applyPromptCache(synthMsgs, coordModel, 3, provider.baseURL); // 3 blocos system estáveis antes do user
     try { finalText = await streamCoordinator(synthMsgs); }
     catch (err) { finalText = `Não foi possível compilar a resposta final: ${friendlyApiError(err)}`; onEvent({ type: 'delta', content: finalText }); }
   }

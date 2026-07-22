@@ -41,8 +41,11 @@ export const RESUME_CONTINUE_NOTE = 'VOCÊ ESTÁ RETOMANDO uma tarefa que foi pa
 // de um raciocínio), adiciona a nota de "continue de onde parou" para ele não
 // reemitir; se parou logo após um resultado de ferramenta, o próximo turno já é
 // a continuação natural. Puro (sem I/O) para poder ser testado isoladamente.
-export function buildResumeMessages(checkpointMessages, { streamResumeNote = '' } = {}) {
+export function buildResumeMessages(checkpointMessages, { streamResumeNote = '', objective = '' } = {}) {
   const messages = Array.isArray(checkpointMessages) ? checkpointMessages.slice() : [];
+  if (objective && !messages.some(message => message?.role === 'user')) {
+    messages.splice(leadingSystemCount(messages), 0, { role: 'user', content: String(objective) });
+  }
   const last = messages[messages.length - 1];
   if (last?.role === 'assistant' && streamResumeNote) messages.push({ role: 'system', content: streamResumeNote });
   messages.push({ role: 'system', content: RESUME_CONTINUE_NOTE });
@@ -62,7 +65,7 @@ export function leadingSystemCount(messages) {
 // mensagens mais RECENTES que couberem, e nunca deixa a cauda começar por uma
 // mensagem role:'tool' órfã (um resultado de ferramenta exige o assistant com
 // tool_calls antes dele). Uma nota de sistema sinaliza o trecho elidido.
-export function trimCheckpointMessages(messages, maxBytes = MAX_CHECKPOINT_BYTES) {
+export function trimCheckpointMessages(messages, maxBytes = MAX_CHECKPOINT_BYTES, objective = '') {
   const arr = Array.isArray(messages) ? messages.slice() : [];
   if (byteLen(arr) <= maxBytes) return arr;
 
@@ -73,7 +76,10 @@ export function trimCheckpointMessages(messages, maxBytes = MAX_CHECKPOINT_BYTES
   const rest = arr.slice(headEnd);
 
   const note = { role: 'system', content: '[continuidade: parte do histórico intermediário desta execução foi omitida por tamanho; o objetivo, os resultados recentes das ferramentas e o estado atual estão preservados abaixo]' };
-  let budget = maxBytes - byteLen(head) - byteLen(note);
+  const objectiveNote = objective
+    ? { role: 'user', content: `[objetivo original preservado pelo checkpoint]\n${String(objective).slice(0, 12000)}` }
+    : null;
+  let budget = maxBytes - byteLen(head) - byteLen(note) - (objectiveNote ? byteLen(objectiveNote) : 0);
 
   // 2) Acumula do FIM para o começo enquanto couber.
   const tail = [];
@@ -91,15 +97,15 @@ export function trimCheckpointMessages(messages, maxBytes = MAX_CHECKPOINT_BYTES
   // cortamos pelo fim, os resultados dos tool_calls mantidos já estão na cauda.
   while (tail.length && tail[0].role === 'tool') tail.shift();
 
-  const trimmed = [...head, note, ...tail];
-  return byteLen(trimmed) <= maxBytes ? trimmed : [...head, note, ...tail.slice(-40)];
+  const trimmed = [...head, note, ...(objectiveNote ? [objectiveNote] : []), ...tail];
+  return byteLen(trimmed) <= maxBytes ? trimmed : [...head, note, ...(objectiveNote ? [objectiveNote] : []), ...tail.slice(-40)];
 }
 
 // Grava (upsert) o checkpoint da conversa. `messages` é o array completo do
 // agente no momento da interrupção. Aparado se exceder o teto.
 export async function saveCheckpoint({ userId, conversationId, runId, objective, reason, model, triedModels, step, messages, usage, meta }) {
   if (!conversationId || !userId || !Array.isArray(messages) || !messages.length) return false;
-  const safeMessages = trimCheckpointMessages(messages);
+  const safeMessages = trimCheckpointMessages(messages, MAX_CHECKPOINT_BYTES, objective);
   const t = now();
   try {
     await db.prepare(`

@@ -126,3 +126,16 @@ test('leadingSystemCount localiza o fim do preâmbulo de sistema', () => {
   assert.equal(leadingSystemCount([{ role: 'user', content: 'x' }]), 0);
   assert.equal(leadingSystemCount([]), 0);
 });
+
+test('checkpoint aparado preserva explicitamente o objetivo original', () => {
+  const messages = [{ role: 'system', content: 'base' }, { role: 'user', content: 'objetivo que seria removido' }];
+  for (let i = 0; i < 80; i++) messages.push({ role: 'assistant', content: `passo ${i} ${'x'.repeat(2500)}` });
+  const objective = 'Corrigir o projeto sem publicar no GitHub';
+  const trimmed = trimCheckpointMessages(messages, 70_000, objective);
+  assert.ok(trimmed.some(message => message.role === 'user' && message.content.includes(objective)));
+});
+
+test('retomada reinsere o objetivo quando um checkpoint antigo não tem mensagem de usuário', () => {
+  const seeded = buildResumeMessages([{ role: 'system', content: 'base' }], { objective: 'Objetivo preservado' });
+  assert.ok(seeded.some(message => message.role === 'user' && message.content === 'Objetivo preservado'));
+});

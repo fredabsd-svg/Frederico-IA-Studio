@@ -34,8 +34,8 @@ export function isRetryableStreamError(error) {
     || /upstream idle timeout|gateway timeout|temporar(?:y|ily)|provider.*(?:overload|timeout)|econnreset|fetch failed|stream stalled|request timed out/.test(detail);
 }
 
-export function openRouterRouting(hasTools = false) {
-  if (!/openrouter\.ai/i.test(modelApiBaseUrl)) return {};
+export function openRouterRouting(hasTools = false, baseURL = modelApiBaseUrl) {
+  if (!/openrouter\.ai/i.test(String(baseURL || ''))) return {};
   const provider = {};
   const configuredSort = String(process.env.OPENROUTER_PROVIDER_SORT || '').trim();
   if (configuredSort) provider.sort = configuredSort;
@@ -73,9 +73,9 @@ export function addUsage(acc, u) {
 // PROMPT_CACHE=0.
 const PROMPT_CACHE_ENABLED = process.env.PROMPT_CACHE !== '0';
 
-export function providerSupportsPromptCache(model) {
+export function providerSupportsPromptCache(model, baseURL = modelApiBaseUrl) {
   if (!PROMPT_CACHE_ENABLED) return false;
-  if (!/openrouter\.ai/i.test(modelApiBaseUrl)) return false;
+  if (!/openrouter\.ai/i.test(String(baseURL || ''))) return false;
   return /(anthropic|claude|google|gemini)/i.test(String(model || ''));
 }
 
@@ -94,8 +94,8 @@ function markMessageCached(message) {
 //      esse 2º ponto rende nos turnos em que o preâmbulo não mudou.
 // Chamar mais de uma vez é seguro (idempotente). Se o modelo não suportar, é um
 // no-op — nada é adicionado.
-export function applyPromptCache(messages, model, staticPrefixEnd = 0) {
-  if (!Array.isArray(messages) || !providerSupportsPromptCache(model)) return messages;
+export function applyPromptCache(messages, model, staticPrefixEnd = 0, baseURL = modelApiBaseUrl) {
+  if (!Array.isArray(messages) || !providerSupportsPromptCache(model, baseURL)) return messages;
   if (messages[0]?.role === 'system') markMessageCached(messages[0]);
   const end = Math.min(staticPrefixEnd, messages.length) - 1;
   if (end > 0 && messages[end]?.role === 'system') markMessageCached(messages[end]);
