@@ -96,7 +96,10 @@ export function modelProfileFromProvider(model = {}) {
 
   return {
     id,
-    name: model.name || id,
+    // `id` pode ser a referência interna `<provider-id>::<model-id>`. Quando
+    // o provedor não envia um nome, mostramos o ID público do modelo e nunca
+    // vazamos essa referência técnica para a interface.
+    name: model.name || model.providerModelId || id,
     providerId: model.providerId || null,
     providerName: model.providerName || '',
     providerType: model.providerType || '',

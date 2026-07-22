@@ -1,6 +1,6 @@
 import { db, now } from '../db.js';
 import { decryptSecret } from '../crypto.js';
-import { importProviderCatalog } from '../providerCatalog.js';
+import { enrichProviderCatalog, importProviderCatalog } from '../providerCatalog.js';
 import { registerModelCatalog } from '../modelCapabilities.js';
 import { getUserProvider } from '../userProvider.js';
 import { makeRouter } from './helpers.js';
@@ -14,7 +14,7 @@ function parseCatalog(value) {
 
 async function validatedCatalog(row) {
   const saved = parseCatalog(row.models);
-  if (saved.length) return saved;
+  if (saved.length) return enrichProviderCatalog(saved, row.provider_type);
   // Credenciais migradas da configuração antiga ainda não tinham catálogo.
   // A primeira leitura valida a chave antes de importar e persistir os modelos.
   const apiKey = decryptSecret(row.api_key_enc);

@@ -28,7 +28,16 @@ const familyKey = id => { const s = String(id); return s.includes('/') ? s.split
 const familyLabel = key => FAMILY_META[key] || (key.charAt(0).toUpperCase() + key.slice(1));
 const BIG_CTX = 100000;
 const ctxLabel = n => !n ? '' : n >= 1000 ? `${Math.round(n / 1000)}k contexto` : `${n} contexto`;
-const priceLabel = m => m.free ? 'grátis' : (m.price ? `$${(m.price * 1e6).toFixed(2)}/1M` : '');
+const usdPerMillion = value => Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 6 });
+const priceLabel = m => {
+  if (m.free) return 'grátis';
+  const input = Number(m.price || 0);
+  const output = Number(m.priceOut || 0);
+  if (input && output) return `$${usdPerMillion(input * 1e6)} entrada · $${usdPerMillion(output * 1e6)} saída / 1M`;
+  if (input) return `$${usdPerMillion(input * 1e6)} entrada / 1M`;
+  if (output) return `$${usdPerMillion(output * 1e6)} saída / 1M`;
+  return '';
+};
 const FAV_KEY = 'fred_fav_models';
 const RECENT_KEY = 'fred_recent_models';
 const loadStoredIds = key => {
