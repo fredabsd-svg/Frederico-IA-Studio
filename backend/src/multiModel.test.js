@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { normalizeMultiModelConfig, usageCostUsd, MULTI_ROLES, MULTI_MODES } from './agent/multiModel.js';
+process.env.WORKSPACE_ROOT = process.env.WORKSPACE_ROOT || '/tmp/frederico-multimodel-tests';
+process.env.DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || 'test-key';
+
+import { normalizeMultiModelConfig, usageCostUsd, MULTI_ROLES, MULTI_MODES, multiModelSystemBlocks } from './agent/multiModel.js';
+import { developerTeamContextFor } from './agent/prompts.js';
 import { registerModelCatalog } from './modelCapabilities.js';
 
 test('config com menos de 2 modelos não é multimodelo', () => {
@@ -71,6 +75,30 @@ test('custo usa os preços de entrada e saída do catálogo', () => {
   }]);
   const cost = usageCostUsd('teste/custoso', { prompt_tokens: 1000, completion_tokens: 500 });
   assert.ok(Math.abs(cost - (1000 * 0.000002 + 500 * 0.000006)) < 1e-12);
+});
+
+// Regressão: no Modo Desenvolvedor com repositório GitHub selecionado, TODOS os
+// modelos do multimodelo (compare/council/debate/pipeline) precisam receber a
+// nota do repositório como bloco de sistema — senão respondem "me mande o link
+// do repositório" mesmo com o repo conectado no painel. O fix anterior só cobria
+// o Modo Equipe (orchestrator.js), não o multimodelo real (multiModel.js).
+test('multimodelo injeta o contexto do repositório nos prompts (Modo Desenvolvedor)', () => {
+  const note = developerTeamContextFor(
+    { mode: 'build', github: { repo: 'fredabsd-svg/Frederico-IA-Studio', branch: 'main' } },
+    'u'
+  );
+  const blocks = multiModelSystemBlocks({ id: 'anthropic/claude-3.7-sonnet', role: 'principal' }, 'debate', note);
+  assert.equal(blocks.length, 2, 'esperava o prompt de papel + a nota do repositório');
+  const systemText = blocks.map(b => b.content).join('\n');
+  assert.match(systemText, /fredabsd-svg\/Frederico-IA-Studio/);
+  assert.match(systemText, /NÃO peça o link/i);
+  assert.match(systemText, /não tem acesso ao GitHub/i);
+});
+
+test('multimodelo sem Modo Desenvolvedor não injeta nota de repositório', () => {
+  const blocks = multiModelSystemBlocks({ id: 'anthropic/claude-3.7-sonnet', role: 'principal' }, 'compare', null);
+  assert.equal(blocks.length, 1);
+  assert.match(blocks[0].content, /MULTIMODELO/);
 });
 
 test('custo é null quando o catálogo não tem preço (e 0 para modelo gratuito)', () => {
