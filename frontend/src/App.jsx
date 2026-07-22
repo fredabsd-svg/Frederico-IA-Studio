@@ -164,6 +164,8 @@ export default function App({ user } = {}) {
   const [filesDrawerOpen, setFilesDrawerOpen] = useState(false);
   const [topActionsOpen, setTopActionsOpen] = useState(false);
   const endRef = useRef(null);
+  const messagesRef = useRef(null);
+  const lastScrollConv = useRef(null);
   const inputRef = useRef(null);
   const topActionsRef = useRef(null);
   const sideScrollRef = useRef(null);
@@ -188,7 +190,7 @@ export default function App({ user } = {}) {
     conversations, allConvs, current, setCurrent, currentRef, files, setFiles, loadingConv,
     fetchConversations, loadAllConvs, ensureConversation, openConversation, deleteConversation, loadFiles
   } = useConversations({ clientId, model, setModel, showToast, blockConversationChange, askConfirm,
-    startNewChat, setMessages, setDeveloperSession, setMenuOpen, followActiveRef });
+    startNewChat, setMessages, setDeveloperSession, setMenuOpen, followActiveRef, setNeedLogin });
   const { listening, recognitionRef, toggleMic } = useSpeech({ input, setInput, showToast });
   const {
     dragActive, uploadingFiles, scanOk, deleteFile, uploadSelectedFiles, uploadFiles,
@@ -259,9 +261,14 @@ export default function App({ user } = {}) {
   const sidebarActivity = anyBusy || conversations.some(c => c.active);
   useEffect(() => {
     if (!sidebarActivity) return;
+    // clientId nas deps: sem ele, o intervalo guardava o fetchConversations do
+    // render em que sidebarActivity virou true — preso ao cliente ANTIGO. Ao
+    // trocar de cliente com uma execução em andamento, o poll recarregava a lista
+    // do cliente anterior por cima da atual a cada 10 s. Re-subscrevendo quando
+    // clientId muda, a closure passa a apontar para o cliente selecionado.
     const t = setInterval(() => { fetchConversations().catch(() => {}); }, 10000);
     return () => clearInterval(t);
-  }, [sidebarActivity]);
+  }, [sidebarActivity, clientId]);
   useEffect(() => { localStorage.setItem('fred_effort', effort); }, [effort]);
   useEffect(() => {
     // O painel de esforço e o de permissões vivem dentro da linha de chips,
@@ -305,7 +312,17 @@ export default function App({ user } = {}) {
     const frame = window.requestAnimationFrame(resetSidebarScroll);
     return () => window.cancelAnimationFrame(frame);
   }, [workspace]);
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+  useEffect(() => {
+    // Ao ABRIR/TROCAR de conversa, sempre desce até a última mensagem. Durante o
+    // STREAMING (mesma conversa), só acompanha se o usuário já está perto do fim
+    // — antes rolava a cada token (o array `messages` é trocado por delta),
+    // sequestrando a rolagem de quem subia para reler algo durante a resposta.
+    const convChanged = lastScrollConv.current !== (current?.id || null);
+    lastScrollConv.current = current?.id || null;
+    const el = messagesRef.current;
+    if (!convChanged && el && el.scrollHeight - el.scrollTop - el.clientHeight > 120) return;
+    endRef.current?.scrollIntoView({ behavior: convChanged ? 'auto' : 'smooth' });
+  }, [messages, current?.id]);
   // Fecha o painel da equipe ao clicar fora
   useEffect(() => {
     function onDoc(e) { if (topActionsRef.current && !topActionsRef.current.contains(e.target)) setTopActionsOpen(false); }
@@ -862,7 +879,7 @@ export default function App({ user } = {}) {
         <span>🔓 <b>Sem senha de acesso.</b> Use apenas na sua rede local — não exponha na internet sem definir <code>APP_PASSWORD</code>.</span>
         <button onClick={() => { setAuthWarnHidden(true); localStorage.setItem('fred_authwarn_hidden', '1'); }} aria-label="Dispensar aviso"><X size={14}/></button>
       </div>}
-      <section className={`messages ${!loadingConv && messages.length === 0 && !busy ? 'empty' : ''}`}>
+      <section ref={messagesRef} className={`messages ${!loadingConv && messages.length === 0 && !busy ? 'empty' : ''}`}>
         {loadingConv && <div className="working"><span className="spin"/><span>Carregando conversa...</span></div>}
         {!loadingConv && messages.length === 0 && !busy && <div className="welcome">
           <h2>{workspaceWelcome.title}</h2>
@@ -879,7 +896,7 @@ export default function App({ user } = {}) {
         </div>}
         {messages.map((m, idx) => {
         const showDay = dayKey(m.created_at) && dayKey(m.created_at) !== dayKey(messages[idx - 1]?.created_at);
-        return <React.Fragment key={m.id || idx}>
+        return <React.Fragment key={m._key || m.id || idx}>
           {showDay && <div className="dayDivider" role="separator">
             <span>{dayLabel(m.created_at)}{msgTime(m.created_at) && ` · ${msgTime(m.created_at)}`}</span>
           </div>}

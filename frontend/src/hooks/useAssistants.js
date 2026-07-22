@@ -14,10 +14,17 @@ export function useAssistants({ model, setModel, showToast, askConfirm }) {
       const res = await fetch(`${API}/api/assistants`);
       const data = await res.json();
       const rows = Array.isArray(data) ? data : [];
+      const firstLoad = !assistantId; // ainda não havia assistente selecionado
       setAssistants(rows);
       setAssistantId(prev => (prev && rows.some(a => a.id === prev)) ? prev : (rows[0]?.id || null));
-      const chosen = rows.find(a => a.id === assistantId) || rows[0];
-      if (chosen?.model) setModel(chosen.model);
+      // Só alinha o modelo ao assistente no PRIMEIRO carregamento. Recarregar a
+      // lista depois (ex.: após salvar um assistente) NÃO pode sobrescrever um
+      // modelo que o usuário trocou à mão — quem seleciona um assistente é o
+      // pickAssistant, que já cuida do modelo.
+      if (firstLoad) {
+        const chosen = rows[0];
+        if (chosen?.model) setModel(chosen.model);
+      }
     } catch {}
   }
 
@@ -54,8 +61,13 @@ export function useAssistants({ model, setModel, showToast, askConfirm }) {
       const res = await fetch(url, { method: form.id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       if (!res.ok) throw new Error();
       const saved = await res.json();
+      const wasCreate = !form.id;
       await loadAssistants();
-      if (saved?.id) pickAssistant(saved.id);
+      // Ao CRIAR, seleciona o novo assistente (e adota o modelo dele). Ao EDITAR,
+      // preserva a seleção e o modelo atuais — chamar pickAssistant aqui jogava o
+      // modelo de volta ao padrão do assistente, descartando a escolha manual do
+      // usuário só por ter salvo uma edição qualquer.
+      if (saved?.id && wasCreate) pickAssistant(saved.id);
       setStudioOpen(false);
     } catch {
       showToast('Não foi possível salvar o assistente.');

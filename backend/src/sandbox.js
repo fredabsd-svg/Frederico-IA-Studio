@@ -200,12 +200,22 @@ export async function getContainer(conversationId, options = {}) {
   const entry = sessions.get(conversationId);
   if (entry?.policyKey === policy.key) { entry.lastUsed = Date.now(); return entry.container; }
   if (entry) await dropSession(conversationId);
-  const creatingKey = `${conversationId}:${policy.key}`;
-  if (creating.has(creatingKey)) return creating.get(creatingKey);
+  // Single-flight POR CONVERSA (não por política): uma conversa tem no máximo UM
+  // container. A chave antiga incluía a política, então duas chamadas
+  // concorrentes na MESMA conversa com políticas diferentes (ex.: read-only x
+  // default) não se viam, criavam DOIS containers e `sessions.set` sobrescrevia
+  // o primeiro — que ficava rodando (`sleep infinity`) fora do mapa, sem ser
+  // reciclado pelo reaper nem por destroyConversation. Serializando por conversa,
+  // a segunda chamada espera a primeira e então reavalia: se a política bater,
+  // reusa o container; se não, dropSession remove o anterior de forma limpa.
+  if (creating.has(conversationId)) {
+    await creating.get(conversationId).catch(() => {});
+    return getContainer(conversationId, options);
+  }
   const p = createContainer(conversationId, policy, userId);
-  creating.set(creatingKey, p);
+  creating.set(conversationId, p);
   try { return await p; }
-  finally { creating.delete(creatingKey); }
+  finally { creating.delete(conversationId); }
 }
 
 // Mantém no máximo MAX_SANDBOXES_PER_USER sandboxes ativos por usuário:
