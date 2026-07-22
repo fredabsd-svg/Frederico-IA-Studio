@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { importProviderCatalog, normalizeBaseURL } from './providerCatalog.js';
+import { enrichProviderCatalog, importProviderCatalog, normalizeBaseURL } from './providerCatalog.js';
+import { registerModelCatalog } from './modelCapabilities.js';
 
 test('imports only the catalog returned after an authenticated provider request', async () => {
   let request;
@@ -46,4 +47,37 @@ test('provider base URLs are normalized and unsafe URL shapes are rejected', () 
   assert.equal(normalizeBaseURL('', 'deepseek'), 'https://api.deepseek.com');
   assert.throws(() => normalizeBaseURL('ftp://example.com/v1'), /HTTP\/HTTPS/);
   assert.throws(() => normalizeBaseURL('https://user:pass@example.com/v1'), /credenciais/);
+});
+
+test('enriches DeepSeek V4 models with official names, capabilities, context and prices', async () => {
+  const result = await importProviderCatalog({
+    apiKey: 'deepseek-key', providerType: 'deepseek',
+    fetchImpl: async () => ({
+      ok: true,
+      json: async () => ({ data: [{ id: 'deepseek-v4-flash' }, { id: 'deepseek-v4-pro' }] })
+    })
+  });
+
+  const [flash, pro] = result.models;
+  assert.equal(flash.name, 'DeepSeek V4 Flash');
+  assert.equal(pro.name, 'DeepSeek V4 Pro');
+  assert.equal(flash.context_length, 1_000_000);
+  const [profile] = registerModelCatalog([flash], {
+    providerId: 'deepseek-key-id', providerName: 'DeepSeek', providerType: 'deepseek'
+  });
+  assert.deepEqual(profile.capabilities, {
+    text: true, tools: true, vision: false, image: false, reasoning: true, video: false
+  });
+  assert.equal(flash.pricing.prompt * 1_000_000, 0.14);
+  assert.equal(flash.pricing.completion * 1_000_000, 0.28);
+  assert.equal(pro.pricing.prompt * 1_000_000, 0.435);
+  assert.equal(pro.pricing.completion * 1_000_000, 0.87);
+});
+
+test('enriches an existing DeepSeek catalog without requiring a key refresh', () => {
+  const [model] = enrichProviderCatalog([{ id: 'deepseek-v4-flash' }], 'deepseek');
+  assert.equal(model.name, 'DeepSeek V4 Flash');
+  assert.equal(model.context_length, 1_000_000);
+  assert.deepEqual(model.architecture.input_modalities, ['text']);
+  assert.equal(model.supported_parameters.includes('tools'), true);
 });

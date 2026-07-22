@@ -11,6 +11,29 @@ export const PROVIDER_PRESETS = Object.freeze({
   custom: { name: 'OpenAI compatível', baseURL: '' }
 });
 
+// GET /models da DeepSeek autentica a chave e lista os IDs disponíveis, mas
+// não publica nome amigável, contexto, capacidades ou preços. Esses metadados
+// vêm da documentação oficial vigente em 2026-07-22:
+// https://api-docs.deepseek.com/quick_start/pricing/
+// Os preços abaixo são convertidos de USD por 1M tokens para USD por token,
+// que é a unidade interna também usada pelos catálogos da OpenRouter.
+const DEEPSEEK_MODEL_METADATA = Object.freeze({
+  'deepseek-v4-flash': {
+    name: 'DeepSeek V4 Flash',
+    context_length: 1_000_000,
+    pricing: { prompt: 0.14 / 1_000_000, completion: 0.28 / 1_000_000, cache_read: 0.0028 / 1_000_000 },
+    architecture: { input_modalities: ['text'], output_modalities: ['text'] },
+    supported_parameters: ['tools', 'tool_choice', 'reasoning_effort', 'response_format']
+  },
+  'deepseek-v4-pro': {
+    name: 'DeepSeek V4 Pro',
+    context_length: 1_000_000,
+    pricing: { prompt: 0.435 / 1_000_000, completion: 0.87 / 1_000_000, cache_read: 0.003625 / 1_000_000 },
+    architecture: { input_modalities: ['text'], output_modalities: ['text'] },
+    supported_parameters: ['tools', 'tool_choice', 'reasoning_effort', 'response_format']
+  }
+});
+
 export function normalizeProviderType(value) {
   const key = String(value || '').trim().toLowerCase();
   return Object.hasOwn(PROVIDER_PRESETS, key) ? key : 'custom';
@@ -28,13 +51,37 @@ export function normalizeBaseURL(value, providerType = 'custom') {
   return raw;
 }
 
-function normalizedCatalog(data) {
+function enrichProviderModel(model, providerType) {
+  if (providerType !== 'deepseek') return model;
+  const metadata = DEEPSEEK_MODEL_METADATA[model.id];
+  if (!metadata) return model;
+  return {
+    ...metadata,
+    ...model,
+    name: String(model.name || '').trim() || metadata.name,
+    context_length: Number(model.context_length || model.context || 0) || metadata.context_length,
+    pricing: { ...metadata.pricing, ...(model.pricing || {}) },
+    supported_parameters: Array.isArray(model.supported_parameters) && model.supported_parameters.length
+      ? model.supported_parameters
+      : metadata.supported_parameters
+  };
+}
+
+function normalizedCatalog(data, providerType = 'custom') {
   const source = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : [];
   const seen = new Set();
   return source.map(item => typeof item === 'string' ? { id: item } : item)
     .filter(item => item && typeof item === 'object')
     .map(item => ({ ...item, id: String(item.id || '').trim() }))
-    .filter(item => item.id && item.id.length <= 300 && !seen.has(item.id) && seen.add(item.id));
+    .filter(item => item.id && item.id.length <= 300 && !seen.has(item.id) && seen.add(item.id))
+    .map(item => enrichProviderModel(item, providerType));
+}
+
+// Também corrige catálogos já armazenados antes deste enriquecimento, para que
+// a atualização do servidor resolva a interface sem exigir que a pessoa apague
+// e cadastre novamente a chave.
+export function enrichProviderCatalog(models, providerType = 'custom') {
+  return normalizedCatalog(models, normalizeProviderType(providerType));
 }
 
 async function responseError(response) {
@@ -59,7 +106,7 @@ export async function importProviderCatalog({ apiKey, baseURL, providerType = 'c
       signal: AbortSignal.timeout(timeoutMs)
     });
     if (!response.ok) throw new Error(await responseError(response));
-    const models = normalizedCatalog(await response.json());
+    const models = normalizedCatalog(await response.json(), type);
     if (models.length) return { baseURL: base, models, validation: 'catalog' };
     listFailure = new Error('O provedor não retornou nenhum modelo para esta chave.');
   } catch (error) {

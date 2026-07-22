@@ -136,6 +136,15 @@ test('detects vision from input modalities and image generation from output', ()
   assert.equal(painter.image, true); // GERA imagem
 });
 
+test('uses the public provider model id when a catalog item has no display name', () => {
+  const [profile] = registerModelCatalog([{ id: 'deepseek-v4-flash' }], {
+    providerId: 'internal-provider-id', providerName: 'DeepSeek', providerType: 'deepseek'
+  });
+  assert.equal(profile.id, 'internal-provider-id::deepseek-v4-flash');
+  assert.equal(profile.providerModelId, 'deepseek-v4-flash');
+  assert.equal(profile.name, 'deepseek-v4-flash');
+});
+
 test('accepts tool_choice/functions as evidence of tool support', () => {
   const a = deriveModelCapabilities({ id: 'a', supported_parameters: ['tool_choice', 'temperature'], architecture: { input_modalities: ['text'], output_modalities: ['text'] } });
   const b = deriveModelCapabilities({ id: 'b', supported_parameters: ['functions'], architecture: { input_modalities: ['text'], output_modalities: ['text'] } });
