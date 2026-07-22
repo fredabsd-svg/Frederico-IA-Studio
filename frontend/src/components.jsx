@@ -4,6 +4,7 @@ import { ProviderIcon } from './components/ProviderIcon.jsx';
 import { FamilySelect } from './components/FamilySelect.jsx';
 import { findRanking, tierClass, tierScore } from './modelRanking.js';
 import { capabilityOf, filterModels, modelFamily, tierOf } from './modelFilters.js';
+import { groupModelVersions, versionStamp } from './modelVersions.js';
 
 // Ids (ou prefixos) dos modelos mais confiáveis para gerar planilhas/arquivos
 const BEST_FOR_FILES = [
@@ -101,6 +102,8 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
   const [sort, setSort] = useState('rank');
   const [favs, setFavs] = useState(loadFavs);
   const [recent, setRecent] = useState(loadRecent);
+  // Grupos de versões expandidos ("Ver outras versões") — por id da principal.
+  const [openVersions, setOpenVersions] = useState(() => new Set());
   const ref = useRef(null);
   const searchRef = useRef(null);
 
@@ -229,8 +232,16 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
     .sort(sort === 'rank' ? recommendedSort : sortFn)
     .slice(0, 6);
   const favoriteModels = [...filteredModels].filter(model => isFav(model.id)).sort(sortFn);
-  const catalogModels = [...filteredModels].sort(sortFn);
+  // Catálogo/busca: agrupa versões datadas do mesmo modelo (a mais nova como
+  // principal; as demais em "Ver outras versões"). Favoritos/recomendados não
+  // agrupam — são escolhas explícitas.
+  const catalogModels = groupModelVersions([...filteredModels].sort(sortFn));
   const displayView = query ? 'search' : view;
+  const toggleVersions = id => setOpenVersions(previous => {
+    const next = new Set(previous);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
 
   const STATUS_BADGE = {
     deprecated: { label: 'Descontinuado', cls: 'no' },
@@ -239,7 +250,7 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
     preview: { label: 'Prévia', cls: 'neutral' },
     experimental: { label: 'Experimental', cls: 'neutral' }
   };
-  const row = model => {
+  const modelRow = (model, { nested = false } = {}) => {
     const ranking = findRanking({ ...model, id: rawId(model) });
     const status = STATUS_BADGE[model.status];
     const rankTitle = ranking
@@ -248,7 +259,7 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
           : `Classificação de referência · Tier ${ranking.tier}`)
       : '';
     return (
-    <div key={model.id} className={'mpItem ' + (model.id === value ? 'sel' : '')}>
+    <div key={model.id} className={'mpItem ' + (model.id === value ? 'sel ' : '') + (nested ? 'mpItemVersion' : '')}>
       <ProviderIcon id={rawId(model)} size={28}/>
       <button className="mpPick" onClick={() => pick(model.id)}>
         <span className="mpItemName">
@@ -264,6 +275,22 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
       <button className={'mpStar ' + (isFav(model.id) ? 'on' : '')} onClick={event => toggleFav(model.id, event)} title={isFav(model.id) ? 'Remover dos favoritos' : 'Adicionar aos favoritos'} aria-label={isFav(model.id) ? 'Remover dos favoritos' : 'Adicionar aos favoritos'} aria-pressed={isFav(model.id)}><Star size={14} fill={isFav(model.id) ? 'currentColor' : 'none'}/></button>
     </div>
     );
+  };
+  // Principal + versões anteriores agrupadas ("Ver outras versões"). O grupo
+  // abre sozinho quando a versão selecionada é uma das antigas.
+  const row = model => {
+    const versions = model.versions || [];
+    if (!versions.length) return modelRow(model);
+    const opened = openVersions.has(model.id) || versions.some(v => v.id === value);
+    const newestStamp = versionStamp(versions[0]);
+    return <React.Fragment key={`${model.id}::grupo`}>
+      {modelRow(model)}
+      <button className="mpVersionsToggle" onClick={() => toggleVersions(model.id)} aria-expanded={opened}>
+        {opened ? 'Ocultar versões anteriores' : `Ver outras versões (${versions.length})`}
+        {!opened && newestStamp > 0 && <span className="mpVersionsHint"> · anteriores a esta</span>}
+      </button>
+      {opened && versions.map(v => modelRow(v, { nested: true }))}
+    </React.Fragment>;
   };
   const section = (title, items, empty) => <section className="mpSection">
     <div className="mpSectionHead"><span>{title}</span><em>{items.length}</em></div>
@@ -329,14 +356,15 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
               <option value="1m">1 milhão de tokens</option>
             </select>
           </label>
-          <label>Classificação mínima
+          <label>Classificação
             <select value={tier} onChange={event => setTier(event.target.value)}>
               <option value="all">Qualquer classificação</option>
-              <option value="S+">S+ (topo)</option>
-              <option value="S">S ou acima</option>
-              <option value="A+">A+ ou acima</option>
-              <option value="A">A ou acima</option>
-              <option value="B+">B+ ou acima</option>
+              <optgroup label="Exata">
+                {['S+', 'S', 'A+', 'A', 'B+', 'B'].map(t => <option key={t} value={t}>Somente {t}</option>)}
+              </optgroup>
+              <optgroup label="Mínima (ou acima)">
+                {['S', 'A+', 'A', 'B+', 'B'].map(t => <option key={`>=${t}`} value={`>=${t}`}>{t} ou acima</option>)}
+              </optgroup>
             </select>
           </label>
           <label>Modalidade
