@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { API } from '../constants.js';
-import { FileText, Table, ScanLine, Coins, RefreshCw, AlertTriangle, CheckCircle2, Loader2, Braces, Sparkles } from 'lucide-react';
+import { FileText, Table, ScanLine, Coins, RefreshCw, AlertTriangle, CheckCircle2, Loader2, Braces, Sparkles, Settings } from 'lucide-react';
 
 // Painel de compreensão documental (Docling): mostra, por documento processado,
 // o andamento e as estatísticas (páginas, tabelas, OCR, economia de tokens) e dá
@@ -24,10 +24,10 @@ function StatusIcon({ status }) {
   return <CheckCircle2 size={15} />;
 }
 
-export function DoclingPanel({ docs = [], onReprocess }) {
+export function DoclingPanel({ docs = [], onReprocess, isAdmin = false, config = null, health = null, onSaveConfig }) {
   const [openMd, setOpenMd] = useState(null);   // { id, text }
   const [tables, setTables] = useState(null);   // { id, list }
-  if (!docs.length) return null;
+  if (!docs.length && !isAdmin) return null;
 
   async function viewMarkdown(id) {
     try {
@@ -48,6 +48,7 @@ export function DoclingPanel({ docs = [], onReprocess }) {
   return (
     <div className="doclingPanel">
       <div className="doclingHead"><FileText size={14} /> Compreensão documental (Docling)</div>
+      {isAdmin && <DoclingAdmin config={config} health={health} onSave={onSaveConfig} />}
       {docs.map(d => {
         const st = d.stats || {};
         return (
@@ -112,6 +113,67 @@ export function DoclingPanel({ docs = [], onReprocess }) {
           <div className="doclingMdBox" onClick={e => e.stopPropagation()}>
             <div className="doclingMdHead">Markdown enviado à IA <button onClick={() => setOpenMd(null)}>Fechar</button></div>
             <pre>{openMd.text}</pre>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Configuração administrativa (só admin): OCR, idioma, tabelas, fórmulas,
+// limite de páginas e tamanho de chunk. Alterar reprocessa sob demanda.
+function DoclingAdmin({ config, health, onSave }) {
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  const base = config?.options || {};
+  const cur = form || base;
+  const set = (patch) => setForm({ ...cur, ...patch });
+
+  async function save() {
+    setSaving(true); setSaved(false);
+    const ok = await onSave?.({
+      ocr: cur.ocr, lang: cur.lang, tables: cur.tables,
+      formulas: cur.formulas, maxPages: cur.maxPages, maxChunkTokens: cur.maxChunkTokens,
+    });
+    setSaving(false);
+    if (ok) { setSaved(true); setForm(null); setTimeout(() => setSaved(false), 2500); }
+  }
+
+  const healthLabel = health?.disabled ? 'desligado'
+    : health?.ok ? (health.models_loaded ? 'no ar · modelos carregados' : 'no ar · carregando modelos') : 'indisponível';
+
+  return (
+    <div className="doclingAdmin">
+      <button className="doclingAdminToggle" onClick={() => setOpen(o => !o)}>
+        <Settings size={13} /> Configurações (admin)
+        <span className={`doclingHealth ${health?.ok ? 'ok' : 'off'}`}>serviço: {healthLabel}</span>
+      </button>
+      {open && (
+        <div className="doclingAdminBody">
+          <label>OCR
+            <select value={cur.ocr || 'auto'} onChange={e => set({ ocr: e.target.value })}>
+              <option value="auto">Automático (só quando precisar)</option>
+              <option value="always">Sempre (força OCR em tudo)</option>
+              <option value="never">Nunca (só texto nativo)</option>
+            </select>
+          </label>
+          <label>Idioma do OCR
+            <input value={cur.lang ?? 'por'} onChange={e => set({ lang: e.target.value })} placeholder="por (ou por+eng)" />
+          </label>
+          <label className="row"><input type="checkbox" checked={cur.tables ?? true} onChange={e => set({ tables: e.target.checked })} /> Extrair tabelas</label>
+          <label className="row"><input type="checkbox" checked={cur.formulas ?? false} onChange={e => set({ formulas: e.target.checked })} /> Processar fórmulas (mais lento)</label>
+          <label>Limite de páginas (0 = sem limite)
+            <input type="number" min="0" value={cur.maxPages ?? 0} onChange={e => set({ maxPages: Number(e.target.value) })} />
+          </label>
+          <label>Tokens por chunk
+            <input type="number" min="200" max="8000" value={cur.maxChunkTokens ?? 1200} onChange={e => set({ maxChunkTokens: Number(e.target.value) })} />
+          </label>
+          <div className="doclingAdminActions">
+            <button className="primary" onClick={save} disabled={saving}>{saving ? 'Salvando…' : 'Salvar'}</button>
+            {saved && <span className="doclingSaved">✓ salvo — novos documentos usam a nova config</span>}
           </div>
         </div>
       )}

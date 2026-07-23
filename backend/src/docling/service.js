@@ -9,7 +9,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { nanoid } from 'nanoid';
 import { db, now } from '../db.js';
-import { isDoclingEnabled, isDoclingSupported, doclingOptions, configVersion } from './config.js';
+import { isDoclingEnabled, isDoclingSupported, configVersion } from './config.js';
+import { resolvedOptions } from './adminConfig.js';
 import { runDocling } from './runner.js';
 import { optimizeMarkdown } from './markdown.js';
 import { chunkMarkdown } from './chunker.js';
@@ -106,7 +107,8 @@ async function setStatus(userId, hash, cfg, status, extra = {}) {
 export async function processFile({ userId, conversationId, fileId, filePath, filename, mime, hash, options, signal, onProgress, force = false }) {
   if (!isDoclingEnabled()) return null;
   if (!isDoclingSupported(filename || filePath)) return null;
-  const opts = { ...doclingOptions(), ...(options || {}) };
+  // Opções efetivas: ambiente + overrides do admin + o que veio na chamada.
+  const opts = { ...(await resolvedOptions()), ...(options || {}) };
   const cfg = configVersion(opts);
 
   // Cache: já concluído com esta config? Reutiliza (sem reprocessar).

@@ -58,7 +58,7 @@ app = FastAPI(title="docling-service", docs_url=None, redoc_url=None, openapi_ur
 _sem = asyncio.Semaphore(MAX_CONCURRENCY)
 _pool = ThreadPoolExecutor(max_workers=MAX_CONCURRENCY)
 
-_converter = None            # DocumentConverter (carregado uma vez, lazy)
+_converters: dict[str, Any] = {}   # DocumentConverter por assinatura de opções
 _models_loaded = False
 
 
@@ -86,36 +86,62 @@ def require_auth(token: Optional[str]):
         raise HTTPException(status_code=401, detail="unauthorized")
 
 
-def get_converter():
-    """Cria o DocumentConverter uma única vez, apontando para os modelos locais
-    (offline: o container roda sem rede; os modelos vêm do volume ARTIFACTS_PATH)."""
-    global _converter, _models_loaded
-    if _converter is not None:
-        return _converter
+def _opts_key(opts: dict) -> str:
+    return json.dumps({
+        "ocr": opts.get("ocr", "auto"),
+        "lang": opts.get("lang", "por"),
+        "tables": opts.get("tables", True),
+        "formulas": opts.get("formulas", False),
+    }, sort_keys=True)
+
+
+def get_converter_for(opts: dict):
+    """Cria (e cacheia) um DocumentConverter para as opções do job. Reusa o mesmo
+    converter para opções iguais — evita recarregar modelos a cada documento.
+    Offline: aponta para os modelos locais em ARTIFACTS_PATH."""
+    global _models_loaded
+    key = _opts_key(opts)
+    if key in _converters:
+        return _converters[key]
+
     from docling.document_converter import DocumentConverter, PdfFormatOption
     from docling.datamodel.base_models import InputFormat
     from docling.datamodel.pipeline_options import PdfPipelineOptions
 
-    opts = PdfPipelineOptions(artifacts_path=ARTIFACTS_PATH) if os.path.isdir(ARTIFACTS_PATH) else PdfPipelineOptions()
-    opts.do_ocr = True
-    opts.do_table_structure = True
+    p = PdfPipelineOptions(artifacts_path=ARTIFACTS_PATH) if os.path.isdir(ARTIFACTS_PATH) else PdfPipelineOptions()
+
+    ocr_mode = str(opts.get("ocr", "auto")).lower()
+    p.do_ocr = ocr_mode != "never"
+    if ocr_mode == "always":
+        try:
+            p.ocr_options.force_full_page_ocr = True
+        except Exception:
+            pass
+    # Idioma do OCR (pt-BR por padrão). Aceita "por", "por+eng", etc.
+    lang = str(opts.get("lang", "por"))
     try:
-        opts.table_structure_options.do_cell_matching = True
+        p.ocr_options.lang = lang.replace("+", ",").split(",")
     except Exception:
         pass
-    _converter = DocumentConverter(
-        format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=opts)}
-    )
+
+    p.do_table_structure = bool(opts.get("tables", True))
+    try:
+        p.table_structure_options.do_cell_matching = True
+    except Exception:
+        pass
+    # Fórmulas (mais caro): habilita quando pedido e a versão suportar.
+    if opts.get("formulas"):
+        for attr in ("do_formula_enrichment", "do_formula_understanding"):
+            if hasattr(p, attr):
+                try:
+                    setattr(p, attr, True)
+                except Exception:
+                    pass
+
+    conv = DocumentConverter(format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=p)})
+    _converters[key] = conv
     _models_loaded = True
-    return _converter
-
-
-def _apply_ocr_lang(pipeline_opts, lang: str):
-    """Configura o idioma do OCR (pt-BR por padrão) quando o backend de OCR aceita."""
-    try:
-        pipeline_opts.ocr_options.lang = [lang] if isinstance(lang, str) else lang
-    except Exception:
-        pass
+    return conv
 
 
 def _page_marked_markdown(doc) -> tuple[str, int, int]:
@@ -184,15 +210,7 @@ def _page_marked_markdown(doc) -> tuple[str, int, int]:
 
 def _convert(path: str, options: dict, job: Job) -> dict:
     """Roda o Docling de forma síncrona (chamado no executor de threads)."""
-    from docling.datamodel.base_models import InputFormat  # noqa
-
-    conv = get_converter()
-    lang = options.get("lang", "por")
-    # (o idioma do OCR é aplicado no pipeline default do converter quando possível)
-    try:
-        _apply_ocr_lang(conv.format_to_options[InputFormat.PDF].pipeline_options, lang)  # type: ignore
-    except Exception:
-        pass
+    conv = get_converter_for(options)
 
     job.stage, job.progress = "convertendo", 0.3
     result = conv.convert(path, max_num_pages=options.get("maxPages") or MAX_PAGES or 10**9)
@@ -376,7 +394,7 @@ async def cancel_job(job_id: str, x_internal_token: Optional[str] = Header(None)
 async def _warmup():
     # Carrega os modelos uma vez no boot (mantém o serviço "quente").
     try:
-        get_converter()
+        get_converter_for({"ocr": "auto", "lang": os.environ.get("DOCLING_OCR_LANG", "por"), "tables": True})
         log.info("modelos carregados (offline=%s)", os.path.isdir(ARTIFACTS_PATH))
     except Exception as e:  # não derruba o serviço; /health mostra models_loaded=false
         log.warning("falha ao pré-carregar modelos: %s", str(e)[:200])
