@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { parseGitStatus, proactiveAllowed } from './monitor.js';
+import { inspectGit, parseGitStatus, proactiveAllowed } from './monitor.js';
 
 test('parseGitStatus: workspace limpo com branch e tracking', () => {
   const s = parseGitStatus('## main...origin/main\n');
@@ -45,4 +45,13 @@ test('proactiveAllowed respeita enabled, modo e flag de alertas', () => {
   assert.ok(!proactiveAllowed({ enabled: true, proactiveAlerts: true, mode: 'foco' }));
   assert.ok(!proactiveAllowed({ enabled: false, proactiveAlerts: true, mode: 'proativo' }));
   assert.ok(!proactiveAllowed({ enabled: true, proactiveAlerts: false, mode: 'proativo' }));
+});
+
+test('inspectGit sem sandbox ativo OBSERVA sem criar container (noSandbox)', async () => {
+  // A conversa não tem sessão de sandbox — o monitor deve devolver o resumo
+  // vazio com noSandbox:true, sem materializar um container (nem tocar Docker).
+  const s = await inspectGit('conversa-inexistente-monitor');
+  assert.equal(s.isRepo, false);
+  assert.equal(s.noSandbox, true);
+  assert.equal(s.dirty, false);
 });

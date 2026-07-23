@@ -1,5 +1,51 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 🔒 Revisão dos PRs #102–#107 (Companion + Docling): isolamento, churn de sandbox e contradição de prompt (2026-07-23 — branch `claude/steps-count-bug-v879qz`)
+
+Análise completa do código novo (Companion fases 1–2, Docling fases 1–2,
+launcher). Quatro correções aplicadas:
+
+1. **SEGURANÇA (grave) — posse no monitor de Git do Companion:**
+   `POST /companion/monitor/git` só validava o FORMATO do `conversationId`;
+   qualquer usuário logado com o id de uma conversa alheia lia branch +
+   arquivos alterados do workspace de outro dono (e fazia o servidor criar um
+   container para isso). Agora a rota exige posse
+   (`WHERE id=? AND user_id=?` → 404), como manda a regra multi-tenant.
+2. **Recursos/VPS — monitor OBSERVA, não cria:** `inspectGit` usava
+   `execInSandbox`, que (a) MATERIALIZAVA um container a cada ciclo de polling
+   (90 s) quando não havia um, e (b) pior: com opções default, DERRUBAVA e
+   recriava um sandbox ativo de política diferente (`getContainer` troca o
+   container quando a policyKey não bate) — podia matar um sandbox do modo dev
+   no meio do trabalho. Novo `execInActiveSandbox` (sandbox.js): executa SÓ se
+   já houver sandbox ativo, nunca cria/troca/mata, não estende o lastUsed
+   (observar não deve impedir o reaper) e no timeout apenas desiste da leitura.
+   Sem sandbox → `{ isRepo:false, noSandbox:true }`.
+3. **Contradição de prompt (Docling ligado):** a `uploadsNote` (system) manda
+   extrair anexos com ferramentas; o contexto do Docling manda NÃO reextrair —
+   e `mustInspectUploads` ainda FORÇAVA `tool_choice='required'`. Mesma classe
+   do bug "não tenho acesso ao GitHub" (2026-07-22). Agora: nota de
+   precedência `DOC_PRECEDENCE_NOTE` (context.js) publicada entre as duas
+   ("pré-processados usam o conteúdo fornecido; ferramentas valem para os
+   demais anexos e para cálculos/conversões"), a nota do Docling é escopada
+   aos documentos listados, e `mustInspectUploads` não força ferramenta quando
+   o conteúdo documental já foi injetado.
+4. **Botão "Reprocessar" do Docling era no-op:** com a mesma config, o
+   `processFile` devolvia o cache (early-return) e nada reprocessava. Agora a
+   rota passa `force:true` e o `processFile` ignora o cache nesse caso; o hash
+   usa `f.hash || row.hash` (arquivos antigos sem hash na tabela files).
+
+**Registrados sem correção (menores):** docling-service ignora `ocr:auto|never`
+(`do_ocr=True` sempre — a config prometida entra no config_version mas não é a
+efetiva); `inbox.js` insere em files sem hash/mime (anexos do inbox ficam fora
+do Docling — o fallback cobre); `selectChunks` não inclui chunks sem match "se
+sobrar espaço" (comentário promete, código não faz); no caminho "documento
+completo" as páginas vão como `<!-- page: N -->` e o modelo pode não citá-las;
+definir `DOCLING_INTERNAL_TOKEN` no .env da VPS ao ligar o Docling.
+
+**Validação:** `node --check` em todos os arquivos tocados; suíte
+`node --test` → 337 testes, 335 pass, 0 fail (inclui teste novo do
+`inspectGit` sem sandbox). Nenhuma migração nem mudança de frontend.
+
 ## 🔁 FIM do "limite de N etapas" em tarefa produtiva — fôlego automático + retomada na pipeline (2026-07-23 — branch `claude/steps-count-bug-v879qz`)
 
 **Sintoma (com print):** pipeline multimodelo ("Especialistas em sequência"), a

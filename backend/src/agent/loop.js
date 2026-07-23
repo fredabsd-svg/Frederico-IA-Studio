@@ -26,7 +26,7 @@ import { saveCheckpoint, clearCheckpoint, isResumableReason, buildResumeMessages
 import { untrustedContext } from './promptRegistry.js';
 import { emitExecutionState, finalExecutionState } from './executionState.js';
 import { explicitlyAuthorizesSandboxNetwork, isToolCallAllowed } from './assistantPolicy.js';
-import { buildDocumentContext } from '../docling/context.js';
+import { buildDocumentContext, DOC_PRECEDENCE_NOTE } from '../docling/context.js';
 
 export function explicitlyAuthorizesGitWrite(text) {
   const value = String(text || '');
@@ -259,7 +259,13 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
     if (cleanMemory) messages.push({ role: 'user', content: untrustedContext('memory-fallback', cleanMemory) });
   }
   if (uploadNoteForRun) messages.push({ role: 'system', content: uploadNoteForRun });
-  if (docContext?.note) messages.push({ role: 'user', content: untrustedContext('document-content', docContext.note) });
+  if (docContext?.note) {
+    // Ponte entre as duas instruções: a uploadsNote (acima) manda extrair com
+    // ferramentas; para os documentos JÁ processados vale o conteúdo pré-
+    // extraído. A nota de precedência evita as ordens contraditórias.
+    if (uploadNoteForRun) messages.push({ role: 'system', content: DOC_PRECEDENCE_NOTE });
+    messages.push({ role: 'user', content: untrustedContext('document-content', docContext.note) });
+  }
   const pcNote = pcFoldersNote(sandboxOptions);
   if (pcNote) messages.push({ role: 'system', content: pcNote });
   const historyPlan = await selectHistoryForContext({
@@ -401,7 +407,10 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
   // Em Pipeline com anexos, a primeira ação precisa ser uma ferramenta. Isso
   // impede modelos pequenos/gratuitos de responderem "não localizei o PDF"
   // sem sequer consultar o workspace que o backend acabou de confirmar.
-  const mustInspectUploads = Boolean(uploadNoteForRun && (forceExecution || modelPlan.requirements.reasons.includes('a leitura dos arquivos anexados')));
+  // EXCEÇÃO: com o conteúdo documental já injetado (Docling), forçar ferramenta
+  // contradiz a instrução de "não reextrair" — o modelo já tem o material e
+  // decide livremente se precisa de ferramentas (cálculos, geração de arquivo).
+  const mustInspectUploads = Boolean(uploadNoteForRun && !docContext?.note && (forceExecution || modelPlan.requirements.reasons.includes('a leitura dos arquivos anexados')));
   let forceNativeToolCall = mustInspectUploads;
   let executedToolCalls = 0;
   let truncationContinuationAttempts = 0;

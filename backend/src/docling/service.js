@@ -94,15 +94,17 @@ async function setStatus(userId, hash, cfg, status, extra = {}) {
 // Entry point. Processa (ou reaproveita o cache de) um arquivo já salvo em disco.
 // Retorna a linha serializada. NUNCA lança para o chamador: em erro, marca a
 // linha como 'failed' e devolve — o fluxo do app continua no fallback.
-export async function processFile({ userId, conversationId, fileId, filePath, filename, mime, hash, options, signal, onProgress }) {
+export async function processFile({ userId, conversationId, fileId, filePath, filename, mime, hash, options, signal, onProgress, force = false }) {
   if (!isDoclingEnabled()) return null;
   if (!isDoclingSupported(filename || filePath)) return null;
   const opts = { ...doclingOptions(), ...(options || {}) };
   const cfg = configVersion(opts);
 
   // Cache: já concluído com esta config? Reutiliza (sem reprocessar).
+  // `force` (botão Reprocessar) ignora o cache — sem isto, reprocessar com a
+  // MESMA config era um no-op silencioso (o early-return devolvia o cacheado).
   const cached = await getProcessingByHash(userId, hash, cfg);
-  if (cached && ['done', 'done_warnings', 'partial'].includes(cached.status)) {
+  if (!force && cached && ['done', 'done_warnings', 'partial'].includes(cached.status)) {
     const arts = readArtifacts(userId, hash, cfg);
     if (arts.markdown) {
       // Só vincula a esta conversa (rastreabilidade), sem reprocessar.
