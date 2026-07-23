@@ -1,0 +1,7 @@
+# docling-service — dependências fixadas no build da imagem.
+# O torch é instalado à parte (wheel CPU-only) no Dockerfile para não puxar CUDA.
+docling==2.14.0
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+pydantic==2.10.4

@@ -24,6 +24,8 @@ import { PrivacyPanel, ConsentGate } from './PrivacyPanel.jsx';
 import { CameraCapture } from './CameraCapture.jsx';
 import { Companion } from './Companion.jsx';
 import { useCompanion } from './hooks/useCompanion.js';
+import { useDocling } from './hooks/useDocling.js';
+import { DoclingPanel } from './components/DoclingPanel.jsx';
 import { ContextPicker, AssistantGlyph, AssistantTile, ASSISTANT_ICON, modelHasTools } from './components/ContextPicker.jsx';
 import { MultiModelPicker } from './components/MultiModelPicker.jsx';
 import { MultiModelBoard } from './components/MultiModelBoard.jsx';
@@ -226,6 +228,8 @@ export default function App({ user } = {}) {
   // a sessão do modo dev, ou a conversa aberta quando o workspace é o "developer".
   const devConversationId = developerSession?.conversationId || (workspace === 'developer' ? current?.id : null) || null;
   const companion = useCompanion({ tasks, devConversationId, showToast });
+  // Docling — andamento e resultados do processamento documental da conversa.
+  const docling = useDocling(current?.id);
 
   function changeMultiModel(next) {
     setMultiModel(next);
@@ -1008,6 +1012,7 @@ export default function App({ user } = {}) {
         </div>}
         {uploadingFiles && <div className="attachStatus"><span className="spin sm"/><span>Anexando arquivo...</span></div>}
         {!uploadingFiles && scanOk && <div className="attachStatus scanOk"><ShieldCheck size={13}/><span>Arquivos verificados pelo antivírus</span></div>}
+        {docling.enabled && docling.processing && <div className="attachStatus"><span className="spin sm"/><span>Analisando documento (layout, tabelas, OCR)…</span></div>}
         <div className="composerChips" ref={cmpChipsRef}>
           <button type="button" className={`cmpChip ${webSearch ? 'on' : ''}`} aria-pressed={webSearch}
             onClick={() => setWebSearch(w => !w)}
@@ -1099,6 +1104,7 @@ export default function App({ user } = {}) {
           </div>;
         })}
       </div>
+      {docling.enabled && <DoclingPanel docs={docling.docs} onReprocess={docling.reprocess} />}
     </Drawer>}
 
     {toast && <div className={`toast ${toast.kind || 'err'}`} role="alert">{toast.text}<button onClick={() => setToast(null)} aria-label="Fechar aviso"><X size={14}/></button></div>}

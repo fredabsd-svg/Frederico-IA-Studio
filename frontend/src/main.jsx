@@ -10,6 +10,7 @@ import './landing.css';
 import './dev-handoff.css';
 import './camera.css';
 import './companion.css';
+import './docling.css';
 
 // Rotas públicas dos documentos legais (LGPD) — funcionam sem login, tanto no
 // Vite (fallback de SPA) quanto no Caddy (try_files -> index.html).

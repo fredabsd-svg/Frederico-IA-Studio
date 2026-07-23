@@ -42,6 +42,32 @@ services:
     volumes:
       - clamav_db:/var/lib/clamav
 
+  # Serviço dedicado do Docling — compreensão documental (layout, tabelas, OCR).
+  # PERMANENTE (modelos carregados uma vez) e acessível SOMENTE pela rede interna
+  # do Docker: repare que NÃO há `ports:` — nada é publicado no host. O backend
+  # o alcança por http://docling-service:8000. Ative com DOCLING_ENABLED=true.
+  docling-service:
+    build: ./docling-service
+    profiles: ["docling"]
+    restart: unless-stopped
+    environment:
+      - DOCLING_INTERNAL_TOKEN=${DOCLING_INTERNAL_TOKEN:-}
+      - DOCLING_CONCURRENCY=${DOCLING_CONCURRENCY:-2}
+      - DOCLING_MAX_FILE_MB=${DOCLING_MAX_FILE_MB:-50}
+      - DOCLING_MAX_PAGES=${DOCLING_MAX_PAGES:-600}
+      - DOCLING_ARTIFACTS_PATH=/models
+    volumes:
+      - docling_models:/models
+    # Limites de memória/CPU (o modelo é pesado; ajuste conforme o servidor).
+    mem_limit: ${DOCLING_MEM_LIMIT:-4g}
+    cpus: ${DOCLING_CPUS:-2}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
   backend:
     build: .
     ports:
@@ -58,6 +84,11 @@ services:
       - DATA_DIR=/app/data
       # Conexão com o Postgres (serviço acima, na rede do Docker)
       - DATABASE_URL=postgres://studio:studio@postgres:5432/studio
+      # Docling (camada de documentos). Desligado por padrão — ligue com true.
+      - DOCLING_ENABLED=${DOCLING_ENABLED:-false}
+      - DOCLING_SERVICE_URL=http://docling-service:8000
+      - DOCLING_INTERNAL_TOKEN=${DOCLING_INTERNAL_TOKEN:-}
+      - DOCLING_CACHE_ROOT=/app/data/docling-cache
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./workspaces:/app/workspaces
@@ -92,3 +123,4 @@ services:
 volumes:
   pgdata:
   clamav_db:
+  docling_models:
