@@ -8,6 +8,7 @@ import { db } from '../db.js';
 import { isDoclingEnabled } from './config.js';
 import { readArtifacts } from './service.js';
 import { estimateTokens } from './tokens.js';
+import { validateTable } from './tables.js';
 
 const STOP = new Set('a o e de da do das dos que com para por um uma no na em os as se ao à é qual quais onde quando como sobre entre'.split(' '));
 function terms(q) {
@@ -52,7 +53,12 @@ function renderDoc(filename, markdown, chunks, { query, budget }) {
   const picked = selectChunks(chunks, query, budget);
   const body = picked.map(c => {
     const head = `> [pág. ${c.page}${c.section ? ` · ${c.section}` : ''}${c.type === 'table' ? ' · tabela' : ''}] (${c.source_reference})`;
-    return `${head}\n${c.content}`;
+    let caution = '';
+    if (c.type === 'table') {
+      const v = validateTable(c.content);
+      if (!v.ok) caution = `\n> ⚠ Estrutura da tabela pode estar inconsistente (${v.issues.join(', ')}). Confira na página ${c.page} antes de afirmar valores.`;
+    }
+    return `${head}${caution}\n${c.content}`;
   }).join('\n\n');
   const pages = [...new Set(picked.map(c => c.page))].sort((a, b) => a - b);
   return { text: body, refs: `trechos das páginas ${pages.join(', ')}`, tokens: estimateTokens(body) };

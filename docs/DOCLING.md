@@ -91,10 +91,25 @@ rede em runtime). O JSON completo e os artefatos ficam no volume do backend
 registram conteúdo. Excluir a conversa remove os arquivos originais; a limpeza
 dos artefatos derivados por retenção entra numa fase seguinte.
 
+## Fase 2 — tabelas (concluída)
+
+- **Validação de coerência** de cada tabela (`tables.js`): confere nº de colunas
+  consistente, cabeçalho presente/preenchido, existência de linhas e colunas
+  vazias. Os alertas entram nas métricas (`stats.tablesWithWarnings`,
+  `stats.tableDetails`) e no status (`done_warnings`).
+- **Exportação CSV** por tabela: `GET /api/docling/documents/:id/tables/:index/csv`
+  (com BOM para o Excel abrir acentos). Lista em
+  `GET /api/docling/documents/:id/tables`.
+- **Cautela ao modelo**: no contexto injetado, uma tabela com estrutura suspeita
+  recebe um aviso pedindo conferência na página, em vez de afirmar valores.
+- **UI**: o painel mostra "N tabelas (M alerta)", lista as tabelas com
+  linhas×colunas e link de download CSV.
+- Testes: `backend/src/docling/tables.test.js`.
+
 ## O que falta (próximas fases)
 
 - OCR por página (parcialmente digitalizado) e reprocesso com outro mecanismo.
-- Tabelas → validação de linhas/colunas, exportação CSV, células mescladas.
+- Células mescladas em tabelas complexas.
 - Imagens/gráficos/assinaturas → handoff para modelo com visão + referência.
 - Seleção de chunks por embeddings (reusando a infra de RAG já existente).
 - Painel administrativo completo e taxonomia de falhas na UI.
