@@ -178,12 +178,27 @@ conversa/arquivo não os removia. Agora:
 - **UI**: botão "Apagar dados" por documento no painel.
 - Testes: `backend/src/docling/retention.test.js`.
 
-## O que falta (próximas fases)
+## Fase 7 — taxonomia de falhas (concluída)
+
+Em vez de um "falhou" genérico, cada erro é classificado e explicado (seção
+"Tratamento de falhas"):
+
+- **`failures.js`** (puro): `classifyFailure(mensagem)` → `{ kind, label,
+  suggestion, canRetry }`. Tipos: `protegido` (senha), `formato_nao_suportado`,
+  `corrompido`, `timeout`, `ocr_falhou`, `tabela_falhou`,
+  `servico_indisponivel`, `cancelado`, `desconhecido`.
+- **`service.js`**: ao falhar, grava `stats.failure` com o motivo.
+- **`app.py`**: detecta PDF protegido por senha ANTES de converter, devolvendo um
+  erro claro (`password/encrypted`).
+- **UI**: o estado "falhou" mostra o rótulo, a sugestão do que fazer e o botão de
+  tentar de novo apenas quando fizer sentido (`canRetry`).
+- Testes: `backend/src/docling/failures.test.js`.
+
+## O que falta (refinamentos menores)
 
 - OCR por página (parcialmente digitalizado) e reprocesso com outro mecanismo.
 - Células mescladas em tabelas complexas.
 - Classificação do tipo de elemento visual (gráfico × assinatura × selo).
-- Taxonomia de falhas detalhada na UI.
 
 ## Matriz de testes (critério de aceite)
 
