@@ -22,6 +22,8 @@ import { FreeAdminPanel } from './FreeAdminPanel.jsx';
 import { ConnectorsPanel } from './ConnectorsPanel.jsx';
 import { PrivacyPanel, ConsentGate } from './PrivacyPanel.jsx';
 import { CameraCapture } from './CameraCapture.jsx';
+import { Companion } from './Companion.jsx';
+import { useCompanion } from './hooks/useCompanion.js';
 import { ContextPicker, AssistantGlyph, AssistantTile, ASSISTANT_ICON, modelHasTools } from './components/ContextPicker.jsx';
 import { MultiModelPicker } from './components/MultiModelPicker.jsx';
 import { MultiModelBoard } from './components/MultiModelBoard.jsx';
@@ -218,6 +220,9 @@ export default function App({ user } = {}) {
     input, setInput, listening, recognitionRef,
     model, assistantId, webSearch, showToast, waitForUploads
   });
+  // Frederico Companion — camada de experiência (personagem flutuante). Recebe
+  // as tarefas para a detecção proativa (tarefas que falham viram alertas).
+  const companion = useCompanion({ tasks, showToast });
 
   function changeMultiModel(next) {
     setMultiModel(next);
@@ -1345,5 +1350,21 @@ export default function App({ user } = {}) {
       </div>
     </Drawer>}
     {appDialog}
+    <Companion
+      companion={companion}
+      busy={busy}
+      statusText={statusText}
+      listening={listening}
+      model={model}
+      allModels={allModels}
+      assistants={assistants}
+      assistantId={assistantId}
+      onSend={(text) => sendMessage(text)}
+      onSetModel={setModel}
+      onNewChat={startNewChat}
+      onOpenDeveloper={() => setDeveloperOpen(true)}
+      onOpenAssistants={openStudioNew}
+      showToast={showToast}
+    />
   </div>;
 }
