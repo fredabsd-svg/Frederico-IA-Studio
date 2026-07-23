@@ -17,10 +17,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# 1) Torch CPU-only (evita puxar pacotes CUDA gigantes).
-RUN pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu
+# 0) pip novo é OBRIGATÓRIO: o resolvedor antigo estoura com a árvore de
+#    dependências do Docling (pip ... ResolutionTooDeep: 200000). O pip atual
+#    resolve isso sem backtracking infinito.
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
-# 2) Docling + API.
+# 1) Docling + torch CPU numa ÚNICA resolução (caminho oficial CPU do Docling).
+#    Fazer em passos separados (torch e depois docling) era o que disparava o
+#    backtracking. O --extra-index-url traz os wheels CPU do torch.
+# docling 2.115.0: resolução validada (dry-run) com os wheels CPU do torch —
+# sem o ResolutionTooDeep que a 2.14.0 causava.
+RUN pip install --no-cache-dir "docling==2.115.0" \
+      --extra-index-url https://download.pytorch.org/whl/cpu
+
+# 2) API do serviço (pins frouxos: reusa o que o Docling já trouxe).
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
