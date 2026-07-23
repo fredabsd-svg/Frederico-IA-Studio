@@ -35,6 +35,7 @@ import backupRouter from './routes/backup.js';
 import cacheRouter from './routes/cache.js';
 import modelTeamsRouter from './routes/modelTeams.js';
 import companionRouter from './routes/companion.js';
+import doclingRouter from './routes/docling.js';
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -142,6 +143,7 @@ app.use('/api', backupRouter);
 app.use('/api', cacheRouter);
 app.use('/api', modelTeamsRouter);
 app.use('/api', companionRouter);
+app.use('/api', doclingRouter);
 
 // LGPD — retenção automática: com CONVERSATION_RETENTION_DAYS > 0, apaga
 // conversas paradas há mais de N dias (varredura a cada 6 h; desligada por padrão).

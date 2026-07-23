@@ -17,6 +17,8 @@ import { enforceFreeTierLimits, bumpFreeTierUsage, logFreeTierEvent, freeTierSta
 import { acquireFreeSlot, cancelFreeJob, freeQueueSnapshot } from '../freeQueue.js';
 import { makeRouter, upload, scanOrReject, decodeUploadName, loadAssistant, ensureConversation, enforceDailyLimit, looksLikeFailedAssistantReply } from './helpers.js';
 import { validateAttachmentManifest } from '../attachments.js';
+import { hashBuffer } from '../docling/hash.js';
+import { kickProcessing, mimeForName } from '../docling/service.js';
 
 const router = makeRouter();
 
@@ -121,8 +123,14 @@ router.post('/conversations/:id/upload', upload.array('files'), async (req, res)
     fs.writeFileSync(target, file.buffer);
     try { fs.chownSync(target, 1000, 1000); } catch {}
     const id = nanoid();
-    await db.prepare('INSERT INTO files (id,conversation_id,kind,name,path,size,created_at) VALUES (?,?,?,?,?,?,?)')
-      .run(id, req.params.id, 'upload', original, `uploads/${name}`, file.size, now());
+    // Hash de conteúdo (base do cache/dedup do Docling) e MIME por extensão.
+    const hash = hashBuffer(file.buffer);
+    const mime = file.mimetype && file.mimetype !== 'application/octet-stream' ? file.mimetype : mimeForName(original);
+    await db.prepare('INSERT INTO files (id,conversation_id,kind,name,path,size,hash,mime,created_at) VALUES (?,?,?,?,?,?,?,?,?)')
+      .run(id, req.params.id, 'upload', original, `uploads/${name}`, file.size, hash, mime, now());
+    // Pré-processa com o Docling em segundo plano (se ligado e tipo suportado);
+    // não bloqueia a resposta do upload.
+    kickProcessing({ userId: req.userId, conversationId: req.params.id, fileId: id, filePath: target, filename: original, mime, hash });
     saved.push({ id, name: original, path: `uploads/${name}`, size: file.size });
   }
   res.json({ files: saved, scanned: scan.scanned, rejected: scan.rejected });

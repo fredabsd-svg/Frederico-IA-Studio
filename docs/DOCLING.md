@@ -1,0 +1,117 @@
+# Docling — camada central de compreensão documental
+
+Integra o [Docling](https://github.com/docling-project/docling) como a camada que
+**processa PDFs e documentos uma única vez** (layout, ordem de leitura, tabelas,
+OCR quando necessário), guarda o **JSON completo** como fonte da verdade e envia
+à IA um **Markdown otimizado com referência de página** — em vez de mandar o
+arquivo cru e deixar cada modelo re-extrair.
+
+> **Estado:** Fase 1 (fundação), atrás da flag `DOCLING_ENABLED` (padrão
+> **desligado**). Com a flag desligada, o app se comporta exatamente como antes.
+
+## Por que
+
+Antes, PDFs não eram extraídos no servidor: um aviso em texto instruía o próprio
+modelo a extrair via ferramentas no sandbox. Isso gerava consumo de tokens,
+perda de estrutura, leitura ruim de tabelas, resultados diferentes por modelo e
+reprocessamento a cada pergunta/modelo. A camada Docling resolve isso com um
+**artefato cacheado por hash**, reutilizado por chat, assistentes, modo dev e
+multi-modelo.
+
+## Arquitetura
+
+```
+Upload → hash(sha256) → [cache?] → docling-service (dedicado, offline, rede interna)
+  → JSON completo (fonte da verdade)         ← auditoria/rastreabilidade
+  → Markdown otimizado + chunks (com página) ← enviado à IA
+  → seleção de trechos relevantes            → modelo(s)
+```
+
+- **docling-service/** — serviço FastAPI **dedicado e permanente** (modelos
+  carregados uma vez). Escuta **apenas na rede interna do Docker** (sem `ports`),
+  com **token interno** (`X-Internal-Token`), **fila de concorrência**
+  (semáforo + thread pool), **cache por hash+config**, **timeout**,
+  **cancelamento**, **progresso por estágio**, `/health`, **limites** de
+  tamanho/páginas/memória/CPU, **logs sem conteúdo** e **limpeza de temporários**.
+  Roda **offline**: os modelos (`ds4sd/docling-models`) são pré-baixados no build
+  para um volume (`docling_models`).
+- **backend/src/docling/** — a orquestração em Node (testável e única para todos
+  os modelos):
+  - `hash.js` — sha256 do conteúdo (identidade/cache/dedup).
+  - `config.js` — flag, opções e `configVersion` (invalida o cache).
+  - `runner.js` — cliente HTTP do serviço (enfileira → acompanha → cancela).
+  - `markdown.js` — otimização (remove cabeçalho/rodapé repetido, páginas
+    duplicadas, ruído) **sem descartar conteúdo útil**.
+  - `chunker.js` — chunking **semântico** por seções, tabela inteira preservada,
+    com página/seção/tipo/referência e limite de tokens.
+  - `tokens.js` — estimativa de tokens e cálculo de economia.
+  - `service.js` — `processFile()` idempotente por (user, hash, config): cache →
+    serviço → otimização → chunks → persistência + métricas.
+  - `context.js` — monta o conteúdo (Markdown/chunks relevantes com página) que é
+    injetado no modelo; **null** quando desligado/sem documento (→ fluxo atual).
+- **Banco:** `files` ganhou `hash`/`mime`; `document_processings` guarda o cache
+  (status, engine, OCR, páginas, tabelas, caminhos de JSON/MD/chunks, métricas).
+- **Pontos de integração** (mínimo impacto):
+  - upload (`routes/conversations.js`): calcula hash+mime e dispara o
+    processamento em segundo plano.
+  - agente (`agent/loop.js`): injeta o conteúdo pré-extraído quando houver;
+    senão, mantém o comportamento atual (fallback, sem regressão).
+  - rotas (`routes/docling.js`): status, resultados, Markdown/JSON/chunks,
+    reprocessar.
+  - UI (`DoclingPanel` + `useDocling`): andamento e estatísticas no drawer de
+    arquivos.
+
+## Como ligar
+
+1. Gere um token interno: `openssl rand -hex 32` → `DOCLING_INTERNAL_TOKEN`.
+2. No `.env`: `DOCLING_ENABLED=true` e o token acima.
+3. O `docling-service` fica atrás do **profile `docling`** do compose (para não
+   forçar o build pesado — torch + modelos — em quem não usa). Suba com o profile:
+   `docker compose --profile docling up -d --build`
+   (o build baixa os modelos — precisa de rede **no build**; em runtime roda
+   offline). Em produção: `docker compose -f docker-compose.prod.yml --profile docling up -d --build`.
+4. Verifique a saúde: o backend expõe `GET /api/docling/status` (mostra
+   `health.models_loaded`).
+
+> Com `DOCLING_ENABLED=false` (padrão) ou sem subir o profile `docling`, o app
+> funciona normalmente pelo método atual — a integração fica inerte.
+
+## Multi-modelo
+
+Como a extração vira artefato cacheado, **todos os modelos recebem a mesma
+extração** (mesmo Markdown, mesmas tabelas, mesmas referências de página) — nada
+de re-extrair por modelo. Um segundo modelo revisor recebe os trechos usados + a
+resposta do primeiro + as referências de página.
+
+## Segurança e LGPD
+
+Processamento na própria infraestrutura (serviço interno, sem porta pública, sem
+rede em runtime). O JSON completo e os artefatos ficam no volume do backend
+(`DOCLING_CACHE_ROOT`), isolados por usuário no caminho. Logs do serviço não
+registram conteúdo. Excluir a conversa remove os arquivos originais; a limpeza
+dos artefatos derivados por retenção entra numa fase seguinte.
+
+## O que falta (próximas fases)
+
+- OCR por página (parcialmente digitalizado) e reprocesso com outro mecanismo.
+- Tabelas → validação de linhas/colunas, exportação CSV, células mescladas.
+- Imagens/gráficos/assinaturas → handoff para modelo com visão + referência.
+- Seleção de chunks por embeddings (reusando a infra de RAG já existente).
+- Painel administrativo completo e taxonomia de falhas na UI.
+- Retenção/expiração automática dos artefatos derivados.
+
+## Matriz de testes (critério de aceite)
+
+Validar no ambiente com `DOCLING_ENABLED=true`, comparando conteúdo extraído vs.
+original, nº de páginas, tabelas, referências de página, tokens antes/depois,
+tempo e memória:
+
+- PDF simples com texto · PDF digitalizado (OCR) · várias colunas · tabelas
+  extensas · balanço patrimonial · DRE · relatório fiscal · Receita Federal ·
+  PGFN · extrato bancário · documento com gráficos · orientações diferentes ·
+  parcialmente ilegível · protegido por senha · centenas de páginas · páginas
+  duplicadas.
+
+Os módulos puros (hash, otimização de Markdown, chunking, seleção de trechos,
+tokens, `configVersion`) têm testes automatizados em
+`backend/src/docling/docling.test.js`.

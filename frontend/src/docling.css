@@ -1,0 +1,47 @@
+/* Painel de compreensão documental (Docling) no drawer de arquivos. */
+.doclingPanel {
+  margin-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.doclingHead {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 600; color: #8b96af; text-transform: uppercase; letter-spacing: 0.04em;
+}
+.doclingDoc {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px; padding: 10px 12px; background: rgba(255, 255, 255, 0.03);
+}
+.doclingDoc.status-failed { border-color: rgba(239, 68, 68, 0.35); }
+.doclingDoc.status-done_warnings, .doclingDoc.status-partial { border-color: rgba(240, 163, 64, 0.35); }
+.doclingDocTop { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.doclingName { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: #eef2fb; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doclingStatus { font-size: 11.5px; color: #9aa5bd; white-space: nowrap; }
+.doclingStage { font-size: 12px; color: #9fd0ff; margin-top: 6px; }
+.doclingStats { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; font-size: 12px; color: #b8c2d8; }
+.doclingStats span { display: inline-flex; align-items: center; gap: 4px; }
+.doclingTokens { font-size: 11.5px; color: #8b96af; margin-top: 4px; }
+.doclingTokens strong { color: #22c55e; }
+.doclingActions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+.doclingActions button, .doclingActions a {
+  display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
+  font-size: 12px; padding: 5px 10px; border-radius: 7px; text-decoration: none;
+  background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.1); color: #cdd6ea;
+}
+.doclingActions button:hover, .doclingActions a:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
+.doclingError { font-size: 12px; color: #f2b8b8; margin-top: 8px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.doclingError button { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; font-size: 11.5px; padding: 4px 9px; border-radius: 6px; background: rgba(255, 255, 255, 0.08); border: none; color: #cdd6ea; }
+
+.doclingMdModal { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.6); z-index: 1400; display: flex; align-items: center; justify-content: center; padding: 24px; }
+.doclingMdBox { background: #0f1522; border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 12px; width: min(820px, 100%); max-height: 82vh; display: flex; flex-direction: column; overflow: hidden; }
+.doclingMdHead { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); font-weight: 600; color: #eef2fb; font-size: 14px; }
+.doclingMdHead button { cursor: pointer; background: rgba(255, 255, 255, 0.08); border: none; color: #cdd6ea; padding: 5px 12px; border-radius: 7px; font-size: 12px; }
+.doclingMdBox pre { margin: 0; padding: 16px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-size: 12.5px; line-height: 1.5; color: #c8d2e6; }
+
+@media (prefers-color-scheme: light) {
+  .app.theme-light .doclingMdBox { background: #fff; }
+  .app.theme-light .doclingMdBox pre { color: #1e293b; }
+}

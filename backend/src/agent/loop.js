@@ -26,6 +26,7 @@ import { saveCheckpoint, clearCheckpoint, isResumableReason, buildResumeMessages
 import { untrustedContext } from './promptRegistry.js';
 import { emitExecutionState, finalExecutionState } from './executionState.js';
 import { explicitlyAuthorizesSandboxNetwork, isToolCallAllowed } from './assistantPolicy.js';
+import { buildDocumentContext } from '../docling/context.js';
 
 export function explicitlyAuthorizesGitWrite(text) {
   const value = String(text || '');
@@ -129,6 +130,16 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   if (lowSignalTurn) requestedTools = [];
 
   const uploadNoteForRun = !lowSignalTurn ? uploadsNote(conversationId) : null;
+  // Docling: quando ligado e houver documentos já processados nesta conversa,
+  // injeta o CONTEÚDO pré-extraído (Markdown otimizado / chunks relevantes com
+  // página) — mesma extração para todos os modelos, sem re-extrair por modelo.
+  // Se estiver desligado ou nada tiver sido processado, docContext é null e o
+  // fluxo segue idêntico ao atual (fallback, sem regressão).
+  let docContext = null;
+  if (!lowSignalTurn) {
+    try { docContext = await buildDocumentContext(userId, conversationId, { query: userText }); }
+    catch (e) { console.error('[docling] contexto falhou:', e.message); }
+  }
 
   const modelPlanInput = () => ({
     modelId: chosenModel,
@@ -248,6 +259,7 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
     if (cleanMemory) messages.push({ role: 'user', content: untrustedContext('memory-fallback', cleanMemory) });
   }
   if (uploadNoteForRun) messages.push({ role: 'system', content: uploadNoteForRun });
+  if (docContext?.note) messages.push({ role: 'user', content: untrustedContext('document-content', docContext.note) });
   const pcNote = pcFoldersNote(sandboxOptions);
   if (pcNote) messages.push({ role: 'system', content: pcNote });
   const historyPlan = await selectHistoryForContext({
