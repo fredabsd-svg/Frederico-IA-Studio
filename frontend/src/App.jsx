@@ -222,7 +222,10 @@ export default function App({ user } = {}) {
   });
   // Frederico Companion — camada de experiência (personagem flutuante). Recebe
   // as tarefas para a detecção proativa (tarefas que falham viram alertas).
-  const companion = useCompanion({ tasks, showToast });
+  // Conversa de desenvolvimento ativa (para o monitoramento de Git do Companion):
+  // a sessão do modo dev, ou a conversa aberta quando o workspace é o "developer".
+  const devConversationId = developerSession?.conversationId || (workspace === 'developer' ? current?.id : null) || null;
+  const companion = useCompanion({ tasks, devConversationId, showToast });
 
   function changeMultiModel(next) {
     setMultiModel(next);

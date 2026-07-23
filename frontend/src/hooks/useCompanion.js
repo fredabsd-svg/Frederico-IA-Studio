@@ -21,7 +21,7 @@ const DEFAULTS = {
   proactiveAlerts: true,
 };
 
-export function useCompanion({ tasks = [], showToast } = {}) {
+export function useCompanion({ tasks = [], devConversationId = null, showToast } = {}) {
   const [settings, setSettings] = useState(DEFAULTS);
   const [persona, setPersona] = useState(null);
   const [events, setEvents] = useState([]);
@@ -45,6 +45,50 @@ export function useCompanion({ tasks = [], showToast } = {}) {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Recarrega só a lista de eventos (poll leve) para refletir os alertas que o
+  // monitoramento do backend cria de forma assíncrona.
+  const refreshEvents = useCallback(async () => {
+    try {
+      const res = await fetch(`${API}/api/companion/events`);
+      if (!res.ok) return;
+      const rows = await res.json();
+      if (Array.isArray(rows)) setEvents(rows);
+    } catch { /* silencioso */ }
+  }, []);
+
+  // Poll dos eventos enquanto o Companion está ativo (barato: só GET). Para
+  // quando desativado para não bater no servidor à toa.
+  useEffect(() => {
+    if (!settings.enabled) return;
+    const id = setInterval(refreshEvents, 45_000);
+    return () => clearInterval(id);
+  }, [settings.enabled, refreshEvents]);
+
+  // Monitoramento de Git: enquanto há uma conversa de desenvolvimento ativa e o
+  // modo permite intervir, verifica periodicamente se há alterações sem commit /
+  // commits sem push. O backend cuida da deduplicação (não repete o alerta).
+  useEffect(() => {
+    const s = settingsRef.current;
+    const canWatch = s.enabled && s.proactiveAlerts && ['auxiliar', 'proativo'].includes(s.mode);
+    if (!canWatch || !devConversationId) return;
+    let stopped = false;
+    async function tick() {
+      try {
+        const res = await fetch(`${API}/api/companion/monitor/git`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ conversationId: devConversationId }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.event && !stopped) setEvents(prev => [data.event, ...prev.filter(e => e.id !== data.event.id)]);
+        }
+      } catch { /* silencioso */ }
+    }
+    const first = setTimeout(tick, 8_000); // dá tempo do sandbox/clonagem
+    const id = setInterval(tick, 90_000);
+    return () => { stopped = true; clearTimeout(first); clearInterval(id); };
+  }, [devConversationId, settings.enabled, settings.mode, settings.proactiveAlerts]);
 
   // Salva a configuração (merge otimista + persistência). Devolve a persona
   // resolvida pelo servidor para refletir troca de assistente na hora.
@@ -135,6 +179,6 @@ export function useCompanion({ tasks = [], showToast } = {}) {
 
   return {
     settings, persona, events, options, ready,
-    saveSettings, addEvent, dismissEvent, resolveEvent, dismissAll, reload: load,
+    saveSettings, addEvent, dismissEvent, resolveEvent, dismissAll, reload: load, refreshEvents,
   };
 }

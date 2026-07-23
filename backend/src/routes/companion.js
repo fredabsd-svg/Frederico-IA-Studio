@@ -7,16 +7,17 @@
 //     proposta): origem, data/hora, projeto, importância, dados enviados,
 //     ação proposta, autorização necessária e resultado.
 // A inteligência continua sendo o núcleo do Studio — o Companion só o consome.
-import { nanoid } from 'nanoid';
 import { db, now } from '../db.js';
 import { makeRouter, loadAssistant, safeParse } from './helpers.js';
+import { isConversationId } from '../sandbox.js';
+import { createEvent, serializeEvent } from '../companion/events.js';
+import { checkGit, ingestLogs } from '../companion/monitor.js';
 
 const router = makeRouter();
 
 // Valores possíveis (fonte única de verdade — o front espelha estes).
 const MODES = ['silencioso', 'auxiliar', 'proativo', 'foco', 'apresentacao'];
 const ANIMATION_LEVELS = ['completo', 'reduzido', 'nenhum'];
-const EVENT_LEVELS = ['info', 'aviso', 'critico'];
 const EVENT_STATUS = ['novo', 'visto', 'dispensado', 'resolvido'];
 const CHARACTER_PRESETS = ['Luma', 'Clara', 'Pixel', 'Nova', 'Nexo', 'Fred', 'Echo'];
 
@@ -73,14 +74,8 @@ async function resolvePersona(userId, settings) {
   return a ? { id: a.id, name: a.name, emoji: a.emoji, color: a.color, model: a.model } : null;
 }
 
-function serializeEvent(e) {
-  return {
-    id: e.id, kind: e.kind, level: e.level, title: e.title, detail: e.detail,
-    origin: e.origin, project: e.project, dataSent: e.data_sent,
-    proposedAction: e.proposed_action, authorization: e.authorization,
-    result: e.result, status: e.status, createdAt: e.created_at, updatedAt: e.updated_at,
-  };
-}
+// serializeEvent/createEvent vivem em ../companion/events.js (compartilhados
+// com o monitoramento).
 
 // ---- Configuração ----------------------------------------------------------
 
@@ -126,20 +121,7 @@ router.get('/companion/events', async (req, res) => {
 router.post('/companion/events', async (req, res) => {
   const b = req.body || {};
   if (!b.title || !String(b.title).trim()) return res.status(400).json({ error: 'title é obrigatório' });
-  const id = nanoid();
-  const t = now();
-  await db.prepare(
-    `INSERT INTO companion_events
-     (id,user_id,kind,level,title,detail,origin,project,data_sent,proposed_action,authorization,result,status,created_at,updated_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
-  ).run(
-    id, req.userId, str(b.kind, 60) || 'geral', pick(b.level, EVENT_LEVELS, 'info'),
-    str(b.title, 200), str(b.detail, 4000), str(b.origin, 60) || 'app', str(b.project, 200),
-    str(b.dataSent, 4000), str(b.proposedAction, 2000), str(b.authorization, 60), str(b.result, 4000),
-    'novo', t, t,
-  );
-  const row = await db.prepare('SELECT * FROM companion_events WHERE id=? AND user_id=?').get(id, req.userId);
-  res.json(serializeEvent(row));
+  res.json(await createEvent(req.userId, b));
 });
 
 // Atualiza o status de um evento (marcar como visto/dispensado/resolvido) e,
@@ -161,6 +143,32 @@ router.post('/companion/events/dismiss-all', async (req, res) => {
   await db.prepare(`UPDATE companion_events SET status='dispensado', updated_at=? WHERE user_id=? AND status IN ('novo','visto')`)
     .run(now(), req.userId);
   res.json({ ok: true });
+});
+
+// ---- Monitoramento (Fase 2: Companion de desenvolvimento) -------------------
+
+// Verifica o Git do workspace da conversa e devolve o resumo (branch, arquivos
+// alterados, ahead/behind). Quando o modo permite, cria o alerta de "sem commit"
+// / "sem push" (uma única vez, sem repetir a cada ciclo). O front chama isto
+// periodicamente enquanto há um projeto de desenvolvimento ativo.
+router.post('/companion/monitor/git', async (req, res) => {
+  const conversationId = String(req.body?.conversationId || '');
+  if (!isConversationId(conversationId)) return res.status(400).json({ error: 'conversationId inválido' });
+  const settings = await readSettings(req.userId);
+  const { status, event } = await checkGit(req.userId, conversationId, { settings, project: req.body?.project });
+  res.json({ status, event });
+});
+
+// Ingestão de linhas de log/erro para detecção de erros recorrentes. As linhas
+// são normalizadas em assinaturas e, ao cruzarem o limiar, viram alerta. Feita
+// sob demanda pelo front (ex.: saída do terminal do modo dev) — no futuro, pelo
+// agente local.
+router.post('/companion/monitor/logs', async (req, res) => {
+  const b = req.body || {};
+  const lines = Array.isArray(b.lines) ? b.lines.slice(0, 500) : (b.line ? [b.line] : []);
+  const settings = await readSettings(req.userId);
+  const events = await ingestLogs(req.userId, { source: b.source, project: b.project, lines }, { settings });
+  res.json({ created: events.length, events });
 });
 
 export default router;

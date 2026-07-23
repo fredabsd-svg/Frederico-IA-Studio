@@ -58,12 +58,38 @@ e o modelo/provedor é escolhido livremente pelo usuário.
 - Montado em `frontend/src/App.jsx`, recebendo o estado ao vivo (`busy`,
   `statusText`, `listening`, `model`, `assistants`, `tasks`) e os atalhos.
 
-## Próximas fases (roadmap)
+## Fase 2 — Companion de desenvolvimento (em andamento)
 
-- **Fase 2 — Companion de desenvolvimento**: agente local (logs, Docker,
-  terminal, Git, GitHub, testes) alimentando `companion_events`; fluxo
-  Debugger Companion (detectar → explicar → planejar → autorizar → executar →
-  testar → apresentar).
+Primeiro corte: **monitoramento (awareness)**. O backend passa a transformar
+sinais reais que já enxerga em eventos/alertas, respeitando o modo de
+comportamento e a deduplicação (não repete o mesmo alerta a cada ciclo):
+
+- **Git** — `POST /api/companion/monitor/git` roda `git status` no sandbox da
+  conversa e cria alertas de *alterações sem commit* e *commits sem push*
+  («Você alterou 7 arquivos mas ainda não fez commit»). O front verifica
+  periodicamente enquanto há uma conversa de desenvolvimento ativa.
+- **Erros recorrentes** — `POST /api/companion/monitor/logs` recebe linhas de
+  log, normaliza cada uma numa assinatura estável (ignorando timestamps,
+  números, ids, caminhos) e alerta quando a mesma assinatura cruza o limiar
+  dentro de uma janela («O mesmo erro apareceu 5 vezes»).
+
+Novos módulos:
+- `backend/src/companion/events.js` — criação/serialização/deduplicação de
+  eventos (compartilhado entre a rota e o monitoramento).
+- `backend/src/companion/errorDigest.js` — detecção pura de erros recorrentes
+  (com testes).
+- `backend/src/companion/monitor.js` — `checkGit`/`inspectGit`/`parseGitStatus`
+  e `ingestLogs` (com testes de parsing e de política de modo).
+- Endpoints `POST /api/companion/monitor/git` e `.../logs`.
+- Frontend: `useCompanion` faz o poll dos eventos e do Git da conversa ativa.
+
+Próximos cortes da Fase 2:
+- Saúde de containers Docker → alertas de "aplicação fora do ar".
+- Fluxo **Debugger Companion** (detectar → explicar → planejar → autorizar →
+  executar → testar → apresentar diff), começando pelo botão "Investigar" de
+  um alerta de erro recorrente.
+- Agente local dedicado (Node.js) coletando os sinais autorizados fora do
+  sandbox.
 - **Fase 3 — Voz e contexto**: fala/escuta, contexto da janela ativa, captura de
   tela sob demanda.
 - **Fase 4 — Personalização e multiassistentes**: vários personagens, temas,
