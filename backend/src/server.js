@@ -36,6 +36,7 @@ import cacheRouter from './routes/cache.js';
 import modelTeamsRouter from './routes/modelTeams.js';
 import companionRouter from './routes/companion.js';
 import doclingRouter from './routes/docling.js';
+import { sweepExpiredArtifacts, RETENTION_DAYS as DOCLING_RETENTION_DAYS } from './docling/retention.js';
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -156,6 +157,13 @@ if (CONVERSATION_RETENTION_DAYS > 0) {
 if (USAGE_RETENTION_DAYS > 0) {
   setInterval(() => sweepOldUsage().catch(e => console.error('[retenção-uso]', e.message)), 24 * 60 * 60 * 1000).unref();
   setTimeout(() => sweepOldUsage().catch(e => console.error('[retenção-uso]', e.message)), 90 * 1000).unref();
+}
+// Retenção dos artefatos DERIVADOS do Docling (JSON/Markdown/chunks/figuras).
+// Só os derivados (reprocessáveis) — nunca os arquivos originais do usuário.
+// DOCLING_RETENTION_DAYS=0 (padrão) desliga.
+if (DOCLING_RETENTION_DAYS > 0) {
+  setInterval(() => sweepExpiredArtifacts().catch(e => console.error('[docling-retenção]', e.message)), 24 * 60 * 60 * 1000).unref();
+  setTimeout(() => sweepExpiredArtifacts().catch(e => console.error('[docling-retenção]', e.message)), 120 * 1000).unref();
 }
 
 // Catálogo de modelos: sincronização automática pelo menos 1x/dia (checa modelos

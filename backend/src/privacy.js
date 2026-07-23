@@ -16,6 +16,7 @@ import { nanoid } from 'nanoid';
 import { db, now } from './db.js';
 import { destroyConversation } from './sandbox.js';
 import { isConversationActive } from './agent.js';
+import { purgeOrphansForHashes } from './docling/retention.js';
 
 // Versão vigente dos Termos de Uso + Política de Privacidade. Ao alterar os
 // documentos de forma relevante, mude esta data: todos os usuários verão o
@@ -41,6 +42,9 @@ export async function recordConsent(userId, { ip = null, userAgent = null } = {}
 // trechos indexados, memórias extraídas automaticamente, tarefas associadas e
 // o workspace em disco (container + uploads + outputs).
 export async function deleteConversationDeep(userId, conversationId) {
+  // Coleta os hashes dos arquivos ANTES do cascade, para limpar os derivados do
+  // Docling que não forem mais referenciados por nenhum arquivo do usuário.
+  const hashes = (await db.prepare('SELECT DISTINCT hash FROM files WHERE conversation_id=? AND hash IS NOT NULL').all(conversationId)).map(r => r.hash);
   await db.prepare('DELETE FROM conversations WHERE id=? AND user_id=?').run(conversationId, userId); // cascade: messages + files
   await db.prepare('DELETE FROM conversation_chunks WHERE conversation_id=? AND user_id=?').run(conversationId, userId);
   await db.prepare("DELETE FROM memory WHERE source_type='auto' AND source_id=? AND user_id=?").run(conversationId, userId);
@@ -51,6 +55,7 @@ export async function deleteConversationDeep(userId, conversationId) {
   // Sem isto, uma tarefa na fila recriaria a conversa apagada ao ser executada.
   await db.prepare("DELETE FROM tasks WHERE conversation_id=? AND user_id=? AND status<>'running'").run(conversationId, userId);
   await destroyConversation(conversationId); // remove container e pasta do workspace
+  try { await purgeOrphansForHashes(userId, hashes); } catch {} // LGPD: derivados do Docling
 }
 
 // ---- Apagar todo o histórico de conversas do usuário ----

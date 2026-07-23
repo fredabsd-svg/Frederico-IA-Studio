@@ -1104,7 +1104,7 @@ export default function App({ user } = {}) {
           </div>;
         })}
       </div>
-      {docling.enabled && <DoclingPanel docs={docling.docs} onReprocess={docling.reprocess} isAdmin={docling.isAdmin} config={docling.config} health={docling.health} onSaveConfig={docling.saveConfig} />}
+      {docling.enabled && <DoclingPanel docs={docling.docs} onReprocess={docling.reprocess} onPurge={docling.purge} isAdmin={docling.isAdmin} config={docling.config} health={docling.health} onSaveConfig={docling.saveConfig} />}
     </Drawer>}
 
     {toast && <div className={`toast ${toast.kind || 'err'}`} role="alert">{toast.text}<button onClick={() => setToast(null)} aria-label="Fechar aviso"><X size={14}/></button></div>}

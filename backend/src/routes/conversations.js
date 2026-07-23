@@ -19,6 +19,7 @@ import { makeRouter, upload, scanOrReject, decodeUploadName, loadAssistant, ensu
 import { validateAttachmentManifest } from '../attachments.js';
 import { hashBuffer } from '../docling/hash.js';
 import { kickProcessing, mimeForName } from '../docling/service.js';
+import { purgeIfOrphan } from '../docling/retention.js';
 
 const router = makeRouter();
 
@@ -161,8 +162,13 @@ router.delete('/conversations/:id/files/*', async (req, res) => {
   const rel = req.params[0];
   const target = path.resolve(ws.base, rel);
   if (!insideBase(ws.base, target) || !realInside(ws.base, target)) return res.status(400).json({ error: 'Caminho inválido' });
+  // Guarda o hash ANTES de apagar, para limpar os derivados do Docling depois.
+  const gone = await db.prepare('SELECT hash FROM files WHERE conversation_id=? AND path=?').get(req.params.id, rel.replaceAll('\\', '/'));
   try { fs.rmSync(target, { force: true }); } catch {}
   await db.prepare('DELETE FROM files WHERE conversation_id=? AND path=?').run(req.params.id, rel.replaceAll('\\', '/'));
+  // LGPD: se o usuário não tem mais nenhum arquivo com esse conteúdo, apaga os
+  // artefatos derivados (JSON/Markdown/chunks/embeddings/figuras).
+  if (gone?.hash) { try { await purgeIfOrphan(req.userId, gone.hash); } catch {} }
   res.json({ ok: true });
 });
 

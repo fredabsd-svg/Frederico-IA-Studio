@@ -32,6 +32,7 @@
   background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.1); color: #cdd6ea;
 }
 .doclingActions button:hover, .doclingActions a:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
+.doclingActions .doclingPurge:hover { background: rgba(239, 68, 68, 0.18); color: #fca5a5; }
 .doclingTables { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
 .doclingTablesEmpty { font-size: 12px; color: #8b96af; }
 .doclingTableRow { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; color: #b8c2d8; padding: 5px 8px; border-radius: 6px; background: rgba(255, 255, 255, 0.03); }

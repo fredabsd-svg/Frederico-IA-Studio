@@ -19,10 +19,10 @@ import { summarizeTables } from './tables.js';
 import { chunkEmbedText } from './semantic.js';
 import { embed, embeddingsDegraded } from '../memory/embeddings.js';
 
-function cacheRoot() {
+export function cacheRoot() {
   return process.env.DOCLING_CACHE_ROOT || path.resolve(process.env.WORKSPACE_ROOT || './workspaces', '..', 'docling-cache');
 }
-function artifactDir(userId, hash, cfg) {
+export function artifactDir(userId, hash, cfg) {
   return path.join(cacheRoot(), String(userId), `${hash}_${cfg}`);
 }
 
