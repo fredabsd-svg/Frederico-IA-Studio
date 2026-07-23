@@ -14,6 +14,7 @@ import { runDocling } from './runner.js';
 import { optimizeMarkdown } from './markdown.js';
 import { chunkMarkdown } from './chunker.js';
 import { estimateTokens, savings } from './tokens.js';
+import { summarizeTables } from './tables.js';
 
 function cacheRoot() {
   return process.env.DOCLING_CACHE_ROOT || path.resolve(process.env.WORKSPACE_ROOT || './workspaces', '..', 'docling-cache');
@@ -140,14 +141,21 @@ export async function processFile({ userId, conversationId, fileId, filePath, fi
     fs.writeFileSync(path.join(dir, 'optimized.md'), markdown, 'utf8');
     fs.writeFileSync(path.join(dir, 'chunks.json'), JSON.stringify(chunks), 'utf8');
 
-    const warnings = Array.isArray(result.warnings) ? result.warnings : [];
+    // Valida a coerência das tabelas extraídas (linhas/colunas/cabeçalho).
+    const tableSummary = summarizeTables(chunks);
+    const warnings = Array.isArray(result.warnings) ? [...result.warnings] : [];
+    if (tableSummary.withWarnings > 0) {
+      warnings.push(`${tableSummary.withWarnings} tabela(s) com possível inconsistência de estrutura.`);
+    }
     const status = result.status && result.status !== 'done'
       ? result.status
       : (warnings.length ? 'done_warnings' : 'done');
 
     const stats = {
       pages: result.page_count ?? report.pages,
-      tables: result.table_count ?? chunks.filter(c => c.type === 'table').length,
+      tables: tableSummary.count || (result.table_count ?? 0),
+      tablesWithWarnings: tableSummary.withWarnings,
+      tableDetails: tableSummary.details,
       ocrUsed: !!result.ocr_used,
       chunks: chunks.length,
       tokensOriginal: tokenOriginal,
@@ -162,7 +170,7 @@ export async function processFile({ userId, conversationId, fileId, filePath, fi
       user_id: userId, conversation_id: conversationId, file_id: fileId, hash, mime, filename,
       config_version: cfg, engine: 'docling', status,
       ocr_used: !!result.ocr_used, page_count: result.page_count ?? report.pages,
-      table_count: stats.tables, json_path: path.join(dir, 'document.json'),
+      table_count: tableSummary.count, json_path: path.join(dir, 'document.json'),
       md_path: path.join(dir, 'optimized.md'), chunks_path: path.join(dir, 'chunks.json'),
       stats: JSON.stringify(stats), token_original: tokenOriginal, token_optimized: tokenOptimized,
       warnings: warnings.length ? JSON.stringify(warnings) : null, error: null,

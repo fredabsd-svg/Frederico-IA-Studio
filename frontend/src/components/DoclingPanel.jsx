@@ -25,7 +25,8 @@ function StatusIcon({ status }) {
 }
 
 export function DoclingPanel({ docs = [], onReprocess }) {
-  const [openMd, setOpenMd] = useState(null); // { id, text }
+  const [openMd, setOpenMd] = useState(null);   // { id, text }
+  const [tables, setTables] = useState(null);   // { id, list }
   if (!docs.length) return null;
 
   async function viewMarkdown(id) {
@@ -34,6 +35,14 @@ export function DoclingPanel({ docs = [], onReprocess }) {
       const text = r.ok ? await r.text() : 'Markdown indisponível.';
       setOpenMd({ id, text });
     } catch { setOpenMd({ id, text: 'Erro ao carregar.' }); }
+  }
+
+  async function viewTables(id) {
+    if (tables?.id === id) { setTables(null); return; }
+    try {
+      const r = await fetch(`${API}/api/docling/documents/${encodeURIComponent(id)}/tables`);
+      setTables({ id, list: r.ok ? await r.json() : [] });
+    } catch { setTables({ id, list: [] }); }
   }
 
   return (
@@ -56,7 +65,7 @@ export function DoclingPanel({ docs = [], onReprocess }) {
               <>
                 <div className="doclingStats">
                   <span title="Páginas"><FileText size={12} /> {d.pageCount ?? st.pages ?? '?'} pág.</span>
-                  <span title="Tabelas"><Table size={12} /> {d.tableCount ?? st.tables ?? 0} tab.</span>
+                  <span title="Tabelas"><Table size={12} /> {d.tableCount ?? st.tables ?? 0} tab.{st.tablesWithWarnings > 0 ? ` (${st.tablesWithWarnings} alerta)` : ''}</span>
                   {d.ocrUsed && <span title="OCR aplicado"><ScanLine size={12} /> OCR</span>}
                   {typeof st.savedPercent === 'number' && (
                     <span title="Economia de tokens vs. conteúdo integral"><Coins size={12} /> −{st.savedPercent}% tokens</span>
@@ -69,9 +78,21 @@ export function DoclingPanel({ docs = [], onReprocess }) {
                 )}
                 <div className="doclingActions">
                   <button onClick={() => viewMarkdown(d.id)}><FileText size={13} /> Markdown</button>
+                  {(d.tableCount ?? st.tables ?? 0) > 0 && <button onClick={() => viewTables(d.id)}><Table size={13} /> Tabelas</button>}
                   <a href={`${API}/api/docling/documents/${encodeURIComponent(d.id)}/json`} target="_blank" rel="noreferrer"><Braces size={13} /> JSON</a>
                   <button onClick={() => onReprocess?.(d.id)}><RefreshCw size={13} /> Reprocessar</button>
                 </div>
+                {tables?.id === d.id && (
+                  <div className="doclingTables">
+                    {!tables.list.length && <div className="doclingTablesEmpty">Nenhuma tabela detalhada.</div>}
+                    {tables.list.map(tb => (
+                      <div key={tb.index} className={`doclingTableRow ${tb.ok ? '' : 'warn'}`}>
+                        <span>Tabela {tb.index} · pág. {tb.page} · {tb.rows}×{tb.cols}{tb.ok ? '' : ' · ⚠ inconsistente'}</span>
+                        <a href={`${API}/api/docling/documents/${encodeURIComponent(d.id)}/tables/${tb.index}/csv`} target="_blank" rel="noreferrer">CSV</a>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </>
             )}
 

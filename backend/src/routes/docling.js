@@ -7,6 +7,7 @@ import { makeRouter } from './helpers.js';
 import { isDoclingEnabled, doclingOptions } from '../docling/config.js';
 import { doclingHealth } from '../docling/runner.js';
 import { getProcessingById, listProcessingsForConversation, readArtifacts, kickProcessing, mimeForName } from '../docling/service.js';
+import { summarizeTables, tableToCsv } from '../docling/tables.js';
 import { workspaceFor } from '../sandbox.js';
 import path from 'node:path';
 
@@ -45,6 +46,29 @@ router.get('/docling/documents/:id/chunks', async (req, res) => {
   if (!row) return res.status(404).json({ error: 'Não encontrado' });
   const arts = readArtifacts(req.userId, row.hash, row.configVersion);
   res.json(arts.chunks || []);
+});
+
+// Tabelas identificadas (com página/seção e validação de coerência).
+router.get('/docling/documents/:id/tables', async (req, res) => {
+  const row = await getProcessingById(req.userId, req.params.id);
+  if (!row) return res.status(404).json({ error: 'Não encontrado' });
+  const arts = readArtifacts(req.userId, row.hash, row.configVersion);
+  res.json(summarizeTables(arts.chunks || []).details);
+});
+
+// Exporta UMA tabela como CSV (download). O índice vem de summarizeTables/chunks.
+router.get('/docling/documents/:id/tables/:index/csv', async (req, res) => {
+  const row = await getProcessingById(req.userId, req.params.id);
+  if (!row) return res.status(404).json({ error: 'Não encontrado' });
+  const arts = readArtifacts(req.userId, row.hash, row.configVersion);
+  const idx = Number(req.params.index);
+  const tables = (arts.chunks || []).filter(c => c.type === 'table');
+  const table = tables.find((c, i) => (c.tableIndex ?? i + 1) === idx);
+  if (!table) return res.status(404).json({ error: 'Tabela não encontrada' });
+  const csv = tableToCsv(table.content);
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="tabela_${idx}.csv"`);
+  res.send('﻿' + csv); // BOM para o Excel abrir acentos corretamente
 });
 
 // JSON completo do Docling (a "fonte da verdade" — para auditoria/reprocesso).
