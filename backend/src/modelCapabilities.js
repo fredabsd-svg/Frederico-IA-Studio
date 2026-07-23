@@ -30,6 +30,14 @@ function capabilityValue(value, fallback) {
   return value === true ? true : value === false ? false : fallback;
 }
 
+// Faixa plausível de preço por TOKEN em USD: de 0 a 0.001 ($1.000 por 1M — os
+// modelos de fronteira mais caros ficam em ~$180/1M). Fora disso é sentinela
+// (-1 = "variável" no OpenRouter) ou unidade errada → null (não confirmado).
+export function sanePricePerToken(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 && n <= 0.001 ? n : null;
+}
+
 function declaredCapabilities(value) {
   if (!value || typeof value !== 'object') return null;
   return {
@@ -110,9 +118,18 @@ export function modelProfileFromProvider(model = {}) {
   }
   const parameters = asStringList(model.supported_parameters);
   const pricing = model.pricing || {};
-  const promptPrice = Number(pricing.prompt ?? model.price ?? 0);
-  const completionPrice = Number(pricing.completion ?? 0);
-  const hasPricing = Number.isFinite(Number(pricing.prompt)) || Number.isFinite(Number(pricing.completion)) || typeof model.free === 'boolean';
+  // SANIDADE DE PREÇO (USD por TOKEN). Provedores mandam sentinelas e unidades
+  // erradas: o OpenRouter devolve -1 no roteador automático ("preço variável",
+  // que exibido virava "-$1.000.000/1M"), e um preço por-1M interpretado como
+  // por-token multiplica por um milhão. Valor fora da faixa plausível NUNCA é
+  // exibido: cai para o preço curado (documentação oficial) ou vira
+  // "preço não confirmado".
+  const rawPromptPrice = Number(pricing.prompt ?? model.price);
+  const rawCompletionPrice = Number(pricing.completion);
+  const negativeSentinel = rawPromptPrice < 0 || rawCompletionPrice < 0;
+  const promptSane = sanePricePerToken(rawPromptPrice);
+  const completionSane = sanePricePerToken(rawCompletionPrice);
+  const apiPricingKnown = promptSane != null;
   const apiName = model.name || model.providerModelId || '';
   const apiContext = Number(model.context_length || model.top_provider?.context_length || model.context || 0);
   const apiMaxOutput = Number(model.max_output_tokens || model.max_completion_tokens || model.top_provider?.max_completion_tokens || 0);
@@ -121,13 +138,15 @@ export function modelProfileFromProvider(model = {}) {
   // classificação coerente, contexto/preço/formatos/status/substituto/fonte).
   const know = enrichModelProfile({
     id, name: apiName, apiCaps, apiContext, apiMaxOutput,
-    apiPriceIn: Number.isFinite(Number(pricing.prompt)) ? Number(pricing.prompt) : (Number.isFinite(Number(model.price)) ? Number(model.price) : null),
-    apiPriceOut: Number.isFinite(Number(pricing.completion)) ? Number(pricing.completion) : null,
-    apiPricingKnown: hasPricing
+    apiPriceIn: promptSane,
+    apiPriceOut: completionSane,
+    apiPricingKnown
   });
   const capabilities = know.capabilities;
-  const price = know.pricingKnown ? know.priceIn : (Number.isFinite(promptPrice) ? promptPrice : 0);
-  const priceOut = know.pricingKnown ? know.priceOut : (Number.isFinite(completionPrice) ? completionPrice : 0);
+  // Sem preço validado (API sã ou curadoria), o valor é ZERO e pricingKnown
+  // false — a interface mostra "preço não confirmado" em vez de números lixo.
+  const price = know.pricingKnown ? know.priceIn : 0;
+  const priceOut = know.pricingKnown ? know.priceOut : 0;
 
   return {
     id,
@@ -165,6 +184,13 @@ export function modelProfileFromProvider(model = {}) {
     price: Number.isFinite(price) ? price : 0,
     priceOut: Number.isFinite(priceOut) ? priceOut : 0,
     pricingKnown: know.pricingKnown,
+    // Preço "variável" (sentinela -1, ex.: roteador automático do OpenRouter):
+    // só quando não há preço confiável de outra fonte para exibir.
+    pricingVariable: negativeSentinel && !know.pricingKnown,
+    // Procedência do PREÇO exibido: API do provedor ou documentação oficial
+    // curada (com a data da verificação) — para a interface informar a origem.
+    priceSource: know.pricingKnown ? (apiPricingKnown ? 'provider_api' : 'curated') : null,
+    priceVerifiedAt: know.pricingKnown && !apiPricingKnown ? know.verifiedAt : null,
     // --- Campos novos do catálogo ---
     streaming: know.streaming,
     inputFormats: know.inputFormats,
