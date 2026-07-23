@@ -238,7 +238,9 @@ docker compose up --build -d
 | `MAX_ACTIVE_RUNS_PER_USER` | 5 | Conversas do mesmo usuário processando ao mesmo tempo (multiconversa); conversas que executam código também disputam `MAX_SANDBOXES_PER_USER` |
 | `CHECKPOINT_MAX_BYTES` | 600000 | Tamanho máximo do estado de execução salvo por conversa (retomada real); array aparado preservando objetivo + resultados recentes |
 | `TOOL_TIMEOUT_MS` | 45000 | Tempo máximo de um comando de sandbox |
-| `AGENT_MAX_STEPS` | conforme o esforço | Limite de etapas da tarefa |
+| `AGENT_MAX_STEPS` | conforme o esforço | Piso do orçamento de etapas da tarefa (nunca reduz o esforço do menu) |
+| `AGENT_MAX_AUTO_CONTINUES` | 6 | Fôlego automático: quantas vezes uma tarefa AINDA produtiva pode compactar o histórico e renovar a janela de etapas em vez de parar no teto (`0` desliga) |
+| `PIPELINE_STAGE_RESUME_LIMIT` | 2 | Pipeline multimodelo: retomadas automáticas de uma etapa interrompida por limite de etapas (a partir do checkpoint) antes de marcar erro |
 | `SANDBOX_MEMORY / SANDBOX_CPUS` | 1024m / 1 | Recursos do sandbox |
 | `WEB_FETCH_SCREENSHOTS` | 1 | Miniatura da página aberta pelo `web_fetch` (Chromium headless); `0` desliga (só o texto) |
 | `SCREENSHOT_TIMEOUT_MS` | 9000 | Tempo máximo por captura de miniatura (best-effort) |

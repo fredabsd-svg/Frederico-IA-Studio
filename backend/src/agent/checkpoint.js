@@ -36,6 +36,12 @@ export function isResumableReason(reason) { return RESUMABLE_REASONS.has(String(
 // após o array do checkpoint. Mantida aqui (não no loop) para ser testável.
 export const RESUME_CONTINUE_NOTE = 'VOCÊ ESTÁ RETOMANDO uma tarefa que foi pausada (limite de tempo/etapas ou instabilidade do provedor). O histórico acima é o SEU progresso real: as ferramentas já executadas, seus resultados e os arquivos criados estão registrados. Continue da PRÓXIMA etapa pendente para concluir o objetivo — não recomece do zero, não repita ferramentas já executadas nem refaça arquivos que já existem. Se já estava quase terminando, finalize e entregue o resultado.';
 
+// Nota do FÔLEGO AUTOMÁTICO (loop.js): injetada quando o loop renova o
+// orçamento de etapas NO MEIO do run (compactando o histórico se necessário),
+// em vez de abortar uma tarefa que ainda está rendendo. Vive aqui ao lado da
+// nota de retomada porque compartilham o mesmo contrato de continuidade.
+export const AUTO_CONTINUE_NOTE = 'CONTINUE a tarefa em andamento (o orçamento de etapas foi renovado; parte do histórico intermediário pode ter sido compactada por tamanho). O que está acima é o seu progresso real: ferramentas já executadas, resultados e arquivos criados. Prossiga da PRÓXIMA etapa pendente — não recomece do zero, não repita ferramentas já executadas nem refaça arquivos que já existem. Se o objetivo já foi alcançado, finalize e entregue o resultado agora.';
+
 // Monta o array de mensagens para o run de RETOMADA: o estado salvo + as notas
 // de continuidade. Se a última mensagem for texto do assistente (parou no meio
 // de um raciocínio), adiciona a nota de "continue de onde parou" para ele não

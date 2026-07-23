@@ -22,7 +22,7 @@ import { STREAM_RECOVERY_LIMIT, STREAM_RESUME_NOTE, STREAM_PAUSE_RESUME_NOTE, PR
 import { guardStreamStall, PROVIDER_CONNECT_TIMEOUT_MS } from './streamGuard.js';
 import { acquireConversationControl, releaseConversationControl, beginProviderRequest, releaseProviderRequest, beginToolRequest, releaseToolRequest, controlInterruptReason, gate } from './control.js';
 import { clientScopeFor, memoryNote, saveMessage, persistAssistantReply } from './persistence.js';
-import { saveCheckpoint, clearCheckpoint, isResumableReason, buildResumeMessages, leadingSystemCount } from './checkpoint.js';
+import { saveCheckpoint, clearCheckpoint, isResumableReason, buildResumeMessages, leadingSystemCount, trimCheckpointMessages, AUTO_CONTINUE_NOTE } from './checkpoint.js';
 import { untrustedContext } from './promptRegistry.js';
 import { emitExecutionState, finalExecutionState } from './executionState.js';
 import { explicitlyAuthorizesSandboxNetwork, isToolCallAllowed } from './assistantPolicy.js';
@@ -353,6 +353,17 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
   const hardMaxSteps = Math.max(maxSteps, Number(process.env.AGENT_HARD_MAX_STEPS) || Math.round(maxSteps * 1.5));
   const IDLE_STEP_GRACE = 2; // etapas sem progresso toleradas após o orçamento base
   let lastProductiveStep = 0;
+  // 3) FÔLEGO AUTOMÁTICO: bater o teto AINDA TRABALHANDO deixou de ser erro.
+  //    O teto vale por JANELA de orçamento: ao alcançá-lo com progresso
+  //    recente, o loop compacta o histórico (o mesmo apara do checkpoint) e
+  //    renova a janela — exatamente o que o botão "Continuar" faria, só que
+  //    sem parar nem depender do usuário. O freio de tarefa produtiva é falta
+  //    de progresso (falhas seguidas, repetição, estagnação), nunca um
+  //    contador de etapas; AGENT_MAX_AUTO_CONTINUES (padrão 6) é apenas o
+  //    para-raios contra um loop "produtivo" infinito.
+  const maxAutoContinues = Math.max(0, Number(process.env.AGENT_MAX_AUTO_CONTINUES ?? 6));
+  let autoContinues = 0;
+  let windowStart = 0; // etapa em que a janela de orçamento atual começou
   const executionRequired = forceExecution || modelPlan.requirements.required;
   const requiresOutput = modelPlan.requirements.expectsOutput;
   // No resume, tratamos os arquivos que JÁ existem (criados no run anterior)
@@ -398,12 +409,36 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
   // certo é reenviar do zero, não continuar o mesmo array problemático.
   let checkpointReason = null;
   let reachedStep = 0;
-  for (let step = 0; step < hardMaxSteps; step++) {
+  for (let step = 0; ; step++) {
+    const windowStep = step - windowStart;
     // Passou do orçamento base? Só segue enquanto o trabalho ainda rende (uma
     // ferramenta executada com sucesso há poucas etapas). Se estagnou, encerra
     // como limite de etapas — as travas de falha (5 seguidas), repetição e
     // pesquisa web continuam valendo à parte.
-    if (step >= maxSteps && (step - lastProductiveStep) >= IDLE_STEP_GRACE) break;
+    if (windowStep >= maxSteps && (step - lastProductiveStep) >= IDLE_STEP_GRACE) break;
+    if (windowStep >= hardMaxSteps) {
+      // Chegar aqui exige progresso recente (o teste acima já teria encerrado
+      // uma tarefa estagnada) — então isto é trabalho legítimo que ficou
+      // longo, não um loop. Renova a janela em vez de abortar no meio.
+      if (autoContinues >= maxAutoContinues) break;
+      autoContinues += 1;
+      const objective = resume?.objective || userText;
+      clearPromptCache(messages);
+      const compacted = trimCheckpointMessages(messages, undefined, objective);
+      messages.length = 0;
+      for (const m of compacted) messages.push(m);
+      // A nota de continuidade fica só uma vez, sempre no fim (fôlegos
+      // repetidos não acumulam avisos).
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i]?.role === 'system' && messages[i].content === AUTO_CONTINUE_NOTE) messages.splice(i, 1);
+      }
+      messages.push({ role: 'system', content: AUTO_CONTINUE_NOTE });
+      resumePrefixEnd = leadingSystemCount(messages);
+      applyPromptCache(messages, chosenModel, resumePrefixEnd, provider.baseURL);
+      windowStart = step;
+      onEvent({ type: 'status', content: `A tarefa está longa mas rendendo: compactei o histórico e continuei o trabalho (fôlego ${autoContinues} de ${maxAutoContinues}).` });
+      emitExecutionState(onEvent, 'continuing', `Orçamento de etapas renovado (fôlego ${autoContinues})`, { runId, step });
+    }
     reachedStep = step;
     if (await gate(control, onEvent)) { stopped = true; break; }
     onEvent({ type: 'status', content: step === 0 ? 'Pensando...' : 'Continuando...' });
@@ -872,7 +907,7 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
   else if (!completedNaturally) {
     incomplete = true;
     checkpointReason = 'step_limit';
-    failureMessage = `A tarefa atingiu o limite de ${hardMaxSteps} etapas antes da conclusão.`;
+    failureMessage = `A tarefa atingiu o limite de ${reachedStep + 1} etapas antes da conclusão.`;
     // Atingiu o limite de etapas ainda usando ferramentas: avisa de forma honesta
     // e diz como retomar. O progresso é salvo num checkpoint (backend), então a
     // retomada CONTINUA de onde parou — não recomeça.
