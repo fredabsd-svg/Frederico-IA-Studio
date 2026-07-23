@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { API } from '../constants.js';
-import { FileText, Table, ScanLine, Coins, RefreshCw, AlertTriangle, CheckCircle2, Loader2, Braces, Sparkles, Settings, Image } from 'lucide-react';
+import { FileText, Table, ScanLine, Coins, RefreshCw, AlertTriangle, CheckCircle2, Loader2, Braces, Sparkles, Settings, Image, Trash2 } from 'lucide-react';
 
 // Painel de compreensão documental (Docling): mostra, por documento processado,
 // o andamento e as estatísticas (páginas, tabelas, OCR, economia de tokens) e dá
@@ -24,7 +24,7 @@ function StatusIcon({ status }) {
   return <CheckCircle2 size={15} />;
 }
 
-export function DoclingPanel({ docs = [], onReprocess, isAdmin = false, config = null, health = null, onSaveConfig }) {
+export function DoclingPanel({ docs = [], onReprocess, onPurge, isAdmin = false, config = null, health = null, onSaveConfig }) {
   const [openMd, setOpenMd] = useState(null);   // { id, text }
   const [tables, setTables] = useState(null);   // { id, list }
   const [pics, setPics] = useState(null);       // { id, list }
@@ -94,6 +94,7 @@ export function DoclingPanel({ docs = [], onReprocess, isAdmin = false, config =
                   {st.pictureCount > 0 && <button onClick={() => viewPictures(d.id)}><Image size={13} /> Visuais</button>}
                   <a href={`${API}/api/docling/documents/${encodeURIComponent(d.id)}/json`} target="_blank" rel="noreferrer"><Braces size={13} /> JSON</a>
                   <button onClick={() => onReprocess?.(d.id)}><RefreshCw size={13} /> Reprocessar</button>
+                  <button className="doclingPurge" title="Apagar os dados extraídos (o arquivo original é mantido)" onClick={() => onPurge?.(d.id)}><Trash2 size={13} /> Apagar dados</button>
                 </div>
                 {pics?.id === d.id && (
                   <div className="doclingPics">

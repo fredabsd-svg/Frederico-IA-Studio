@@ -160,13 +160,30 @@ texto (seção "Imagens, gráficos e elementos visuais"):
 - **UI**: selo "N visuais", botão "Visuais" com miniaturas por página.
 - Testes: `backend/src/docling/vision.test.js`.
 
+## Fase 6 — retenção e exclusão (LGPD) (concluída)
+
+Os artefatos derivados (JSON/Markdown/chunks/embeddings/figuras) ficam num cache
+no disco do backend, fora do workspace da conversa. Antes, apagar a
+conversa/arquivo não os removia. Agora:
+
+- **`retention.js`**: `purgeIfOrphan` (apaga os derivados quando o usuário não
+  tem mais nenhum arquivo com aquele hash), `purgeByHash`, `purgeProcessing`,
+  `sweepExpiredArtifacts` (varredura por tempo) e `isExpired` (pura, testável).
+- **Exclusão de arquivo** (`routes/conversations.js`) e **de conversa**
+  (`privacy.js`) passam a limpar os derivados órfãos na hora.
+- **Rota** `DELETE /docling/documents/:id`: o usuário apaga os dados extraídos de
+  um documento (o arquivo original é mantido; reprocessar recria).
+- **Varredura periódica** no boot (`server.js`): `DOCLING_RETENTION_DAYS` (0 =
+  desligado) apaga derivados mais antigos que N dias — nunca o original.
+- **UI**: botão "Apagar dados" por documento no painel.
+- Testes: `backend/src/docling/retention.test.js`.
+
 ## O que falta (próximas fases)
 
 - OCR por página (parcialmente digitalizado) e reprocesso com outro mecanismo.
 - Células mescladas em tabelas complexas.
 - Classificação do tipo de elemento visual (gráfico × assinatura × selo).
 - Taxonomia de falhas detalhada na UI.
-- Retenção/expiração automática dos artefatos derivados.
 
 ## Matriz de testes (critério de aceite)
 

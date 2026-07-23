@@ -9,6 +9,7 @@ import { resolvedOptions, writeOverrides, readOverrides, adminEditable } from '.
 import { doclingHealth } from '../docling/runner.js';
 import { getProcessingById, listProcessingsForConversation, readArtifacts, kickProcessing, mimeForName } from '../docling/service.js';
 import { summarizeTables, tableToCsv } from '../docling/tables.js';
+import { purgeProcessing } from '../docling/retention.js';
 import { workspaceFor } from '../sandbox.js';
 import path from 'node:path';
 
@@ -124,6 +125,15 @@ router.post('/docling/documents/:id/reprocess', async (req, res) => {
   // verdade (era um no-op: o processFile devolvia o resultado cacheado).
   kickProcessing({ userId: req.userId, conversationId: conv.conversation_id, fileId: f.id, filePath, filename: f.name, mime: f.mime || mimeForName(f.name), hash: f.hash || row.hash, force: true });
   res.json({ ok: true, status: 'processing' });
+});
+
+// LGPD: apaga os dados DERIVADOS de um documento (JSON/Markdown/chunks/
+// embeddings/figuras). Não remove o arquivo original — só os artefatos, que são
+// reprocessáveis. Reenviar/reprocessar o documento os recria.
+router.delete('/docling/documents/:id', async (req, res) => {
+  const ok = await purgeProcessing(req.userId, req.params.id);
+  if (!ok) return res.status(404).json({ error: 'Não encontrado' });
+  res.json({ ok: true });
 });
 
 export default router;
