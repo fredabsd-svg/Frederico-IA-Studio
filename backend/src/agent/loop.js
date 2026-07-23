@@ -10,7 +10,7 @@ import { buildContext, historyBudgetForModel, selectHistoryForContext } from '..
 import { indexAfterReply } from '../memory/indexer.js';
 import { getSettings } from '../memory/memoryService.js';
 import { isLowSignalTurn, LOW_SIGNAL_TURN_NOTE } from '../memory/retrievalPolicy.js';
-import { buildModelRuntimeState, isUnsupportedToolError, isUnsupportedVisionError, isModelUnavailableError, markModelCapabilityUnsupported, modelCompatibilityMessage } from '../modelCapabilities.js';
+import { buildModelRuntimeState, isUnsupportedToolError, isUnsupportedVisionError, isModelUnavailableError, isToolChoiceReasoningConflictError, markModelCapabilityUnsupported, modelCompatibilityMessage } from '../modelCapabilities.js';
 import { createToolProtocolStreamGuard, parseTextToolCalls, sanitizeToolProtocolText } from '../toolProtocol.js';
 import { githubToolDefinitions, GITHUB_WRITE_TOOLS, hasGithubConnection } from '../connectors/github.js';
 import { effortCfg, promptFor, promptManifestFor, toolsFor, temperatureFor, developerContextFor, toolAvailabilityNote, ENVIRONMENT_QUERY_RE, verifiedEnvironmentNote, pcFoldersNote, uploadsNote, clipForBriefing, BRIEFING_CHAR_LIMIT, QUALITY_BAR } from './prompts.js';
@@ -449,6 +449,16 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
         stripImagePartsFromMessages(messages);
         visionApplied = false;
         onEvent({ type: 'status', content: 'Este modelo não lê imagens diretamente; usando OCR no lugar.' });
+        step -= 1;
+        continue;
+      }
+      // tool_choice='required' × modo thinking: Qwen/GLM (e afins) respondem 400
+      // quando a ferramenta é OBRIGATÓRIA com o raciocínio ligado. Refaz a mesma
+      // etapa com tool_choice='auto' — as ferramentas continuam disponíveis; só
+      // deixa de ser imposição (o modelo raciocinante decide chamá-las).
+      if (isToolChoiceReasoningConflictError(err) && forceNativeToolCall) {
+        forceNativeToolCall = false;
+        onEvent({ type: 'status', content: 'Este modelo não aceita ferramenta obrigatória no modo de raciocínio; repetindo com chamada livre.' });
         step -= 1;
         continue;
       }

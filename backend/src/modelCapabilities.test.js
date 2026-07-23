@@ -5,12 +5,26 @@ import {
   detectToolRequirement,
   isUnsupportedToolError,
   isUnsupportedVisionError,
+  isToolChoiceReasoningConflictError,
   modelCompatibilityMessage,
   modelProfileFromProvider,
   registerModelCatalog,
   getModelProfile,
   deriveModelCapabilities
 } from './modelCapabilities.js';
+
+// Bug relatado: com a memória ativa, Qwen/GLM devolviam 400 porque o app
+// mandava tool_choice='required' com o modo thinking ligado. O detector abaixo
+// aciona a repetição da chamada com tool_choice='auto'.
+test('detecta o conflito tool_choice obrigatório × modo thinking (400 do Qwen/GLM)', () => {
+  const err = { status: 400, error: { message: 'The tool_choice parameter does not support being set to required or object in thinking mode' } };
+  assert.equal(isToolChoiceReasoningConflictError(err), true);
+  assert.equal(isToolChoiceReasoningConflictError({ message: 'tool_choice is not supported in reasoning mode' }), true);
+  // Não confunde com outros erros de ferramenta/raciocínio.
+  assert.equal(isToolChoiceReasoningConflictError({ message: 'This model does not support tool use' }), false);
+  assert.equal(isToolChoiceReasoningConflictError({ message: 'reasoning effort is not supported' }), false);
+  assert.equal(isToolChoiceReasoningConflictError({ message: 'rate limit exceeded' }), false);
+});
 
 test('catálogos de provedores diferentes não colidem quando o model id é igual', () => {
   registerModelCatalog([{ id: 'shared/model', name: 'Modelo na NVIDIA' }], {
