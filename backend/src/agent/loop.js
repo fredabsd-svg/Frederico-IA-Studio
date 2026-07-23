@@ -27,6 +27,7 @@ import { untrustedContext } from './promptRegistry.js';
 import { emitExecutionState, finalExecutionState } from './executionState.js';
 import { explicitlyAuthorizesSandboxNetwork, isToolCallAllowed } from './assistantPolicy.js';
 import { buildDocumentContext, DOC_PRECEDENCE_NOTE } from '../docling/context.js';
+import { doclingImageParts, visualElementsNote } from '../docling/vision.js';
 
 export function explicitlyAuthorizesGitWrite(text) {
   const value = String(text || '');
@@ -266,6 +267,13 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
     if (uploadNoteForRun) messages.push({ role: 'system', content: DOC_PRECEDENCE_NOTE });
     messages.push({ role: 'user', content: untrustedContext('document-content', docContext.note) });
   }
+  // ELEMENTOS VISUAIS (gráficos/assinaturas/selos): nota transparente adaptada à
+  // visão do modelo. Com visão, as imagens são anexadas mais abaixo; sem visão,
+  // o modelo é avisado para NÃO fingir que interpretou o elemento.
+  if (docContext?.pictures?.length) {
+    const vnote = visualElementsNote(docContext.pictures, modelPlan.capabilities?.vision === true);
+    if (vnote) messages.push({ role: 'system', content: vnote });
+  }
   const pcNote = pcFoldersNote(sandboxOptions);
   if (pcNote) messages.push({ role: 'system', content: pcNote });
   const historyPlan = await selectHistoryForContext({
@@ -303,7 +311,10 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
   // imagens já estão no array do checkpoint (não reanexar).
   let visionApplied = false;
   if (!resume && modelPlan.capabilities?.vision === true) {
-    visionApplied = attachImagesToLastUserMessage(messages, imageUploadParts(conversationId));
+    // Imagens dos uploads + figuras/gráficos extraídos pelo Docling (quando o
+    // documento foi processado) — o modelo com visão enxerga ambos.
+    const visualParts = [...imageUploadParts(conversationId), ...doclingImageParts(docContext?.pictures || [])];
+    visionApplied = attachImagesToLastUserMessage(messages, visualParts);
     if (visionApplied) onEvent({ type: 'status', content: 'Enviando a imagem para o modelo analisar...' });
   }
 

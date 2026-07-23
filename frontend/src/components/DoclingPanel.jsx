@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { API } from '../constants.js';
-import { FileText, Table, ScanLine, Coins, RefreshCw, AlertTriangle, CheckCircle2, Loader2, Braces, Sparkles, Settings } from 'lucide-react';
+import { FileText, Table, ScanLine, Coins, RefreshCw, AlertTriangle, CheckCircle2, Loader2, Braces, Sparkles, Settings, Image } from 'lucide-react';
 
 // Painel de compreensão documental (Docling): mostra, por documento processado,
 // o andamento e as estatísticas (páginas, tabelas, OCR, economia de tokens) e dá
@@ -27,6 +27,7 @@ function StatusIcon({ status }) {
 export function DoclingPanel({ docs = [], onReprocess, isAdmin = false, config = null, health = null, onSaveConfig }) {
   const [openMd, setOpenMd] = useState(null);   // { id, text }
   const [tables, setTables] = useState(null);   // { id, list }
+  const [pics, setPics] = useState(null);       // { id, list }
   if (!docs.length && !isAdmin) return null;
 
   async function viewMarkdown(id) {
@@ -43,6 +44,14 @@ export function DoclingPanel({ docs = [], onReprocess, isAdmin = false, config =
       const r = await fetch(`${API}/api/docling/documents/${encodeURIComponent(id)}/tables`);
       setTables({ id, list: r.ok ? await r.json() : [] });
     } catch { setTables({ id, list: [] }); }
+  }
+
+  async function viewPictures(id) {
+    if (pics?.id === id) { setPics(null); return; }
+    try {
+      const r = await fetch(`${API}/api/docling/documents/${encodeURIComponent(id)}/pictures`);
+      setPics({ id, list: r.ok ? await r.json() : [] });
+    } catch { setPics({ id, list: [] }); }
   }
 
   return (
@@ -68,6 +77,7 @@ export function DoclingPanel({ docs = [], onReprocess, isAdmin = false, config =
                   <span title="Páginas"><FileText size={12} /> {d.pageCount ?? st.pages ?? '?'} pág.</span>
                   <span title="Tabelas"><Table size={12} /> {d.tableCount ?? st.tables ?? 0} tab.{st.tablesWithWarnings > 0 ? ` (${st.tablesWithWarnings} alerta)` : ''}</span>
                   {d.ocrUsed && <span title="OCR aplicado"><ScanLine size={12} /> OCR</span>}
+                  {st.pictureCount > 0 && <span title="Elementos visuais (gráficos, assinaturas, selos)"><Image size={12} /> {st.pictureCount} visual{st.pictureCount > 1 ? 'is' : ''}</span>}
                   {st.semantic && <span title="Busca semântica ativa (seleção dos trechos por relevância)"><Sparkles size={12} /> semântica</span>}
                   {typeof st.savedPercent === 'number' && (
                     <span title="Economia de tokens vs. conteúdo integral"><Coins size={12} /> −{st.savedPercent}% tokens</span>
@@ -81,9 +91,23 @@ export function DoclingPanel({ docs = [], onReprocess, isAdmin = false, config =
                 <div className="doclingActions">
                   <button onClick={() => viewMarkdown(d.id)}><FileText size={13} /> Markdown</button>
                   {(d.tableCount ?? st.tables ?? 0) > 0 && <button onClick={() => viewTables(d.id)}><Table size={13} /> Tabelas</button>}
+                  {st.pictureCount > 0 && <button onClick={() => viewPictures(d.id)}><Image size={13} /> Visuais</button>}
                   <a href={`${API}/api/docling/documents/${encodeURIComponent(d.id)}/json`} target="_blank" rel="noreferrer"><Braces size={13} /> JSON</a>
                   <button onClick={() => onReprocess?.(d.id)}><RefreshCw size={13} /> Reprocessar</button>
                 </div>
+                {pics?.id === d.id && (
+                  <div className="doclingPics">
+                    {!pics.list.length && <div className="doclingTablesEmpty">Nenhum elemento visual detalhado.</div>}
+                    {pics.list.map(p => (
+                      <div key={p.index} className="doclingPic">
+                        {p.hasImage
+                          ? <a href={`${API}/api/docling/documents/${encodeURIComponent(d.id)}/pictures/${p.index}`} target="_blank" rel="noreferrer"><img src={`${API}/api/docling/documents/${encodeURIComponent(d.id)}/pictures/${p.index}`} alt={`Figura ${p.index}`} loading="lazy" /></a>
+                          : <div className="doclingPicMissing" title={p.note || ''}>⚠ sem imagem</div>}
+                        <span>pág. {p.page ?? '?'}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {tables?.id === d.id && (
                   <div className="doclingTables">
                     {!tables.list.length && <div className="doclingTablesEmpty">Nenhuma tabela detalhada.</div>}
