@@ -98,12 +98,14 @@ export async function buildDocumentContext(userId, conversationId, { query = '',
   const perDoc = Math.max(1500, Math.floor(tokenBudget / rows.length));
   const parts = [];
   const used = [];
+  const pictures = []; // figuras/gráficos de todos os documentos (para a visão)
   for (const row of rows) {
     const arts = readArtifacts(userId, row.hash, row.config_version);
     if (!arts.markdown) continue;
     const rendered = renderDoc(row.filename || 'documento', arts.markdown, arts.chunks, { query, budget: perDoc, queryVec, vectors: arts.embeddings });
     parts.push(`### ${row.filename || 'documento'} (${row.page_count ?? '?'} pág.${row.ocr_used ? ', via OCR' : ''})\n${rendered.text}`);
     used.push({ hash: row.hash, filename: row.filename, refs: rendered.refs, configVersion: row.config_version });
+    for (const pic of (arts.pictures || [])) pictures.push({ ...pic, docFilename: row.filename });
   }
   if (!parts.length) return null;
 
@@ -115,5 +117,5 @@ export async function buildDocumentContext(userId, conversationId, { query = '',
     parts.join('\n\n'),
   ].join('\n');
 
-  return { note, used, tokens: estimateTokens(note) };
+  return { note, used, pictures, tokens: estimateTokens(note) };
 }

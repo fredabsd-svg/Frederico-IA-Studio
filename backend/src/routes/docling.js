@@ -81,6 +81,25 @@ router.get('/docling/documents/:id/tables/:index/csv', async (req, res) => {
   res.send('﻿' + csv); // BOM para o Excel abrir acentos corretamente
 });
 
+// Elementos visuais (figuras/gráficos/assinaturas) com página e referência.
+router.get('/docling/documents/:id/pictures', async (req, res) => {
+  const row = await getProcessingById(req.userId, req.params.id);
+  if (!row) return res.status(404).json({ error: 'Não encontrado' });
+  const arts = readArtifacts(req.userId, row.hash, row.configVersion);
+  res.json((arts.pictures || []).map(p => ({ index: p.index, page: p.page, note: p.note, hasImage: !!p.file })));
+});
+
+// Imagem de UM elemento visual (PNG).
+router.get('/docling/documents/:id/pictures/:index', async (req, res) => {
+  const row = await getProcessingById(req.userId, req.params.id);
+  if (!row) return res.status(404).json({ error: 'Não encontrado' });
+  const arts = readArtifacts(req.userId, row.hash, row.configVersion);
+  const pic = (arts.pictures || []).find(p => String(p.index) === String(req.params.index));
+  if (!pic?.file || !fs.existsSync(pic.file)) return res.status(404).json({ error: 'Imagem indisponível' });
+  res.type('image/png');
+  fs.createReadStream(pic.file).pipe(res);
+});
+
 // JSON completo do Docling (a "fonte da verdade" — para auditoria/reprocesso).
 router.get('/docling/documents/:id/json', async (req, res) => {
   const row = await getProcessingById(req.userId, req.params.id);

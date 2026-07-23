@@ -141,11 +141,30 @@ container:
 - **UI**: seção "Configurações (admin)" no painel + indicador de saúde do serviço.
 - Testes: `backend/src/docling/adminConfig.test.js`.
 
+## Fase 5 — elementos visuais (concluída)
+
+Gráficos, assinaturas, selos e comprovantes não se perdem mais na conversão para
+texto (seção "Imagens, gráficos e elementos visuais"):
+
+- **`app.py`**: liga `generate_picture_images` e extrai cada figura como PNG
+  (redimensionado), com página e posição — `_extract_pictures`. Figuras que não
+  puderam ser renderizadas são registradas mesmo assim (nunca somem em silêncio).
+- **`service.js`**: persiste as imagens (`pictures/<n>.png`) + metadados
+  (`pictures.json`); stats ganham `pictureCount` e `picturesUnrendered`.
+- **`vision.js`**: `visualElementsNote` (nota transparente adaptada à visão do
+  modelo) e `doclingImageParts` (partes image_url das figuras).
+- **`loop.js`**: com modelo COM visão, anexa as figuras junto com as imagens dos
+  uploads; SEM visão, injeta um aviso para o modelo **não fingir** que
+  interpretou o elemento (e sugerir um modelo com visão).
+- **Rotas**: `GET /docling/documents/:id/pictures` e `.../pictures/:index` (PNG).
+- **UI**: selo "N visuais", botão "Visuais" com miniaturas por página.
+- Testes: `backend/src/docling/vision.test.js`.
+
 ## O que falta (próximas fases)
 
 - OCR por página (parcialmente digitalizado) e reprocesso com outro mecanismo.
 - Células mescladas em tabelas complexas.
-- Imagens/gráficos/assinaturas → handoff para modelo com visão + referência.
+- Classificação do tipo de elemento visual (gráfico × assinatura × selo).
 - Taxonomia de falhas detalhada na UI.
 - Retenção/expiração automática dos artefatos derivados.
 

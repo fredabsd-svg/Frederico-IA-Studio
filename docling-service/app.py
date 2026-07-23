@@ -25,7 +25,9 @@ usa acessos defensivos (getattr) e degrada para avisos em vez de quebrar.
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
+import io
 import json
 import logging
 import os
@@ -124,6 +126,15 @@ def get_converter_for(opts: dict):
     except Exception:
         pass
 
+    # Gera as imagens das figuras/gráficos para um modelo com visão analisar
+    # depois (gráficos, assinaturas, selos, comprovantes). Sem isto, o conteúdo
+    # visual se perderia silenciosamente.
+    try:
+        p.generate_picture_images = True
+        p.images_scale = 2.0
+    except Exception:
+        pass
+
     p.do_table_structure = bool(opts.get("tables", True))
     try:
         p.table_structure_options.do_cell_matching = True
@@ -208,6 +219,58 @@ def _page_marked_markdown(doc) -> tuple[str, int, int]:
     return md, page_count, tables
 
 
+def _extract_pictures(doc, max_pictures: int = 20, max_px: int = 1600) -> list[dict]:
+    """Coleta as figuras/gráficos como PNG base64 (redimensionados), com página e
+    posição. É o que permite um modelo com VISÃO analisar o elemento visual em vez
+    de descartá-lo. Defensivo quanto à API do Docling entre versões."""
+    out: list[dict] = []
+    pics = getattr(doc, "pictures", None) or []
+    for idx, pic in enumerate(pics):
+        if len(out) >= max_pictures:
+            break
+        page = None
+        bbox = None
+        try:
+            prov = getattr(pic, "prov", None)
+            if prov:
+                page = getattr(prov[0], "page_no", None)
+                bb = getattr(prov[0], "bbox", None)
+                if bb is not None:
+                    bbox = [getattr(bb, "l", None), getattr(bb, "t", None), getattr(bb, "r", None), getattr(bb, "b", None)]
+        except Exception:
+            pass
+        # Tenta obter a imagem PIL da figura (nomes variam por versão).
+        img = None
+        for getter in ("get_image",):
+            try:
+                img = getattr(pic, getter)(doc)
+                if img is not None:
+                    break
+            except Exception:
+                img = None
+        if img is None:
+            try:
+                img = pic.image.pil_image  # type: ignore
+            except Exception:
+                img = None
+        if img is None:
+            # Sem imagem: registra a referência mesmo assim (transparência —
+            # não some silenciosamente), sinalizando que não foi possível render.
+            out.append({"index": idx + 1, "page": page, "bbox": bbox, "image_b64": None, "note": "imagem não pôde ser renderizada"})
+            continue
+        try:
+            if max(img.size) > max_px:
+                ratio = max_px / max(img.size)
+                img = img.resize((int(img.size[0] * ratio), int(img.size[1] * ratio)))
+            buf = io.BytesIO()
+            img.convert("RGB").save(buf, format="PNG")
+            b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+            out.append({"index": idx + 1, "page": page, "bbox": bbox, "image_b64": b64})
+        except Exception:
+            out.append({"index": idx + 1, "page": page, "bbox": bbox, "image_b64": None, "note": "falha ao codificar a imagem"})
+    return out
+
+
 def _convert(path: str, options: dict, job: Job) -> dict:
     """Roda o Docling de forma síncrona (chamado no executor de threads)."""
     conv = get_converter_for(options)
@@ -220,6 +283,7 @@ def _convert(path: str, options: dict, job: Job) -> dict:
 
     job.stage, job.progress = "exportando", 0.8
     markdown, page_count, table_count = _page_marked_markdown(doc)
+    pictures = _extract_pictures(doc)
 
     # OCR usado? Heurística: se o documento não tinha texto nativo suficiente.
     ocr_used = bool(options.get("ocr") == "always")
@@ -246,6 +310,8 @@ def _convert(path: str, options: dict, job: Job) -> dict:
         "docling_json": docling_json,
         "page_count": page_count,
         "table_count": table_count,
+        "picture_count": len(pictures),
+        "pictures": pictures,
         "ocr_used": ocr_used,
         "warnings": warnings,
     }

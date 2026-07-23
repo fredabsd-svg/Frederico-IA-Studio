@@ -63,7 +63,14 @@ export function readArtifacts(userId, hash, cfg) {
     const e = read('embeddings.json');
     if (e) embeddings = JSON.parse(e).map(b => (b ? Buffer.from(b, 'base64') : null));
   } catch {}
-  return { markdown: md, chunks, embeddings, jsonPath: path.join(dir, 'document.json') };
+  // Figuras/gráficos: metadados + caminho ABSOLUTO do PNG (para anexar a um
+  // modelo com visão). `file` vem relativo no JSON e é resolvido aqui.
+  let pictures = null;
+  try {
+    const p = read('pictures.json');
+    if (p) pictures = JSON.parse(p).map(pic => ({ ...pic, file: pic.file ? path.join(dir, pic.file) : null }));
+  } catch {}
+  return { markdown: md, chunks, embeddings, pictures, jsonPath: path.join(dir, 'document.json') };
 }
 
 async function upsertRow(fields) {
@@ -170,12 +177,34 @@ export async function processFile({ userId, conversationId, fileId, filePath, fi
       }
     } catch (e) { console.error('[docling] embeddings dos chunks falharam:', e.message); }
 
+    // Persiste as figuras/gráficos extraídos (PNG + metadados) para um modelo
+    // com visão analisar depois. As imagens NUNCA são descartadas em silêncio.
+    let pictureMeta = [];
+    try {
+      const pics = Array.isArray(result.pictures) ? result.pictures : [];
+      if (pics.length) {
+        const pdir = path.join(dir, 'pictures');
+        fs.mkdirSync(pdir, { recursive: true });
+        pictureMeta = pics.map(p => {
+          const meta = { index: p.index, page: p.page ?? null, bbox: p.bbox ?? null, note: p.note ?? null, file: null };
+          if (p.image_b64) {
+            try { fs.writeFileSync(path.join(pdir, `${p.index}.png`), Buffer.from(p.image_b64, 'base64')); meta.file = `pictures/${p.index}.png`; }
+            catch { meta.note = meta.note || 'falha ao salvar a imagem'; }
+          }
+          return meta;
+        });
+        fs.writeFileSync(path.join(dir, 'pictures.json'), JSON.stringify(pictureMeta), 'utf8');
+      }
+    } catch (e) { console.error('[docling] persistência das figuras falhou:', e.message); }
+
     // Valida a coerência das tabelas extraídas (linhas/colunas/cabeçalho).
     const tableSummary = summarizeTables(chunks);
     const warnings = Array.isArray(result.warnings) ? [...result.warnings] : [];
     if (tableSummary.withWarnings > 0) {
       warnings.push(`${tableSummary.withWarnings} tabela(s) com possível inconsistência de estrutura.`);
     }
+    const unrenderedPics = pictureMeta.filter(p => !p.file).length;
+    if (unrenderedPics > 0) warnings.push(`${unrenderedPics} elemento(s) visual(is) não puderam ser renderizados.`);
     const status = result.status && result.status !== 'done'
       ? result.status
       : (warnings.length ? 'done_warnings' : 'done');
@@ -193,6 +222,8 @@ export async function processFile({ userId, conversationId, fileId, filePath, fi
       duplicatePages: report.duplicatePages,
       removedHeaderFooterLines: report.removedHeaderFooterLines,
       semantic: semanticReady,
+      pictureCount: pictureMeta.length,
+      picturesUnrendered: unrenderedPics,
       timingMs: result.timing_ms ?? null,
     };
 
