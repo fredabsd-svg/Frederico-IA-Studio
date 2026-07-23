@@ -349,6 +349,16 @@ export function isUnsupportedReasoningError(error) {
   return /reasoning(?: effort| parameter| controls?)?.*(?:not supported|unsupported)|(?:not supported|unsupported).*reasoning/i.test(errorText(error));
 }
 
+// Conflito tool_choice='required' × modo thinking: provedores como Qwen/GLM
+// respondem 400 "The tool_choice parameter does not support being set to
+// required or object in thinking mode". A chamada deve ser refeita com
+// tool_choice='auto' (as ferramentas continuam disponíveis ao modelo).
+export function isToolChoiceReasoningConflictError(error) {
+  const text = errorText(error);
+  return /tool_choice[^.]{0,80}(?:thinking|reasoning) mode|(?:thinking|reasoning) mode[^.]{0,80}tool_choice/i.test(text)
+    || (/tool_choice/i.test(text) && /does not support|not supported|unsupported/i.test(text) && /thinking|reasoning/i.test(text));
+}
+
 // O modelo (ou o endpoint escolhido) não aceita imagem na entrada, apesar de
 // ter sido tratado como capaz de visão. Nesse caso removemos as imagens e
 // caímos para OCR.
