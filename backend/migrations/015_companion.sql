@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS companion_events (
   project TEXT,                       -- projeto/conversa relacionado
   data_sent TEXT,                     -- resumo do que foi/seria enviado a um modelo
   proposed_action TEXT,              -- ação sugerida pelo Companion
-  authorization TEXT,                -- nível de autorização necessário
+  authz TEXT,                         -- nível de autorização necessário ("authorization"
+                                      -- é palavra reservada no PostgreSQL, por isso authz)
   result TEXT,                        -- resultado após execução (quando houver)
   status TEXT NOT NULL DEFAULT 'novo',-- novo | visto | dispensado | resolvido
   created_at TEXT NOT NULL,

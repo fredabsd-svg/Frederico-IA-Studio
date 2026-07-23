@@ -12,7 +12,7 @@ export function serializeEvent(e) {
   return {
     id: e.id, kind: e.kind, level: e.level, title: e.title, detail: e.detail,
     origin: e.origin, project: e.project, dataSent: e.data_sent,
-    proposedAction: e.proposed_action, authorization: e.authorization,
+    proposedAction: e.proposed_action, authorization: e.authz,
     result: e.result, status: e.status, createdAt: e.created_at, updatedAt: e.updated_at,
   };
 }
@@ -24,7 +24,7 @@ export async function createEvent(userId, evt = {}) {
   const t = now();
   await db.prepare(
     `INSERT INTO companion_events
-     (id,user_id,kind,level,title,detail,origin,project,data_sent,proposed_action,authorization,result,status,created_at,updated_at)
+     (id,user_id,kind,level,title,detail,origin,project,data_sent,proposed_action,authz,result,status,created_at,updated_at)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
   ).run(
     id, userId, str(evt.kind, 60) || 'geral', pick(evt.level, EVENT_LEVELS, 'info'),
