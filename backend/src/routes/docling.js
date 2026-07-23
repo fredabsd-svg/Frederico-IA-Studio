@@ -91,7 +91,9 @@ router.post('/docling/documents/:id/reprocess', async (req, res) => {
   const ws = workspaceFor(conv.conversation_id);
   const filePath = path.join(ws.base, f.path);
   if (!fs.existsSync(filePath)) return res.status(409).json({ error: 'Arquivo original não está mais no disco.' });
-  kickProcessing({ userId: req.userId, conversationId: conv.conversation_id, fileId: f.id, filePath, filename: f.name, mime: f.mime || mimeForName(f.name), hash: f.hash });
+  // force: ignora o cache — reprocessar com a mesma config deve reprocessar de
+  // verdade (era um no-op: o processFile devolvia o resultado cacheado).
+  kickProcessing({ userId: req.userId, conversationId: conv.conversation_id, fileId: f.id, filePath, filename: f.name, mime: f.mime || mimeForName(f.name), hash: f.hash || row.hash, force: true });
   res.json({ ok: true, status: 'processing' });
 });
 

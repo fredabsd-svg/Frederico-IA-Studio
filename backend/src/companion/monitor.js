@@ -5,7 +5,7 @@
 //   * Logs: erros recorrentes (via ErrorDigest).
 // A execução do git roda no MESMO sandbox das ferramentas (execInSandbox), então
 // só observa o que o usuário já autorizou naquele workspace.
-import { execInSandbox } from '../sandbox.js';
+import { execInActiveSandbox } from '../sandbox.js';
 import { ErrorDigest } from './errorDigest.js';
 import { createEvent, createEventOnce, hasOpenEvent } from './events.js';
 
@@ -44,13 +44,18 @@ export function parseGitStatus(output) {
   return { isRepo, branch, changed, ahead, behind, dirty: changed.length > 0 };
 }
 
-// Roda o git no sandbox da conversa e devolve o resumo. Nunca lança: em caso de
-// erro/sandbox indisponível, devolve isRepo:false.
-export async function inspectGit(conversationId, options = {}) {
+// Roda o git no sandbox da conversa e devolve o resumo. OBSERVA, não cria:
+// se a conversa não tem um sandbox JÁ ativo, não há o que monitorar — e
+// materializar um container a cada ciclo de polling (90 s) viraria churn de
+// recursos na VPS, além de poder derrubar um sandbox ativo de política
+// diferente (ver execInActiveSandbox). Nunca lança: em caso de erro/sandbox
+// indisponível, devolve isRepo:false.
+export async function inspectGit(conversationId) {
   try {
     const cmd = 'git status --porcelain=v1 -b 2>&1 | head -400';
-    const res = await execInSandbox(conversationId, cmd, 20000, options);
-    return parseGitStatus(res?.output || '');
+    const res = await execInActiveSandbox(conversationId, cmd, 20000);
+    if (!res) return { isRepo: false, branch: null, changed: [], ahead: 0, behind: 0, dirty: false, noSandbox: true };
+    return parseGitStatus(res.output || '');
   } catch {
     return { isRepo: false, branch: null, changed: [], ahead: 0, behind: 0, dirty: false };
   }

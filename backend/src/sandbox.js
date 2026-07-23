@@ -377,6 +377,49 @@ export async function execInSandbox(conversationId, cmd, timeoutMs = Number(proc
   });
 }
 
+// Executa um comando APENAS se já houver um sandbox ativo para a conversa —
+// nunca cria, troca nem mata um container. É o caminho certo para OBSERVAÇÃO
+// (ex.: monitoramento do Companion): o execInSandbox normal materializa um
+// container novo quando não há (custo/churn na VPS) e, pior, DERRUBA e recria
+// o container ativo quando a política das opções não bate com a dele (o
+// monitor rodaria com política default e mataria um sandbox de modo dev no
+// meio do trabalho). Aqui nada disso acontece: sem sandbox ativo devolve null;
+// no timeout, apenas desiste da leitura (o container do usuário segue intacto).
+// De propósito NÃO atualiza lastUsed: observar não prolonga a vida do sandbox
+// (senão o polling do monitor impediria o reaper de reciclá-lo para sempre).
+export async function execInActiveSandbox(conversationId, cmd, timeoutMs = 20000) {
+  conversationId = assertConversationId(conversationId);
+  const entry = sessions.get(conversationId);
+  if (!entry) return null;
+  const container = entry.container;
+  try {
+    const exec = await container.exec({ Cmd: ['bash', '-lc', cmd], AttachStdout: true, AttachStderr: true, WorkingDir: '/workspace', User: 'sandbox' });
+    const stream = await exec.start({ hijack: true, stdin: false });
+    const stdout = new PassThrough(), stderr = new PassThrough();
+    try { container.modem.demuxStream(stream, stdout, stderr); } catch {}
+    let output = '';
+    const onData = (chunk) => { if (output.length < 64_000) output += chunk.toString('utf8'); };
+    stdout.on('data', onData);
+    stderr.on('data', onData);
+    return await new Promise((resolve) => {
+      let settled = false;
+      const finish = async () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        const info = await exec.inspect().catch(() => ({ ExitCode: -1 }));
+        resolve({ exitCode: info.ExitCode ?? -1, output: output.replace(/[\x00-\x08\x0E-\x1F]/g, '').slice(-12000) });
+      };
+      const timer = setTimeout(() => { try { stream.destroy(); } catch {} void finish(); }, timeoutMs);
+      stream.on('end', finish);
+      stream.on('close', finish);
+      stream.on('error', finish);
+    });
+  } catch {
+    return null; // container morreu entre o get e o exec: sem observação neste ciclo
+  }
+}
+
 // Remove o sandbox e o diretório de workspace de uma conversa (usado ao apagar)
 export async function destroyConversation(conversationId) {
   conversationId = assertConversationId(conversationId);

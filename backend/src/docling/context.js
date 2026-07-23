@@ -71,6 +71,14 @@ function renderDoc(filename, markdown, chunks, { query, budget, queryVec, vector
   return { text: body, refs: `trechos das páginas ${pages.join(', ')}`, tokens: estimateTokens(body), mode: semantic ? 'semantico' : 'palavras' };
 }
 
+// Nota de PRECEDÊNCIA (system). Publicada logo após a uploadsNote quando há
+// documentos já processados, para as duas instruções não se contradizerem: a
+// uploadsNote manda extrair os anexos com ferramentas (PyMuPDF/OCR/...), mas
+// para os documentos pré-processados vale o conteúdo já extraído. Sem esta
+// ponte, o modelo recebia ordens opostas (a mesma classe de contradição
+// interna do bug "não tenho acesso ao GitHub", corrigido em 2026-07-22).
+export const DOC_PRECEDENCE_NOTE = 'DOCUMENTOS PRÉ-PROCESSADOS: o conteúdo de parte dos anexos já foi extraído pela camada documental e está fornecido adiante no bloco "document-content", com as páginas de origem. Para ESSES documentos, NÃO repita a extração por ferramentas (PyMuPDF, pdftotext, OCR etc.) — use o conteúdo fornecido e cite as páginas. As instruções de leitura por ferramentas valem apenas para anexos que não aparecem naquele bloco; ferramentas continuam valendo para cálculos, conversões e geração de arquivos.';
+
 // Constrói a nota de contexto para a conversa. Retorna null quando não há nada
 // processado (ou o Docling está desligado) — nesse caso o app usa o fluxo atual.
 export async function buildDocumentContext(userId, conversationId, { query = '', tokenBudget = 6000 } = {}) {
@@ -101,8 +109,8 @@ export async function buildDocumentContext(userId, conversationId, { query = '',
 
   const note = [
     'CONTEÚDO DOS DOCUMENTOS (pré-processado pelo Docling — layout, tabelas e ordem de leitura já resolvidos).',
-    'Use este conteúdo como fonte. Cada trecho indica a página de origem entre colchetes — ao responder, cite a página de onde veio cada dado.',
-    'Não tente reextrair o arquivo com ferramentas: o conteúdo abaixo já é a extração oficial.',
+    'Use este conteúdo como fonte. Cada trecho indica a página de origem — ao responder, cite a página de onde veio cada dado.',
+    'Não reextraia com ferramentas os documentos listados abaixo: este conteúdo já é a extração oficial deles. Anexos que NÃO aparecem aqui seguem as instruções normais de leitura.',
     '',
     parts.join('\n\n'),
   ].join('\n');

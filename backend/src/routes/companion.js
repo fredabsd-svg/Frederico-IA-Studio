@@ -154,6 +154,11 @@ router.post('/companion/events/dismiss-all', async (req, res) => {
 router.post('/companion/monitor/git', async (req, res) => {
   const conversationId = String(req.body?.conversationId || '');
   if (!isConversationId(conversationId)) return res.status(400).json({ error: 'conversationId inválido' });
+  // Posse OBRIGATÓRIA (regra multi-tenant do app): a conversa monitorada
+  // precisa ser DO usuário logado — sem isto, qualquer usuário com o id de uma
+  // conversa alheia leria branch/arquivos alterados do workspace de outro dono.
+  const owned = await db.prepare('SELECT 1 FROM conversations WHERE id=? AND user_id=?').get(conversationId, req.userId);
+  if (!owned) return res.status(404).json({ error: 'Não encontrado' });
   const settings = await readSettings(req.userId);
   const { status, event } = await checkGit(req.userId, conversationId, { settings, project: req.body?.project });
   res.json({ status, event });
