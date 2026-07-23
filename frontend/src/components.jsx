@@ -32,12 +32,24 @@ const ctxLabel = n => !n ? 'contexto não informado' : n >= 1000000 ? `${(n / 10
 const usdPerMillion = value => Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 6 });
 const priceLabel = m => {
   if (m.free) return 'grátis';
+  // Sentinela de preço variável (ex.: roteador automático) e valores não
+  // validados NUNCA viram números na tela.
+  if (m.pricingVariable) return 'preço variável (depende do modelo roteado)';
+  if (!m.pricingKnown) return 'preço não confirmado';
   const input = Number(m.price || 0);
   const output = Number(m.priceOut || 0);
   if (input && output) return `$${usdPerMillion(input * 1e6)} entrada · $${usdPerMillion(output * 1e6)} saída / 1M`;
   if (input) return `$${usdPerMillion(input * 1e6)} entrada / 1M`;
   if (output) return `$${usdPerMillion(output * 1e6)} saída / 1M`;
-  return m.pricingKnown ? 'sem custo informado' : 'preço não informado pelo provedor';
+  return 'sem custo informado';
+};
+// Origem do preço, mostrada no tooltip da linha de detalhes do modelo.
+const priceProvenance = m => {
+  if (m.free) return 'Modelo gratuito.';
+  if (m.pricingVariable) return 'O provedor roteia entre modelos; o custo real depende do modelo escolhido a cada chamada.';
+  if (!m.pricingKnown) return 'Sem preço confiável da API do provedor nem da base verificada — nenhum valor é exibido para não induzir a erro.';
+  if (m.priceSource === 'curated') return `Preço da documentação oficial do provedor${m.priceVerifiedAt ? `, verificado em ${m.priceVerifiedAt}` : ''}.`;
+  return 'Preço informado pela API do provedor na última sincronização do catálogo.';
 };
 const FAV_KEY = 'fred_fav_models';
 const RECENT_KEY = 'fred_recent_models';
@@ -269,7 +281,7 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
           {model.id === value && <Check size={13} className="mpInlineCheck" aria-label="Modelo em uso"/>}
         </span>
         <span className="mpItemId">{model.providerName ? `${model.providerName} · ` : ''}{rawId(model)}</span>
-        <span className="mpItemMeta">{[ctxLabel(model.context), model.maxOutput ? `${model.maxOutput.toLocaleString('pt-BR')} saída máx.` : '', priceLabel(model)].filter(Boolean).join(' · ')}</span>
+        <span className="mpItemMeta" title={priceProvenance(model)}>{[ctxLabel(model.context), model.maxOutput ? `${model.maxOutput.toLocaleString('pt-BR')} saída máx.` : '', priceLabel(model)].filter(Boolean).join(' · ')}</span>
         <ModelCapabilitySummary model={model}/>
       </button>
       <button className={'mpStar ' + (isFav(model.id) ? 'on' : '')} onClick={event => toggleFav(model.id, event)} title={isFav(model.id) ? 'Remover dos favoritos' : 'Adicionar aos favoritos'} aria-label={isFav(model.id) ? 'Remover dos favoritos' : 'Adicionar aos favoritos'} aria-pressed={isFav(model.id)}><Star size={14} fill={isFav(model.id) ? 'currentColor' : 'none'}/></button>
