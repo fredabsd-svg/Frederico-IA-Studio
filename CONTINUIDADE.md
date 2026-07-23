@@ -1,5 +1,52 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 🔁 FIM do "limite de N etapas" em tarefa produtiva — fôlego automático + retomada na pipeline (2026-07-23 — branch `claude/steps-count-bug-v879qz`)
+
+**Sintoma (com print):** pipeline multimodelo ("Especialistas em sequência"), a
+etapa 2 (Revisão especializada, Kimi K3) morre com _"A tarefa atingiu o limite
+de 90 etapas antes da conclusão"_ e o estágio vira **"● Erro"** — no MEIO de
+trabalho legítimo (inspecionando/corrigindo um .xlsx, 11,4M tokens, 84 min).
+Bug "consertado várias vezes" (PR #58 subiu 60→90) mas sempre voltava, porque
+as correções mexiam no NÚMERO, não no MODELO do limite.
+
+**Causa raiz (por que o Claude Code não sofre disso):** ferramentas maduras de
+agente NÃO limitam por contador de etapas — os freios são de **falta de
+progresso** (repetição, falhas seguidas, estagnação) e o contexto é
+**compactado** quando cresce. Aqui, qualquer teto fixo (60, 90, 200…) sempre
+será alcançado por uma tarefa pesada honesta: cada etapa = 1 turno do modelo
+(~1 ferramenta), e revisar uma planilha real consome dezenas de turnos. Dois
+agravantes: (1) o loop abortava a tarefa **ainda produtiva** ao bater
+`hardMaxSteps`; (2) na pipeline multimodelo o `step_limit` era terminal — o
+estágio virava Erro e a sequência parava, pois o botão "Continuar" do chat não
+existe dentro do quadro multimodelo (o checkpoint ficava salvo sem ninguém usar).
+
+**Correção (modelo novo, não número novo):**
+- **`loop.js` — fôlego automático:** `hardMaxSteps` passa a valer por JANELA.
+  Ao bater o teto com progresso recente (o mesmo sinal `lastProductiveStep`/
+  `IDLE_STEP_GRACE` de antes), o loop **compacta o histórico**
+  (`trimCheckpointMessages`, o mesmo apara do checkpoint — preserva preâmbulo
+  de sistema + cauda recente) + injeta `AUTO_CONTINUE_NOTE` (checkpoint.js) e
+  **renova a janela de orçamento**, até `AGENT_MAX_AUTO_CONTINUES` vezes
+  (padrão 6; 0 desliga = comportamento antigo). É o que o "Continuar" faria,
+  sem parar. Estagnação, 5 falhas seguidas, degeneração e limites de pesquisa
+  web continuam encerrando como antes. Mensagem de limite agora cita o total
+  REAL de etapas executadas.
+- **`multiModel.js` — retomada automática da etapa:** se mesmo assim uma etapa
+  da pipeline terminar `resumable` por `step_limit`, o orquestrador recarrega o
+  checkpoint (`loadCheckpoint`) e chama `runAgent({ resume })` de novo, até
+  `PIPELINE_STAGE_RESUME_LIMIT` vezes (padrão 2), antes de marcar Erro. Só
+  `step_limit` retoma na hora (falha de provedor já esgotou a cadeia de reserva).
+  Usage somado UMA vez no final (o resume acumula o consumo anterior — somar a
+  cada tentativa duplicaria).
+- **Custo/latência:** a compactação também resolve o crescimento sem fim do
+  array `messages` (era reenviado inteiro a cada turno — daí 11,4M tokens);
+  janelas seguintes partem de um contexto aparado.
+- Docs: `.env.example` + tabela do README com as duas variáveis novas.
+
+**Regra para não regredir:** NUNCA "resolver" limite de etapas aumentando o
+número. Tarefa produtiva não morre por contador; morre por falta de progresso.
+Os tetos são para-raios, e a resposta ao teto é compactar + continuar.
+
 ## 🐛 Corrige "conecto o GitHub e a IA diz que não tem acesso" (2026-07-22 — branch `claude/resumo-alteracoes-tres-dias-vukd8t`)
 
 **Sintoma relatado (com print):** no Modo Desenvolvedor, com um repositório

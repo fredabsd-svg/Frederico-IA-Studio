@@ -27,6 +27,7 @@ import { buildRepoDigest } from '../connectors/github.js';
 import { STREAM_RECOVERY_LIMIT, STREAM_RESUME_NOTE, STREAM_PAUSE_RESUME_NOTE, isRetryableStreamError, openRouterRouting, retryDelay, addUsage, friendlyApiError, applyPromptCache } from './provider.js';
 import { guardStreamStall, PROVIDER_CONNECT_TIMEOUT_MS } from './streamGuard.js';
 import { acquireConversationControl, releaseConversationControl, beginProviderRequest, releaseProviderRequest, controlInterruptReason, gate } from './control.js';
+import { loadCheckpoint } from './checkpoint.js';
 import { persistAssistantReply, saveMessage } from './persistence.js';
 import { MULTI_ARTIFACT_PROTOCOL, untrustedContext } from './promptRegistry.js';
 import { snapshotArtifactVersion } from './artifacts.js';
@@ -567,7 +568,7 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
             else if (event?.type === 'response_reset') onEvent({ type: 'mm_reset', slot: state.slot });
             else onEvent(event);
           };
-          executorResult = await runAgent({
+          const stageParams = {
             userId, conversationId, userText,
             model: state.member.id,
             assistant: {
@@ -587,7 +588,31 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
             gitWriteAuthorization: executableIndex === executableStates.length - 1 ? null : false,
             persistReply: executableIndex === executableStates.length - 1,
             continuationOutputPaths: [...artifactOutputPaths]
-          });
+          };
+          executorResult = await runAgent(stageParams);
+          // RETOMADA AUTOMÁTICA DA ETAPA: se, mesmo com o fôlego do loop, a
+          // etapa parou por limite de etapas, o checkpoint salvo permite
+          // CONTINUAR do ponto exato (orçamento novo, sem refazer nada). Antes
+          // o estágio virava "Erro" e a sequência inteira morria — o botão
+          // "Continuar" do chat não existe dentro do quadro multimodelo. Só o
+          // step_limit é retomado aqui: falha de provedor já esgotou a cadeia
+          // de reserva e repetir na hora tende a falhar de novo.
+          const stageResumeLimit = Math.max(0, Number(process.env.PIPELINE_STAGE_RESUME_LIMIT ?? 2));
+          for (let attempt = 1; attempt <= stageResumeLimit && executorResult.resumable && !executorResult.stopped; attempt++) {
+            const checkpoint = await loadCheckpoint(userId, conversationId);
+            if (checkpoint?.reason !== 'step_limit') break;
+            onEvent({ type: 'status', content: `A etapa ${state.slot + 1} (${state.name}) ficou longa; retomando do ponto salvo (${attempt}/${stageResumeLimit})...` });
+            executorResult = await runAgent({
+              ...stageParams,
+              userText: checkpoint.objective || userText,
+              model: checkpoint.model,
+              executionBriefing: null, // o briefing já está no array do checkpoint
+              resume: checkpoint
+            });
+          }
+          // O usage do resume já acumula o consumo dos runs anteriores da
+          // etapa (o checkpoint carrega o total) — somar só o resultado final
+          // evita contar duas vezes.
           addUsage(usage, executorResult.usage);
           addUsage(state.usage, executorResult.usage);
           state.text = clipForBriefing(String(executorResult.text || ''), META_TEXT_LIMIT);
