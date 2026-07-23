@@ -106,12 +106,28 @@ dos artefatos derivados por retenção entra numa fase seguinte.
   linhas×colunas e link de download CSV.
 - Testes: `backend/src/docling/tables.test.js`.
 
+## Fase 3 — seleção por embeddings (concluída)
+
+Para documentos grandes (que não cabem inteiros no orçamento), a escolha dos
+trechos deixa de ser só por palavras e passa a usar **similaridade semântica**,
+reusando a infra de embeddings do app (`memory/embeddings.js`, a mesma da
+memória/RAG):
+
+- No **processamento**, os vetores de cada chunk são pré-computados e salvos
+  (`embeddings.json`) — assim não se reembeda a cada pergunta e **todos os
+  modelos reusam a mesma seleção**.
+- Na **pergunta**, o vetor da questão é gerado uma vez e os chunks são ranqueados
+  por cosseno (`semantic.js` → `rankBySimilarity`), preenchendo até o orçamento.
+- **Fallback** automático para a seleção por palavras quando os embeddings estão
+  indisponíveis (modo degradado) — sem quebrar nada.
+- A UI marca "semântica" quando ela está ativa para o documento.
+- Testes: `backend/src/docling/semantic.test.js`.
+
 ## O que falta (próximas fases)
 
 - OCR por página (parcialmente digitalizado) e reprocesso com outro mecanismo.
 - Células mescladas em tabelas complexas.
 - Imagens/gráficos/assinaturas → handoff para modelo com visão + referência.
-- Seleção de chunks por embeddings (reusando a infra de RAG já existente).
 - Painel administrativo completo e taxonomia de falhas na UI.
 - Retenção/expiração automática dos artefatos derivados.
 

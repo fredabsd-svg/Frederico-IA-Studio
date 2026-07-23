@@ -9,6 +9,8 @@ import { isDoclingEnabled } from './config.js';
 import { readArtifacts } from './service.js';
 import { estimateTokens } from './tokens.js';
 import { validateTable } from './tables.js';
+import { rankBySimilarity } from './semantic.js';
+import { embedOne, cosine, embeddingsDegraded } from '../memory/embeddings.js';
 
 const STOP = new Set('a o e de da do das dos que com para por um uma no na em os as se ao à é qual quais onde quando como sobre entre'.split(' '));
 function terms(q) {
@@ -45,12 +47,17 @@ export function selectChunks(chunks, query, tokenBudget) {
   return picked.sort((a, b) => (a.page - b.page) || 0);
 }
 
-function renderDoc(filename, markdown, chunks, { query, budget }) {
+function renderDoc(filename, markdown, chunks, { query, budget, queryVec, vectors }) {
   const full = estimateTokens(markdown);
   if (full <= budget) {
-    return { text: markdown, refs: 'documento completo', tokens: full };
+    return { text: markdown, refs: 'documento completo', tokens: full, mode: 'completo' };
   }
-  const picked = selectChunks(chunks, query, budget);
+  // Seleção semântica quando há vetores do documento e da pergunta; senão, cai
+  // na seleção por palavras (determinística e sempre disponível).
+  const semantic = queryVec && Array.isArray(vectors) && vectors.some(Boolean);
+  const picked = semantic
+    ? rankBySimilarity(chunks, vectors, queryVec, budget, cosine)
+    : selectChunks(chunks, query, budget);
   const body = picked.map(c => {
     const head = `> [pág. ${c.page}${c.section ? ` · ${c.section}` : ''}${c.type === 'table' ? ' · tabela' : ''}] (${c.source_reference})`;
     let caution = '';
@@ -61,7 +68,7 @@ function renderDoc(filename, markdown, chunks, { query, budget }) {
     return `${head}${caution}\n${c.content}`;
   }).join('\n\n');
   const pages = [...new Set(picked.map(c => c.page))].sort((a, b) => a - b);
-  return { text: body, refs: `trechos das páginas ${pages.join(', ')}`, tokens: estimateTokens(body) };
+  return { text: body, refs: `trechos das páginas ${pages.join(', ')}`, tokens: estimateTokens(body), mode: semantic ? 'semantico' : 'palavras' };
 }
 
 // Constrói a nota de contexto para a conversa. Retorna null quando não há nada
@@ -73,13 +80,20 @@ export async function buildDocumentContext(userId, conversationId, { query = '',
   ).all(userId, conversationId);
   if (!rows.length) return null;
 
+  // Vetor da pergunta (uma vez, reusado por todos os documentos). Se os
+  // embeddings estiverem indisponíveis, fica null e a seleção usa palavras.
+  let queryVec = null;
+  if (query && !embeddingsDegraded()) {
+    try { queryVec = await embedOne(query, 'query'); } catch { queryVec = null; }
+  }
+
   const perDoc = Math.max(1500, Math.floor(tokenBudget / rows.length));
   const parts = [];
   const used = [];
   for (const row of rows) {
     const arts = readArtifacts(userId, row.hash, row.config_version);
     if (!arts.markdown) continue;
-    const rendered = renderDoc(row.filename || 'documento', arts.markdown, arts.chunks, { query, budget: perDoc });
+    const rendered = renderDoc(row.filename || 'documento', arts.markdown, arts.chunks, { query, budget: perDoc, queryVec, vectors: arts.embeddings });
     parts.push(`### ${row.filename || 'documento'} (${row.page_count ?? '?'} pág.${row.ocr_used ? ', via OCR' : ''})\n${rendered.text}`);
     used.push({ hash: row.hash, filename: row.filename, refs: rendered.refs, configVersion: row.config_version });
   }
