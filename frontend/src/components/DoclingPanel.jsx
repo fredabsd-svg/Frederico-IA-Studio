@@ -123,12 +123,17 @@ export function DoclingPanel({ docs = [], onReprocess, onPurge, isAdmin = false,
               </>
             )}
 
-            {d.status === 'failed' && (
-              <div className="doclingError">
-                {d.error || 'Não foi possível processar. O modelo pode ler o arquivo pelo método tradicional.'}
-                <button onClick={() => onReprocess?.(d.id)}><RefreshCw size={12} /> Tentar de novo</button>
-              </div>
-            )}
+            {d.status === 'failed' && (() => {
+              const f = d.stats?.failure;
+              return (
+                <div className="doclingError">
+                  <strong>{f?.label || 'Não foi possível processar o documento'}</strong>
+                  {f?.suggestion && <span className="doclingErrHint">{f.suggestion}</span>}
+                  {!f && d.error && <span className="doclingErrHint">{d.error}</span>}
+                  {(f?.canRetry ?? true) && <button onClick={() => onReprocess?.(d.id)}><RefreshCw size={12} /> Tentar de novo</button>}
+                </div>
+              );
+            })()}
           </div>
         );
       })}

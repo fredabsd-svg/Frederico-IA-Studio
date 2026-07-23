@@ -17,6 +17,7 @@ import { chunkMarkdown } from './chunker.js';
 import { estimateTokens, savings } from './tokens.js';
 import { summarizeTables } from './tables.js';
 import { chunkEmbedText } from './semantic.js';
+import { classifyFailure } from './failures.js';
 import { embed, embeddingsDegraded } from '../memory/embeddings.js';
 
 export function cacheRoot() {
@@ -238,9 +239,11 @@ export async function processFile({ userId, conversationId, fileId, filePath, fi
     });
     return serialize(await getProcessingByHash(userId, hash, cfg));
   } catch (e) {
+    const msg = String(e.message || e).slice(0, 500);
+    const failure = classifyFailure(msg); // motivo claro (senha/corrompido/timeout/...)
     await upsertRow({ user_id: userId, conversation_id: conversationId, file_id: fileId, hash, mime, filename,
-      config_version: cfg, engine: 'docling', status: 'failed', error: String(e.message || e).slice(0, 500) });
-    console.error('[docling] processFile falhou:', e.message);
+      config_version: cfg, engine: 'docling', status: 'failed', error: msg, stats: JSON.stringify({ failure }) });
+    console.error(`[docling] processFile falhou (${failure.kind}):`, msg);
     return serialize(await getProcessingByHash(userId, hash, cfg));
   }
 }

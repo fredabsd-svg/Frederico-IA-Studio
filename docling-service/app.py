@@ -271,8 +271,22 @@ def _extract_pictures(doc, max_pictures: int = 20, max_px: int = 1600) -> list[d
     return out
 
 
+def _is_encrypted_pdf(path: str) -> bool:
+    """Detecta PDF protegido por senha antes de tentar converter — assim o erro
+    volta claro ("password") em vez de uma falha genérica no meio do pipeline."""
+    try:
+        if not path.lower().endswith(".pdf"):
+            return False
+        from pypdf import PdfReader
+        return bool(PdfReader(path).is_encrypted)
+    except Exception:
+        return False
+
+
 def _convert(path: str, options: dict, job: Job) -> dict:
     """Roda o Docling de forma síncrona (chamado no executor de threads)."""
+    if _is_encrypted_pdf(path):
+        raise RuntimeError("documento protegido por senha (password/encrypted)")
     conv = get_converter_for(options)
 
     job.stage, job.progress = "convertendo", 0.3
