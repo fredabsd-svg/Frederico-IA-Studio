@@ -15,6 +15,8 @@ import { optimizeMarkdown } from './markdown.js';
 import { chunkMarkdown } from './chunker.js';
 import { estimateTokens, savings } from './tokens.js';
 import { summarizeTables } from './tables.js';
+import { chunkEmbedText } from './semantic.js';
+import { embed, embeddingsDegraded } from '../memory/embeddings.js';
 
 function cacheRoot() {
   return process.env.DOCLING_CACHE_ROOT || path.resolve(process.env.WORKSPACE_ROOT || './workspaces', '..', 'docling-cache');
@@ -53,7 +55,14 @@ export function readArtifacts(userId, hash, cfg) {
   const read = (f) => { try { return fs.readFileSync(path.join(dir, f), 'utf8'); } catch { return null; } };
   const md = read('optimized.md');
   let chunks = null; try { const c = read('chunks.json'); chunks = c ? JSON.parse(c) : null; } catch {}
-  return { markdown: md, chunks, jsonPath: path.join(dir, 'document.json') };
+  // Vetores dos chunks (base64 → Buffer Float32), alinhados a chunks. null quando
+  // não houver busca semântica para este documento.
+  let embeddings = null;
+  try {
+    const e = read('embeddings.json');
+    if (e) embeddings = JSON.parse(e).map(b => (b ? Buffer.from(b, 'base64') : null));
+  } catch {}
+  return { markdown: md, chunks, embeddings, jsonPath: path.join(dir, 'document.json') };
 }
 
 async function upsertRow(fields) {
@@ -141,6 +150,22 @@ export async function processFile({ userId, conversationId, fileId, filePath, fi
     fs.writeFileSync(path.join(dir, 'optimized.md'), markdown, 'utf8');
     fs.writeFileSync(path.join(dir, 'chunks.json'), JSON.stringify(chunks), 'utf8');
 
+    // Pré-computa os vetores dos chunks (busca semântica) — melhor esforço:
+    // se os embeddings estiverem indisponíveis, o context.js cai na seleção por
+    // palavras. Fazer isto AGORA (no processamento) evita reembedar a cada
+    // pergunta e é o que permite todos os modelos reusarem a mesma seleção.
+    let semanticReady = false;
+    try {
+      if (!embeddingsDegraded() && chunks.length) {
+        const vecs = await embed(chunks.map(chunkEmbedText), 'passage');
+        if (vecs.some(Boolean)) {
+          const b64 = vecs.map(v => (v ? Buffer.from(v).toString('base64') : null));
+          fs.writeFileSync(path.join(dir, 'embeddings.json'), JSON.stringify(b64), 'utf8');
+          semanticReady = true;
+        }
+      }
+    } catch (e) { console.error('[docling] embeddings dos chunks falharam:', e.message); }
+
     // Valida a coerência das tabelas extraídas (linhas/colunas/cabeçalho).
     const tableSummary = summarizeTables(chunks);
     const warnings = Array.isArray(result.warnings) ? [...result.warnings] : [];
@@ -163,6 +188,7 @@ export async function processFile({ userId, conversationId, fileId, filePath, fi
       savedPercent: econ.percent,
       duplicatePages: report.duplicatePages,
       removedHeaderFooterLines: report.removedHeaderFooterLines,
+      semantic: semanticReady,
       timingMs: result.timing_ms ?? null,
     };
 

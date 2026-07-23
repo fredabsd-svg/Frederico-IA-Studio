@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { API } from '../constants.js';
-import { FileText, Table, ScanLine, Coins, RefreshCw, AlertTriangle, CheckCircle2, Loader2, Braces } from 'lucide-react';
+import { FileText, Table, ScanLine, Coins, RefreshCw, AlertTriangle, CheckCircle2, Loader2, Braces, Sparkles } from 'lucide-react';
 
 // Painel de compreensão documental (Docling): mostra, por documento processado,
 // o andamento e as estatísticas (páginas, tabelas, OCR, economia de tokens) e dá
@@ -67,6 +67,7 @@ export function DoclingPanel({ docs = [], onReprocess }) {
                   <span title="Páginas"><FileText size={12} /> {d.pageCount ?? st.pages ?? '?'} pág.</span>
                   <span title="Tabelas"><Table size={12} /> {d.tableCount ?? st.tables ?? 0} tab.{st.tablesWithWarnings > 0 ? ` (${st.tablesWithWarnings} alerta)` : ''}</span>
                   {d.ocrUsed && <span title="OCR aplicado"><ScanLine size={12} /> OCR</span>}
+                  {st.semantic && <span title="Busca semântica ativa (seleção dos trechos por relevância)"><Sparkles size={12} /> semântica</span>}
                   {typeof st.savedPercent === 'number' && (
                     <span title="Economia de tokens vs. conteúdo integral"><Coins size={12} /> −{st.savedPercent}% tokens</span>
                   )}
