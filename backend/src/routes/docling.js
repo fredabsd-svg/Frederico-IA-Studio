@@ -3,8 +3,9 @@
 // processamento na interface e permitem auditar/baixar o que foi extraído.
 import fs from 'node:fs';
 import { db } from '../db.js';
-import { makeRouter } from './helpers.js';
-import { isDoclingEnabled, doclingOptions } from '../docling/config.js';
+import { makeRouter, isAdmin } from './helpers.js';
+import { isDoclingEnabled } from '../docling/config.js';
+import { resolvedOptions, writeOverrides, readOverrides, adminEditable } from '../docling/adminConfig.js';
 import { doclingHealth } from '../docling/runner.js';
 import { getProcessingById, listProcessingsForConversation, readArtifacts, kickProcessing, mimeForName } from '../docling/service.js';
 import { summarizeTables, tableToCsv } from '../docling/tables.js';
@@ -17,7 +18,16 @@ const router = makeRouter();
 router.get('/docling/status', async (req, res) => {
   const enabled = isDoclingEnabled();
   const health = enabled ? await doclingHealth() : { ok: false, disabled: true };
-  res.json({ enabled, options: doclingOptions(), health });
+  const opts = await resolvedOptions();
+  res.json({ enabled, isAdmin: isAdmin(req), options: adminEditable(opts), overrides: await readOverrides(), health });
+});
+
+// Ajuste das opções do Docling (somente admin). Muda o configVersion → o cache
+// é invalidado e os documentos são reprocessados sob demanda.
+router.put('/docling/config', async (req, res) => {
+  if (!isAdmin(req)) return res.status(403).json({ error: 'Apenas o administrador pode alterar a configuração do Docling.' });
+  const saved = await writeOverrides(req.body || {});
+  res.json({ ok: true, overrides: saved, options: adminEditable(await resolvedOptions()) });
 });
 
 // Documentos processados (ou em processamento) da conversa.

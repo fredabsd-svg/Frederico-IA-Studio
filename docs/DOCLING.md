@@ -123,12 +123,30 @@ memória/RAG):
 - A UI marca "semântica" quando ela está ativa para o documento.
 - Testes: `backend/src/docling/semantic.test.js`.
 
+## Fase 4 — painel administrativo (concluída)
+
+Configuração do Docling pela interface (somente admin), sem reiniciar o
+container:
+
+- **`adminConfig.js`**: overrides globais (uma linha JSON em `settings`) com
+  precedência sobre o ambiente — `ocr` (auto/always/never), `lang`, `tables`,
+  `formulas`, `maxPages`, `maxChunkTokens`. Sanitizados e mesclados em
+  `resolvedOptions()`.
+- **Rotas**: `GET /docling/status` agora traz `isAdmin`, as opções vigentes e a
+  saúde do serviço; `PUT /docling/config` (admin) grava os overrides. Mudar
+  qualquer opção altera o `configVersion` → o cache é invalidado e os documentos
+  reprocessados sob demanda.
+- **Serviço (`app.py`)**: passa a honrar as opções por job (OCR on/off/força,
+  idioma, tabelas, fórmulas) com um cache de converters por conjunto de opções.
+- **UI**: seção "Configurações (admin)" no painel + indicador de saúde do serviço.
+- Testes: `backend/src/docling/adminConfig.test.js`.
+
 ## O que falta (próximas fases)
 
 - OCR por página (parcialmente digitalizado) e reprocesso com outro mecanismo.
 - Células mescladas em tabelas complexas.
 - Imagens/gráficos/assinaturas → handoff para modelo com visão + referência.
-- Painel administrativo completo e taxonomia de falhas na UI.
+- Taxonomia de falhas detalhada na UI.
 - Retenção/expiração automática dos artefatos derivados.
 
 ## Matriz de testes (critério de aceite)

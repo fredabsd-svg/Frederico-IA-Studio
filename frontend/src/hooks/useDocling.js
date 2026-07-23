@@ -11,22 +11,35 @@ const ACTIVE = new Set(['queued', 'processing']);
 
 export function useDocling(conversationId) {
   const [enabled, setEnabled] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [config, setConfig] = useState(null); // { options, overrides }
+  const [health, setHealth] = useState(null);
   const [docs, setDocs] = useState([]);
   const timer = useRef(null);
 
-  // Descobre uma vez se a camada está ligada.
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const r = await fetch(`${API}/api/docling/status`);
-        if (!r.ok) return;
-        const d = await r.json();
-        if (alive) setEnabled(!!d.enabled);
-      } catch {}
-    })();
-    return () => { alive = false; };
+  // Descobre o estado da camada (ligada? admin? config? saúde do serviço).
+  const loadStatus = useCallback(async () => {
+    try {
+      const r = await fetch(`${API}/api/docling/status`);
+      if (!r.ok) return;
+      const d = await r.json();
+      setEnabled(!!d.enabled);
+      setIsAdmin(!!d.isAdmin);
+      setConfig({ options: d.options || {}, overrides: d.overrides || {} });
+      setHealth(d.health || null);
+    } catch {}
   }, []);
+  useEffect(() => { loadStatus(); }, [loadStatus]);
+
+  // Salva a configuração (somente admin). Recarrega o status ao concluir.
+  const saveConfig = useCallback(async (overrides) => {
+    const r = await fetch(`${API}/api/docling/config`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(overrides || {}),
+    });
+    if (r.ok) await loadStatus();
+    return r.ok;
+  }, [loadStatus]);
 
   const refresh = useCallback(async () => {
     if (!conversationId) { setDocs([]); return []; }
@@ -60,5 +73,5 @@ export function useDocling(conversationId) {
   }, [refresh]);
 
   const processing = docs.some(d => ACTIVE.has(d.status));
-  return { enabled, docs, processing, refresh, reprocess };
+  return { enabled, isAdmin, config, health, docs, processing, refresh, reprocess, saveConfig };
 }
