@@ -14,6 +14,8 @@ import { createEvent, serializeEvent } from '../companion/events.js';
 import { checkGit, ingestLogs } from '../companion/monitor.js';
 import { recordIncident, listIncidents, getIncident, updateIncident, findSimilar, incidentSignature } from '../companion/incidents.js';
 import { audit, listAudit } from '../companion/audit.js';
+import { analyzeBug } from '../companion/bugAnalysis.js';
+import { incidentReportMarkdown } from '../companion/reports.js';
 
 const router = makeRouter();
 
@@ -209,6 +211,22 @@ router.post('/companion/incidents/similar', async (req, res) => {
   const b = req.body || {};
   const signature = incidentSignature(b);
   res.json(await findSimilar(req.userId, { signature, project: b.project || null }));
+});
+
+// Análise de bug sob demanda (pura/local): causa provável + arquivos + severidade.
+router.post('/companion/analyze', async (req, res) => {
+  const b = req.body || {};
+  res.json(analyzeBug({ errorMessage: b.errorMessage, stack: b.stack }));
+});
+
+// Relatório de diagnóstico de um incidente em Markdown (download).
+router.get('/companion/incidents/:id/report.md', async (req, res) => {
+  const inc = await getIncident(req.userId, req.params.id);
+  if (!inc) return res.status(404).json({ error: 'Não encontrado' });
+  const similar = await findSimilar(req.userId, { signature: inc.signature, project: inc.project, excludeId: inc.id });
+  res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="diagnostico_${inc.id}.md"`);
+  res.send(incidentReportMarkdown(inc, { similar }));
 });
 
 // ---- Auditoria das ações do agente ------------------------------------------
