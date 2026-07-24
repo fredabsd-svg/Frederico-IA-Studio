@@ -27,6 +27,8 @@ import { useCompanion } from './hooks/useCompanion.js';
 import { useDocling } from './hooks/useDocling.js';
 import { DoclingPanel } from './components/DoclingPanel.jsx';
 import { PromptCoach } from './components/PromptCoach.jsx';
+import { CopilotPanel } from './components/CopilotPanel.jsx';
+import { useCopilot } from './hooks/useCopilot.js';
 import { ContextPicker, AssistantGlyph, AssistantTile, ASSISTANT_ICON, modelHasTools } from './components/ContextPicker.jsx';
 import { MultiModelPicker } from './components/MultiModelPicker.jsx';
 import { MultiModelBoard } from './components/MultiModelBoard.jsx';
@@ -231,6 +233,9 @@ export default function App({ user } = {}) {
   const companion = useCompanion({ tasks, devConversationId, showToast });
   // Docling — andamento e resultados do processamento documental da conversa.
   const docling = useDocling(current?.id);
+  // Copiloto — central de diagnósticos, saúde e permissões.
+  const copilot = useCopilot();
+  const [copilotOpen, setCopilotOpen] = useState(false);
 
   function changeMultiModel(next) {
     setMultiModel(next);
@@ -1375,7 +1380,9 @@ export default function App({ user } = {}) {
       onNewChat={startNewChat}
       onOpenDeveloper={() => setDeveloperOpen(true)}
       onOpenAssistants={openStudioNew}
+      onOpenCopilot={() => setCopilotOpen(true)}
       showToast={showToast}
     />
+    {copilotOpen && <CopilotPanel copilot={copilot} onClose={() => setCopilotOpen(false)} />}
   </div>;
 }

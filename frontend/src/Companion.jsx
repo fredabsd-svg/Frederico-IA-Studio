@@ -73,7 +73,7 @@ export function Companion({
   companion,           // retorno do useCompanion
   busy, statusText, listening,
   model, allModels = [], assistants = [], assistantId,
-  onSend, onSetModel, onNewChat, onOpenDeveloper, onOpenAssistants,
+  onSend, onSetModel, onNewChat, onOpenDeveloper, onOpenAssistants, onOpenCopilot,
   showToast,
 }) {
   const { settings, persona, events, options, saveSettings, dismissEvent, resolveEvent, dismissAll } = companion;
@@ -245,6 +245,7 @@ export function Companion({
               <button onClick={() => { onNewChat?.(); setOpen(false); }}><Plus size={14} /> Nova conversa</button>
               {onOpenDeveloper && <button onClick={() => { onOpenDeveloper(); setOpen(false); }}><Bug size={14} /> Modo dev</button>}
               {onOpenAssistants && <button onClick={() => { onOpenAssistants(); setOpen(false); }}><Sparkles size={14} /> Assistentes</button>}
+              {onOpenCopilot && <button onClick={() => { onOpenCopilot(); setOpen(false); }}><Bug size={14} /> Copiloto</button>}
             </div>
 
             {/* Modo de comportamento (troca rápida) */}

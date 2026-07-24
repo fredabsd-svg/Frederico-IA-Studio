@@ -1,0 +1,61 @@
+/* Central do copiloto (Diagnósticos, Saúde, Permissões) */
+.copTabs { display: flex; gap: 6px; margin-bottom: 14px; }
+.copTabs button {
+  flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  font-size: 12.5px; padding: 8px 6px; border-radius: 9px; cursor: pointer;
+  background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.08); color: #9aa5bd;
+}
+.copTabs button.on { background: rgba(79, 140, 255, 0.18); border-color: rgba(79, 140, 255, 0.5); color: #cfe0ff; }
+.copEmpty { font-size: 13px; color: #8b96af; line-height: 1.5; padding: 10px 0; }
+.copLink { background: none; border: none; color: #6ea8ff; cursor: pointer; font-size: 12px; }
+.copDim { font-size: 11.5px; color: #7f8aa1; }
+
+/* Diagnósticos */
+.copList { display: flex; flex-direction: column; gap: 8px; }
+.copIncident { border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 10px; overflow: hidden; }
+.copIncTop { display: flex; align-items: center; gap: 8px; padding: 9px 11px; cursor: pointer; }
+.copIncTop:hover { background: rgba(255, 255, 255, 0.03); }
+.copSev { font-size: 10px; font-weight: 700; text-transform: uppercase; color: #0b1220; padding: 2px 7px; border-radius: 999px; }
+.copIncTitle { flex: 1; font-size: 13px; color: #eef2fb; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.copIncMeta { font-size: 11.5px; color: #8b96af; white-space: nowrap; }
+.copIncBody { padding: 4px 12px 12px; font-size: 12.5px; color: #b8c2d8; border-top: 1px solid rgba(255, 255, 255, 0.06); }
+.copIncBody p { margin: 8px 0; }
+.copConf { color: #8b96af; }
+.copErr { background: rgba(0, 0, 0, 0.3); border-radius: 8px; padding: 8px; font-size: 11.5px; overflow-x: auto; white-space: pre-wrap; color: #c8d2e6; }
+.copIncActions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.copIncActions a, .copIncActions button { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; padding: 5px 10px; border-radius: 7px; cursor: pointer; text-decoration: none; background: rgba(255, 255, 255, 0.06); border: none; color: #cdd6ea; }
+.copIncActions a:hover, .copIncActions button:hover { background: rgba(255, 255, 255, 0.14); color: #fff; }
+.copIncActions button.ok { color: #22c55e; }
+
+/* Saúde */
+.copHealth { display: flex; flex-direction: column; gap: 8px; }
+.copHealthTop { display: flex; align-items: center; gap: 8px; font-size: 14px; color: #eef2fb; margin-bottom: 4px; }
+.copHealthTop .copLink { margin-left: auto; }
+.copAlerts { list-style: none; margin: 0 0 6px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.copAlerts li { display: flex; align-items: center; gap: 6px; font-size: 12.5px; padding: 8px 10px; border-radius: 8px; }
+.copAlerts li.lvl-aviso { background: rgba(240, 163, 64, 0.1); color: #f0c98a; }
+.copAlerts li.lvl-critico { background: rgba(239, 68, 68, 0.12); color: #fca5a5; }
+.copMetric { display: flex; align-items: center; justify-content: space-between; font-size: 13px; color: #cdd6ea; }
+.copMetric span { display: inline-flex; align-items: center; gap: 6px; color: #9aa5bd; }
+.copBar { height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.08); overflow: hidden; }
+.copBar span { display: block; height: 100%; border-radius: 3px; }
+.copWarn { font-size: 12px; color: #f0a340; padding: 6px 0; }
+
+/* Permissões */
+.copPerms { display: flex; flex-direction: column; gap: 12px; }
+.copPermLabel { font-size: 12px; font-weight: 600; color: #8b96af; text-transform: uppercase; letter-spacing: 0.04em; }
+.copLevels { display: flex; flex-direction: column; gap: 6px; }
+.copLevel { text-align: left; padding: 9px 11px; border-radius: 10px; cursor: pointer; background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.1); color: #b8c2d8; display: flex; flex-direction: column; gap: 2px; }
+.copLevel b { font-size: 12.5px; color: #eef2fb; }
+.copLevel span { font-size: 11.5px; color: #8b96af; }
+.copLevel.on { background: rgba(79, 140, 255, 0.16); border-color: rgba(79, 140, 255, 0.5); }
+.copSwitch { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: #cdd6ea; }
+.copSwitch input { width: 16px; height: 16px; accent-color: #4f8cff; }
+.copCaps { display: flex; flex-wrap: wrap; gap: 5px; }
+.copCap { font-size: 11px; padding: 3px 8px; border-radius: 999px; background: rgba(255, 255, 255, 0.06); color: #b8c2d8; }
+.copCap.sens { background: rgba(240, 163, 64, 0.12); color: #f0c98a; }
+.copEmergency { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 10px; border-radius: 10px; cursor: pointer; background: rgba(239, 68, 68, 0.14); border: 1px solid rgba(239, 68, 68, 0.4); color: #fca5a5; font-weight: 600; font-size: 13px; }
+.copEmergency:hover:not(:disabled) { background: rgba(239, 68, 68, 0.24); }
+.copEmergency:disabled { opacity: 0.4; cursor: default; }
+.copEmergencyOn { background: rgba(239, 68, 68, 0.14); border: 1px solid rgba(239, 68, 68, 0.4); border-radius: 10px; padding: 10px; font-size: 12.5px; color: #fca5a5; }
+.copEmergencyOn button { margin-left: 6px; background: rgba(255, 255, 255, 0.1); border: none; color: #fff; padding: 3px 10px; border-radius: 6px; cursor: pointer; }
