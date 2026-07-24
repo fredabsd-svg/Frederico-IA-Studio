@@ -41,7 +41,11 @@ export const COMPANION_DEFAULTS = Object.freeze({
   permissionLevel: 1,  // 1..5 (seção 7)
   voice: false,
   proactiveAlerts: true,
+  proactiveWriting: true,       // balão proativo de revisão de escrita no chat principal
+  writingSensitivity: 'media',  // baixa | media | alta — quão cedo o balão se oferece
 });
+
+const WRITING_SENSITIVITY = ['baixa', 'media', 'alta'];
 
 const clampInt = (v, min, max, fallback) => {
   const n = Number(v);
@@ -64,6 +68,8 @@ export function sanitizeSettings(input = {}) {
     permissionLevel: clampInt(input.permissionLevel, 1, 5, d.permissionLevel),
     voice: Boolean(input.voice),
     proactiveAlerts: input.proactiveAlerts == null ? d.proactiveAlerts : Boolean(input.proactiveAlerts),
+    proactiveWriting: input.proactiveWriting == null ? d.proactiveWriting : Boolean(input.proactiveWriting),
+    writingSensitivity: pick(input.writingSensitivity, WRITING_SENSITIVITY, d.writingSensitivity),
   };
 }
 

@@ -6,7 +6,7 @@ import { SlidersHorizontal, Palette, Bot, Sparkles, KeyRound, Code2, Cable, Fold
 // estava espalhado pelo app, organizado por categoria. Cada item apenas ABRE o
 // painel existente (não reescreve nada), preservando as funcionalidades.
 const ICONS = {
-  aparencia: Palette, copiloto: Bug, assistentes: Sparkles, provedor: KeyRound,
+  aparencia: Palette, copiloto: Bug, copilotoAjustes: Sparkles, assistentes: Sparkles, provedor: KeyRound,
   dev: Code2, conectores: Cable, pastas: FolderCog, rotinas: CalendarClock,
   memoria: Brain, privacidade: ShieldCheck, analises: BarChart3, inbox: Inbox,
   backup: HardDriveDownload, gratuito: Gauge, agente: Bot, sandbox: Wifi,
@@ -18,7 +18,8 @@ export function SettingsHub({ onClose, actions = {}, isAdmin, pcFoldersEnabled, 
       { id: 'aparencia', label: 'Aparência e tema', desc: 'Paleta, espaço de trabalho e densidade.' },
     ] },
     { id: 'agente', label: 'Agente', items: [
-      { id: 'copiloto', label: 'Copiloto', desc: 'Diagnósticos, saúde do sistema e permissões/autonomia. (O personagem e a proatividade ficam na engrenagem do Companion.)' },
+      { id: 'copilotoAjustes', label: 'Copiloto — Personalização', desc: 'Personagem, persona, modelo, modo e proatividade (alertas e revisão de escrita).' },
+      { id: 'copiloto', label: 'Copiloto — Diagnósticos', desc: 'Diagnósticos, saúde do sistema e permissões/autonomia.' },
     ] },
     { id: 'ia', label: 'Inteligência artificial', items: [
       { id: 'provedor', label: 'Provedor de IA', desc: 'Suas chaves de API e provedores.' },

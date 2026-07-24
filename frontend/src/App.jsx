@@ -27,9 +27,9 @@ import { Companion } from './Companion.jsx';
 import { useCompanion } from './hooks/useCompanion.js';
 import { useDocling } from './hooks/useDocling.js';
 import { DoclingPanel } from './components/DoclingPanel.jsx';
-import { PromptCoach } from './components/PromptCoach.jsx';
 import { CopilotPanel } from './components/CopilotPanel.jsx';
 import { useCopilot } from './hooks/useCopilot.js';
+import { CompanionConfig } from './components/CompanionConfig.jsx';
 import { SettingsHub } from './components/SettingsHub.jsx';
 import { ContextPicker, AssistantGlyph, AssistantTile, ASSISTANT_ICON, modelHasTools } from './components/ContextPicker.jsx';
 import { MultiModelPicker } from './components/MultiModelPicker.jsx';
@@ -239,6 +239,7 @@ export default function App({ user } = {}) {
   // Copiloto — central de diagnósticos, saúde e permissões.
   const copilot = useCopilot();
   const [copilotOpen, setCopilotOpen] = useState(false);
+  const [companionConfigOpen, setCompanionConfigOpen] = useState(false);
   const [settingsHubOpen, setSettingsHubOpen] = useState(false);
 
   function changeMultiModel(next) {
@@ -1060,7 +1061,6 @@ export default function App({ user } = {}) {
             </div>}
           </div>}
         </div>
-        <PromptCoach input={input} setInput={setInput} onSend={(text) => sendMessage(text)} mode={companion.settings?.mode} disabled={busy} />
         <div className="composer">
           <button className="attachBtn" onClick={() => fileInputRef.current?.click()} title="Anexar arquivo" aria-label="Anexar arquivo"><Paperclip size={19}/></button>
           <input ref={fileInputRef} type="file" multiple onChange={uploadFiles} style={{ display: 'none' }}/>
@@ -1368,16 +1368,18 @@ export default function App({ user } = {}) {
       model={model}
       allModels={allModels}
       assistants={assistants}
-      assistantId={assistantId}
-      onSend={(text) => sendMessage(text)}
-      onSetModel={setModel}
-      onNewChat={startNewChat}
-      onOpenDeveloper={() => setDeveloperOpen(true)}
-      onOpenAssistants={openStudioNew}
-      onOpenCopilot={() => setCopilotOpen(true)}
+      draft={input}
+      onApplyDraft={setInput}
       showToast={showToast}
     />
     {copilotOpen && <CopilotPanel copilot={copilot} onClose={() => setCopilotOpen(false)} />}
+    {companionConfigOpen && <CompanionConfig
+      companion={companion}
+      allModels={allModels}
+      assistants={assistants}
+      model={model}
+      onClose={() => setCompanionConfigOpen(false)}
+    />}
     {settingsHubOpen && <SettingsHub
       onClose={() => setSettingsHubOpen(false)}
       isAdmin={me?.isAdmin}
@@ -1385,6 +1387,7 @@ export default function App({ user } = {}) {
       freeConfigured={freeStatus?.configured}
       actions={{
         aparencia: () => setThemeOpen(true),
+        copilotoAjustes: () => setCompanionConfigOpen(true),
         copiloto: () => setCopilotOpen(true),
         provedor: () => setProviderOpen(true),
         assistentes: openStudioNew,
