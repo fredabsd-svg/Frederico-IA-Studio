@@ -1,5 +1,61 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 🎚️ Roteamento OpenRouter: qualidade × resiliência + transparência de troca de modelo (2026-07-24 — PR #124, branch `claude/open-router-provider-lock-6iywu6`)
+
+
+**Contexto:** investigação a partir de uma reclamação de que um app agêntico via
+OpenRouter parecia **trocar de modelo silenciosamente** (DeepSeek V4 Pro → V3)
+durante a execução. A análise do código + dos dados reais da API pública do
+OpenRouter (`/models/<slug>/endpoints`) mostrou **dois fenômenos distintos**:
+(1) o OpenRouter balanceia cada requisição entre vários provedores do MESMO
+modelo, e esses provedores rodam o modelo em **precisões diferentes**
+(quantização) — as faixas agressivas (`int4/int8/fp4/fp6`) degradam a qualidade;
+(2) a "troca de modelo" relatada **não era downgrade da tarefa**: a conversa
+rodou inteira no modelo escolhido, e as chamadas pequenas a um modelo mais barato
+eram a **extração de memória em segundo plano** (`indexer.js` / `EXTRACT_MODEL`,
+default `deepseek/deepseek-chat`), cobrada ao preço correto e apenas misturada no
+Activity do OpenRouter.
+
+
+**Correção:**
+- **`agent/provider.js` — `openRouterRouting`:** meio-termo qualidade × resiliência.
+  `allow_fallbacks: true` mantém a resiliência (reroteia só entre provedores que
+  ainda atendem o filtro de qualidade, em vez de falhar) e `quantizations`
+  (padrão `fp8,fp16,bf16,fp32,unknown`) exclui só a compressão agressiva sem
+  prender a um provedor único. `unknown` fica na lista porque modelos reais em uso
+  (ex.: `gpt-4o`) só têm provedores `unknown` e ficariam sem endpoint se fossem
+  excluídos. Ajustável por ambiente: `OPENROUTER_QUANTIZATIONS` (inclui `off` e a
+  precisão cheia `bf16,fp16,fp32`) e `OPENROUTER_ALLOW_FALLBACKS=0` (trava no
+  provedor preferido — erro em vez de troca de provedor).
+- **`memory/indexer.js`:** as chamadas de extração de memória passam a herdar o
+  mesmo `openRouterRouting` das respostas principais — o filtro de qualidade
+  (evita `fp4` etc.) vale também no segundo plano.
+- **`agent/loop.js`:** quando um failover troca o modelo no meio da execução, a
+  troca é registrada **na própria resposta salva** (antes só havia um status
+  efêmero que sumia — por isso "só se notava depois"). Compara o modelo final com
+  o inicial (`startedModel`) e anexa uma nota explicando qual reserva concluiu e
+  como desativar a troca automática (`MODEL_FALLBACKS`).
+
+
+**Decisão de engenharia:** a extração de memória **continua** num modelo barato
+(configurável via `EXTRACT_MODEL`), não no modelo premium da conversa — ela roda a
+cada resposta e usar um modelo caro multiplicaria o custo sem benefício visível;
+agora apenas com a mesma proteção de qualidade das respostas principais.
+
+
+**Arquivos:**
+- `backend/src/agent/provider.js` — filtro de quantização + `allow_fallbacks`
+- `backend/src/agent/provider.promptCache.test.js` — testes do roteamento (padrão,
+  modo estrito, trava de provedor, filtro desligado)
+- `backend/src/memory/indexer.js` — roteamento de qualidade nas 2 chamadas de extração
+- `backend/src/agent/loop.js` — nota persistente de troca de modelo
+- `.env.example`, `README.md` — `OPENROUTER_QUANTIZATIONS` e `OPENROUTER_ALLOW_FALLBACKS`
+
+
+**Validação:** suíte completa do backend → 434 pass / 2 skipped / 0 falhas;
+`node --check` nos arquivos alterados + verificação de import (sem ciclo).
+
+
 ## 🎯 Filtro de relevância por domínio na recuperação de contexto — Context Builder 3.0 (2026-07-24 — PR #120, merge `31303fd`)
 
 
