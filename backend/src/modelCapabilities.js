@@ -14,6 +14,13 @@ const OUTPUT_ACTION_RE = /\b(?:gere|crie|monte|produza|faca|construa|elabore|pre
 const OUTPUT_TARGET_RE = /\b(?:arquivo|planilha|excel|xlsx|word|docx|pdf|documento|relatorio|apresentacao|imagem|foto|video|svg|zip)\b/i;
 const DIRECT_DELIVERY_RE = /\b(?:quero|preciso|gostaria(?:\s+de)?|me\s+(?:entregue|de))\b[\s\S]{0,48}\b(?:arquivo|planilha|excel|xlsx|word|docx|pdf|documento|imagem|foto|video|zip)\b/i;
 const UPLOAD_REFERENCE_RE = /\b(?:anexo|anexado|arquivo|planilha|excel|xlsx|word|docx|pdf|documento|imagem|foto|video|isso|isto|este|esta|esse|essa)\b/i;
+// Entrega EM TEXTO explícita: o pedido quer um texto/prompt de volta (ou proíbe
+// criar arquivos). Nesses casos, palavras de "arquivo/gerar" que aparecem no
+// CONTEÚDO citado (ex.: "transforme este pedido — que fala em gerar arquivos —
+// num prompt") NÃO devem marcar a tarefa como execução de ferramenta; senão uma
+// resposta legítima é descartada e refeita, e o usuário vê o texto "sumir e
+// reaparecer" enquanto o modelo raciocina de novo.
+const TEXT_ONLY_DELIVERY_RE = /\b(?:devolva|retorne|responda|entregue|escreva|gere|crie|monte|elabore|produza|transforme|reescreva)\b[\s\S]{0,60}\bprompt\b|\bprompt\s+de\s+engenharia\b|\bn[ãa]o\s+(?:crie|gere|produza|salve|escreva|exporte|execute|rode)\b[\s\S]{0,30}\b(?:arquivo|arquivos|planilha|documento|codigo|script)\b|\b(?:responda|devolva|retorne|escreva|entregue)\b[\s\S]{0,40}\b(?:apenas|somente|so)\b[\s\S]{0,30}\b(?:texto|em texto|no chat)\b/i;
 
 function normalizedText(value) {
   return String(value || '')
@@ -279,11 +286,15 @@ export function markModelCapabilityUnsupported(id, capability) {
 export function detectToolRequirement({ userText, webSearch = false, developer = false, hasUploads = false } = {}) {
   const reasons = [];
   const text = normalizedText(userText);
-  const expectsOutput = (OUTPUT_ACTION_RE.test(text) && OUTPUT_TARGET_RE.test(text)) || DIRECT_DELIVERY_RE.test(text);
+  // Pedido de entrega em texto (ex.: "devolva apenas o prompt") desliga a
+  // detecção baseada em palavras do conteúdo. Ações deliberadas do usuário
+  // (pesquisa na web, modo desenvolvedor, anexos citados) continuam valendo.
+  const textOnly = TEXT_ONLY_DELIVERY_RE.test(text);
+  const expectsOutput = !textOnly && ((OUTPUT_ACTION_RE.test(text) && OUTPUT_TARGET_RE.test(text)) || DIRECT_DELIVERY_RE.test(text));
   if (webSearch) reasons.push('a pesquisa na internet ativada');
   if (developer) reasons.push('o modo desenvolvedor');
   if (hasUploads && UPLOAD_REFERENCE_RE.test(text)) reasons.push('a leitura dos arquivos anexados');
-  if ((TOOL_ACTION_RE.test(text) && TOOL_TARGET_RE.test(text)) || DIRECT_DELIVERY_RE.test(text)) {
+  if (!textOnly && ((TOOL_ACTION_RE.test(text) && TOOL_TARGET_RE.test(text)) || DIRECT_DELIVERY_RE.test(text))) {
     reasons.push('a criação ou o processamento solicitado');
   }
   return { required: reasons.length > 0, reasons, expectsOutput };
