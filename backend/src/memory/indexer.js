@@ -6,6 +6,7 @@ import { saveEmbeddingVec } from './vectorStore.js';
 import { getUserProvider } from '../userProvider.js';
 import { sanitizeToolProtocolText } from '../toolProtocol.js';
 import { untrustedContext } from '../agent/promptRegistry.js';
+import { openRouterRouting } from '../agent/provider.js';
 
 // Indexa conversas (chunks + resumo) e extrai fatos importantes para a
 // memória de longo prazo. Roda em segundo plano, sem atrasar as respostas.
@@ -114,7 +115,10 @@ export async function indexAfterReply(userId, conversationId) {
     const completion = await provider.client.chat.completions.create({
       model: EXTRACT_MODEL(),
       messages: [{ role: 'system', content: EXTRACT_PROMPT }, { role: 'user', content: untrustedContext('memory-extraction-input', input) }],
-      temperature: 0
+      temperature: 0,
+      // Mesma política de qualidade das respostas principais: mesmo sendo uma
+      // chamada barata de segundo plano, evita provedores de baixa precisão.
+      ...openRouterRouting(false, provider.baseURL)
     });
     const data = parseExtraction(completion.choices[0].message.content);
 
@@ -254,7 +258,9 @@ export async function importConversations(userId, fileName, buffer, scope = 'glo
       const completion = await provider.client.chat.completions.create({
         model: EXTRACT_MODEL(),
         messages: [{ role: 'system', content: EXTRACT_PROMPT }, { role: 'user', content: untrustedContext('imported-conversation', `Conversa importada "${conv.title}":\n${body.slice(0, 5000)}`) }],
-        temperature: 0
+        temperature: 0,
+        // Mesma política de qualidade das respostas principais (evita fp4 etc.).
+        ...openRouterRouting(false, provider.baseURL)
       });
       const data = parseExtraction(completion.choices[0].message.content);
       for (const f of (data.facts || []).slice(0, 5)) {

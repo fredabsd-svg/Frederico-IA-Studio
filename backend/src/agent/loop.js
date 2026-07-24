@@ -77,6 +77,12 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   if (provider.source === 'free' && !(provider.freeModels || []).includes(chosenModel)) {
     chosenModel = provider.modelRef;
   }
+  // Modelo com que a tarefa COMEÇA. Se um failover trocar de modelo no meio da
+  // execução, comparamos o modelo final com este para registrar a troca NA
+  // PRÓPRIA RESPOSTA — uma substituição de modelo nunca pode passar despercebida
+  // (foi exatamente a queixa que originou esta mudança: o usuário só percebeu a
+  // troca depois que a tarefa terminou).
+  const startedModel = chosenModel;
   // FAILOVER (MM-04): se o provedor cair no meio da tarefa, antes o app só
   // repetia o MESMO modelo e desistia. Agora há uma cadeia de reserva — os
   // modelos de MODEL_FALLBACKS (env), os modelos gratuitos alternativos (modo
@@ -987,6 +993,16 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
       ? (requiresOutput ? MISSING_OUTPUT_NOTICE.trim() : EXECUTION_INCOMPLETE_NOTICE.trim())
       : 'O modelo terminou sem gerar uma resposta. Use **Reenviar** ou escolha outro modelo.';
     onEvent({ type: 'delta', content: finalText });
+  }
+  // TRANSPARÊNCIA DE MODELO: se um failover trocou o modelo no meio da execução,
+  // registra isso na própria resposta (não só num status efêmero que some). O
+  // estado/badge já reporta o modelo final, mas a nota garante que o usuário
+  // SEMPRE saiba, no texto salvo, que a tarefa terminou num modelo diferente do
+  // escolhido — sem substituição silenciosa.
+  if (rawModelId(chosenModel) !== rawModelId(startedModel)) {
+    const modelSwitchNote = `\n\n_ℹ️ O modelo escolhido (**${rawModelId(startedModel)}**) ficou indisponível durante a execução; a tarefa foi concluída com o modelo de reserva **${rawModelId(chosenModel)}**. Para uma indisponibilidade retornar erro em vez de trocar de modelo, não configure modelos de reserva (variável MODEL_FALLBACKS)._`;
+    finalText += modelSwitchNote;
+    onEvent({ type: 'delta', content: modelSwitchNote });
   }
   let checks = {};
   if (newFiles.length && !stopped) {
