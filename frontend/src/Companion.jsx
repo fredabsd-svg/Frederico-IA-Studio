@@ -208,7 +208,7 @@ export function Companion({
             {/* Status da sessão: modelo em uso e atividade (transparência). */}
             <div className="cmpSession">
               <span className="cmpChip" title="Modelo responsável pelo Companion"><Cpu size={13} /> {modelLabel}</span>
-              <span className={`cmpChip mode-${settings.mode}`} title="Modo de comportamento">{MODE_LABEL[settings.mode]}</span>
+              <button className={`cmpChip cmpChipBtn mode-${settings.mode}`} title="Modo de comportamento (clique para configurar)" onClick={() => setSettingsOpen(true)}>{MODE_LABEL[settings.mode]}</button>
               {persona && <span className="cmpChip" title="Persona (assistente do Studio)"><AssistantGlyph value={persona.emoji} size={13} /> {persona.name}</span>}
             </div>
 
@@ -248,17 +248,8 @@ export function Companion({
               {onOpenCopilot && <button onClick={() => { onOpenCopilot(); setOpen(false); }}><Bug size={14} /> Copiloto</button>}
             </div>
 
-            {/* Modo de comportamento (troca rápida) */}
-            <div className="cmpModes" role="group" aria-label="Modo de comportamento">
-              {(options.modes || Object.keys(MODE_LABEL)).map(m => (
-                <button
-                  key={m}
-                  className={`cmpMode ${settings.mode === m ? 'on' : ''}`}
-                  title={MODE_DESC[m]}
-                  onClick={() => saveSettings({ mode: m })}
-                >{MODE_LABEL[m] || m}</button>
-              ))}
-            </div>
+            {/* Os modos de comportamento agora ficam na engrenagem (Configurações),
+                deixando o painel limpo. O modo atual aparece como chip acima. */}
 
             {/* Envio rápido — delega ao chat do Studio na conversa aberta */}
             <form className="cmpQuick" onSubmit={submitQuick}>

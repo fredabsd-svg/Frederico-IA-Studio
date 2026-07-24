@@ -1067,11 +1067,11 @@ export default function App({ user } = {}) {
             </div>}
           </div>}
         </div>
+        <PromptCoach input={input} setInput={setInput} onSend={(text) => sendMessage(text)} mode={companion.settings?.mode} disabled={busy} />
         <div className="composer">
           <button className="attachBtn" onClick={() => fileInputRef.current?.click()} title="Anexar arquivo" aria-label="Anexar arquivo"><Paperclip size={19}/></button>
           <input ref={fileInputRef} type="file" multiple onChange={uploadFiles} style={{ display: 'none' }}/>
           <button className="attachBtn" onClick={() => setCameraOpen(true)} title="Tirar foto com a câmera" aria-label="Tirar foto com a câmera"><Camera size={19}/></button>
-          <PromptCoach input={input} setInput={setInput} onSend={(text) => sendMessage(text)} disabled={busy} />
           <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)} onInput={e => { e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 160) + 'px'; }} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (!uploadingFiles) sendMessage(); } }} placeholder={listening ? 'Ouvindo... fale agora' : (webSearch ? 'Pesquisa na internet ativada — pergunte algo atual...' : 'Peça para analisar arquivos, gerar Word, Excel, PDF...')} />
           <button className="sendBtn" onClick={sendMessage} disabled={busy || uploadingFiles} aria-label={uploadingFiles ? 'Aguardando anexos' : 'Enviar'}><ArrowUp size={18}/></button>
         </div>
