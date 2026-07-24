@@ -1,5 +1,76 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 🤖 Copiloto com espaço próprio: Chat + Documentos isolados, config nas Configurações e balão proativo de revisão (2026-07-24 — PR #126, branch `claude/copilot-refactor`)
+
+
+**Contexto:** o "copiloto" estava espalhado em três peças diferentes e com papéis
+misturados: o **avatar flutuante** (Companion) cuja engrenagem abria um modal de
+configuração do personagem; um **painel técnico** separado (Diagnósticos/Saúde/
+Permissões); e o **PromptCoach**, que oferecia revisão de prompt durante a
+digitação no chat principal. Além disso, o avatar não tinha cérebro próprio — o
+envio rápido dele delegava ao `sendMessage` do chat principal, sem contexto,
+memória nem armazenamento próprios. A reorganização (R1–R4) dá ao copiloto um
+**espaço próprio e isolado**.
+
+
+**Mudanças:**
+- **R1 — Configuração sai do avatar → Configurações.** Removido o modal
+  `CompanionSettings` e o painel rápido do avatar. Nova tela **Configurações ›
+  Agente › "Copiloto — Personalização"** (`CompanionConfig.jsx`): personagem,
+  persona, modelo, modo, proatividade e animação. O painel técnico continua em
+  **"Copiloto — Diagnósticos"**. Clicar no avatar passa a abrir **apenas** o
+  painel do copiloto (abas Chat e Documentos).
+- **R2 — Balão proativo de revisão de escrita.** O avatar observa o rascunho do
+  chat principal e, após uma pausa (`PAUSA_MS=3000`) + tamanho mínimo
+  (`MIN_CHARS` por sensibilidade), oferece revisar (**Sim / Agora não**). Aceitar
+  chama `/api/copilot/revise` e mostra um **cartão clicável** que substitui o
+  texto pelo revisado. Frases sorteadas sem repetir, Esc/clique-fora fecham,
+  cooldown por rascunho. Removida a faixa do PromptCoach do compositor (não há
+  mais oferta de prompt durante a digitação); as 10 ações de prompt foram
+  preservadas **dentro do chat do copiloto**.
+- **R3 — Chat com contexto 100% isolado.** Novas tabelas
+  `copilot_conversations`/`copilot_messages` (migration `018`), separadas de
+  `conversations`/`messages`. Backend `copilot/core.js` (puro) + `copilot/store.js`
+  + rotas `/api/copilot/chat` (GET/POST/DELETE) com persona dedicada. O isolamento
+  é garantido em `buildChatMessages` (só `system` + histórico do **próprio**
+  copiloto — nunca a conversa principal nem a memória dela).
+- **R4 — Caixa de documentos própria.** Nova tabela `copilot_documents`
+  (migration `019`), separada dos anexos das conversas (`files`). Rotas de
+  listar/ver/baixar/excluir e criação automática dos textos revisados pelo balão.
+  Aba Documentos com estados vazio/carregando/lista.
+
+
+**Decisões de engenharia:**
+- O copiloto usa o **mesmo provedor de IA do usuário** (`getUserProvider`), com o
+  modelo definido na config do Companion (`settings.model`; vazio = provedor
+  padrão). Sem chave configurada, o chat/revisão respondem com mensagem amigável
+  em vez de erro.
+- O chat mantém **uma thread contínua por usuário** (MVP), com botão de limpar
+  histórico. Documentos guardam o conteúdo textual inline na tabela.
+- O painel técnico (Diagnósticos/Saúde/Permissões) foi **mantido** — o prompt não
+  pedia removê-lo e ele já vivia nas Configurações, não no avatar.
+
+
+**Arquivos:**
+- Backend: `migrations/018_copilot_chat.sql`, `migrations/019_copilot_documents.sql`,
+  `src/copilot/core.js`, `src/copilot/core.test.js`, `src/copilot/store.js`,
+  `src/routes/copilot.js`, `src/routes/companion.js` (novos campos
+  `proactiveWriting`/`writingSensitivity`), `src/server.js` (monta o router).
+- Frontend: `Companion.jsx` (reescrito — avatar abre o painel + balão proativo),
+  `components/CopilotWorkspace.jsx` (abas Chat/Documentos), `components/CompanionConfig.jsx`,
+  `hooks/useCopilotChat.js`, `hooks/useCompanion.js`, `components/SettingsHub.jsx`,
+  `App.jsx`, `companion.css`. Removido `components/PromptCoach.jsx` (órfão).
+
+
+**Validação:** Postgres real — migrations `001`–`019` aplicam limpas; E2E do
+`store` contra o banco confirma **isolamento por usuário** (um usuário não lê/apaga
+dados de outro) e o CRUD de chat e documentos; testes unitários do núcleo
+(`core.test.js`, incluindo o invariante de isolamento das mensagens) e
+`sanitizeSettings` verdes; build do frontend OK. Não exercitado ponta a ponta: a
+chamada real ao provedor de IA (sem chave no ambiente) — as peças em volta estão
+testadas.
+
+
 ## 🎚️ Roteamento OpenRouter: qualidade × resiliência + transparência de troca de modelo (2026-07-24 — PR #124, branch `claude/open-router-provider-lock-6iywu6`)
 
 
