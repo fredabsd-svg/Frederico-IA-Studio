@@ -240,7 +240,10 @@ export async function buildContext({ userId, conversationId, assistantId, client
     `SELECT * FROM memory WHERE scope IN (${ph}) AND user_id=? AND (type IN ('perfil','preferencia') OR pinned=1)
      ORDER BY pinned DESC, importance DESC, updated_at DESC LIMIT 14`).all(...scopes, userId);
 
-  const profileIncluded = [];
+  // NB: os blocos de memorias/conversas NAO sao empurrados aqui. Primeiro
+  // coletamos todos os itens incluidos e depois deduplicamos de verdade
+  // (em ordem de prioridade) antes de montar o texto — ver secao de dedup.
+  let profileIncluded = [];
   for (const m of profileRows) {
     const scoreResult = scoreMemory(m, promptAnalysis, 0); // sem similaridade semantica para perfil
     const validation = validateRelevance(m.content, promptAnalysis, scoreResult);
@@ -250,21 +253,13 @@ export async function buildContext({ userId, conversationId, assistantId, client
     }
   }
 
-  if (profileIncluded.length) {
-    blocks.push({
-      priority: 1,
-      text: `QUEM E O USUARIO (memoria de longo prazo; use quando relevante):\n${profileIncluded.map(fmtMem).join('\n')}`,
-      memories: profileIncluded.map(m => memoryMeta(m, m._reason, m._score))
-    });
-  }
-
   // ─── 2) Notas manuais — tambem com crivo de relevancia ──────────────
   const profileIds = new Set(profileRows.map(p => p.id));
   const manualRows = (await db.prepare(
     `SELECT * FROM memory WHERE scope IN (${ph}) AND user_id=? AND type='manual' ORDER BY updated_at DESC LIMIT 15`).all(...scopes, userId))
     .filter(m => !profileIds.has(m.id));
 
-  const manualIncluded = [];
+  let manualIncluded = [];
   for (const m of manualRows) {
     const scoreResult = scoreMemory(m, promptAnalysis, 0);
     const validation = validateRelevance(m.content, promptAnalysis, scoreResult);
@@ -272,14 +267,6 @@ export async function buildContext({ userId, conversationId, assistantId, client
     if (validation.valid && scoreResult.shouldInclude) {
       manualIncluded.push({ ...m, _reason: scoreResult.reason, _score: scoreResult.score });
     }
-  }
-
-  if (manualIncluded.length) {
-    blocks.push({
-      priority: 2,
-      text: `NOTAS SALVAS PELO USUARIO:\n${manualIncluded.map(fmtMem).join('\n')}`,
-      memories: manualIncluded.map(m => memoryMeta(m, m._reason, m._score))
-    });
   }
 
   // ─── 3) Resumo da conversa atual (quando o inicio saiu da janela) ──
@@ -300,10 +287,10 @@ export async function buildContext({ userId, conversationId, assistantId, client
   // resultados fracos. AGORA: cada memoria e pontuada e validada; so
   // entram as que passam no crivo.
   const seen = new Set([...profileIds, ...manualRows.map(m => m.id)]);
+  let relIncluded = [];
   try {
     const limit = Math.max(0, Math.min(Number(settings.max_memories) || 0, budget < 20000 ? 6 : 16));
     const candidates = limit ? (await searchMemories(userId, userText, { scopes, limit: limit * 2 })).filter(m => !seen.has(m.id)) : [];
-    const relIncluded = [];
     for (const m of candidates) {
       // Usa a similaridade semantica retornada pela busca (_sim)
       const semanticSim = m._sim || 0;
@@ -313,13 +300,6 @@ export async function buildContext({ userId, conversationId, assistantId, client
       if (validation.valid && scoreResult.shouldInclude) {
         relIncluded.push({ ...m, _reason: scoreResult.reason, _score: scoreResult.score });
       }
-    }
-    if (relIncluded.length) {
-      blocks.push({
-        priority: 4,
-        text: `MEMORIAS RELEVANTES PARA ESTA PERGUNTA:\n${relIncluded.map(fmtMem).join('\n')}`,
-        memories: relIncluded.map(m => memoryMeta(m, m._reason, m._score))
-      });
     }
   } catch {}
 
@@ -332,7 +312,6 @@ export async function buildContext({ userId, conversationId, assistantId, client
     const chunkScopes = clientScope ? unique(['office', clientScope]) : unique(['global', 'office']);
     const limit = Math.max(0, Math.min(Number(settings.max_chunks) || 0, budget < 20000 ? 3 : 12));
     const chunkCandidates = limit ? await searchChunks(userId, userText, { excludeConversationId: conversationId, scopes: chunkScopes, limit: limit * 2 }) : [];
-    const chunksIncluded = [];
     for (const c of chunkCandidates) {
       const semanticSim = c._sim || 0;
       const scoreResult = scoreConversation(c, promptAnalysis, semanticSim);
@@ -344,29 +323,60 @@ export async function buildContext({ userId, conversationId, assistantId, client
         chunksIncluded.push({ ...c, _snippet: snippet, _reason: scoreResult.reason, _score: scoreResult.score });
       }
     }
-    if (chunksIncluded.length) {
-      const txt = chunksIncluded
-        .map(c => `--- ${c.source_title || 'Conversa anterior'} (${(c.created_at || '').slice(0, 10)}) ---\n${sanitizeToolProtocolText(c._snippet)}`)
-        .join('\n');
-      blocks.push({
-        priority: 5,
-        text: `TRECHOS DE CONVERSAS ANTERIORES RELEVANTES (contexto recuperado automaticamente):\n${txt}`,
-        chunks: chunksIncluded.map(c => chunkMeta({ ...c, content: c._snippet }, c._reason, c._score))
-      });
-    }
   } catch {}
 
-  // ─── Deduplicacao entre blocos ─────────────────────────────────────
-  // Remove memorias/conversas com conteudo muito parecido que ja apareceu
-  // em um bloco de prioridade mais alta.
-  const allMetaItems = [];
-  for (const b of blocks) {
-    if (b.memories) allMetaItems.push(...b.memories.map(m => ({ preview: m.preview, source: 'memory' })));
-    if (b.chunks) allMetaItems.push(...b.chunks.map(c => ({ preview: c.preview, source: 'chunk' })));
+  // ─── Deduplicacao REAL entre blocos ────────────────────────────────
+  // Em ordem de prioridade (perfil > notas > relevantes > conversas),
+  // descarta itens cujo conteudo essencial ja apareceu num bloco anterior.
+  // ANTES (bug): o resultado do dedup era descartado — so contava-se
+  // quantos seriam removidos — e as duplicatas continuavam indo ao modelo.
+  // AGORA: os proprios arrays sao filtrados antes de virar texto.
+  const dedupItems = [
+    ...profileIncluded.map((m, i) => ({ content: m.content, _b: 'p', _i: i })),
+    ...manualIncluded.map((m, i) => ({ content: m.content, _b: 'm', _i: i })),
+    ...relIncluded.map((m, i) => ({ content: m.content, _b: 'r', _i: i })),
+    ...chunksIncluded.map((c, i) => ({ content: c._snippet || c.content, _b: 'c', _i: i })),
+  ];
+  const survivors = deduplicateContext(dedupItems);
+  diagDuplicatesRemoved = dedupItems.length - survivors.length;
+  const keepSet = new Set(survivors.map(x => `${x._b}:${x._i}`));
+  profileIncluded = profileIncluded.filter((_, i) => keepSet.has(`p:${i}`));
+  manualIncluded = manualIncluded.filter((_, i) => keepSet.has(`m:${i}`));
+  relIncluded = relIncluded.filter((_, i) => keepSet.has(`r:${i}`));
+  chunksIncluded = chunksIncluded.filter((_, i) => keepSet.has(`c:${i}`));
+
+  // ─── Montagem dos blocos (apos dedup) ──────────────────────────────
+  if (profileIncluded.length) {
+    blocks.push({
+      priority: 1,
+      text: `QUEM E O USUARIO (memoria de longo prazo; use quando relevante):\n${profileIncluded.map(fmtMem).join('\n')}`,
+      memories: profileIncluded.map(m => memoryMeta(m, m._reason, m._score))
+    });
   }
-  const beforeDedup = allMetaItems.length;
-  const afterDedup = deduplicateContext(allMetaItems).length;
-  diagDuplicatesRemoved = beforeDedup - afterDedup;
+  if (manualIncluded.length) {
+    blocks.push({
+      priority: 2,
+      text: `NOTAS SALVAS PELO USUARIO:\n${manualIncluded.map(fmtMem).join('\n')}`,
+      memories: manualIncluded.map(m => memoryMeta(m, m._reason, m._score))
+    });
+  }
+  if (relIncluded.length) {
+    blocks.push({
+      priority: 4,
+      text: `MEMORIAS RELEVANTES PARA ESTA PERGUNTA:\n${relIncluded.map(fmtMem).join('\n')}`,
+      memories: relIncluded.map(m => memoryMeta(m, m._reason, m._score))
+    });
+  }
+  if (chunksIncluded.length) {
+    const txt = chunksIncluded
+      .map(c => `--- ${c.source_title || 'Conversa anterior'} (${(c.created_at || '').slice(0, 10)}) ---\n${sanitizeToolProtocolText(c._snippet)}`)
+      .join('\n');
+    blocks.push({
+      priority: 5,
+      text: `TRECHOS DE CONVERSAS ANTERIORES RELEVANTES (contexto recuperado automaticamente):\n${txt}`,
+      chunks: chunksIncluded.map(c => chunkMeta({ ...c, content: c._snippet }, c._reason, c._score))
+    });
+  }
 
   // ─── Orcamento: corta primeiro o menos importante ──────────────────
   const ordered = blocks.sort((a, b) => a.priority - b.priority);

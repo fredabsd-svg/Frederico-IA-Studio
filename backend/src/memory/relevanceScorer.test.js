@@ -255,3 +255,35 @@ test('Memória de perfil genérico entra quando prompt é genérico', () => {
   // Perfil genérico pode ser útil em prompt genérico
   assert.ok(result.shouldInclude || result.score >= 0, `deveria ter score razoável, got ${result.reason}`);
 });
+
+// ─── Regressão: vazamento de domínio em pedidos curtos ─────────────────
+// Pedidos curtos de software (1 keyword) caíam em domínio 'general' e, com
+// isso, o crivo de domínio se desligava e memórias contábeis fixadas/
+// importantes entravam mesmo assim. Agora o softDomain (inclinação fraca)
+// mantém o crivo ativo.
+
+test('softDomain: pedido curto de software não é totalmente cego', () => {
+  const analysis = analyzePrompt('dá uma olhada no app e encontra bugs');
+  assert.equal(analysis.softDomain, 'software');
+});
+
+test('Regressão: memória contábil fixada NÃO entra em pedido curto de software', () => {
+  const memContabil = { content: 'Cliente XPTO é Simples Nacional anexo III, entrega SPED mensal', type: 'fato', importance: 5, pinned: true };
+  for (const p of ['dá uma olhada no app e encontra bugs', 'revise meu aplicativo profundamente', 'arruma o erro que aparece quando salvo']) {
+    const analysis = analyzePrompt(p);
+    const result = scoreMemory(memContabil, analysis, 0);
+    assert.ok(!result.shouldInclude, `"${p}": contábil não deveria entrar (score=${result.score.toFixed(2)}, reason=${result.reason})`);
+  }
+});
+
+test('Controle: pedido contábil real continua puxando memória contábil', () => {
+  const analysis = analyzePrompt('Analise a retenção de tributos dessa nota fiscal e o SPED');
+  const memContabil = { content: 'Cliente XPTO é Simples Nacional anexo III, entrega SPED mensal', type: 'fato', importance: 5, pinned: true };
+  const result = scoreMemory(memContabil, analysis, 0.3);
+  assert.ok(result.shouldInclude, `contábil deveria entrar (score=${result.score.toFixed(2)}, reason=${result.reason})`);
+});
+
+test('Palavras-chave de UI classificam como software', () => {
+  const { domain } = detectContentDomain('ajustar o layout da tela de login e o botão do menu');
+  assert.equal(domain, 'software');
+});
