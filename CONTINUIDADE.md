@@ -1,5 +1,58 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 🔧 Correções do Context Builder 3.0.1 — dedup real, vazamento de domínio e performance (2026-07-24 — branch `claude/conversation-memory-changes-i2i4vz`)
+
+
+**Contexto:** revisão do Context Builder 3.0 (recuperação de memória/conversa no
+início da conversa). A arquitetura estava boa, mas a revisão encontrou três
+defeitos concretos que faziam a funcionalidade não cumprir a promessa em casos
+comuns. Corrigidos aqui.
+
+
+**Bugs corrigidos:**
+
+1. **Deduplicação morta (não deduplicava nada).** Em `contextBuilder.js`, o
+   resultado de `deduplicateContext(...)` era descartado — só o `.length` virava
+   contador de diagnóstico. Os blocos enviados ao modelo nunca eram filtrados, ou
+   seja, duplicatas continuavam indo no prompt. **Correção:** os itens agora são
+   coletados primeiro, deduplicados **de verdade** em ordem de prioridade
+   (perfil → notas → relevantes → conversas) e só então viram texto.
+
+2. **Vazamento do filtro de domínio em pedidos curtos (falha do objetivo central).**
+   O domínio só era classificado com **≥2 keyword-hits**; pedidos reais e curtos
+   ("dá uma olhada no app e encontra bugs") caíam em `domain='general'`, o que
+   desligava a penalidade de desvio, a checagem de `validateRelevance` e liberava
+   todos os domínios via `MEMORY_INTENT_MAP['general']`. Resultado: memória
+   contábil fixada/importante voltava a entrar num pedido de software (o exato
+   problema que a 3.0 dizia corrigir). **Correção:** novo conceito de **domínio
+   efetivo** — quando não há domínio forte, usa-se a **inclinação fraca**
+   (`softDomain`, argmax dos hits mesmo abaixo de 2). O crivo passa a operar sobre
+   o domínio efetivo em `scoreMemory`, `scoreConversation` e `validateRelevance`.
+   Também foram adicionadas palavras-chave de **UI** (layout, tela, login, botão,
+   menu, formulário, painel, responsivo…) para reduzir pedidos de "sinal zero".
+
+3. **Typo de copy-paste** em `relevanceScorer.js`: `chunk.created_at || chunk.created_at`
+   (fallback repetia o mesmo campo) → `chunk.created_at || chunk.updated_at`.
+
+4. **Performance:** `detectContentDomain` renormalizava ~500 palavras-chave a cada
+   chamada (e é chamado várias vezes por candidato). Agora as keywords são
+   normalizadas **uma vez** no carregamento do módulo (`DOMAIN_INDEX`, com RegExp
+   de fronteira pré-compiladas para termos curtos) e há uma função única
+   `scoreDomains()` usada por `analyzePrompt` e `detectContentDomain`.
+
+
+**Arquivos:**
+- `backend/src/memory/relevanceScorer.js` — domínio efetivo/`softDomain`,
+  `DOMAIN_INDEX` pré-computado, keywords de UI, correção do typo
+- `backend/src/memory/contextBuilder.js` — dedup real antes de montar os blocos
+- `backend/src/memory/relevanceScorer.test.js` — +4 testes de regressão
+  (vazamento em prompt curto, controle contábil, `softDomain`, keywords de UI)
+
+
+**Validação:** `relevanceScorer.test.js` → 31/31; `contextBuilder.test.js` → 1
+pulado (exige PostgreSQL, pré-existente); verificação empírica: memória contábil
+não entra mais em pedidos curtos de software (score cai para −0.25) e continua
+entrando em pedidos contábeis reais (score 0.69).
 ## 🌱 Redesign do copiloto: o personagem agora é o Nino (2026-07-25 — branch `claude/nino-copilot-redesign`)
 
 
