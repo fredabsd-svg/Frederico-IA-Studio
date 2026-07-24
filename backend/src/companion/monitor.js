@@ -8,6 +8,7 @@
 import { execInActiveSandbox } from '../sandbox.js';
 import { ErrorDigest } from './errorDigest.js';
 import { createEvent, createEventOnce, hasOpenEvent } from './events.js';
+import { recordIncident } from './incidents.js';
 
 // Modos em que o Companion pode intervir de forma proativa (seção 5).
 export function proactiveAllowed(settings) {
@@ -119,15 +120,32 @@ export async function ingestLogs(userId, { source = 'app', project = null, lines
   if (!fired.length || !proactiveAllowed(settings)) return [];
   const events = [];
   for (const f of fired) {
+    // Registra/atualiza o incidente na base técnica (correlação por assinatura).
+    let recorded = null;
+    try {
+      recorded = await recordIncident(userId, {
+        kind: 'erro_recorrente', severity: 'alta', project, signature: f.signature,
+        summary: `Erro recorrente: ${f.sample.slice(0, 160)}`, errorMessage: f.sample,
+        evidence: { occurrencesNaJanela: f.count, origem: source },
+      });
+    } catch (e) { console.error('[copiloto] recordIncident falhou:', e.message); }
+
+    // "Esse erro já ocorreu antes": se há histórico, o alerta aponta a última solução.
+    const prior = recorded?.previous?.find(p => p.solution) || recorded?.previous?.[0] || null;
+    const jaOcorreu = recorded?.recurring || (recorded?.previous?.length > 0);
+    const detail = jaOcorreu && prior
+      ? `${f.sample}\n\nEsse erro já ocorreu antes neste projeto${prior.solution ? `. Última correção: ${prior.solution}` : ` (${recorded.incident.occurrences}x).`}`
+      : f.sample;
+
     const evt = await createEvent(userId, {
       kind: 'erro_recorrente',
       level: 'aviso',
       title: `O mesmo erro apareceu ${f.count} vezes`,
-      detail: f.sample,
+      detail,
       origin: source === 'app' ? 'monitor_logs' : `monitor_logs:${source}`,
       project,
       dataSent: `Assinatura: ${f.signature}`,
-      proposedAction: 'Posso investigar a causa provável nos logs e no código.',
+      proposedAction: jaOcorreu ? 'Posso aplicar/adaptar a correção anterior ou investigar de novo.' : 'Posso investigar a causa provável nos logs e no código.',
       authorization: 'Nível 1 — somente leitura',
     });
     events.push(evt);
