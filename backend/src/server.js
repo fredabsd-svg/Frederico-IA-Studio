@@ -38,6 +38,7 @@ import companionRouter from './routes/companion.js';
 import doclingRouter from './routes/docling.js';
 import { healthMetrics } from './healthMetrics.js';
 import { sweepExpiredArtifacts, RETENTION_DAYS as DOCLING_RETENTION_DAYS } from './docling/retention.js';
+import { startHealthSampling } from './companion/health.js';
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -207,5 +208,6 @@ app.use((err, req, res, _next) => {
   // 5) Sobe o servidor, arma as rotinas agendadas e dispara o worker de tarefas.
   app.listen(port, () => console.log(`Frederico AI Studio backend em http://localhost:${port}`));
   startSchedulers();
+  startHealthSampling(); // amostragem de saúde (memória/CPU) para o copiloto
   setTimeout(() => processTasks().catch(() => {}), 2000);
 })().catch((e) => { console.error('Falha no boot do backend:', e); process.exit(1); });

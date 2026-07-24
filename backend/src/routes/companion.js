@@ -17,6 +17,7 @@ import { audit, listAudit } from '../companion/audit.js';
 import { analyzeBug } from '../companion/bugAnalysis.js';
 import { incidentReportMarkdown } from '../companion/reports.js';
 import { contextualSuggestions } from '../companion/suggestions.js';
+import { collectHealth, healthHistory } from '../companion/health.js';
 
 const router = makeRouter();
 
@@ -179,6 +180,15 @@ router.post('/companion/monitor/logs', async (req, res) => {
   const settings = await readSettings(req.userId);
   const events = await ingestLogs(req.userId, { source: b.source, project: b.project, lines }, { settings });
   res.json({ created: events.length, events });
+});
+
+// ---- Saúde e observabilidade (seções 10/11) ---------------------------------
+
+router.get('/companion/health', async (req, res) => {
+  res.json(await collectHealth());
+});
+router.get('/companion/health/history', async (req, res) => {
+  res.json(healthHistory());
 });
 
 // ---- Base de incidentes (memória técnica do copiloto) -----------------------
