@@ -73,3 +73,21 @@
 .shubInfo b { font-size: 13.5px; color: #eef2fb; }
 .shubInfo small { font-size: 11.5px; color: #8b96af; line-height: 1.35; }
 .shubChevron { flex: none; color: #6b7690; }
+
+/* Painel Sandbox e rede */
+.sandboxNote { display: flex; gap: 10px; align-items: flex-start; font-size: 12.5px; line-height: 1.5; color: #bcd0f0; background: rgba(52,199,123,0.10); border: 1px solid rgba(52,199,123,0.28); border-radius: 11px; padding: 12px; margin-bottom: 14px; }
+.sandboxNote svg { flex: none; margin-top: 1px; color: #34c77b; }
+.sandboxOptions { display: flex; flex-direction: column; gap: 9px; }
+.sandboxOption { display: flex; gap: 12px; align-items: flex-start; text-align: left; padding: 13px; border-radius: 12px; cursor: pointer; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.10); color: #dbe3f4; transition: border-color .12s, background .12s; }
+.sandboxOption:hover:not(:disabled) { background: rgba(255,255,255,0.07); border-color: rgba(255,255,255,0.18); }
+.sandboxOption:disabled { opacity: 0.55; cursor: default; }
+.sandboxOption.sel { background: rgba(79,140,255,0.14); border-color: rgba(79,140,255,0.55); }
+.sandboxOptIcon { flex: none; width: 38px; height: 38px; border-radius: 10px; display: flex; align-items: center; justify-content: center; background: rgba(79,140,255,0.14); color: #6ea8ff; }
+.sandboxOption.sel .sandboxOptIcon { background: rgba(79,140,255,0.26); color: #cfe0ff; }
+.sandboxOptInfo { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.sandboxOptInfo b { display: flex; align-items: center; gap: 6px; font-size: 13.5px; color: #eef2fb; }
+.sandboxOptCheck { color: #6ea8ff; }
+.sandboxOptInfo small { font-size: 12px; color: #93a0ba; line-height: 1.45; }
+.sandboxWarn { display: flex; gap: 10px; align-items: flex-start; font-size: 12.5px; line-height: 1.5; color: #fcd9a5; background: rgba(245,158,11,0.12); border: 1px solid rgba(245,158,11,0.34); border-radius: 11px; padding: 12px; margin-top: 14px; }
+.sandboxWarn svg { flex: none; margin-top: 1px; color: #f59e0b; }
+.sandboxSaved { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #34c77b; margin-top: 12px; }

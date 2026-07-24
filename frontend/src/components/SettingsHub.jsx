@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Drawer } from '../components.jsx';
-import { SlidersHorizontal, Palette, Bot, Sparkles, KeyRound, Code2, Cable, FolderCog, CalendarClock, Brain, ShieldCheck, BarChart3, Bug, HardDriveDownload, Gauge, Inbox, ChevronRight } from 'lucide-react';
+import { SlidersHorizontal, Palette, Bot, Sparkles, KeyRound, Code2, Cable, FolderCog, CalendarClock, Brain, ShieldCheck, BarChart3, Bug, HardDriveDownload, Gauge, Inbox, ChevronRight, Wifi } from 'lucide-react';
 
 // Aba central de Configurações (repaginação — seção 3): reúne num só lugar o que
 // estava espalhado pelo app, organizado por categoria. Cada item apenas ABRE o
@@ -9,7 +9,7 @@ const ICONS = {
   aparencia: Palette, copiloto: Bug, assistentes: Sparkles, provedor: KeyRound,
   dev: Code2, conectores: Cable, pastas: FolderCog, rotinas: CalendarClock,
   memoria: Brain, privacidade: ShieldCheck, analises: BarChart3, inbox: Inbox,
-  backup: HardDriveDownload, gratuito: Gauge, agente: Bot,
+  backup: HardDriveDownload, gratuito: Gauge, agente: Bot, sandbox: Wifi,
 };
 
 export function SettingsHub({ onClose, actions = {}, isAdmin, pcFoldersEnabled, freeConfigured }) {
@@ -29,6 +29,7 @@ export function SettingsHub({ onClose, actions = {}, isAdmin, pcFoldersEnabled, 
       { id: 'conectores', label: 'Conectores', desc: 'GitHub e outros serviços externos.' },
       pcFoldersEnabled && { id: 'pastas', label: 'Pastas do PC', desc: 'Libere pastas locais para o assistente.' },
       { id: 'rotinas', label: 'Rotinas', desc: 'Tarefas que rodam sozinhas em horários.' },
+      { id: 'sandbox', label: 'Sandbox e rede', desc: 'Rede do ambiente isolado onde o código roda. Não afeta os modelos.' },
     ] },
     { id: 'privacidade', label: 'Privacidade e dados', items: [
       { id: 'memoria', label: 'Memória', desc: 'O que o assistente lembra — ver, editar, apagar.' },

@@ -25,7 +25,7 @@ import { clientScopeFor, memoryNote, saveMessage, persistAssistantReply } from '
 import { saveCheckpoint, clearCheckpoint, isResumableReason, buildResumeMessages, leadingSystemCount, trimCheckpointMessages, AUTO_CONTINUE_NOTE } from './checkpoint.js';
 import { untrustedContext } from './promptRegistry.js';
 import { emitExecutionState, finalExecutionState } from './executionState.js';
-import { explicitlyAuthorizesSandboxNetwork, isToolCallAllowed } from './assistantPolicy.js';
+import { resolveSandboxNetwork, isToolCallAllowed } from './assistantPolicy.js';
 import { buildDocumentContext, DOC_PRECEDENCE_NOTE } from '../docling/context.js';
 import { doclingImageParts, visualElementsNote } from '../docling/vision.js';
 
@@ -106,9 +106,12 @@ export async function runAgent({ userId, conversationId, userText, model, assist
     : Boolean(gitWriteAuthorization);
   const developerContext = developerContextFor(developer, userId, { githubConnected, gitWriteAuthorized });
   const lowSignalTurn = isLowSignalTurn(userText);
+  // A política persistente (Configurações → Sandbox e rede) decide o padrão:
+  // automático (só quando o pedido pede), sempre ligada ou sempre desligada.
+  // Não toca nas chamadas dos modelos — essas saem do backend.
   const sandboxNetworkEnabled = !lowSignalTurn && (resume
     ? Boolean(resume?.meta?.sandboxNetworkEnabled)
-    : explicitlyAuthorizesSandboxNetwork(userText));
+    : resolveSandboxNetwork(getSettings().sandbox_network_policy, userText));
   const promptManifest = promptManifestFor(assistant, developerContext ? ['developer'] : []);
   // userId viaja junto: o sandbox monta só as pastas do PC DESTE usuário
   // (isolamento multi-tenant) e aplica o limite de sandboxes por usuário.

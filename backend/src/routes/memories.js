@@ -88,6 +88,17 @@ router.get('/memories/import-status', (_, res) => res.json(importStatus));
 router.get('/memory-config', (_, res) => res.json(getSettings()));
 router.put('/memory-config', async (req, res) => res.json(await setSettings(req.body || {})));
 
+// Configuração da rede do sandbox (execução isolada por conversa). Endpoint
+// dedicado para não acoplar a UI de segurança ao painel de memória, ainda que
+// ambos usem a mesma tabela de settings.
+router.get('/sandbox-config', (_, res) => res.json({ sandbox_network_policy: getSettings().sandbox_network_policy }));
+router.put('/sandbox-config', async (req, res) => {
+  const raw = Number(req.body?.sandbox_network_policy);
+  const policy = [0, 1, 2].includes(raw) ? raw : 0;
+  const s = await setSettings({ sandbox_network_policy: policy });
+  res.json({ sandbox_network_policy: s.sandbox_network_policy });
+});
+
 // Rotas legadas (compatibilidade com versões antigas da interface)
 router.get('/memory', async (req, res) => {
   res.json(await listMemories(req.userId, { scope: req.query.scope || 'global' }));

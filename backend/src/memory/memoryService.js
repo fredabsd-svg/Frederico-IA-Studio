@@ -26,7 +26,13 @@ export const DEFAULT_SETTINGS = {
   context_target_tokens: 60000, // alvo do Context Builder (suba p/ modelos de 1M)
   max_memories: 12,           // memórias recuperadas por resposta
   max_chunks: 10,             // trechos de conversas antigas por resposta
-  importance_threshold: 2     // importância mínima p/ salvar memória automática
+  importance_threshold: 2,    // importância mínima p/ salvar memória automática
+  // Política de rede do sandbox (container de execução por conversa). NÃO afeta
+  // os modelos de IA — as chamadas aos provedores saem do backend, não do
+  // container. Controla só o que o CÓDIGO executado dentro da conversa alcança.
+  // 0 = automático (abre quando o pedido pede claramente; padrão seguro)
+  // 1 = sempre ligada  2 = sempre desligada
+  sandbox_network_policy: 0
 };
 
 // Teto de contexto no modo economia (o Context Builder já reduz memórias,
