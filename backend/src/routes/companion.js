@@ -16,6 +16,7 @@ import { recordIncident, listIncidents, getIncident, updateIncident, findSimilar
 import { audit, listAudit } from '../companion/audit.js';
 import { analyzeBug } from '../companion/bugAnalysis.js';
 import { incidentReportMarkdown } from '../companion/reports.js';
+import { contextualSuggestions } from '../companion/suggestions.js';
 
 const router = makeRouter();
 
@@ -211,6 +212,12 @@ router.post('/companion/incidents/similar', async (req, res) => {
   const b = req.body || {};
   const signature = incidentSignature(b);
   res.json(await findSimilar(req.userId, { signature, project: b.project || null }));
+});
+
+// Sugestões contextuais (seção 23): recebe o contexto observável e devolve as
+// sugestões relevantes. Puro/local — o front decide exibir conforme o modo.
+router.post('/companion/suggestions', async (req, res) => {
+  res.json(contextualSuggestions(req.body || {}));
 });
 
 // Análise de bug sob demanda (pura/local): causa provável + arquivos + severidade.
