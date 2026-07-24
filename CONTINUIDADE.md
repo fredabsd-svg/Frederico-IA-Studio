@@ -1,5 +1,64 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 🩺 Correção de watchdog de streaming (C7) + métricas de saúde no healthcheck (C8) (2026-07-24 — branch `main`, commit `d393640`)
+
+
+**Contexto:** auditoria técnica (`AUDITORIA_TECNICA_FREDERICO_AI_STUDIO.md`) 
+listou 10 problemas; dois foram corrigidos nesta rodada (os de curto prazo 
+factíveis sem reestruturação).
+
+
+### C7 — Unificar watchdogs de streaming (backend como fonte de verdade)
+
+
+**Problema:** o frontend tinha `SSE_STALL_MS = 60000` (60s) e o backend tinha 
+`guardStreamStall` (180s). Como o timeout do frontend era menor, ele abortava 
+antes do backend, gerando falsos positivos — o usuário via "stream travado" 
+quando na verdade o modelo só estava pensando (ex.: DeepSeek R1 com <think> 
+longo, ou o primeiro token de um modelo lento em pico de uso).
+
+
+**Correção:** `SSE_STALL_MS` do frontend (`frontend/src/hooks/useChat.js`) 
+subiu de 60s → 300s (5 min). O backend (`guardStreamStall` em 180s) continua 
+sendo a fonte de verdade — ele tem visibilidade real do socket e do heartbeat 
+do provedor. O frontend agora é apenas um **fallback de conexão TCP perdida** 
+(se o EventSource morrer sem notificar, o timeout de 5 min evita que o chat 
+fique pendurado para sempre). Comentário documentando a hierarquia de duas 
+camadas adicionado no hook.
+
+
+### C8 — `unhandledRejection` counter + healthcheck
+
+
+**Problema:** `process.on('unhandledRejection')` no `server.js` só dava 
+`console.error`, sem visibilidade em produção. Se promessas começassem a 
+vazar (ex.: após um deploy com bug), ninguém saberia até o processo crashar 
+por memória ou o event loop ficar lento.
+
+
+**Correção:** novo módulo `backend/src/healthMetrics.js` exporta objeto 
+`{ unhandledRejections, bootAt }`. O handler de `unhandledRejection` em 
+`server.js` incrementa o contador. O endpoint `GET /api/health` 
+(`backend/src/routes/account.js`) agora inclui `bootAt` e `unhandledRejections` 
+na resposta — compatível com versão anterior (campos adicionados, nenhum 
+removido). Assim um monitor externo (Uptime Kuma, Healthchecks.io, Grafana) 
+pode alertar quando `unhandledRejections > 0`.
+
+
+**Arquivos modificados:** `frontend/src/hooks/useChat.js`, 
+`backend/src/server.js`, `backend/src/routes/account.js`. 
+**Arquivo novo:** `backend/src/healthMetrics.js`.
+
+
+**Validação:** `node --check` nos 3 arquivos backend; suíte `streamGuard.test.js` 
+(6/6 passando); `curl /api/health` confirmando os novos campos. 
+Commit direto em `main` (sem PR).
+
+
+**Pendências da auditoria (médio prazo, não mexidas):** React Router (C1/C6), 
+projetos no banco (C3), prompt modular (C5), proxy de containers (C9).
+
+
 ## 🔒 Revisão dos PRs #102–#107 (Companion + Docling): isolamento, churn de sandbox e contradição de prompt (2026-07-23 — branch `claude/steps-count-bug-v879qz`)
 
 Análise completa do código novo (Companion fases 1–2, Docling fases 1–2,

@@ -108,7 +108,7 @@ streaming SSE funcionam também atrás de Tailscale ou de um proxy HTTPS.
 
 **Backend modular:** `backend/src/server.js` só cuida de middlewares e boot; as
 rotas vivem em `backend/src/routes/*` (um arquivo por domínio — conversas,
-memória, tarefas, rotinas etc.) e o loop do agente em `backend/src/agent/*`
+memória, tarefas, rotinas etc.) e o loop do agente em `backend/src/agent/*` e métricas de saúde em `backend/src/healthMetrics.js`
 (orquestrador, ferramentas, reparos, visão). A busca semântica roda no próprio
 Postgres via `pgvector` (índice HNSW), com fallback automático em JS quando a
 extensão não está disponível. **Frontend modular:** `frontend/src/App.jsx` é a
@@ -246,7 +246,7 @@ docker compose up --build -d
 | `SCREENSHOT_TIMEOUT_MS` | 9000 | Tempo máximo por captura de miniatura (best-effort) |
 | `CHROMIUM_PATH` | /usr/bin/chromium | Caminho do Chromium do sistema (já definido no Dockerfile) |
 | `MODEL_FALLBACKS` | — | Modelos de reserva (ordem) para failover automático quando o provedor cai; sem isso, cai para o modelo-base da conta |
-| `STREAM_STALL_TIMEOUT_MS` | 180000 | Watchdog do streaming: tempo máximo sem receber nenhum dado do provedor antes de abortar e retomar/failover (piso 30000) |
+| `STREAM_STALL_TIMEOUT_MS` | 180000 | Watchdog do streaming no backend (fonte de verdade): tempo máximo sem receber nenhum dado do provedor antes de abortar e retomar/failover (piso 30000). O frontend tem um timeout separado de 5 min como fallback de conexão TCP perdida |
 | `PROVIDER_CONNECT_TIMEOUT_MS` | 180000 | Tempo máximo até o provedor começar a responder a chamada de streaming (piso 30000) |
 | `VALIDATE_RECALC` | true | Recalcula .xlsx/.xlsm com LibreOffice para detectar erros reais de fórmula (#DIV/0!, #REF!); `false` = validação parcial mais rápida |
 | `OUTPUT_RETENTION_DAYS` | 0 (desligado) | Remove arquivos de saída mais antigos que N dias (útil em uso público/soak) |
@@ -297,6 +297,7 @@ Como funciona por dentro:
 
 - ✅ **Isolamento por usuário concluído:** cada conta só acessa os próprios dados (posse verificada em cada consulta). As chaves de IA por usuário são guardadas **criptografadas**.
 - 🧱 **Camada HTTP endurecida:** headers de segurança via `helmet` (X-Frame-Options, nosniff, HSTS), CORS restrito à própria origem (sem `FRONTEND_URL` nenhuma origem externa é aceita — o antigo fallback `*` foi removido), rate limiting geral por IP (`RATE_API_PER_MIN`) e janela apertada para login/cadastro (`RATE_AUTH_PER_15MIN`), além de validação estruturada de entrada com `zod` nas rotas de escrita.
+- 🩺 **Healthcheck com métricas:** `GET /api/health` agora expõe `bootAt` (uptime do processo) e `unhandledRejections` (contador de promessas rejeitadas sem handler). Monitores externos como Uptime Kuma, Healthchecks.io ou Grafana podem alertar quando o contador sobe — sinal precoce de regressão após deploy.
 - 🛡️ **Antivírus nos uploads (ClamAV):** todo arquivo enviado (anexos, caixa de entrada, importação de memória) é escaneado antes de ser salvo; infectado é recusado com aviso e o usuário vê "✓ verificado" quando passa. Ligado por padrão em produção (`docker-compose.prod.yml`); opcional no dev (`--profile antivirus`). Veja o Passo 8 do [VPS-DEPLOY.md](VPS-DEPLOY.md).
 - 🪧 **Segurança visível ao usuário:** a tela de login exibe selos (arquivos verificados por antivírus, conexão criptografada, compromisso com a LGPD — com link para `/privacidade`) e a página de apresentação tem um bloco de confiança com 6 cartões (dados isolados, chave própria/BYOK, credenciais protegidas, arquivos verificados, HTTPS, LGPD). Regra: só anunciar o que está de fato ativo — se desativar o ClamAV, remova os selos correspondentes.
 - ⚠️ O backend recebe o **socket Docker** — permissão privilegiada; use uma máquina **dedicada** a este app.
