@@ -292,3 +292,6 @@ body:not(.dark) .companionPanel {
   .companionRoot { right: 12px; bottom: 12px; }
   .companionPanel { width: calc(100vw - 24px); }
 }
+
+.cmpChipBtn { cursor: pointer; }
+.cmpChipBtn:hover { background: rgba(255,255,255,0.12); color: #fff; }
