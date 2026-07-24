@@ -12,6 +12,8 @@ import { makeRouter, loadAssistant, safeParse } from './helpers.js';
 import { isConversationId } from '../sandbox.js';
 import { createEvent, serializeEvent } from '../companion/events.js';
 import { checkGit, ingestLogs } from '../companion/monitor.js';
+import { recordIncident, listIncidents, getIncident, updateIncident, findSimilar, incidentSignature } from '../companion/incidents.js';
+import { audit, listAudit } from '../companion/audit.js';
 
 const router = makeRouter();
 
@@ -174,6 +176,50 @@ router.post('/companion/monitor/logs', async (req, res) => {
   const settings = await readSettings(req.userId);
   const events = await ingestLogs(req.userId, { source: b.source, project: b.project, lines }, { settings });
   res.json({ created: events.length, events });
+});
+
+// ---- Base de incidentes (memória técnica do copiloto) -----------------------
+
+router.get('/companion/incidents', async (req, res) => {
+  res.json(await listIncidents(req.userId, { project: req.query.project || null, status: req.query.status || null }));
+});
+
+router.post('/companion/incidents', async (req, res) => {
+  const b = req.body || {};
+  if (!b.summary && !b.errorMessage) return res.status(400).json({ error: 'summary ou errorMessage é obrigatório' });
+  const out = await recordIncident(req.userId, b);
+  res.json(out);
+});
+
+router.get('/companion/incidents/:id', async (req, res) => {
+  const inc = await getIncident(req.userId, req.params.id);
+  if (!inc) return res.status(404).json({ error: 'Não encontrado' });
+  const similar = await findSimilar(req.userId, { signature: inc.signature, project: inc.project, excludeId: inc.id });
+  res.json({ incident: inc, similar });
+});
+
+router.patch('/companion/incidents/:id', async (req, res) => {
+  const inc = await updateIncident(req.userId, req.params.id, req.body || {});
+  if (!inc) return res.status(404).json({ error: 'Não encontrado' });
+  res.json(inc);
+});
+
+// Consulta de similaridade: "esse erro já ocorreu antes?" (antes de sugerir).
+router.post('/companion/incidents/similar', async (req, res) => {
+  const b = req.body || {};
+  const signature = incidentSignature(b);
+  res.json(await findSimilar(req.userId, { signature, project: b.project || null }));
+});
+
+// ---- Auditoria das ações do agente ------------------------------------------
+
+router.get('/companion/audit', async (req, res) => {
+  res.json(await listAudit(req.userId, { project: req.query.project || null, category: req.query.category || null }));
+});
+
+router.post('/companion/audit', async (req, res) => {
+  const id = await audit(req.userId, req.body || {});
+  res.json({ ok: !!id, id });
 });
 
 export default router;
