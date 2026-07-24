@@ -904,6 +904,11 @@ input[type=checkbox]:focus-visible,input[type=radio]:focus-visible{outline-offse
    tokens sem espaço passam a quebrar; blocos de código e tabelas rolam dentro
    da própria caixa em vez de empurrar a página. */
 .msg{overflow-wrap:anywhere;word-break:break-word;min-width:0}
+/* Anti-estouro da mensagem: nunca ultrapassa a largura do container (o cap de
+   900px vira um teto, não uma largura fixa) e qualquer texto/token longo quebra.
+   min-width:0 corrige o bug clássico do flexbox (item não encolhe e vaza). */
+.msg{max-width:min(900px,100%);min-width:0;overflow-wrap:anywhere}
+.msg p,.msg li,.msg h1,.msg h2,.msg h3,.msg h4,.msg blockquote,.msg td,.msg th{overflow-wrap:anywhere;min-width:0}
 .msg pre{max-width:100%;overflow-x:auto;white-space:pre}
 .msg :not(pre)>code{overflow-wrap:anywhere;word-break:break-word;white-space:pre-wrap}
 .msg table{display:block;max-width:100%;overflow-x:auto}
