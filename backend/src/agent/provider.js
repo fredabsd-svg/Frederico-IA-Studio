@@ -25,12 +25,58 @@ export function isRetryableStreamError(error) {
     || /upstream idle timeout|gateway timeout|temporar(?:y|ily)|provider.*(?:overload|timeout)|econnreset|fetch failed|stream stalled|request timed out/.test(detail);
 }
 
+// ---- Qualidade x resiliência do roteamento OpenRouter ----
+// O OpenRouter balanceia cada requisição entre vários provedores do MESMO
+// modelo, e esses provedores rodam o modelo em precisões diferentes
+// (quantização). As faixas mais agressivas — int4/int8/fp4/fp6 — comprimem os
+// pesos ao ponto de a QUALIDADE cair de forma perceptível; fp8 e acima
+// (fp16/bf16/fp32) preservam a qualidade. Como o app é agêntico (usa
+// ferramentas em vários passos), cair num provedor de baixa precisão a cada
+// requisição deixa a qualidade oscilando de forma invisível — que foi
+// exatamente a queixa que originou esta mudança.
+//
+// MEIO-TERMO (não travar num único provedor, mas manter a qualidade):
+//   1) allow_fallbacks: true  -> mantém a resiliência: se o provedor preferido
+//      cair, o OpenRouter reroteia para OUTRO provedor QUE AINDA ATENDA o filtro
+//      de qualidade abaixo (em vez de falhar a requisição inteira).
+//   2) quantizations          -> allowlist de precisões aceitáveis. O padrão
+//      exclui só a compressão agressiva (int4/int8/fp4/fp6) e mantém fp8+ e
+//      'unknown'. Verificado contra os modelos reais em uso: DeepSeek V3 só tem
+//      provedores fp8/unknown/fp4 (nenhum fp16), e modelos como gpt-4o só têm
+//      'unknown' — por isso 'unknown' PRECISA ficar na lista, senão modelos
+//      inteiros ficariam sem endpoint. Assim removemos o risco real (fp4) sem
+//      quebrar nada nem prender a um provedor só.
+//
+// Tudo é ajustável por ambiente, sem tocar no código:
+//   OPENROUTER_QUANTIZATIONS = lista separada por vírgula (ex.: "bf16,fp16,fp32"
+//     para exigir precisão cheia onde existir) ou "off"/"any" para desligar o
+//     filtro e voltar ao comportamento antigo (qualquer provedor).
+//   OPENROUTER_ALLOW_FALLBACKS = "0" para travar no provedor preferido (falha
+//     em vez de trocar de provedor); qualquer outro valor mantém o fallback.
+const DEFAULT_QUANTIZATIONS = ['fp8', 'fp16', 'bf16', 'fp32', 'unknown'];
+
+function resolveQuantizations() {
+  const raw = process.env.OPENROUTER_QUANTIZATIONS;
+  if (raw === undefined) return DEFAULT_QUANTIZATIONS;
+  const trimmed = raw.trim().toLowerCase();
+  if (trimmed === '' || trimmed === 'off' || trimmed === 'any' || trimmed === 'all') return [];
+  return raw.split(',').map(value => value.trim()).filter(Boolean);
+}
+
 export function openRouterRouting(hasTools = false, baseURL = modelApiBaseUrl) {
   if (!/openrouter\.ai/i.test(String(baseURL || ''))) return {};
   const provider = {};
   const configuredSort = String(process.env.OPENROUTER_PROVIDER_SORT || '').trim();
   if (configuredSort) provider.sort = configuredSort;
   if (hasTools) provider.require_parameters = true;
+
+  // Resiliência: reroteia entre provedores da faixa de qualidade permitida.
+  provider.allow_fallbacks = process.env.OPENROUTER_ALLOW_FALLBACKS !== '0';
+
+  // Qualidade: evita provedores de compressão agressiva sem prender a um só.
+  const quantizations = resolveQuantizations();
+  if (quantizations.length) provider.quantizations = quantizations;
+
   return { provider };
 }
 

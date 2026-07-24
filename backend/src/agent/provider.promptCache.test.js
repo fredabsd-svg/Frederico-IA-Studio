@@ -56,7 +56,51 @@ test('rota BYOK usa a base URL do provedor do usuário, não a global', async ()
   process.env.DEEPSEEK_BASE_URL = 'https://api.deepseek.com';
   const { openRouterRouting, providerSupportsPromptCache } = await import('./provider.js?byok');
   assert.equal(providerSupportsPromptCache('anthropic/claude-3.5-sonnet', 'https://openrouter.ai/api/v1'), true);
-  assert.deepEqual(openRouterRouting(true, 'https://openrouter.ai/api/v1'), { provider: { require_parameters: true } });
+  assert.deepEqual(openRouterRouting(true, 'https://openrouter.ai/api/v1'), {
+    provider: {
+      require_parameters: true,
+      allow_fallbacks: true,
+      quantizations: ['fp8', 'fp16', 'bf16', 'fp32', 'unknown']
+    }
+  });
+});
+
+test('roteamento OpenRouter: meio-termo qualidade x resiliência', async () => {
+  delete process.env.OPENROUTER_QUANTIZATIONS;
+  delete process.env.OPENROUTER_ALLOW_FALLBACKS;
+  delete process.env.OPENROUTER_PROVIDER_SORT;
+  const { openRouterRouting } = await import('./provider.js?routing-default');
+
+  // Base não-OpenRouter (DeepSeek direto): nunca injeta objeto provider.
+  assert.deepEqual(openRouterRouting(true, 'https://api.deepseek.com'), {});
+
+  // Padrão: mantém fallback (resiliência) e exclui só a compressão agressiva
+  // (fp4/fp6/int4/int8), preservando fp8+ e 'unknown'.
+  const routed = openRouterRouting(false, 'https://openrouter.ai/api/v1').provider;
+  assert.equal(routed.allow_fallbacks, true);
+  assert.deepEqual(routed.quantizations, ['fp8', 'fp16', 'bf16', 'fp32', 'unknown']);
+  assert.ok(!routed.quantizations.includes('fp4'));
+  assert.ok(!routed.quantizations.includes('int4'));
+});
+
+test('roteamento OpenRouter: env pode exigir precisão cheia ou travar provedor', async () => {
+  process.env.OPENROUTER_QUANTIZATIONS = 'bf16, fp16, fp32';
+  process.env.OPENROUTER_ALLOW_FALLBACKS = '0';
+  const { openRouterRouting } = await import('./provider.js?routing-strict');
+  const routed = openRouterRouting(false, 'https://openrouter.ai/api/v1').provider;
+  assert.deepEqual(routed.quantizations, ['bf16', 'fp16', 'fp32']);
+  assert.equal(routed.allow_fallbacks, false);
+  delete process.env.OPENROUTER_QUANTIZATIONS;
+  delete process.env.OPENROUTER_ALLOW_FALLBACKS;
+});
+
+test('roteamento OpenRouter: filtro de quantização desligável via env', async () => {
+  process.env.OPENROUTER_QUANTIZATIONS = 'off';
+  const { openRouterRouting } = await import('./provider.js?routing-off');
+  const routed = openRouterRouting(false, 'https://openrouter.ai/api/v1').provider;
+  assert.equal(routed.quantizations, undefined);
+  assert.equal(routed.allow_fallbacks, true);
+  delete process.env.OPENROUTER_QUANTIZATIONS;
 });
 
 test('failover remove cache_control antes de trocar para modelo incompatível', async () => {

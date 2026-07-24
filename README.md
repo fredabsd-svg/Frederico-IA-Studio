@@ -221,6 +221,8 @@ docker compose up --build -d
 | `DEEPSEEK_BASE_URL` | DeepSeek | Base usada como referência para tarefas internas legadas |
 | `DEEPSEEK_MODEL` | deepseek-chat | Modelo de referência para tarefas internas legadas |
 | `OPENROUTER_PROVIDER_SORT` | automático | Ordenação opcional de provedores no OpenRouter |
+| `OPENROUTER_QUANTIZATIONS` | `fp8,fp16,bf16,fp32,unknown` | Precisões de provedor aceitas no OpenRouter. O padrão exclui só a compressão agressiva (`int4/int8/fp4/fp6`), onde a qualidade cai, mantendo `fp8`+ e `unknown`. Use `bf16,fp16,fp32` para exigir precisão cheia onde existir, ou `off` para desligar o filtro |
+| `OPENROUTER_ALLOW_FALLBACKS` | ligado | Mantém a resiliência: reroteia entre provedores da faixa de qualidade permitida se o preferido cair. Defina `0` para travar no provedor preferido (erro em vez de troca silenciosa) |
 | `BETTER_AUTH_URL` | http://localhost:5173 | Origem pública do app e callbacks OAuth |
 | `BETTER_AUTH_SECRET` | — | Segredo de sessão do Better Auth |
 | `ENCRYPTION_KEY` | — | Criptografa a chave de IA de cada usuário (BYOK) no banco |
