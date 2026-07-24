@@ -1,6 +1,7 @@
 // Rotas de account — movidas do server.js na modularização (mesma lógica,
 // mesmo comportamento). Montado em /api pelo server.js.
 import { TERMS_VERSION, getLatestConsent, recordConsent, exportUserData, deleteAllConversations, deleteAccount } from '../privacy.js';
+import { healthMetrics } from '../healthMetrics.js';
 import { enabledSocialProviders } from '../auth.js';
 import { validate, schemas } from '../validation.js';
 import { makeRouter, isAdmin, PC_FOLDERS_ENABLED, scheduleTimeZone } from './helpers.js';
@@ -9,7 +10,7 @@ const router = makeRouter();
 
 // termsVersion: fonte ÚNICA da versão vigente dos Termos/Política (a página
 // legal pública do frontend lê daqui — nada de manter a data em dois lugares).
-router.get('/health', (_, res) => res.json({ ok: true, name: 'Frederico AI Studio', auth: true, scheduleTimeZone, socialProviders: enabledSocialProviders, termsVersion: TERMS_VERSION }));
+router.get('/health', (_, res) => res.json({ ok: true, name: 'Frederico AI Studio', auth: true, scheduleTimeZone, socialProviders: enabledSocialProviders, termsVersion: TERMS_VERSION, bootAt: healthMetrics.bootAt, unhandledRejections: healthMetrics.unhandledRejections }));
 
 // Dados do usuário logado + flags que a interface usa (ex.: mostrar o botão de
 // backup só para o administrador; esconder "Pastas do PC" quando desligado).

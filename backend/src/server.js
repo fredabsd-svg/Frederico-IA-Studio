@@ -36,6 +36,7 @@ import cacheRouter from './routes/cache.js';
 import modelTeamsRouter from './routes/modelTeams.js';
 import companionRouter from './routes/companion.js';
 import doclingRouter from './routes/docling.js';
+import { healthMetrics } from './healthMetrics.js';
 import { sweepExpiredArtifacts, RETENTION_DAYS as DOCLING_RETENTION_DAYS } from './docling/retention.js';
 
 const app = express();
@@ -55,7 +56,10 @@ for (const method of ['get', 'post', 'put', 'delete', 'patch', 'all']) {
 }
 // Rede de segurança final: se ainda escapar uma rejeição não tratada, registra
 // e segue — nunca derruba o servidor por causa de uma requisição.
-process.on('unhandledRejection', (err) => console.error('[unhandledRejection]', err));
+process.on('unhandledRejection', (err) => {
+  healthMetrics.unhandledRejections++;
+  console.error('[unhandledRejection]', err);
+});
 
 // ---- Cabeçalhos de segurança, CORS e rate limiting HTTP ----
 // Atrás de um proxy (Caddy em produção, Vite em dev): confia no PRIMEIRO salto

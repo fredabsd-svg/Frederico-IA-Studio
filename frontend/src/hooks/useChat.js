@@ -2,12 +2,14 @@ import { useEffect, useRef, useState } from 'react';
 import { API } from '../constants.js';
 import { takeSseEvents } from '../sse.js';
 
-// Watchdog do SSE: o servidor manda um heartbeat (": ping") a cada 15s mesmo
-// quando o modelo está pensando. Se NADA chegar por este tempo, a conexão
-// morreu em silêncio (proxy/rede móvel) — cancelamos o reader e lançamos, e o
-// chamador cai na reconexão automática em vez de exibir "Raciocinando..."
-// para sempre sem entregar a resposta.
-const SSE_STALL_MS = 60000;
+// Watchdog do SSE DO FRONTEND: timeout de ÚLTIMA INSTÂNCIA (5 min).
+// O backend (streamGuard.js) é a fonte de verdade com 3 min (STREAM_STALL_TIMEOUT_MS).
+// Este timeout só age quando a conexão TCP morre sem FIN/RST — cenário raro de
+// proxy/rede que some sem fechar socket. NÃO compete com o backend: se o backend
+// detectar stall primeiro, ele fecha a stream, o reader vê "done" e o timeout
+// nunca dispara. Se o backend NÃO detectar (conexão realmente perdida), este
+// fallback garante que o frontend não fique congelado para sempre.
+const SSE_STALL_MS = 300000;
 async function readWithTimeout(reader, ms = SSE_STALL_MS) {
   let timer;
   try {
