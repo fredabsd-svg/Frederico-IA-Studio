@@ -1,5 +1,40 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 🎯 Filtro de relevância por domínio na recuperação de contexto — Context Builder 3.0 (2026-07-24 — PR #120, merge `31303fd`)
+
+
+**Problema:** a recuperação de contexto (memórias + conversas antigas) injetava
+material irrelevante nos pedidos. Ex.: memórias de domínio **contábil** entravam
+num pedido de **desenvolvimento de software**, poluindo o contexto e gastando
+tokens à toa. Causas: injeção incondicional de memórias de perfil/pinned,
+limiares semânticos baixos demais, peso excessivo de recência e preenchimento
+por cota (encher o orçamento mesmo sem relevância real).
+
+
+**Correção:** novo módulo **puro** `backend/src/memory/relevanceScorer.js` (sem
+I/O nem DB) que pontua cada memória e conversa antiga por **domínio**
+(software / contábil / financeiro / geral, com penalidade para domínio
+incompatível), **intenção**, **projeto**, **entidades** do prompt e
+**similaridade semântica**. Limiares separados (memória `0.25`, conversa `0.30`),
+validação de relevância, deduplicação e extração de trecho relevante. O
+`contextBuilder.js` (Context Builder 3.0) passa a filtrar o material recuperado
+por essas pontuações antes de montar o contexto.
+
+
+**Arquivos:**
+- `backend/src/memory/relevanceScorer.js` — novo, módulo puro
+- `backend/src/memory/relevanceScorer.test.js` — novo, 27 testes
+- `backend/src/memory/contextBuilder.js` — integra o scorer (v3.0)
+- `frontend/src/components/MemoryTrace.jsx` — MemoryTrace 3.0: rótulo do botão por
+  tipo de contexto recuperado (memórias / conversas / ambos) + motivo por item
+
+
+**Validação:** `relevanceScorer.test.js` → 27/27; suíte completa do backend →
+417 pass / 2 skipped / 0 falhas; `vite build` do frontend limpo (`dist`
+reconstruído). Origem: correção feita por um agente no sandbox de dev (sem rede
+para push); os arquivos foram trazidos e publicados a partir do ambiente com rede.
+
+
 ## 🩺 Correção de watchdog de streaming (C7) + métricas de saúde no healthcheck (C8) (2026-07-24 — branch `main`, commit `d393640`)
 
 
