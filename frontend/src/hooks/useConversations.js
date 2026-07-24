@@ -4,7 +4,8 @@ import { API } from '../constants.js';
 // Lista, seleção e CRUD de conversas + arquivos da conversa aberta.
 // Recebe as dependências do App por parâmetro e devolve { estado, ações }.
 export function useConversations({ clientId, model, setModel, showToast, blockConversationChange, askConfirm,
-                                   startNewChat, setMessages, setDeveloperSession, setMenuOpen, followActiveRef, setNeedLogin }) {
+                                   startNewChat, setMessages, setDeveloperSession, setMenuOpen, followActiveRef, setNeedLogin,
+                                   resolveDeveloperSessionRef }) {
   const [conversations, setConversations] = useState([]);
   const [allConvs, setAllConvs] = useState([]);
   const [current, setCurrent] = useState(null);
@@ -81,6 +82,13 @@ export function useConversations({ clientId, model, setModel, showToast, blockCo
       // (sair e voltar / recarregar) o seletor voltava ao modelo padrão e parecia
       // que "trocou o modelo" sozinho — quebrando o "mesmo estado de antes".
       if (data.conversation?.model && setModel) setModel(data.conversation.model);
+      // Restaura a SESSÃO DE DESENVOLVEDOR (vínculo do projeto: repositório GitHub/
+      // pasta, modo e regras). Sem isto, ao reabrir uma conversa de dev o vínculo
+      // com o repositório era perdido — o agente passava a dizer que "não encontra
+      // o repositório", travando o desenvolvimento. O App resolve a partir do
+      // projeto dono da conversa (persistido no navegador com seus conversationIds).
+      const devSession = resolveDeveloperSessionRef?.current?.(id) || null;
+      setDeveloperSession(devSession);
       loadFiles(id);
       // Se a conversa AINDA está processando (o usuário saiu e voltou), reconecta
       // ao stream ao vivo e segue acompanhando o andamento — com pausar/parar
