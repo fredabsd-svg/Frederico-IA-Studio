@@ -42,7 +42,7 @@ import { useSpeech } from './hooks/useSpeech.js';
 import { useFileUploads } from './hooks/useFileUploads.js';
 import { useChat } from './hooks/useChat.js';
 import { useTasks } from './hooks/useTasks.js';
-import { useDevProjects, projectContextText } from './hooks/useDevProjects.js';
+import { useDevProjects, projectContextText, developerSessionForConversation } from './hooks/useDevProjects.js';
 
 const QUICK_ACTION_ICON = {
   document: FileText,
@@ -196,11 +196,16 @@ export default function App({ user } = {}) {
   // reconexão ao stream ao vivo, que vive no useChat — criado DEPOIS. O ref quebra
   // essa ordem sem acoplar os hooks.
   const followActiveRef = useRef(null);
+  // Reconstrói a sessão de desenvolvedor ao reabrir uma conversa (ver efeito
+  // abaixo). Ref para quebrar a ordem de criação dos hooks (devProjects já existe,
+  // mas mantemos o mesmo padrão do followActiveRef e evitamos closures obsoletas).
+  const resolveDeveloperSessionRef = useRef(null);
   const {
     conversations, allConvs, current, setCurrent, currentRef, files, setFiles, loadingConv,
     fetchConversations, loadAllConvs, ensureConversation, openConversation, deleteConversation, loadFiles
   } = useConversations({ clientId, model, setModel, showToast, blockConversationChange, askConfirm,
-    startNewChat, setMessages, setDeveloperSession, setMenuOpen, followActiveRef, setNeedLogin });
+    startNewChat, setMessages, setDeveloperSession, setMenuOpen, followActiveRef, setNeedLogin,
+    resolveDeveloperSessionRef });
   const { listening, recognitionRef, toggleMic } = useSpeech({ input, setInput, showToast });
   const {
     dragActive, uploadingFiles, scanOk, deleteFile, uploadSelectedFiles, uploadFiles, waitForUploads,
@@ -562,6 +567,25 @@ export default function App({ user } = {}) {
       devProjects.linkConversation(developerSession.devProjectId, developerSession.conversationId);
     }
   }, [developerSession?.conversationId, developerSession?.devProjectId]);
+
+  // Resolver usado por openConversation (via ref) para RECONSTRUIR a sessão de
+  // desenvolvedor ao reabrir uma conversa de projeto. Encontra o projeto dono da
+  // conversa (persistido no navegador com seus conversationIds) e remonta o mesmo
+  // par (repositório GitHub / pasta) + modo + regras que o backend espera. É o que
+  // faz o vínculo com o repositório sobreviver a "sair e voltar" ou recarregar.
+  useEffect(() => {
+    resolveDeveloperSessionRef.current = (conversationId) =>
+      developerSessionForConversation(devProjects.projects, conversationId);
+  }, [devProjects.projects]);
+
+  // Ao restaurar (ou iniciar) uma sessão de desenvolvedor vinculada a um projeto,
+  // revela o ambiente de desenvolvimento (colunas do IDE + barra do repositório),
+  // para o usuário voltar exatamente ao contexto em que estava.
+  useEffect(() => {
+    if (developerSession && (developerSession.github || developerSession.projectId || developerSession.devProjectId) && workspace !== 'developer') {
+      setWorkspace('developer');
+    }
+  }, [developerSession]); // eslint-disable-line
 
   // Colapso das colunas do ambiente de desenvolvimento (guardado entre sessões).
   function toggleDevLeft() { setDevLeftCollapsed(v => { localStorage.setItem('fred_dev_left', v ? '0' : '1'); return !v; }); }
