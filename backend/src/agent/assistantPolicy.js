@@ -27,6 +27,22 @@ export function isToolCallAllowed(name, tools = []) {
   return tools.some(tool => tool?.function?.name === name);
 }
 
+// Política persistente da rede do sandbox, escolhida pelo usuário nas
+// Configurações. IMPORTANTE: nada disto afeta os modelos de IA — as chamadas
+// aos provedores saem do backend. Só governa a rede do container de execução.
+export const SANDBOX_NET_AUTO = 0;  // abre quando o pedido pede claramente (padrão)
+export const SANDBOX_NET_ON = 1;    // sempre ligada
+export const SANDBOX_NET_OFF = 2;   // sempre desligada (ignora até pedido explícito)
+
+// Resolve se a rede do container deve abrir neste turno, combinando a política
+// persistente com o texto do pedido. Função pura e testável.
+export function resolveSandboxNetwork(policy, text) {
+  const p = Number(policy);
+  if (p === SANDBOX_NET_ON) return true;
+  if (p === SANDBOX_NET_OFF) return false;
+  return explicitlyAuthorizesSandboxNetwork(text);
+}
+
 export function explicitlyAuthorizesSandboxNetwork(text) {
   const value = String(text || '')
     .normalize('NFD')

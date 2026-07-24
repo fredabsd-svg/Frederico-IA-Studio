@@ -13,6 +13,7 @@ import { MemoryPanel } from './MemoryPanel.jsx';
 import { PcFoldersPanel } from './PcFoldersPanel.jsx';
 import { ToolsPanel } from './ToolsPanel.jsx';
 import { DeveloperPanel } from './DeveloperPanel.jsx';
+import { SandboxPanel } from './SandboxPanel.jsx';
 import { RoutinesPanel } from './RoutinesPanel.jsx';
 import { InboxPanel } from './InboxPanel.jsx';
 import { ProviderPanel } from './ProviderPanel.jsx';
@@ -111,6 +112,7 @@ export default function App({ user } = {}) {
   const [pcOpen, setPcOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [developerOpen, setDeveloperOpen] = useState(false);
+  const [sandboxOpen, setSandboxOpen] = useState(false);
   const [developerSession, setDeveloperSession] = useState(null);
   const [developerStartMode, setDeveloperStartMode] = useState('plan');
   const devProjects = useDevProjects();
@@ -1195,6 +1197,7 @@ export default function App({ user } = {}) {
     {pcOpen && <PcFoldersPanel showToast={showToast} askConfirm={askConfirm} onClose={() => setPcOpen(false)}/>}
     {toolsOpen && <ToolsPanel onPick={pickTool} onClose={() => setToolsOpen(false)}/>}
     {developerOpen && <DeveloperPanel devProjects={devProjects} team={team} initialMode={developerStartMode} onStart={startDeveloperTask} onManageFolders={() => { setDeveloperOpen(false); setPcOpen(true); }} onOpenConnectors={() => { setDeveloperOpen(false); setConnectorsOpen(true); }} onClose={() => setDeveloperOpen(false)}/>}
+    {sandboxOpen && <SandboxPanel onClose={() => setSandboxOpen(false)}/>}
     {routinesOpen && <RoutinesPanel assistants={assistants} clients={clients} showToast={showToast} askConfirm={askConfirm} onClose={() => setRoutinesOpen(false)}/>}
     {inboxOpen && <InboxPanel clients={clients} clientId={clientId} showToast={showToast} askConfirm={askConfirm} onOpenConversation={(id) => { fetchConversations(); openConversation(id); }} onClose={() => setInboxOpen(false)}/>}
     {providerOpen && <ProviderPanel showToast={showToast} freeStatus={freeStatus}
@@ -1386,6 +1389,7 @@ export default function App({ user } = {}) {
         provedor: () => setProviderOpen(true),
         assistentes: openStudioNew,
         dev: () => setDeveloperOpen(true),
+        sandbox: () => setSandboxOpen(true),
         conectores: () => setConnectorsOpen(true),
         pastas: () => setPcOpen(true),
         rotinas: () => setRoutinesOpen(true),
