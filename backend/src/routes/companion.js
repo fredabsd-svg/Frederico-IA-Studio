@@ -18,6 +18,7 @@ import { analyzeBug } from '../companion/bugAnalysis.js';
 import { incidentReportMarkdown } from '../companion/reports.js';
 import { contextualSuggestions } from '../companion/suggestions.js';
 import { collectHealth, healthHistory } from '../companion/health.js';
+import { readPermissions, writePermissions, resolveCapabilities, decide, capabilitiesForLevel, CAPABILITIES, SENSITIVE } from '../companion/permissions.js';
 
 const router = makeRouter();
 
@@ -180,6 +181,40 @@ router.post('/companion/monitor/logs', async (req, res) => {
   const settings = await readSettings(req.userId);
   const events = await ingestLogs(req.userId, { source: b.source, project: b.project, lines }, { settings });
   res.json({ created: events.length, events });
+});
+
+// ---- Permissões e autonomia (seção 16) --------------------------------------
+
+router.get('/companion/permissions', async (req, res) => {
+  const perms = await readPermissions(req.userId);
+  res.json({
+    ...perms,
+    capabilities: resolveCapabilities(perms),
+    catalog: CAPABILITIES,
+    sensitive: [...SENSITIVE],
+    levelDefaults: [1, 2, 3, 4, 5].map(l => ({ level: l, capabilities: capabilitiesForLevel(l) })),
+  });
+});
+
+router.put('/companion/permissions', async (req, res) => {
+  const saved = await writePermissions(req.userId, req.body || {});
+  await audit(req.userId, { category: 'alterar', action: 'alterou permissões do copiloto', actor: 'usuário', authorized: true, permLevel: saved.level, level: 'aviso', detail: `nível ${saved.level}${saved.readOnly ? ', somente-leitura' : ''}${saved.emergencyStop ? ', PARADA DE EMERGÊNCIA' : ''}` });
+  res.json({ ...saved, capabilities: resolveCapabilities(saved) });
+});
+
+// Parada de emergência (revoga tudo imediatamente).
+router.post('/companion/permissions/emergency-stop', async (req, res) => {
+  const cur = await readPermissions(req.userId);
+  const saved = await writePermissions(req.userId, { ...cur, emergencyStop: true });
+  await audit(req.userId, { category: 'alterar', action: 'PARADA DE EMERGÊNCIA acionada', actor: 'usuário', authorized: true, level: 'critico' });
+  res.json({ ok: true, ...saved });
+});
+
+// Consulta de decisão: a ação seria permitida? (para o front/agente checar antes)
+router.post('/companion/permissions/check', async (req, res) => {
+  const perms = await readPermissions(req.userId);
+  const b = req.body || {};
+  res.json(decide({ ...perms, blockList: perms.blockList, allowList: perms.allowList }, b.capability, { command: b.command }));
 });
 
 // ---- Saúde e observabilidade (seções 10/11) ---------------------------------
