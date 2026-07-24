@@ -19,6 +19,8 @@ const DEFAULTS = {
   permissionLevel: 1,
   voice: false,
   proactiveAlerts: true,
+  proactiveWriting: true,
+  writingSensitivity: 'media',
 };
 
 export function useCompanion({ tasks = [], devConversationId = null, showToast } = {}) {

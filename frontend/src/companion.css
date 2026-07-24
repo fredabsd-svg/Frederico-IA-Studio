@@ -295,3 +295,178 @@ body:not(.dark) .companionPanel {
 
 .cmpChipBtn { cursor: pointer; }
 .cmpChipBtn:hover { background: rgba(255,255,255,0.12); color: #fff; }
+
+/* =====================================================================
+   Copiloto — balão proativo de revisão de escrita (R2)
+   ===================================================================== */
+.cmpBubble {
+  position: absolute;
+  right: 0;
+  bottom: 78px;               /* acima do avatar (66px + folga) */
+  width: 300px;
+  max-width: calc(100vw - 44px);
+  background: rgba(17, 24, 39, 0.98);
+  border: 1px solid rgba(79, 140, 255, 0.35);
+  border-radius: 14px;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.45);
+  color: #eef2fb;
+  padding: 12px 13px;
+  z-index: 1210;
+  animation: cmpBubbleIn 0.18s ease-out;
+}
+.cmpBubble.noanim { animation: none; }
+.cmpBubbleArrow {
+  position: absolute;
+  right: 26px;
+  bottom: -8px;
+  width: 14px;
+  height: 14px;
+  background: rgba(17, 24, 39, 0.98);
+  border-right: 1px solid rgba(79, 140, 255, 0.35);
+  border-bottom: 1px solid rgba(79, 140, 255, 0.35);
+  transform: rotate(45deg);
+}
+.cmpBubbleBody { display: flex; flex-direction: column; gap: 9px; }
+.cmpBubbleText { font-size: 13px; line-height: 1.4; color: #eef2fb; display: flex; align-items: center; gap: 7px; }
+.cmpBubbleErr { color: #fca5a5; }
+.cmpBubbleLabel { font-size: 11px; color: #8b96af; }
+.cmpBubbleBtns { display: flex; gap: 8px; }
+.cmpBubbleBtns button, .cmpBubbleDismiss {
+  padding: 7px 12px; border-radius: 9px; font-size: 12.5px; cursor: pointer; border: none;
+  display: inline-flex; align-items: center; gap: 5px; min-height: 34px;
+}
+.cmpBubbleYes { background: #4f8cff; color: #fff; }
+.cmpBubbleYes:hover { background: #3f7cf0; }
+.cmpBubbleNo { background: rgba(255, 255, 255, 0.08); color: #cdd6ea; }
+.cmpBubbleNo:hover { background: rgba(255, 255, 255, 0.14); }
+.cmpBubbleCard {
+  text-align: left; width: 100%; cursor: pointer;
+  background: rgba(79, 140, 255, 0.12); border: 1px solid rgba(79, 140, 255, 0.4);
+  border-radius: 10px; padding: 10px; font-size: 12.5px; line-height: 1.45; color: #eef2fb;
+  max-height: 180px; overflow-y: auto; white-space: pre-wrap;
+}
+.cmpBubbleCard:hover { background: rgba(79, 140, 255, 0.2); }
+.cmpBubbleDismiss { background: transparent; color: #8b96af; align-self: flex-start; padding-left: 0; }
+.cmpBubbleDismiss:hover { color: #cdd6ea; }
+.cmpBubbleSpin {
+  width: 13px; height: 13px; border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.25); border-top-color: #4f8cff;
+  display: inline-block; animation: cmpSpin 0.7s linear infinite;
+}
+@keyframes cmpBubbleIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes cmpSpin { to { transform: rotate(360deg); } }
+.anim-nenhum .cmpBubble { animation: none; }
+.anim-nenhum .cmpBubbleSpin { animation-duration: 1.2s; }
+
+/* =====================================================================
+   Copiloto — espaço próprio (Chat + Documentos) (R3/R4)
+   ===================================================================== */
+.cwTabs { display: flex; gap: 6px; padding: 0 2px 12px; }
+.cwTabs button {
+  flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 9px 10px; border-radius: 10px; font-size: 13px; cursor: pointer;
+  background: rgba(255, 255, 255, 0.05); color: #cdd6ea; border: 1px solid transparent;
+}
+.cwTabs button.on { background: rgba(79, 140, 255, 0.16); border-color: rgba(79, 140, 255, 0.5); color: #eef2fb; }
+.cwCount { background: #4f8cff; color: #fff; border-radius: 999px; font-size: 10px; padding: 1px 6px; }
+
+.cwChat { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.cwMessages { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 4px 2px; min-height: 220px; }
+.cwMsg { display: flex; }
+.cwMsg.user { justify-content: flex-end; }
+.cwMsg.assistant { justify-content: flex-start; }
+.cwBubble {
+  max-width: 84%; padding: 9px 12px; border-radius: 13px; font-size: 13px; line-height: 1.45;
+  white-space: pre-wrap; word-break: break-word;
+}
+.cwMsg.user .cwBubble { background: #4f8cff; color: #fff; border-bottom-right-radius: 4px; }
+.cwMsg.assistant .cwBubble { background: rgba(255, 255, 255, 0.07); color: #eef2fb; border-bottom-left-radius: 4px; }
+.cwMsg.pending { opacity: 0.6; }
+.cwTyping { display: inline-flex; gap: 4px; align-items: center; }
+.cwTyping span { width: 6px; height: 6px; border-radius: 50%; background: #8b96af; animation: cwBlink 1.2s infinite ease-in-out; }
+.cwTyping span:nth-child(2) { animation-delay: 0.2s; }
+.cwTyping span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes cwBlink { 0%, 80%, 100% { opacity: 0.3; } 40% { opacity: 1; } }
+
+.cwEmpty {
+  display: flex; flex-direction: column; align-items: center; text-align: center; gap: 8px;
+  padding: 34px 16px; color: #8b96af; margin: auto;
+}
+.cwEmpty svg { color: #4f8cff; opacity: 0.8; }
+.cwEmpty b { color: #eef2fb; font-size: 14px; }
+.cwEmpty span { font-size: 12.5px; line-height: 1.5; max-width: 320px; }
+.cwLoading { padding: 24px; text-align: center; color: #8b96af; font-size: 13px; }
+.cwError { color: #fca5a5; font-size: 12.5px; padding: 6px 4px; }
+
+.cwComposer { display: flex; align-items: flex-end; gap: 7px; padding-top: 8px; border-top: 1px solid rgba(255, 255, 255, 0.07); }
+.cwComposer textarea {
+  flex: 1; resize: none; max-height: 120px; padding: 9px 11px; border-radius: 11px; font: inherit; font-size: 13px;
+  background: rgba(255, 255, 255, 0.06); color: #eef2fb; border: 1px solid rgba(255, 255, 255, 0.1);
+}
+.cwComposer textarea:focus { outline: none; border-color: rgba(79, 140, 255, 0.6); }
+.cwToolBtn, .cwSend {
+  width: 38px; height: 38px; min-width: 38px; border-radius: 11px; border: none; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.cwToolBtn { background: rgba(255, 255, 255, 0.06); color: #cdd6ea; }
+.cwToolBtn.on { background: rgba(79, 140, 255, 0.2); color: #eef2fb; }
+.cwSend { background: #4f8cff; color: #fff; }
+.cwSend:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.cwTools { padding: 8px 2px; }
+.cwToolsHint { font-size: 11px; color: #8b96af; margin-bottom: 6px; }
+.cwToolsChips { display: flex; flex-wrap: wrap; gap: 6px; }
+.cwToolsChips button {
+  font-size: 11.5px; padding: 5px 9px; border-radius: 8px; cursor: pointer;
+  background: rgba(255, 255, 255, 0.06); color: #cdd6ea; border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.cwToolsChips button:hover:not(:disabled) { background: rgba(79, 140, 255, 0.16); color: #eef2fb; }
+.cwToolsChips button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.cwClear { background: none; border: none; color: #8b96af; font-size: 11.5px; cursor: pointer; padding: 8px 2px 0; display: inline-flex; align-items: center; gap: 5px; }
+.cwClear:hover { color: #fca5a5; }
+
+.cwAlerts { background: rgba(240, 163, 64, 0.08); border: 1px solid rgba(240, 163, 64, 0.25); border-radius: 11px; padding: 9px 10px; margin-bottom: 10px; }
+.cwAlertsHead { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: #edd7bf; margin-bottom: 6px; }
+.cwAlertsHead span { display: inline-flex; align-items: center; gap: 6px; }
+.cwAlert { font-size: 12px; padding: 5px 0; border-top: 1px solid rgba(255, 255, 255, 0.06); }
+.cwAlert:first-of-type { border-top: none; }
+.cwAlertTitle { color: #eef2fb; font-weight: 600; }
+.cwAlertDetail { color: #b9c2d6; margin: 2px 0; line-height: 1.4; }
+.cwLink { background: none; border: none; color: #4f8cff; cursor: pointer; font-size: 11.5px; padding: 0; }
+.cwLink:hover { text-decoration: underline; }
+
+/* Documentos */
+.cwDocs { display: flex; flex-direction: column; gap: 8px; }
+.cwDoc { display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 11px; background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.06); }
+.cwDocIcon { color: #4f8cff; display: flex; }
+.cwDocInfo { flex: 1; min-width: 0; }
+.cwDocInfo b { display: block; font-size: 13px; color: #eef2fb; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cwDocInfo small { font-size: 11px; color: #8b96af; }
+.cwDocKind { background: rgba(79, 140, 255, 0.16); color: #9dbcff; border-radius: 6px; padding: 1px 6px; }
+.cwDocActions { display: flex; gap: 2px; }
+.cwDocActions button, .cwDocActions a {
+  width: 32px; height: 32px; border-radius: 8px; border: none; background: transparent; color: #8b96af;
+  cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+}
+.cwDocActions button:hover, .cwDocActions a:hover { background: rgba(255, 255, 255, 0.08); color: #eef2fb; }
+.cwDocContent { background: rgba(0, 0, 0, 0.25); border-radius: 10px; padding: 12px; font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; max-height: 50vh; overflow-y: auto; color: #dbe2f0; }
+.cwDocModalFoot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.cwDocModalFoot a, .cwDocModalFoot button { padding: 8px 14px; border-radius: 9px; font-size: 13px; cursor: pointer; border: none; display: inline-flex; align-items: center; gap: 6px; text-decoration: none; }
+.cwDocModalFoot .primary { background: #4f8cff; color: #fff; }
+.cwDocModalFoot .ghost { background: rgba(255, 255, 255, 0.06); color: #cdd6ea; }
+
+/* Config — títulos de seção e nota */
+.cmpSectionTitle { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #8b96af; margin: 8px 0 2px; font-weight: 600; }
+.cmpFieldNote { display: flex; align-items: flex-start; gap: 7px; font-size: 11.5px; color: #8b96af; line-height: 1.45; background: rgba(255, 255, 255, 0.03); border-radius: 9px; padding: 9px 10px; }
+.cmpFieldNote svg { color: #4f8cff; flex-shrink: 0; margin-top: 1px; }
+
+/* ---- Tema claro ---- */
+.app.theme-light .cmpBubble, body:not(.dark) .cmpBubble { background: #fff; color: #1e293b; border-color: rgba(79, 140, 255, 0.4); }
+.app.theme-light .cmpBubbleArrow, body:not(.dark) .cmpBubbleArrow { background: #fff; }
+.app.theme-light .cmpBubbleText, body:not(.dark) .cmpBubbleText { color: #1e293b; }
+.app.theme-light .cmpBubbleCard, body:not(.dark) .cmpBubbleCard { color: #1e293b; }
+.app.theme-light .cwBubble, body:not(.dark) .cwMsg.assistant .cwBubble { color: inherit; }
+.app.theme-light .cwMsg.assistant .cwBubble { background: rgba(0, 0, 0, 0.05); color: #1e293b; }
+.app.theme-light .cwEmpty b, .app.theme-light .cwDocInfo b, .app.theme-light .cwAlertTitle { color: #0f172a; }
+.app.theme-light .cwComposer textarea { background: rgba(0, 0, 0, 0.04); color: #1e293b; border-color: rgba(0, 0, 0, 0.12); }

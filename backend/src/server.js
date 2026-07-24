@@ -35,6 +35,7 @@ import backupRouter from './routes/backup.js';
 import cacheRouter from './routes/cache.js';
 import modelTeamsRouter from './routes/modelTeams.js';
 import companionRouter from './routes/companion.js';
+import copilotRouter from './routes/copilot.js';
 import doclingRouter from './routes/docling.js';
 import { healthMetrics } from './healthMetrics.js';
 import { sweepExpiredArtifacts, RETENTION_DAYS as DOCLING_RETENTION_DAYS } from './docling/retention.js';
@@ -149,6 +150,7 @@ app.use('/api', backupRouter);
 app.use('/api', cacheRouter);
 app.use('/api', modelTeamsRouter);
 app.use('/api', companionRouter);
+app.use('/api', copilotRouter);
 app.use('/api', doclingRouter);
 
 // LGPD — retenção automática: com CONVERSATION_RETENTION_DAYS > 0, apaga
