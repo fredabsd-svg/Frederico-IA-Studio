@@ -29,6 +29,7 @@ import { DoclingPanel } from './components/DoclingPanel.jsx';
 import { PromptCoach } from './components/PromptCoach.jsx';
 import { CopilotPanel } from './components/CopilotPanel.jsx';
 import { useCopilot } from './hooks/useCopilot.js';
+import { SettingsHub } from './components/SettingsHub.jsx';
 import { ContextPicker, AssistantGlyph, AssistantTile, ASSISTANT_ICON, modelHasTools } from './components/ContextPicker.jsx';
 import { MultiModelPicker } from './components/MultiModelPicker.jsx';
 import { MultiModelBoard } from './components/MultiModelBoard.jsx';
@@ -236,6 +237,7 @@ export default function App({ user } = {}) {
   // Copiloto — central de diagnósticos, saúde e permissões.
   const copilot = useCopilot();
   const [copilotOpen, setCopilotOpen] = useState(false);
+  const [settingsHubOpen, setSettingsHubOpen] = useState(false);
 
   function changeMultiModel(next) {
     setMultiModel(next);
@@ -769,21 +771,10 @@ export default function App({ user } = {}) {
           <button className="studio" onClick={() => { setTasksOpen(true); pollTasks(); }}><ListTodo size={16}/> Tarefas{tasksActive && <span className="badge">{tasks.filter(t => t.status === 'queued' || t.status === 'running').length}</span>}</button>
           <button className="studio" onClick={() => setRoutinesOpen(true)} title="Programe tarefas para rodarem sozinhas"><CalendarClock size={16}/> Rotinas</button>
         </div>
-        <div className="navGroup navGroupKnowledge">
-          <div className="navGroupTitle">Conhecimento</div>
-          <button className="studio" onClick={() => setMemoryOpen(true)}><Brain size={16}/> Memória</button>
-          {me?.pcFoldersEnabled && <button className="studio" onClick={() => setPcOpen(true)} title="Libere pastas do seu PC para o assistente procurar, ler e organizar arquivos"><FolderCog size={16}/> Pastas do PC</button>}
-        </div>
         <div className="navGroup navGroupAdmin">
-          <div className="navGroupTitle">Administração</div>
+          <div className="navGroupTitle">Ajustes</div>
           <button className="studio" onClick={openStudioNew}><Bot size={16}/> Assistentes</button>
-          <button className="studio" onClick={openAnalytics}><BarChart3 size={16}/> Análises</button>
-          {me?.isAdmin && <button className="studio" onClick={() => window.open(`${API}/api/backup`, '_blank')} title="Baixa um arquivo com o banco e todos os workspaces (somente administrador)"><HardDriveDownload size={16}/> Backup</button>}
-          {me?.isAdmin && freeStatus?.configured && <button className="studio" onClick={() => setFreeAdminOpen(true)} title="Usuários, consumo, bloqueios e limites do modo gratuito (somente administrador)"><Gauge size={16}/> Modo gratuito</button>}
-          <button className="studio" onClick={() => setProviderOpen(true)} title="Cadastre a sua própria chave de API"><KeyRound size={16}/> Provedor de IA</button>
-          <button className="studio" onClick={() => setConnectorsOpen(true)} title="Conecte serviços externos, como o GitHub"><Cable size={16}/> Conectores</button>
-          <button className="studio" onClick={() => setPrivacyOpen(true)} title="Exportar dados, apagar histórico ou excluir a conta (LGPD)"><ShieldCheck size={16}/> Privacidade e dados</button>
-          <button className="studio" onClick={() => setThemeOpen(true)} title="Trocar a paleta e o espaço de trabalho"><Palette size={16}/> Aparência</button>
+          <button className="studio" onClick={() => setSettingsHubOpen(true)} title="Todas as configurações num só lugar"><SlidersHorizontal size={16}/> Configurações</button>
         </div>
       </nav>
       </div>
@@ -1384,5 +1375,27 @@ export default function App({ user } = {}) {
       showToast={showToast}
     />
     {copilotOpen && <CopilotPanel copilot={copilot} onClose={() => setCopilotOpen(false)} />}
+    {settingsHubOpen && <SettingsHub
+      onClose={() => setSettingsHubOpen(false)}
+      isAdmin={me?.isAdmin}
+      pcFoldersEnabled={me?.pcFoldersEnabled}
+      freeConfigured={freeStatus?.configured}
+      actions={{
+        aparencia: () => setThemeOpen(true),
+        copiloto: () => setCopilotOpen(true),
+        provedor: () => setProviderOpen(true),
+        assistentes: openStudioNew,
+        dev: () => setDeveloperOpen(true),
+        conectores: () => setConnectorsOpen(true),
+        pastas: () => setPcOpen(true),
+        rotinas: () => setRoutinesOpen(true),
+        memoria: () => setMemoryOpen(true),
+        privacidade: () => setPrivacyOpen(true),
+        analises: openAnalytics,
+        inbox: () => setInboxOpen(true),
+        backup: () => window.open(`${API}/api/backup`, '_blank'),
+        gratuito: () => setFreeAdminOpen(true),
+      }}
+    />}
   </div>;
 }

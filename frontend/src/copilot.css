@@ -59,3 +59,17 @@
 .copEmergency:disabled { opacity: 0.4; cursor: default; }
 .copEmergencyOn { background: rgba(239, 68, 68, 0.14); border: 1px solid rgba(239, 68, 68, 0.4); border-radius: 10px; padding: 10px; font-size: 12.5px; color: #fca5a5; }
 .copEmergencyOn button { margin-left: 6px; background: rgba(255, 255, 255, 0.1); border: none; color: #fff; padding: 3px 10px; border-radius: 6px; cursor: pointer; }
+
+/* Aba central de Configurações (SettingsHub) */
+.shubTabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.shubTabs button { font-size: 12.5px; padding: 7px 12px; border-radius: 999px; cursor: pointer; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); color: #9aa5bd; }
+.shubTabs button.on { background: rgba(79,140,255,0.18); border-color: rgba(79,140,255,0.5); color: #cfe0ff; }
+.shubItems { display: flex; flex-direction: column; gap: 8px; }
+.shubItem { display: flex; align-items: center; gap: 12px; text-align: left; padding: 12px; border-radius: 11px; cursor: pointer; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); color: #dbe3f4; }
+.shubItem:hover:not(:disabled) { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.16); }
+.shubItem:disabled { opacity: 0.4; cursor: default; }
+.shubIcon { flex: none; width: 38px; height: 38px; border-radius: 10px; display: flex; align-items: center; justify-content: center; background: rgba(79,140,255,0.14); color: #6ea8ff; }
+.shubInfo { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.shubInfo b { font-size: 13.5px; color: #eef2fb; }
+.shubInfo small { font-size: 11.5px; color: #8b96af; line-height: 1.35; }
+.shubChevron { flex: none; color: #6b7690; }
