@@ -14,6 +14,11 @@ import { createEvent, serializeEvent } from '../companion/events.js';
 import { checkGit, ingestLogs } from '../companion/monitor.js';
 import { recordIncident, listIncidents, getIncident, updateIncident, findSimilar, incidentSignature } from '../companion/incidents.js';
 import { audit, listAudit } from '../companion/audit.js';
+import { analyzeBug } from '../companion/bugAnalysis.js';
+import { incidentReportMarkdown } from '../companion/reports.js';
+import { contextualSuggestions } from '../companion/suggestions.js';
+import { collectHealth, healthHistory } from '../companion/health.js';
+import { readPermissions, writePermissions, resolveCapabilities, decide, capabilitiesForLevel, CAPABILITIES, SENSITIVE } from '../companion/permissions.js';
 
 const router = makeRouter();
 
@@ -178,6 +183,49 @@ router.post('/companion/monitor/logs', async (req, res) => {
   res.json({ created: events.length, events });
 });
 
+// ---- Permissões e autonomia (seção 16) --------------------------------------
+
+router.get('/companion/permissions', async (req, res) => {
+  const perms = await readPermissions(req.userId);
+  res.json({
+    ...perms,
+    capabilities: resolveCapabilities(perms),
+    catalog: CAPABILITIES,
+    sensitive: [...SENSITIVE],
+    levelDefaults: [1, 2, 3, 4, 5].map(l => ({ level: l, capabilities: capabilitiesForLevel(l) })),
+  });
+});
+
+router.put('/companion/permissions', async (req, res) => {
+  const saved = await writePermissions(req.userId, req.body || {});
+  await audit(req.userId, { category: 'alterar', action: 'alterou permissões do copiloto', actor: 'usuário', authorized: true, permLevel: saved.level, level: 'aviso', detail: `nível ${saved.level}${saved.readOnly ? ', somente-leitura' : ''}${saved.emergencyStop ? ', PARADA DE EMERGÊNCIA' : ''}` });
+  res.json({ ...saved, capabilities: resolveCapabilities(saved) });
+});
+
+// Parada de emergência (revoga tudo imediatamente).
+router.post('/companion/permissions/emergency-stop', async (req, res) => {
+  const cur = await readPermissions(req.userId);
+  const saved = await writePermissions(req.userId, { ...cur, emergencyStop: true });
+  await audit(req.userId, { category: 'alterar', action: 'PARADA DE EMERGÊNCIA acionada', actor: 'usuário', authorized: true, level: 'critico' });
+  res.json({ ok: true, ...saved });
+});
+
+// Consulta de decisão: a ação seria permitida? (para o front/agente checar antes)
+router.post('/companion/permissions/check', async (req, res) => {
+  const perms = await readPermissions(req.userId);
+  const b = req.body || {};
+  res.json(decide({ ...perms, blockList: perms.blockList, allowList: perms.allowList }, b.capability, { command: b.command }));
+});
+
+// ---- Saúde e observabilidade (seções 10/11) ---------------------------------
+
+router.get('/companion/health', async (req, res) => {
+  res.json(await collectHealth());
+});
+router.get('/companion/health/history', async (req, res) => {
+  res.json(healthHistory());
+});
+
 // ---- Base de incidentes (memória técnica do copiloto) -----------------------
 
 router.get('/companion/incidents', async (req, res) => {
@@ -209,6 +257,28 @@ router.post('/companion/incidents/similar', async (req, res) => {
   const b = req.body || {};
   const signature = incidentSignature(b);
   res.json(await findSimilar(req.userId, { signature, project: b.project || null }));
+});
+
+// Sugestões contextuais (seção 23): recebe o contexto observável e devolve as
+// sugestões relevantes. Puro/local — o front decide exibir conforme o modo.
+router.post('/companion/suggestions', async (req, res) => {
+  res.json(contextualSuggestions(req.body || {}));
+});
+
+// Análise de bug sob demanda (pura/local): causa provável + arquivos + severidade.
+router.post('/companion/analyze', async (req, res) => {
+  const b = req.body || {};
+  res.json(analyzeBug({ errorMessage: b.errorMessage, stack: b.stack }));
+});
+
+// Relatório de diagnóstico de um incidente em Markdown (download).
+router.get('/companion/incidents/:id/report.md', async (req, res) => {
+  const inc = await getIncident(req.userId, req.params.id);
+  if (!inc) return res.status(404).json({ error: 'Não encontrado' });
+  const similar = await findSimilar(req.userId, { signature: inc.signature, project: inc.project, excludeId: inc.id });
+  res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="diagnostico_${inc.id}.md"`);
+  res.send(incidentReportMarkdown(inc, { similar }));
 });
 
 // ---- Auditoria das ações do agente ------------------------------------------

@@ -112,4 +112,25 @@ Começo pela espinha dorsal que torna a proatividade **real e auditável**:
 - **Correlação real:** o monitor de erros recorrentes passa a registrar/atualizar
   incidentes (com contagem de ocorrências), não só um alerta volátil.
 
-As demais fases entram nas próximas etapas, validando cada uma antes de seguir.
+## 8. Fases 2–5 — entregues (backbone real e testado)
+
+- **Fase 2 (Diagnósticos):** `bugAnalysis.js` (causa raiz por padrão, arquivos do
+  stack, severidade, confiança), auto-enriquecimento dos incidentes, `reports.js`
+  (relatório Markdown organizado por projeto/ano/mês/dia/severidade), rotas
+  `/companion/analyze` e `/incidents/:id/report.md`.
+- **Fase 3 (Inteligência):** assistente de prompts LOCAL (`promptCoach.js` +
+  `PromptCoach.jsx`, análise sem gastar tokens, estruturar/ações) e motor de
+  sugestões contextuais (`suggestions.js`, seção 23).
+- **Fase 4 (Observabilidade):** `health.js` com métricas REAIS (memória/CPU/disco/
+  event-loop) e detecção de degradação (vazamento por RSS crescente), amostragem
+  no boot, rotas `/companion/health[/history]`.
+- **Fase 5 (Automação controlada):** `permissions.js` — modelo granular (17
+  capacidades, níveis 1..5, grant/revoke, listas allow/block, somente-leitura,
+  parada de emergência, ações sensíveis sempre confirmadas), `decide()` como
+  motor de política, rotas + auditoria.
+
+Cada módulo pesado é PURO e testado (64/64 na suíte do companion). **Pendente:**
+o *enforcement* de `decide()` ao longo de todo o `agent/loop.js`/`tools.js` (a
+política já existe e é consultável; falta plugá-la em cada ponto de execução) e
+as camadas visuais completas (central de diagnósticos, dashboard de saúde,
+painel de permissões) — próximos passos naturais sobre esta fundação.

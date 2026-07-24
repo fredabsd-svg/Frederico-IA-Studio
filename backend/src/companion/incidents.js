@@ -5,6 +5,7 @@
 import { nanoid } from 'nanoid';
 import { db, now } from '../db.js';
 import { signatureOf } from './errorDigest.js';
+import { analyzeBug } from './bugAnalysis.js';
 
 const SEVERITY = ['info', 'baixa', 'media', 'alta', 'critica'];
 const STATUS = ['aberto', 'investigando', 'resolvido', 'reaberto', 'ignorado'];
@@ -64,6 +65,14 @@ export async function recordIncident(userId, data = {}) {
     return { incident, recurring: true, previous };
   }
 
+  // Auto-análise (pura): preenche causa/arquivos/severidade/confiança quando não
+  // vieram prontos — sempre com base em evidência (mensagem/stack), nunca chute.
+  const analysis = (data.errorMessage || data.stack) ? analyzeBug({ errorMessage: data.errorMessage, stack: data.stack }) : null;
+  const severity = pick(data.severity, SEVERITY, analysis?.severity || 'media');
+  const probableCause = data.probableCause || analysis?.probableCause || null;
+  const relatedFiles = data.relatedFiles || analysis?.files || null;
+  const confidence = clampPct(data.confidence != null ? data.confidence : analysis?.confidence);
+
   const id = nanoid();
   await db.prepare(
     `INSERT INTO companion_incidents
@@ -73,10 +82,10 @@ export async function recordIncident(userId, data = {}) {
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
   ).run(
     id, userId, project, str(data.environment, 60), str(data.service, 120),
-    pick(data.kind, KIND, 'bug'), pick(data.severity, SEVERITY, 'media'), signature || null,
+    pick(data.kind, KIND, 'bug'), severity, signature || null,
     str(data.summary, 500) || 'Incidente sem resumo', str(data.errorMessage), str(data.stack),
-    str(data.probableCause, 2000), jsonOrNull(data.relatedFiles), jsonOrNull(data.recentChanges),
-    str(data.suggestedFix, 2000), jsonOrNull(data.commands), jsonOrNull(data.evidence), clampPct(data.confidence),
+    str(probableCause, 2000), jsonOrNull(relatedFiles), jsonOrNull(data.recentChanges),
+    str(data.suggestedFix, 2000), jsonOrNull(data.commands), jsonOrNull(data.evidence), confidence,
     pick(data.status, STATUS, 'aberto'), str(data.solution, 2000), str(data.result, 2000),
     str(data.commitRef, 80), str(data.prRef, 120), 1, t, t, t, t,
   );
