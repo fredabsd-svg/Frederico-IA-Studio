@@ -2,6 +2,7 @@
 // modularização — mesma lógica, mesmo comportamento).
 import { Router } from 'express';
 import multer from 'multer';
+import { nanoid } from 'nanoid';
 import { db, now } from '../db.js';
 import { workspaceFor } from '../sandbox.js';
 import { resolveScheduleTimeZone, scheduleDateKey } from '../scheduling.js';
@@ -25,12 +26,97 @@ export function makeRouter() {
 // Fuso horário das rotinas e dos contadores diários (APP_TIMEZONE).
 export const scheduleTimeZone = resolveScheduleTimeZone(process.env.APP_TIMEZONE);
 
-// Administrador: só o e-mail em ADMIN_EMAIL pode baixar o backup completo do
-// sistema. Sem ADMIN_EMAIL definido, NINGUÉM pode (padrão seguro).
+// ---- Autorização administrativa (ver migrations/020_admin_roles_audit.sql) --
+// A AUTORIDADE é a tabela user_roles, presa ao ID do usuário. ADMIN_EMAIL é
+// apenas bootstrap do PRIMEIRO administrador; ADMIN_USER_ID fixa por id (modo
+// recomendado numa instalação pública). Sem nenhum dos dois, NINGUÉM é
+// administrador (padrão seguro, como antes).
 const ADMIN_EMAIL = String(process.env.ADMIN_EMAIL || '').trim().toLowerCase();
-export function isAdmin(req) {
+const ADMIN_USER_ID = String(process.env.ADMIN_USER_ID || '').trim();
+// Exigir e-mail verificado no bootstrap. Fica desligado por padrão porque o
+// cadastro por e-mail/senha desta instalação não envia verificação — ligar sem
+// um provedor de e-mail configurado deixaria o app sem administrador algum.
+const ADMIN_REQUIRE_VERIFIED_EMAIL = process.env.ADMIN_REQUIRE_VERIFIED_EMAIL === 'true';
+
+async function grantAdminRole(userId, grantedBy) {
+  await db.prepare(
+    `INSERT INTO user_roles (user_id, role, granted_at, granted_by) VALUES (?, 'admin', ?, ?)
+     ON CONFLICT (user_id, role) DO NOTHING`
+  ).run(userId, now(), grantedBy);
+  console.warn(`[admin] papel de administrador concedido ao usuário ${userId} (origem: ${grantedBy}).`);
+}
+
+async function resolveAdmin(req) {
+  const userId = String(req.userId || '');
+  if (!userId) return false;
+  // 1) Papel já persistido: manda em tudo.
+  const row = await db.prepare("SELECT 1 FROM user_roles WHERE user_id=? AND role='admin'").get(userId);
+  if (row) return true;
+  // 2) Administrador fixado por ID no ambiente.
+  if (ADMIN_USER_ID && userId === ADMIN_USER_ID) {
+    await grantAdminRole(userId, 'env:ADMIN_USER_ID');
+    await recordAdminAction(req, 'admin.role.granted', { origem: 'ADMIN_USER_ID' });
+    return true;
+  }
+  // 3) Bootstrap por e-mail — vale UMA vez, enquanto não existe nenhum admin.
+  //    Depois disso o texto do e-mail deixa de autorizar qualquer coisa: quem
+  //    registrar uma conta com o endereço do administrador não herda o poder.
+  if (!ADMIN_EMAIL) return false;
   const email = String(req.user?.email || '').trim().toLowerCase();
-  return !!ADMIN_EMAIL && !!email && email === ADMIN_EMAIL;
+  if (!email || email !== ADMIN_EMAIL) return false;
+  if (ADMIN_REQUIRE_VERIFIED_EMAIL && !req.user?.emailVerified) {
+    console.warn('[admin] bootstrap recusado: ADMIN_REQUIRE_VERIFIED_EMAIL=true e o e-mail da conta não está verificado.');
+    return false;
+  }
+  const existing = await db.prepare("SELECT user_id FROM user_roles WHERE role='admin' LIMIT 1").get();
+  if (existing) {
+    console.warn(`[admin] bootstrap por ADMIN_EMAIL recusado: já existe administrador (${existing.user_id}). Conceda o papel em user_roles se a troca for intencional.`);
+    return false;
+  }
+  await grantAdminRole(userId, 'bootstrap:ADMIN_EMAIL');
+  await recordAdminAction(req, 'admin.role.granted', { origem: 'ADMIN_EMAIL', verificado: !!req.user?.emailVerified });
+  return true;
+}
+
+// Memoiza por requisição (várias rotas consultam isso no mesmo handler).
+export async function isAdmin(req) {
+  if (req._adminResolved !== undefined) return req._adminResolved;
+  let result = false;
+  try { result = await resolveAdmin(req); }
+  catch (e) {
+    // Falha de banco NUNCA vira "é admin": negar é o lado seguro do erro.
+    console.error('[admin] falha ao resolver o papel administrativo:', e.message);
+    result = false;
+  }
+  req._adminResolved = result;
+  return result;
+}
+
+// Portão para rotas administrativas: responde 403 e devolve false quando não é.
+export async function requireAdmin(req, res, message = 'Esta ação é restrita ao administrador do sistema.') {
+  if (await isAdmin(req)) return true;
+  await recordAdminAction(req, 'admin.denied', { rota: req.originalUrl || req.path });
+  res.status(403).json({ error: message });
+  return false;
+}
+
+// Trilha de auditoria das ações administrativas. Nunca lança (uma falha de
+// auditoria não pode derrubar a ação) e nunca grava segredo — só metadados.
+export async function recordAdminAction(req, action, detail = null) {
+  try {
+    await db.prepare('INSERT INTO admin_audit (id,user_id,email,action,detail,ip,user_agent,created_at) VALUES (?,?,?,?,?,?,?,?)').run(
+      nanoid(),
+      req?.userId || null,
+      req?.user?.email ? String(req.user.email).slice(0, 200) : null,
+      String(action).slice(0, 100),
+      detail ? JSON.stringify(detail).slice(0, 2000) : null,
+      req?.ip ? String(req.ip).slice(0, 100) : null,
+      req?.headers?.['user-agent'] ? String(req.headers['user-agent']).slice(0, 300) : null,
+      now()
+    );
+  } catch (e) {
+    console.error('[admin-audit] falha ao registrar a ação:', e.message);
+  }
 }
 
 // "Pastas do PC": monta caminhos do HOST no sandbox. Faz sentido apenas numa

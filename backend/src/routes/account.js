@@ -14,11 +14,11 @@ router.get('/health', (_, res) => res.json({ ok: true, name: 'Frederico AI Studi
 
 // Dados do usuário logado + flags que a interface usa (ex.: mostrar o botão de
 // backup só para o administrador; esconder "Pastas do PC" quando desligado).
-router.get('/me', (req, res) => res.json({
+router.get('/me', async (req, res) => res.json({
   id: req.userId,
   email: req.user?.email || null,
   name: req.user?.name || null,
-  isAdmin: isAdmin(req),
+  isAdmin: await isAdmin(req),
   pcFoldersEnabled: PC_FOLDERS_ENABLED
 }));
 
