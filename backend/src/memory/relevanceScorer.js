@@ -54,6 +54,9 @@ const DOMAINS = {
       'context builder', 'retrieval', 'recuperacao', 'policy', 'politica',
       'free tier', 'modo gratuito', 'economy mode', 'modo economia',
       'vision', 'ocr', 'docling', 'pdf', 'markdown', 'html to pdf',
+      'layout', 'tela', 'login', 'botao', 'clicar', 'clique', 'pagina',
+      'interface', 'menu', 'formulario', 'aba', 'painel', 'design',
+      'responsivo', 'mobile', 'desktop', 'aplicacao', 'funcionalidade',
       'companion', 'monitor', 'health', 'incident', 'audit', 'auditoria',
       'repair', 'stream guard', 'checkpoint', 'persistence', 'persistencia',
       'orchestrator', 'multi model', 'model capabilities', 'model knowledge',
@@ -239,6 +242,95 @@ function normalize(text) {
     .trim();
 }
 
+// ─── Índice de domínios pré-computado ─────────────────────────────────
+// As palavras-chave são normalizadas UMA vez no carregamento do módulo
+// (antes eram renormalizadas ~500x a cada chamada de detecção de domínio,
+// que roda várias vezes por candidato). Cada termo guarda seu peso de hit
+// (1 para keyword comum, 2 para strongKeyword) e, se for curto (<=3), a
+// RegExp de fronteira de palavra já compilada.
+const DOMAIN_INDEX = (() => {
+  const idx = [];
+  for (const [name, dom] of Object.entries(DOMAINS)) {
+    if (name === 'general') continue;
+    const terms = [];
+    const push = (kw, w) => {
+      const n = normalize(kw);
+      if (!n) return;
+      terms.push({ n, w, re: n.length <= 3 ? new RegExp(`\\b${n}\\b`) : null });
+    };
+    for (const kw of dom.keywords) push(kw, 1);
+    for (const kw of (dom.strongKeywords || [])) push(kw, 2);
+    idx.push({ name, weight: dom.weight, terms });
+  }
+  return idx;
+})();
+
+// Pontua um texto normalizado contra todos os domínios e devolve o domínio
+// dominante (mínimo 2 hits ponderados para evitar ruído). Fonte única de
+// verdade usada por analyzePrompt e detectContentDomain.
+function scoreDomains(normalized) {
+  const scores = {};
+  for (const d of DOMAIN_INDEX) {
+    let hits = 0;
+    for (const t of d.terms) {
+      if (t.re) { if (t.re.test(normalized)) hits += t.w; }
+      else if (normalized.includes(t.n)) hits += t.w;
+    }
+    scores[d.name] = hits * d.weight;
+  }
+  let domain = 'general';
+  let maxHits = 0;
+  for (const [name, score] of Object.entries(scores)) {
+    if (score > maxHits) { maxHits = score; domain = name; }
+  }
+  // Domínio "fraco" (soft): a maior inclinação, mesmo abaixo do mínimo de 2.
+  // Usado para não deixar o filtro cego em pedidos curtos (ex.: "olha o app
+  // e acha bugs" tem só 1 hit de software, mas ainda assim NÃO deve puxar
+  // memória contábil).
+  let softDomain = null;
+  let softMax = 0;
+  for (const [name, score] of Object.entries(scores)) {
+    if (score > softMax) { softMax = score; softDomain = name; }
+  }
+  return { domain: maxHits < 2 ? 'general' : domain, scores, maxHits, softDomain: softMax > 0 ? softDomain : null };
+}
+
+// Domínio efetivo do prompt: o domínio forte quando existe; senão, a
+// inclinação fraca (soft); senão, o domínio do CONTEXTO da conversa. É o que
+// decide compatibilidade/penalidade de desvio, para que pedidos curtos não
+// escapem do crivo.
+function effectiveDomain(analysis) {
+  if (analysis.domain !== 'general') return analysis.domain;
+  if (analysis.softDomain) return analysis.softDomain;
+  return analysis.contextDomain || 'general';
+}
+
+// Domínios ACEITÁVEIS para o pedido atual. Devolve um Set, ou null quando não
+// há sinal nenhum (nem na mensagem, nem no contexto da conversa).
+//
+// Por que um conjunto, e não um domínio só: a mensagem e a conversa podem
+// apontar para lados diferentes de forma legítima. No SPED-HUB — um projeto de
+// SOFTWARE cujo nome e assunto são contábeis — "ajustar o parser do SPED" tem
+// palavras de contabilidade, mas a conversa é de desenvolvimento. Aceitar os
+// dois evita tanto barrar memória contábil útil quanto abrir a porteira: se a
+// mensagem não diz nada ("vamos continuar o projeto"), sobra só o domínio da
+// conversa, e a memória de outro assunto continua barrada.
+function domainsAllowed(analysis) {
+  const set = new Set();
+  if (analysis.domain !== 'general') set.add(analysis.domain);
+  else if (analysis.softDomain) set.add(analysis.softDomain);
+  if (analysis.contextDomain) set.add(analysis.contextDomain);
+  return set.size ? set : null;
+}
+
+// Conteúdo de domínio específico que não cabe em nenhum domínio aceitável.
+function isDomainMismatch(contentDomain, analysis) {
+  const allowed = domainsAllowed(analysis);
+  if (!allowed) return false;                    // sem sinal: não há como afirmar desvio
+  if (contentDomain === 'general') return false; // conteúdo neutro nunca é desvio
+  return !allowed.has(contentDomain);
+}
+
 // ─── Análise do prompt ────────────────────────────────────────────────
 // Identifica intenção, assunto, projeto, domínio e entidades.
 // Não usa LLM — é análise lexical rápida (rodada a cada mensagem).
@@ -259,7 +351,12 @@ const PROJECT_PATTERNS = [
   { project: 'contabilidade', re: /\b(escritorio|contabilidade|contabil|clientes?|crc|sped|dominio sistemas)\b/i },
 ];
 
-export function analyzePrompt(text) {
+// `contextDomain` é o domínio que vem do CONTEXTO da conversa (ver
+// conversationDomain no contextBuilder), não das palavras da mensagem. É o que
+// salva pedidos sem sinal nenhum: "vamos continuar o projeto" não tem uma única
+// palavra-chave de domínio, então sem esse sinal o crivo se desligava por
+// completo e injetava todo o perfil do usuário.
+export function analyzePrompt(text, { contextDomain = null } = {}) {
   const normalized = normalize(text);
   const lower = String(text || '').toLowerCase();
 
@@ -269,32 +366,8 @@ export function analyzePrompt(text) {
     if (re.test(normalized) || re.test(lower)) { intent = i; break; }
   }
 
-  // Domínio: conta palavras-chave de cada domínio no texto
-  const domainScores = {};
-  for (const [name, dom] of Object.entries(DOMAINS)) {
-    if (name === 'general') continue;
-    let hits = 0;
-    for (const kw of dom.keywords) {
-      const kwNorm = normalize(kw);
-      if (kwNorm.length > 3 && normalized.includes(kwNorm)) hits++;
-      else if (kwNorm.length <= 3 && new RegExp(`\\b${kwNorm}\\b`).test(normalized)) hits++;
-    }
-    // Strong keywords count as 2 hits
-    for (const kw of (dom.strongKeywords || [])) {
-      const kwNorm = normalize(kw);
-      if (kwNorm.length > 3 && normalized.includes(kwNorm)) hits += 2;
-      else if (kwNorm.length <= 3 && new RegExp(`\\b${kwNorm}\\b`).test(normalized)) hits += 2;
-    }
-    domainScores[name] = hits * dom.weight;
-  }
-
-  // Domínio dominante: o que tiver mais hits (mínimo 2 para evitar ruído)
-  let domain = 'general';
-  let maxHits = 0;
-  for (const [name, score] of Object.entries(domainScores)) {
-    if (score > maxHits) { maxHits = score; domain = name; }
-  }
-  if (maxHits < 2) domain = 'general';
+  // Domínio: pontua palavras-chave de cada domínio (índice pré-computado).
+  const { domain, scores: domainScores, softDomain } = scoreDomains(normalized);
 
   // Projeto
   let project = null;
@@ -315,6 +388,8 @@ export function analyzePrompt(text) {
   return {
     intent,
     domain,
+    softDomain,
+    contextDomain: contextDomain || null,
     domainScores,
     project,
     entities,
@@ -326,32 +401,37 @@ export function analyzePrompt(text) {
 
 // ─── Detecção de domínio de um conteúdo (memória ou conversa) ──────────
 export function detectContentDomain(text) {
-  const normalized = normalize(text);
-  const scores = {};
-  for (const [name, dom] of Object.entries(DOMAINS)) {
-    if (name === 'general') continue;
-    let hits = 0;
-    for (const kw of dom.keywords) {
-      const kwNorm = normalize(kw);
-      if (kwNorm.length > 3 && normalized.includes(kwNorm)) hits++;
-      else if (kwNorm.length <= 3 && new RegExp(`\\b${kwNorm}\\b`).test(normalized)) hits++;
-    }
-    // Strong keywords count as 2 hits — they are highly domain-specific
-    // and even a single occurrence is strong evidence of domain membership.
-    for (const kw of (dom.strongKeywords || [])) {
-      const kwNorm = normalize(kw);
-      if (kwNorm.length > 3 && normalized.includes(kwNorm)) hits += 2;
-      else if (kwNorm.length <= 3 && new RegExp(`\\b${kwNorm}\\b`).test(normalized)) hits += 2;
-    }
-    scores[name] = hits * dom.weight;
-  }
-  let domain = 'general';
-  let maxHits = 0;
-  for (const [name, score] of Object.entries(scores)) {
-    if (score > maxHits) { maxHits = score; domain = name; }
-  }
-  if (maxHits < 2) domain = 'general';
+  const { domain, scores, maxHits } = scoreDomains(normalize(text));
   return { domain, scores, maxHits };
+}
+
+// ─── Calibração da similaridade dos embeddings ─────────────────────────
+// O modelo em uso (multilingual-e5-small) NÃO usa a faixa 0..1. Medido com o
+// próprio modelo, sobre os textos reais que apareceram no relato do problema:
+//
+//   0,786  "o gato subiu no telhado"      ↔ "balanço patrimonial"   (nada a ver)
+//   0,818  "vamos continuar o projeto"    ↔ "alteração contratual"
+//   0,829  "vamos continuar o projeto"    ↔ "roteiro do IRPF"
+//   0,837  "vamos continuar o projeto"    ↔ "faturamento mensal"
+//   0,859  "vamos continuar o projeto"    ↔ "parser de SPED em Node.js"
+//   0,868  "vamos continuar o projeto"    ↔ "continuando o desenvolvimento"
+//   0,905  "calcular o aviso prévio"      ↔ "aviso prévio indenizado na CLT"
+//
+// Ou seja: textos SEM relação nenhuma já partem de ~0,79, e o que interessa
+// começa perto de 0,86. Tratar o cosseno cru como "porcentagem de relevância"
+// fazia qualquer conversa parecer 82-85% relevante — era exatamente o que a
+// interface mostrava. Aqui a faixa útil (0,80–0,92) é reescalada para 0..1
+// antes de virar pontuação: 0,82 (ruído) vira 0,15 e 0,90 vira 0,83.
+//
+// A pontuação por palavras (modo degradado, sem embeddings) já nasce em 0..1
+// e passa direto — por isso o `kind`.
+export const SIM_FLOOR = 0.80;
+export const SIM_CEIL = 0.92;
+
+export function calibrateSimilarity(sim, kind = 'embedding') {
+  const raw = Number(sim) || 0;
+  if (kind !== 'embedding') return Math.max(0, Math.min(1, raw));
+  return Math.max(0, Math.min(1, (raw - SIM_FLOOR) / (SIM_CEIL - SIM_FLOOR)));
 }
 
 // ─── Pontuação de memórias ─────────────────────────────────────────────
@@ -373,25 +453,48 @@ const MEMORY_INTENT_MAP = {
   text_improvement: ['general'],
   document_generation: ['accounting', 'general'],
   question: ['general', 'software', 'accounting'],
-  general: ['general', 'software', 'accounting', 'finance'],
+  // Sem intenção reconhecida NÃO é o mesmo que "qualquer assunto serve": antes
+  // este mapa liberava os quatro domínios, e como pedidos curtos caem em
+  // intent='general', o crivo inteiro se desligava. Quem decide o que é
+  // aceitável é o domínio (mensagem + conversa), não a ausência de intenção.
+  general: ['general'],
 };
 
-export function scoreMemory(memory, promptAnalysis, semanticSim = 0) {
+export function scoreMemory(memory, promptAnalysis, semanticSim = 0, simKind = 'embedding') {
   const analysis = promptAnalysis;
+  // Domínio efetivo: domínio forte da mensagem; senão a inclinação fraca;
+  // senão o domínio da conversa. Só é 'general' quando NADA deu sinal.
+  const eff = effectiveDomain(analysis);
   const content = String(memory.content || '');
   const contentDomain = detectContentDomain(content);
 
   // 1. Relação com a intenção atual (0-0.25)
   const validDomains = MEMORY_INTENT_MAP[analysis.intent] || ['general'];
+  const allowed = domainsAllowed(analysis);
+  const effMismatch = isDomainMismatch(contentDomain.domain, analysis);
   let intentScore = 0;
-  if (validDomains.includes(contentDomain.domain)) {
-    intentScore = 0.25;
-  } else if (analysis.domain === 'general' || contentDomain.domain === 'general') {
-    // Se o prompt é genérico ou a memória é genérica, não penaliza tanto
-    intentScore = 0.10;
-  } else if (contentDomain.domain !== analysis.domain) {
-    // Domínio diferente do prompt — penalidade forte
+  // Combina com o pedido se a INTENÇÃO admite esse domínio ou se o domínio da
+  // conversa/mensagem já o admite. Sem a segunda metade, uma memória de
+  // software ficava de fora de uma conversa de software só porque a mensagem
+  // era curta demais para revelar uma intenção ("vamos continuar o projeto").
+  const intentMatchesDomain = validDomains.includes(contentDomain.domain)
+    || (allowed !== null && allowed.has(contentDomain.domain));
+
+  // Pedido sem domínio nenhum + memória de assunto específico: a memória tem
+  // de MERECER a entrada (similaridade/entidades), não ganhá-la pelos bônus
+  // estruturais de perfil/preferência. É o que impedia "vamos continuar o
+  // projeto" de arrastar IRPF, aviso prévio e alteração contratual junto.
+  const promptSemSinal = domainsAllowed(analysis) === null;
+  const conteudoEspecifico = contentDomain.domain !== 'general';
+  const bonusEstruturalOk = !promptSemSinal || !conteudoEspecifico;
+
+  if (effMismatch) {
+    // Domínio diferente do que a conversa e a mensagem admitem — penalidade forte
     intentScore = -0.20;
+  } else if (intentMatchesDomain && bonusEstruturalOk) {
+    intentScore = 0.25;
+  } else if (bonusEstruturalOk) {
+    intentScore = 0.10;
   }
 
   // 2. Relação com o projeto atual (0-0.15)
@@ -407,9 +510,9 @@ export function scoreMemory(memory, promptAnalysis, semanticSim = 0) {
   // o domínio for compatível ou genérico.
   let personalizationScore = 0;
   if (memory.type === 'perfil' || memory.type === 'preferencia') {
-    if (contentDomain.domain === 'general' || validDomains.includes(contentDomain.domain)) {
+    if (bonusEstruturalOk && (contentDomain.domain === 'general' || (intentMatchesDomain && !effMismatch))) {
       personalizationScore = 0.15;
-    } else if (contentDomain.domain !== analysis.domain && analysis.domain !== 'general') {
+    } else if (effMismatch) {
       personalizationScore = -0.10; // preferência de outro domínio = desvio
     }
   }
@@ -432,37 +535,43 @@ export function scoreMemory(memory, promptAnalysis, semanticSim = 0) {
     entityScore = 0.15 * Math.min(1, matches / 3);
   }
 
-  // 6. Similaridade semântica (0-0.30)
-  const semanticScore = 0.30 * Math.max(0, semanticSim);
+  // 6. Similaridade semântica (0-0.30) — sobre a similaridade CALIBRADA
+  const sim = calibrateSimilarity(semanticSim, simKind);
+  const semanticScore = 0.30 * sim;
 
   // 7. Risco de desvio de contexto (0-0.20 penalidade)
   let diversionRisk = 0;
-  if (analysis.domain !== 'general' && contentDomain.domain !== 'general' && contentDomain.domain !== analysis.domain) {
+  if (effMismatch) {
     diversionRisk = 0.20;
   }
   // Memória genérica (sem domínio claro) em prompt específico: leve risco
-  if (analysis.domain !== 'general' && contentDomain.domain === 'general' && content.length < 50) {
+  if (eff !== 'general' && contentDomain.domain === 'general' && content.length < 50) {
     diversionRisk = Math.max(diversionRisk, 0.05);
   }
 
   const total = intentScore + projectScore + personalizationScore + importanceScore + entityScore + semanticScore - diversionRisk;
 
-  // Motivo
+  // Motivo — a similaridade exibida é a CALIBRADA, senão a interface mostra
+  // "85%" para conteúdo sem relação nenhuma (é o piso do modelo, não afinidade).
   const reasons = [];
-  if (semanticSim >= 0.4) reasons.push(`similaridade semântica ${(semanticSim * 100).toFixed(0)}%`);
-  if (contentDomain.domain === analysis.domain && analysis.domain !== 'general') reasons.push(`mesmo domínio (${contentDomain.domain})`);
+  if (sim >= 0.4) reasons.push(`similaridade semântica ${(sim * 100).toFixed(0)}%`);
+  if (contentDomain.domain === eff && eff !== 'general') reasons.push(`mesmo domínio (${contentDomain.domain})`);
   if (projectScore > 0) reasons.push(`relacionado ao projeto ${analysis.project}`);
   if (memory.pinned) reasons.push('memória fixada');
   if (memory.type === 'perfil' || memory.type === 'preferencia') reasons.push(`${memory.type} permanente`);
   if (entityScore > 0) reasons.push('entidades correspondentes');
-  if (diversionRisk >= 0.20) reasons.push(`descartada: domínio ${contentDomain.domain} ≠ ${analysis.domain}`);
+  if (diversionRisk >= 0.20) reasons.push(`descartada: domínio ${contentDomain.domain} ≠ ${eff}`);
+  if (promptSemSinal && conteudoEspecifico && !effMismatch) {
+    reasons.push('pedido sem assunto definido: exige relação própria');
+  }
   if (total < MEMORY_THRESHOLD && !reasons.some(r => r.startsWith('descartada'))) {
     reasons.push(`pontuação ${total.toFixed(2)} abaixo do threshold ${MEMORY_THRESHOLD}`);
   }
 
   return {
     score: total,
-    semanticSim,
+    semanticSim: sim,
+    semanticSimRaw: semanticSim,
     domain: contentDomain.domain,
     shouldInclude: total >= MEMORY_THRESHOLD && diversionRisk < 0.20,
     reason: reasons.join('; ') || 'sem motivo suficiente',
@@ -482,15 +591,19 @@ export function scoreMemory(memory, promptAnalysis, semanticSim = 0) {
 // Uma conversa recente sobre outro tema deve perder para uma conversa
 // antiga diretamente relacionada.
 
-export function scoreConversation(chunk, promptAnalysis, semanticSim = 0) {
+export function scoreConversation(chunk, promptAnalysis, semanticSim = 0, simKind = 'embedding') {
   const analysis = promptAnalysis;
+  const eff = effectiveDomain(analysis);
   const content = String(chunk.content || '');
   const title = String(chunk.source_title || '');
   const fullText = `${title} ${content}`;
   const contentDomain = detectContentDomain(fullText);
 
-  // 1. Similaridade semântica (0-0.40) — peso principal
-  const semanticScore = 0.40 * Math.max(0, semanticSim);
+  // 1. Similaridade semântica (0-0.40) — peso principal, sobre a similaridade
+  // CALIBRADA. Sem calibrar, o piso de ~0,85 do e5 já valia 0,34 sozinho e
+  // passava do threshold de 0,30: QUALQUER conversa antiga entrava.
+  const sim = calibrateSimilarity(semanticSim, simKind);
+  const semanticScore = 0.40 * sim;
 
   // 2. Continuidade da tarefa (0-0.15)
   // Detecta se a conversa continua o mesmo tipo de tarefa
@@ -510,56 +623,55 @@ export function scoreConversation(chunk, promptAnalysis, semanticSim = 0) {
 
   // 4. Correspondência de funcionalidades (0-0.10)
   let featureScore = 0;
-  if (contentDomain.domain === analysis.domain && analysis.domain !== 'general') {
+  if (contentDomain.domain === eff && eff !== 'general') {
     featureScore = 0.10;
   }
 
   // 5. Decisões anteriores relacionadas (0-0.10)
   // Detecta marcadores de decisão no conteúdo
   const decisionMarkers = /\b(decid|corrig|arrum|consert|implement|mudanc|alterac|ajust|remov|adicion|refator)\b/i;
-  if (decisionMarkers.test(content) && contentDomain.domain === analysis.domain) {
+  if (decisionMarkers.test(content) && contentDomain.domain === eff) {
     featureScore += 0.10;
   }
 
   // 6. Recência com peso secundário (0-0.05) — peso MUITO menor que antes
   let recencyScore = 0;
-  const created = chunk.created_at || chunk.created_at;
+  const created = chunk.created_at || chunk.updated_at;
   if (created) {
     const days = Math.max(0, (Date.now() - new Date(created).getTime()) / 86400000);
     recencyScore = 0.05 * Math.exp(-days / 180); // decai em 6 meses
   }
 
   // 7. Diferença de assunto (penalidade 0-0.30)
+  const subjectMismatch = isDomainMismatch(contentDomain.domain, analysis);
   let subjectPenalty = 0;
-  if (analysis.domain !== 'general' && contentDomain.domain !== 'general' && contentDomain.domain !== analysis.domain) {
+  if (subjectMismatch) {
     subjectPenalty = 0.30;
-  }
-  // Penalidade extra se o título é genérico mas o conteúdo é de outro domínio
-  if (analysis.domain !== 'general' && contentDomain.domain !== 'general' && contentDomain.domain !== analysis.domain) {
-    // Título pode ser enganoso; o conteúdo real é o que importa
+    // Penalidade extra se o título parece do domínio certo mas o conteúdo é de outro
     const titleDomain = detectContentDomain(title);
-    if (titleDomain.domain === analysis.domain && contentDomain.domain !== analysis.domain) {
+    if (titleDomain.domain === eff) {
       subjectPenalty = 0.35; // título enganoso — penaliza mais
     }
   }
 
   const total = semanticScore + continuityScore + projectScore + featureScore + recencyScore - subjectPenalty;
 
-  // Motivo
+  // Motivo — similaridade exibida é a calibrada (ver calibrateSimilarity).
   const reasons = [];
-  if (semanticSim >= 0.35) reasons.push(`similaridade semântica ${(semanticSim * 100).toFixed(0)}%`);
+  if (sim >= 0.35) reasons.push(`similaridade semântica ${(sim * 100).toFixed(0)}%`);
   if (continuityScore > 0) reasons.push('continuidade de tarefa');
   if (projectScore > 0) reasons.push(`projeto ${analysis.project}`);
-  if (contentDomain.domain === analysis.domain && analysis.domain !== 'general') reasons.push(`mesmo domínio (${contentDomain.domain})`);
-  if (decisionMarkers.test(content) && contentDomain.domain === analysis.domain) reasons.push('contém decisões anteriores');
-  if (subjectPenalty >= 0.30) reasons.push(`descartada: assunto ${contentDomain.domain} ≠ ${analysis.domain}`);
+  if (contentDomain.domain === eff && eff !== 'general') reasons.push(`mesmo domínio (${contentDomain.domain})`);
+  if (decisionMarkers.test(content) && contentDomain.domain === eff) reasons.push('contém decisões anteriores');
+  if (subjectPenalty >= 0.30) reasons.push(`descartada: assunto ${contentDomain.domain} ≠ ${eff}`);
   if (total < CONVERSATION_THRESHOLD && !reasons.some(r => r.startsWith('descartada'))) {
     reasons.push(`pontuação ${total.toFixed(2)} abaixo do threshold ${CONVERSATION_THRESHOLD}`);
   }
 
   return {
     score: total,
-    semanticSim,
+    semanticSim: sim,
+    semanticSimRaw: semanticSim,
     domain: contentDomain.domain,
     shouldInclude: total >= CONVERSATION_THRESHOLD && subjectPenalty < 0.30,
     reason: reasons.join('; ') || 'sem motivo suficiente',
@@ -594,8 +706,9 @@ export function validateRelevance(content, promptAnalysis, scoreResult) {
   // específico, descarta mesmo que a pontuação passou (pode ter passado
   // por importância/pinned sem relevância real).
   const contentDomain = detectContentDomain(content);
-  if (promptAnalysis.domain !== 'general' && contentDomain.domain !== 'general' && contentDomain.domain !== promptAnalysis.domain) {
-    return { valid: false, reason: `domínio ${contentDomain.domain} incompatível com ${promptAnalysis.domain}` };
+  const eff = effectiveDomain(promptAnalysis);
+  if (isDomainMismatch(contentDomain.domain, promptAnalysis)) {
+    return { valid: false, reason: `domínio ${contentDomain.domain} incompatível com ${eff}` };
   }
   return { valid: true, reason: scoreResult.reason };
 }

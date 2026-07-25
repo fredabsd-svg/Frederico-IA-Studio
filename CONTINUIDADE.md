@@ -36,6 +36,26 @@ Critérios, condições de operação e caminho para o verde em `docs/AUDITORIA_
 Detalhe de cada achado (evidência, causa raiz, correção, testes) em
 `docs/AUDITORIA_2026-07.md`.
 
+---
+
+## Correção da memória (Context Builder 3.1, 2026-07-25 — branch `claude/memoria-dominio-conversa`)
+
+Numa conversa de software, "vamos continuar o projeto" recuperava 38 memórias e 20
+conversas contábeis (IRPF, aviso prévio, alteração contratual). Duas causas somadas:
+
+1. **Pedido sem palavra-chave desligava o crivo inteiro.** Sem 2 hits de domínio, o
+   prompt caía em `general`, o que liberava os quatro domínios e desativava as
+   penalidades de desvio. O domínio passa a vir também do **contexto da conversa**
+   (modo desenvolvedor com repositório, ou as últimas mensagens do usuário).
+2. **O limiar não correspondia à escala do modelo.** O `multilingual-e5-small` nunca
+   desce de ~0,79, mesmo para textos sem relação; os pisos eram 0,25/0,30. A
+   similaridade passa a ser calibrada (0,80–0,92 → 0..1) antes de virar pontuação e
+   antes de ser exibida na interface.
+
+O nome do projeto é deliberadamente ignorado na classificação: "SPED-HUB" é software
+mas cai inteiro no dicionário contábil. Detalhe completo, com as medições do modelo,
+em `docs/CHANGELOG_HISTORY.md`. Piso configurável por `MEMORY_MIN_SIM`.
+
 ### Ao atualizar uma instalação existente para esta versão
 
 1. **Faça backup antes** (`GET /api/backup` — agora leva a chave mestra junto).
