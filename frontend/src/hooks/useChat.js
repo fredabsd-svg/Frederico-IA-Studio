@@ -250,11 +250,18 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
           content: '',
           blocks: (m.blocks || []).filter(block => block.type !== 'text')
         }));
-        if (ev.type === 'tool_start') { patchRun(convId, { status: `Executando ${ev.name}...` }); update(m => ({ ...m, blocks: [...(m.blocks || []), { type: 'tool', name: ev.name, preview: ev.preview, detail: ev.detail || '', status: 'running', started: Date.now() }] })); }
+        if (ev.type === 'tool_start') { patchRun(convId, { status: `Executando ${ev.name}...` }); update(m => ({ ...m, blocks: [...(m.blocks || []), { type: 'tool', id: ev.id, name: ev.name, preview: ev.preview, detail: ev.detail || '', subagent: ev.subagent || null, parentId: ev.parentId || null, status: 'running', started: Date.now() }] })); }
+        // O resultado é casado pelo `id` da chamada. O "último em execução" só
+        // vale como reserva (stream antigo, sem id): com delegações a
+        // sub-agentes rodando EM PARALELO, várias ferramentas ficam em execução
+        // ao mesmo tempo e a última nem sempre é a que acabou de terminar.
         if (ev.type === 'tool_result') update(m => {
           const blocks = [...(m.blocks || [])];
           const status = toolResultFailed(ev.content) ? 'error' : 'done';
-          for (let i = blocks.length - 1; i >= 0; i--) { if (blocks[i].type === 'tool' && blocks[i].status === 'running') { blocks[i] = { ...blocks[i], status, ended: Date.now(), result: ev.content, ...(ev.thumb ? { thumb: ev.thumb } : {}) }; break; } }
+          const done = block => ({ ...block, status, ended: Date.now(), result: ev.content, ...(ev.thumb ? { thumb: ev.thumb } : {}) });
+          const byId = ev.id ? blocks.findIndex(b => b.type === 'tool' && b.id === ev.id && b.status === 'running') : -1;
+          if (byId > -1) { blocks[byId] = done(blocks[byId]); return { ...m, blocks }; }
+          for (let i = blocks.length - 1; i >= 0; i--) { if (blocks[i].type === 'tool' && blocks[i].status === 'running') { blocks[i] = done(blocks[i]); break; } }
           return { ...m, blocks };
         });
         // ---- Execução multimodelo: estado ao vivo de cada modelo ----

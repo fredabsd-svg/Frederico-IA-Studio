@@ -751,6 +751,8 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .devActItemText{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
 .devActItemText b{font-size:var(--fs-xs);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .devActItemText small{font-size:var(--fs-2xs);color:var(--muted);font-family:ui-monospace,Consolas,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Quem executou a etapa, quando não foi o agente principal (sub-agente). */
+.devActWho{font-size:var(--fs-2xs);color:var(--accent);opacity:.9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .devActChev{flex:none;margin-top:3px;color:var(--muted);transition:transform .15s}
 .devActChev.up{transform:rotate(180deg)}
 .devActSub{list-style:none;margin:2px 0 4px 29px;padding:0;display:flex;flex-direction:column;gap:1px;border-left:1px solid var(--line)}
@@ -1013,6 +1015,13 @@ input[type=checkbox]:focus-visible,input[type=radio]:focus-visible{outline-offse
 .esStepText{display:flex;flex-direction:column;gap:2px;min-width:0}
 .esStepText b{font-size:var(--fs-xs);font-weight:600;line-height:1.3}
 .esStepText small{font-size:var(--fs-2xs);color:var(--muted);font-family:ui-monospace,Consolas,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Etapas executadas por um SUB-AGENTE: recuadas dentro da delegação que as
+   disparou, com um fio à esquerda ligando visualmente ao "dono" da ação. */
+.esStepSub{margin-left:14px;padding-left:10px;border-left:2px solid rgba(79,140,255,.28)}
+.esStepSub .esStep{padding-top:7px;padding-bottom:7px}
+.esStepWho{font-size:var(--fs-2xs);color:var(--accent);opacity:.9}
+.esDelegation{display:flex;flex-direction:column;gap:8px}
+.esDelegWho{display:flex;align-items:center;gap:6px;font-size:var(--fs-xs);color:var(--accent)}
 .esNext{display:flex;align-items:center;gap:8px;padding:9px 11px;color:var(--muted);font-size:var(--fs-xs);opacity:.8}
 .esNext svg{animation:spin 1.6s linear infinite}
 

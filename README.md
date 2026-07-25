@@ -148,6 +148,9 @@ O personagem que acompanha o Studio — e explica o que está acontecendo.
   erro, Revisar e Agente autônomo).
 - **Conector GitHub** — clone, alteração e **push ou Pull Request em 1 clique**;
   o token fica cifrado e nunca entra no sandbox.
+- **Sub-agentes** — o próprio agente delega uma subtarefa a um `runAgent` completo,
+  com ferramentas e janela de contexto própria e descartável; os arquivos gerados
+  aparecem normalmente em `outputs/`.
 - **Rotinas** — tarefas que rodam sozinhas em horários marcados.
 - **Tarefas em segundo plano**, caixa de entrada por cliente e templates de pedido.
 
