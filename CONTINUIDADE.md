@@ -19,8 +19,8 @@ de testes: SSE integrado, retomada após interrupção real, pipeline retomável
 adversarial não foram executados. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
 - **Branch:** `claude/mobile-site-responsiveness-8z0eb9` → **PR [#131](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/131)**
-- **Última validação:** 2026-07-25 — **592 testes, todos passando** (backend 515,
-  frontend 37, guarda do Docker 40), com PostgreSQL real e **zero pulados**;
+- **Última validação:** 2026-07-25 — **684 testes, todos passando** (backend 598,
+  frontend 45, guarda do Docker 40, Python 1), com PostgreSQL real e **zero pulados**;
   21 migrações aplicadas em banco vazio, reexecução idempotente; boot do backend e  `/api/health` verificados.
   A contagem vem de `cd backend && npm run test:count` — não a escreva à mão.
 
