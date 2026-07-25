@@ -80,6 +80,45 @@ class XlsProArtifactTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "dict retornado"):
             planilha.grafico_barras(ws, [["A", "B"]], "A", "B")
 
+    def test_coluna_de_moeda_larga_o_suficiente_para_o_valor_formatado(self):
+        # "R$ 15.015,00" tem 12 caracteres; a largura da coluna precisa comportar
+        # o TEXTO EXIBIDO (não o valor bruto 15015.0), senão o Excel mostra ######.
+        planilha = Planilha()
+        ws = planilha.aba("V")
+        planilha.tabela(ws, ["Item", "Total"],
+                        [["Serviço A", 15015.0], ["Serviço B", 2670.0]],
+                        moeda=["Total"])
+        planilha.salvar(self.path)
+        wb = load_workbook(self.path)
+        self.assertGreaterEqual(wb["V"].column_dimensions["B"].width, 12)
+
+    def test_segunda_tabela_respira_e_nao_rouba_o_congelamento(self):
+        planilha = Planilha()
+        ws = planilha.aba("V")
+        planilha.titulo(ws, "Título")
+        i1 = planilha.tabela(ws, ["A", "B"], [["x", 1.0]])
+        i2 = planilha.tabela(ws, ["A", "B"], [["y", 2.0]])
+        planilha.salvar(self.path)
+        wb = load_workbook(self.path)
+        ws2 = wb["V"]
+        # título na linha 1 → 1ª tabela respira até a linha 3 (linha 2 em branco)
+        self.assertEqual(i1["r0"], 3)
+        # 2ª tabela deixa 1 linha em branco depois da 1ª (não cola no conteúdo)
+        self.assertGreater(i2["r0"], i1["r1"] + 1)
+        # congelamento permanece no cabeçalho da 1ª tabela (não pula p/ a 2ª)
+        self.assertEqual(ws2.freeze_panes, "A4")
+
+    def test_largura_de_coluna_compartilhada_pega_a_maior(self):
+        # Duas tabelas empilhadas nas mesmas colunas: a coluna tem UMA largura;
+        # ela deve caber o maior conteúdo das duas, não encolher para a última.
+        planilha = Planilha()
+        ws = planilha.aba("V")
+        planilha.tabela(ws, ["A", "B"], [["Mesa de escritório grande", 1.0]])
+        planilha.tabela(ws, ["A", "B"], [["curto", 2.0]])
+        planilha.salvar(self.path)
+        wb = load_workbook(self.path)
+        self.assertGreaterEqual(wb["V"].column_dimensions["A"].width, len("Mesa de escritório grande"))
+
 
 if __name__ == "__main__":
     unittest.main()
