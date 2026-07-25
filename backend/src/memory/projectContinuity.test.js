@@ -42,10 +42,11 @@ const USER = 'u_continuidade_test';
 const PROJECT_ID = 'p_spedhub_test';
 
 async function reset() {
-  for (const t of ['conversation_chunks', 'memory', 'memory_suggestions', 'messages', 'conversations', 'dev_projects']) {
+  // `messages` não tem user_id — a limpeza dela é pela conversa.
+  await db.prepare('DELETE FROM messages WHERE conversation_id IN (SELECT id FROM conversations WHERE user_id=?)').run(USER).catch(() => {});
+  for (const t of ['conversation_chunks', 'memory', 'memory_suggestions', 'conversations', 'dev_projects']) {
     await db.prepare(`DELETE FROM ${t} WHERE user_id=?`).run(USER).catch(() => {});
   }
-  await db.prepare('DELETE FROM messages WHERE conversation_id LIKE ?').run('c_test_%').catch(() => {});
   await db.prepare('DELETE FROM "user" WHERE id=?').run(USER).catch(() => {});
   await db.prepare('INSERT INTO "user" (id, name, email, "emailVerified", "createdAt", "updatedAt") VALUES (?,?,?,?,now(),now()) ON CONFLICT (id) DO NOTHING')
     .run(USER, 'Teste', `${USER}@example.com`, false);
