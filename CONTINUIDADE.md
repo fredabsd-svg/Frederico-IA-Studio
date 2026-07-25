@@ -1,5 +1,48 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 📄 Repaginação do README — a vitrine do produto no GitHub (2026-07-25 — branch `claude/github-homepage-update-wx2dev`)
+
+
+**Motivação:** o README era a primeira coisa que um usuário novo via (inclusive no
+celular) e lia como documentação interna, não como apresentação de produto. Três
+problemas de UX concretos: (1) uma tabela única de 20 recursos com células de até
+120 palavras — no GitHub mobile isso vira rolagem horizontal e muro de texto;
+(2) uma tabela de 35 variáveis de ambiente no MEIO da página, antes mesmo de o
+leitor entender o que o app faz; (3) recursos entregues nos últimos PRs (Nino,
+Docling, Rotinas, Central de Configurações, Análises, Backup, Pastas do PC,
+botões de GitHub em 1 clique) **não apareciam em lugar nenhum**.
+
+
+**O que mudou:**
+- `README.md` (353 → 264 linhas): vira landing page. Herói com proposta de valor
+  em uma frase, barra de navegação por âncoras, e logo abaixo a tabela
+  **"O que você pede → o que chega no chat"** com 6 exemplos concretos (planilha,
+  Word, nota fiscal fotografada, CNPJ, pesquisa, PR no GitHub). O **Começar em 2
+  minutos** subiu para antes da lista de recursos — o caminho para rodar o app
+  ficou acima da dobra. Recursos reagrupados em 6 blocos temáticos com bullets
+  curtos (nada de tabela larga), incluindo o bloco novo do **Nino**. Profundidade
+  opcional em `<details>` (chaves/criptografia, limites de publicação, LGPD
+  detalhada), que colapsa por padrão e mantém a página curta sem perder conteúdo.
+- `docs/CONFIGURACAO.md` (novo): a tabela de variáveis, agora **quebrada em 6
+  tabelas por assunto** (essenciais, modo gratuito, modelos/roteamento, execução,
+  web/integrações, abuso/retenção), mais Tailscale, atualização e validação local.
+- `docs/ARQUITETURA.md` (novo): mermaid, módulos (incluindo `companion/` e
+  `copilot/`), Ambiente de Trabalho da IA, execução confiável, memória + cache e
+  Docling — tudo que era parágrafo denso no meio da vitrine.
+
+
+**Regra mantida:** só anunciar o que está de fato ativo. Cada item novo do README
+foi conferido no código (`routes/schedules.js`, `routes/backup.js`,
+`routes/analytics.js`, `routes/pcFolders.js`, `components/SettingsHub.jsx`,
+`components/NinoAvatar.jsx`, `docs/DOCLING.md`) antes de entrar. Docling e Pastas
+do PC aparecem como o que são — camadas atrás de flag (`DOCLING_ENABLED`,
+`ENABLE_PC_FOLDERS`).
+
+
+**Validação:** todos os links internos do README resolvem para arquivos
+existentes; nenhum conteúdo técnico foi descartado — só realocado.
+
+
 ## 🌱 Redesign do copiloto: o personagem agora é o Nino (2026-07-25 — branch `claude/nino-copilot-redesign`)
 
 
