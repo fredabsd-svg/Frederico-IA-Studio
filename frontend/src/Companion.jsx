@@ -3,32 +3,29 @@ import { Moon, Check, X } from 'lucide-react';
 import { API } from './constants.js';
 import { useCopilotChat } from './hooks/useCopilotChat.js';
 import { CopilotWorkspace } from './components/CopilotWorkspace.jsx';
+import { NinoAvatar, NINO_CAPTION } from './components/NinoAvatar.jsx';
 
-// Frederico Companion — a representação visual e interativa do Studio (o "colega
-// de trabalho digital"). É a CAMADA de experiência: a inteligência vem do núcleo
-// do Studio. O avatar agora abre APENAS o painel do copiloto (abas Chat e
-// Documentos); a configuração vive em Configurações. Além disso, ele observa o
-// que você digita no chat principal e, discretamente, oferece revisar a escrita.
+// Frederico Companion — a representação visual e interativa do Studio. É a
+// CAMADA de experiência: a inteligência vem do núcleo do Studio. O avatar abre
+// APENAS o painel do copiloto (abas Chat e Documentos); a configuração vive em
+// Configurações. Além disso, ele observa o que você digita no chat principal e,
+// discretamente, oferece revisar a escrita.
+//
+// Mudou nesta versão: o personagem passou a ser o Nino (components/NinoAvatar.jsx),
+// com uma máquina de estados mais fina (analisando/digitando/sugestão/dúvida
+// separados de "pensando"), reação a cutucar e, no celular, encolher e encostar
+// na borda quando ocioso. Toda a mecânica anterior — arrastar com posição no
+// localStorage, minimizar, níveis de animação, fila de eventos e balão de
+// revisão — foi preservada.
 
-// Uma frase curta que o personagem "diz" em cada estado — transparência sobre o
-// que está acontecendo, em vez de um "Pensando..." opaco.
-const STATE_CAPTION = {
-  disponivel: 'Pronto para ajudar',
-  escutando: 'Ouvindo você...',
-  pensando: 'Analisando...',
-  executando: 'Executando ação...',
-  alerta: 'Encontrei algo para você ver',
-  erro: 'Algo falhou',
-  sucesso: 'Feito!',
-  silencioso: 'Modo silencioso',
-  ausente: 'De férias',
-};
+const STATE_CAPTION = NINO_CAPTION;
 
-// Parâmetros do balão proativo de revisão de escrita (seção R2). Ajustáveis num
-// só lugar. A sensibilidade escolhida pelo usuário controla quão cedo aparece.
+// Parâmetros do balão proativo de revisão de escrita. Ajustáveis num só lugar.
+// A sensibilidade escolhida pelo usuário controla quão cedo aparece.
 const PAUSA_MS = 3000;                 // pausa na digitação antes de se oferecer
 const MIN_CHARS = { baixa: 140, media: 80, alta: 40 };
 const SNOOZE_MS = 20000;               // silêncio após "Agora não" (por rascunho)
+const TUCK_MS = 8000;                  // ociosidade no celular antes de encostar
 const BUBBLE_PHRASES = [
   'Quer que eu dê uma olhada na escrita?',
   'Posso revisar esse texto rapidinho?',
@@ -37,39 +34,10 @@ const BUBBLE_PHRASES = [
   'Posso deixar isso mais claro pra você?',
 ];
 
-// O personagem em si: um "orb" amigável com rosto, desenhado em SVG e animado
-// por CSS conforme o estado.
-function CompanionAvatar({ state, name, color = '#4f8cff' }) {
-  return (
-    <div className={`cmpAvatar state-${state}`} aria-label={`${name}: ${STATE_CAPTION[state] || ''}`}>
-      <svg viewBox="0 0 100 100" width="100%" height="100%" role="img" aria-hidden="true">
-        <defs>
-          <radialGradient id="cmpBody" cx="38%" cy="32%" r="75%">
-            <stop offset="0%" stopColor={color} stopOpacity="0.95" />
-            <stop offset="100%" stopColor={color} stopOpacity="0.55" />
-          </radialGradient>
-        </defs>
-        {/* antena — reage nos estados de escuta/pensamento */}
-        <line className="cmpAntenna" x1="50" y1="16" x2="50" y2="4" stroke={color} strokeWidth="3" strokeLinecap="round" />
-        <circle className="cmpAntennaDot" cx="50" cy="4" r="4" fill={color} />
-        {/* corpo */}
-        <circle className="cmpBody" cx="50" cy="56" r="34" fill="url(#cmpBody)" />
-        {/* olhos */}
-        <g className="cmpEyes" fill="#0b1220">
-          <circle className="cmpEye left" cx="39" cy="52" r="5.2" />
-          <circle className="cmpEye right" cx="61" cy="52" r="5.2" />
-        </g>
-        {/* boca — muda conforme humor */}
-        <path className="cmpMouth" d="M40 68 Q50 76 60 68" fill="none" stroke="#0b1220" strokeWidth="3" strokeLinecap="round" />
-      </svg>
-      <span className="cmpPulse" aria-hidden="true" />
-    </div>
-  );
-}
-
 // Balão proativo de revisão de escrita. Observa o rascunho do chat principal e,
 // após uma pausa, oferece revisar. Nunca altera nada sozinho — o usuário aceita.
-function WritingBubble({ settings, draft, onApply, name }) {
+// `onPhase` avisa o Companion para o personagem reagir junto (dúvida/analisando).
+function WritingBubble({ settings, draft, onApply, name, onPhase }) {
   const [phase, setPhase] = useState('idle');   // idle | ask | loading | result | error
   const [phrase, setPhrase] = useState(BUBBLE_PHRASES[0]);
   const [revised, setRevised] = useState('');
@@ -83,6 +51,8 @@ function WritingBubble({ settings, draft, onApply, name }) {
   const enabled = settings.enabled && settings.proactiveWriting && ['auxiliar', 'proativo'].includes(settings.mode);
   const minChars = MIN_CHARS[settings.writingSensitivity] || MIN_CHARS.media;
   const text = (draft || '').trim();
+
+  useEffect(() => { onPhase?.(phase); }, [phase]); // eslint-disable-line
 
   // Decide quando se oferecer: pausa + tamanho mínimo + rascunho ainda não tratado.
   useEffect(() => {
@@ -152,7 +122,7 @@ function WritingBubble({ settings, draft, onApply, name }) {
         <div className="cmpBubbleBody">
           <div className="cmpBubbleText">{phrase}</div>
           <div className="cmpBubbleBtns">
-            <button className="cmpBubbleYes" onClick={accept}><Check size={13} /> Sim</button>
+            <button className="cmpBubbleYes" onClick={accept}><Check size={13} /> Pode olhar</button>
             <button className="cmpBubbleNo" onClick={decline}>Agora não</button>
           </div>
         </div>
@@ -200,6 +170,8 @@ export function Companion({
     return null; // null = ancorado no canto inferior direito (CSS)
   });
   const [successFlash, setSuccessFlash] = useState(false);
+  const [bubblePhase, setBubblePhase] = useState('idle');
+  const [tucked, setTucked] = useState(false);
   const rootRef = useRef(null);
   const dragRef = useRef(null);
   const prevBusy = useRef(busy);
@@ -212,25 +184,48 @@ export function Companion({
   useEffect(() => {
     if (prevBusy.current && !busy) {
       setSuccessFlash(true);
-      const t = setTimeout(() => setSuccessFlash(false), 1600);
+      const t = setTimeout(() => setSuccessFlash(false), 1800);
       return () => clearTimeout(t);
     }
     prevBusy.current = busy;
   }, [busy]);
 
-  // Máquina de estados visual. A ordem reflete prioridade.
+  // Máquina de estados visual. A ordem reflete prioridade. As faixas de texto
+  // vêm do statusText que o próprio chat já publica — nada de estado inventado.
   const state = useMemo(() => {
     if (settings.mode === 'apresentacao') return 'silencioso';
     if (busy) {
       const s = String(statusText || '').toLowerCase();
-      return /execut|ferramenta|rodando|tool|comando/.test(s) ? 'executando' : 'pensando';
+      if (/escrev|respond|gerando|redigindo|stream/.test(s)) return 'digitando';
+      if (/analis|lend|conferind|verificand|planilha|arquivo|document|pesquis/.test(s)) return 'analisando';
+      if (/execut|ferramenta|rodando|tool|comando|sandbox/.test(s)) return 'analisando';
+      return 'pensando';
     }
-    if (listening) return 'escutando';
-    if (successFlash) return 'sucesso';
+    if (bubblePhase === 'loading') return 'analisando';
+    if (bubblePhase === 'ask') return 'sugestao';
+    if (listening) return 'observando';
+    if (successFlash) return 'comemorando';
     if (hasCritical) return 'erro';
-    if (hasWarning || unread.length) return 'alerta';
-    return 'disponivel';
-  }, [settings.mode, busy, statusText, listening, successFlash, hasCritical, hasWarning, unread.length]);
+    if (hasWarning) return 'sugestao';
+    if (unread.length) return 'duvida';
+    return 'aguardando';
+  }, [settings.mode, busy, statusText, listening, successFlash, hasCritical, hasWarning, unread.length, bubblePhase]);
+
+  // Celular: depois de TUCK_MS sem interação, o personagem encolhe e se encosta
+  // na borda direita. Qualquer toque/tecla devolve o tamanho normal.
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    if (window.innerWidth > 560 || open || minimized) { setTucked(false); return undefined; }
+    let timer = setTimeout(() => setTucked(true), TUCK_MS);
+    const wake = () => {
+      setTucked(false);
+      clearTimeout(timer);
+      timer = setTimeout(() => setTucked(true), TUCK_MS);
+    };
+    window.addEventListener('pointerdown', wake, { passive: true });
+    window.addEventListener('keydown', wake);
+    return () => { clearTimeout(timer); window.removeEventListener('pointerdown', wake); window.removeEventListener('keydown', wake); };
+  }, [open, minimized, busy]);
 
   // Arrastar o personagem pela tela. Guarda a posição no localStorage.
   function onAvatarPointerDown(e) {
@@ -262,47 +257,51 @@ export function Companion({
 
   if (!settings.enabled) return null;
 
-  const characterName = settings.characterName || 'Luma';
-  const personaColor = persona?.color || '#4f8cff';
+  const characterName = settings.characterName || 'Nino';
 
   function toggleMin() {
     setMinimized(m => { const nv = !m; localStorage.setItem('fred_companion_min', nv ? '1' : '0'); if (nv) setOpen(false); return nv; });
   }
 
   const rootStyle = pos ? { left: pos.x, top: pos.y, right: 'auto', bottom: 'auto' } : undefined;
-  const reduced = settings.animationLevel !== 'completo';
+  const quiet = settings.animationLevel !== 'completo';
 
   return (
     <>
       <div
         ref={rootRef}
-        className={`companionRoot anim-${settings.animationLevel} ${minimized ? 'min' : ''} ${open ? 'open' : ''}`}
+        className={`companionRoot anim-${settings.animationLevel} ${minimized ? 'min' : ''} ${open ? 'open' : ''} ${tucked ? 'tucked' : ''}`}
         style={rootStyle}
       >
         {/* Balão proativo de revisão de escrita (só quando o painel está fechado). */}
         {!minimized && !open && (
-          <WritingBubble settings={settings} draft={draft} onApply={onApplyDraft} name={characterName} />
+          <WritingBubble settings={settings} draft={draft} onApply={onApplyDraft} name={characterName} onPhase={setBubblePhase} />
         )}
 
-        {/* Balão quando minimizado (só o personagem visível) */}
+        {/* Balão quando minimizado (só a carinha espiando) */}
         {minimized && (
           <button className="cmpMinBubble" onClick={toggleMin} title={`Reativar ${characterName}`}>
-            <Moon size={14} /> {characterName}
+            <span className="cmpMinFace" aria-hidden="true"><NinoAvatar state="silencioso" name={characterName} quiet /></span>
+            <Moon size={13} /> {characterName} está de soneca
           </button>
         )}
 
         {/* O personagem */}
         {!minimized && (
-          <div className="cmpAvatarWrap" onPointerDown={onAvatarPointerDown} title={`${characterName} — clique para abrir, arraste para mover`}>
+          <div
+            className="cmpAvatarWrap"
+            onPointerDown={onAvatarPointerDown}
+            title={`${characterName} — ${STATE_CAPTION[state] || ''}. Clique para abrir, arraste para mover`}
+          >
             {(hasCritical || hasWarning) && !busy && <span className={`cmpBadge ${hasCritical ? 'crit' : 'warn'}`}>{unread.length}</span>}
-            <CompanionAvatar state={reduced && !busy ? 'disponivel' : state} name={characterName} color={personaColor} />
+            <NinoAvatar state={quiet && !busy ? 'aguardando' : state} name={characterName} quiet={settings.animationLevel === 'nenhum'} />
           </div>
         )}
       </div>
 
       {/* Painel do copiloto (abas Chat e Documentos) — aberto pelo avatar. */}
       {open && !minimized && (
-        <CopilotWorkspace copilot={copilot} companion={companion} onClose={() => setOpen(false)} />
+        <CopilotWorkspace copilot={copilot} companion={companion} state={state} onClose={() => setOpen(false)} />
       )}
     </>
   );

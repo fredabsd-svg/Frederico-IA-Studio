@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
 import { Modal, ModelPicker } from '../components.jsx';
-import { Sparkles, ShieldCheck } from 'lucide-react';
+import { ShieldCheck } from 'lucide-react';
+import { NinoAvatar } from './NinoAvatar.jsx';
 
-// Configuração do Copiloto/Companion — agora vive em Configurações (não mais na
-// engrenagem do avatar). Reúne personagem, persona, modelo, modo de comportamento,
-// proatividade (alertas e revisão de escrita) e animação. Salva via a API do
-// Companion (PUT /api/companion), a mesma de antes.
+// Configuração do Copiloto/Companion — vive em Configurações. Reúne personagem,
+// persona, modelo, modo de comportamento, proatividade (alertas e revisão de
+// escrita) e animação. Salva via a API do Companion (PUT /api/companion), a mesma
+// de antes. Novidade: prévia ao vivo do personagem, que reage ao nível de
+// animação escolhido e a um clique.
 const MODE_LABEL = {
   silencioso: 'Silencioso', auxiliar: 'Auxiliar', proativo: 'Proativo', foco: 'Foco', apresentacao: 'Apresentação',
 };
@@ -17,24 +19,36 @@ const MODE_DESC = {
   apresentacao: 'Sem falas nem animações durante uma apresentação.',
 };
 const SENSITIVITY_LABEL = { baixa: 'Discreta', media: 'Normal', alta: 'Ativa' };
+const ANIM_HINT = {
+  completo: 'Broto balançando, olhos que seguem o cursor e reação a clique.',
+  reduzido: 'Só o flutuar lento — as expressões continuam mudando.',
+  nenhum: 'Personagem parado. É o que prefers-reduced-motion já força sozinho.',
+};
 
 export function CompanionConfig({ companion, allModels = [], assistants = [], model, onClose }) {
   const { settings, options, saveSettings } = companion;
   const [local, setLocal] = useState(settings);
   const set = (patch) => setLocal(prev => ({ ...prev, ...patch }));
 
-  const presets = options?.characterPresets || ['Luma', 'Clara', 'Pixel', 'Nova', 'Nexo', 'Fred', 'Echo'];
+  const presets = options?.characterPresets || ['Nino', 'Luma', 'Clara', 'Pixel', 'Nova', 'Nexo', 'Fred', 'Echo'];
   const modes = options?.modes || Object.keys(MODE_LABEL);
   const anims = options?.animationLevels || ['completo', 'reduzido', 'nenhum'];
   const sensitivities = ['baixa', 'media', 'alta'];
+  const name = local.characterName || 'Nino';
 
   function save() { saveSettings(local); onClose(); }
 
+  const previewFace = (
+    <span className="cmpPreviewFace">
+      <NinoAvatar state="comemorando" name={name} quiet={local.animationLevel === 'nenhum'} />
+    </span>
+  );
+
   return (
-    <Modal title="Copiloto — Personalização" icon={<Sparkles size={18} />} onClose={onClose} className="companionModal">
+    <Modal title="Copiloto — Personalização" icon={previewFace} onClose={onClose} className="companionModal">
       <div className="cmpForm">
         <label className="cmpField switchRow">
-          <span>Ativar o copiloto</span>
+          <span>Ativar o copiloto <small>{name} aparece no canto e observa o que você digita</small></span>
           <input type="checkbox" checked={local.enabled} onChange={e => set({ enabled: e.target.checked })} />
         </label>
 
@@ -83,7 +97,7 @@ export function CompanionConfig({ companion, allModels = [], assistants = [], mo
         </label>
 
         <label className="cmpField switchRow">
-          <span>Revisão de escrita no chat principal <small>(o copiloto se oferece para revisar o que você digita)</small></span>
+          <span>Revisão de escrita no chat principal <small>(o {name} se oferece para revisar o que você digita)</small></span>
           <input type="checkbox" checked={local.proactiveWriting} onChange={e => set({ proactiveWriting: e.target.checked })} />
         </label>
 
@@ -112,7 +126,14 @@ export function CompanionConfig({ companion, allModels = [], assistants = [], mo
               </button>
             ))}
           </div>
-          <small>Reduza para economizar recursos em máquinas mais simples.</small>
+          <small>{ANIM_HINT[local.animationLevel] || ANIM_HINT.completo}</small>
+        </div>
+
+        <div className="cmpPreview">
+          <span className="cmpPreviewFace">
+            <NinoAvatar state="comemorando" name={name} quiet={local.animationLevel === 'nenhum'} />
+          </span>
+          <span>Prévia ao vivo: qualquer ajuste aqui reflete no personagem antes de salvar. Clique nele para ver a reação.</span>
         </div>
 
         <div className="cmpFieldNote">
