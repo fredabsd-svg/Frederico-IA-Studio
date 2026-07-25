@@ -62,7 +62,7 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
   let memory = null;
   let memoryMeta = null;
   try {
-    const contextPlan = await buildContext({ userId, conversationId, assistantId: null, clientScope: await clientScopeFor(userId, conversationId), userText, model: coordModel });
+    const contextPlan = await buildContext({ userId, conversationId, assistantId: null, clientScope: await clientScopeFor(userId, conversationId), userText, model: coordModel, developerDomain: developerTeamNote ? 'software' : null });
     memory = (contextPlan.blocks || []).join('\n\n') || null;
     memoryMeta = contextPlan.meta || null;
     if (memoryMeta) onEvent({ type: 'memory_context', memory: memoryMeta });

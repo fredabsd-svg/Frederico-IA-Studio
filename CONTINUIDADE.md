@@ -1,5 +1,72 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 🧠 Memória: pedido curto desligava o crivo inteiro (Context Builder 3.1) (2026-07-25 — branch `claude/memoria-dominio-conversa`)
+
+
+**Sintoma relatado:** na conversa do projeto **SPED-HUB** (software), a mensagem
+"vamos continuar o projeto" recuperou **38 memórias e 20 conversas antigas** —
+IRPF ficha por ficha, redução de aviso prévio, alteração contratual, faturamento
+mensal. Nada disso tem relação com o pedido. A interface exibia "similaridade
+semântica 85%" para todas.
+
+
+**Causa 1 — "sem assunto" era lido como "qualquer assunto serve".** `analyzePrompt`
+exige 2 hits de palavra-chave para fixar um domínio. "vamos continuar o projeto"
+tem ZERO (medido: `{software: 0, accounting: 0, finance: 0}`), então caía em
+`domain='general'` — e aí TODA proteção se desligava de uma vez:
+`MEMORY_INTENT_MAP.general` liberava os quatro domínios, `diversionRisk` e
+`subjectPenalty` eram guardados por `domain !== 'general'`, e `validateRelevance`
+saía pela primeira porta. Toda memória de perfil/preferência marcava 0,46 contra
+um limiar de 0,25. O `softDomain` do 3.0.1 não alcança este caso: sem nenhum hit,
+não há nem inclinação fraca.
+
+
+**Causa 2 — o limiar não correspondia à escala do modelo.** O
+`multilingual-e5-small` não usa a faixa 0..1. Medido com o próprio modelo:
+"o gato subiu no telhado" ↔ "balanço patrimonial" dá **0,786**; "vamos continuar
+o projeto" ↔ "alteração contratual" dá **0,818**; o par de fato relacionado
+("aviso prévio" ↔ "aviso prévio indenizado") dá **0,905**. Os pisos de busca
+eram 0,25 e 0,30 — muito abaixo do CHÃO de ~0,79 do modelo —, então nenhum
+candidato era descartado e a busca sempre devolvia a cota cheia. Pior: em
+`scoreConversation`, `0,40 × 0,85 = 0,34` já passava sozinho do limiar de 0,30.
+
+
+**Correção:**
+- **Domínio vindo do contexto da conversa** (`conversationDomain` no
+  contextBuilder → `analyzePrompt(texto, { contextDomain })`). Duas fontes: estar
+  em modo desenvolvedor com repositório vinculado (fato estrutural, passado pelo
+  `loop.js`/`orchestrator.js` como `developerDomain`) e, na falta dele, as últimas
+  12 mensagens do usuário na conversa — com margem folgada (≥4 pontos e o dobro do
+  segundo colocado) para não chutar. **O nome do projeto é deliberadamente
+  ignorado**: "SPED-HUB" é software, mas cai inteiro no dicionário contábil.
+- **Domínios aceitáveis viram um conjunto** (`domainsAllowed`), não um valor único:
+  mensagem e conversa podem apontar para lados diferentes de forma legítima —
+  perguntar a regra do SPED dentro de um projeto que processa SPED é válido.
+- **Sem sinal nenhum deixa de ser passe-livre**: `MEMORY_INTENT_MAP.general` passa
+  de quatro domínios para `['general']`, e memória de assunto específico perde os
+  bônus estruturais de perfil/preferência — tem de merecer a entrada por
+  similaridade ou entidades.
+- **Similaridade calibrada** (`calibrateSimilarity`): a faixa útil 0,80–0,92 é
+  reescalada para 0..1 antes de virar pontuação, e é a calibrada que a interface
+  mostra. Pisos de busca sobem para 0,80 (`MEMORY_MIN_SIM`). A contagem de
+  palavras do modo degradado tem escala própria e não é calibrada — daí o
+  `_simKind` carregado desde o `memoryService`.
+
+
+**Efeito medido** (com "vamos continuar o projeto" numa conversa de dev): as três
+memórias contábeis vão de 0,46 para −0,44 (barradas); a conversa de alteração
+contratual vai de 0,39 para −0,02 (barrada); "O usuário se chama Frederico"
+(neutra) e a de experiência em Node.js/Python (mesmo domínio) continuam entrando.
+Com um pedido contábil de verdade, as memórias contábeis voltam a entrar — o caso
+de controle está preservado.
+
+
+**Testes:** `relevanceScorer.test.js` 37/37 (+6 de regressão); suíte do backend
+460 passam, 2 pulados (exigem PostgreSQL, pré-existente). Os fixtures de
+similaridade foram corrigidos para a escala real do e5 — estavam numa escala
+0..1 que o modelo nunca produz.
+
+
 ## 🔧 Correções do Context Builder 3.0.1 — dedup real, vazamento de domínio e performance (2026-07-24 — branch `claude/conversation-memory-changes-i2i4vz`)
 
 

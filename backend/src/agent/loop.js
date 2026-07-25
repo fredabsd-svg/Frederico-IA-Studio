@@ -255,7 +255,12 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
   let memoryMeta = null;
   // Memória de longo prazo: perfil, notas, resumos e recuperação semântica
   try {
-    const contextPlan = await buildContext({ userId, conversationId, assistantId: assistant?.id, clientScope: await clientScopeFor(userId, conversationId), userText, historyLimit, model: chosenModel });
+    // developerDomain: estar em modo desenvolvedor (com projeto/repositório) é
+    // um fato estrutural sobre o assunto da conversa. Sem ele, um pedido curto
+    // como "vamos continuar o projeto" não tem domínio nenhum e o crivo de
+    // memória se desliga, trazendo o perfil contábil inteiro para dentro de uma
+    // conversa de software.
+    const contextPlan = await buildContext({ userId, conversationId, assistantId: assistant?.id, clientScope: await clientScopeFor(userId, conversationId), userText, historyLimit, model: chosenModel, developerDomain: developerContext ? 'software' : null });
     const ctxBlocks = contextPlan.blocks || [];
     memoryMeta = contextPlan.meta || null;
     for (const b of ctxBlocks) {

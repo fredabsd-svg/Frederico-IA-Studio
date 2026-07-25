@@ -5,6 +5,7 @@ import { isLowSignalTurn } from './retrievalPolicy.js';
 import { sanitizeToolProtocolText } from '../toolProtocol.js';
 import {
   analyzePrompt,
+  detectContentDomain,
   scoreMemory,
   scoreConversation,
   validateRelevance,
@@ -184,7 +185,42 @@ function publicMeta(meta) {
   return clean;
 }
 
-export async function buildContext({ userId, conversationId, assistantId, clientScope, userText, historyLimit = 60, model = null }) {
+// Domínio que vem do CONTEXTO da conversa, não das palavras da mensagem.
+//
+// É o que resolve o caso que nenhuma palavra-chave resolve: "vamos continuar o
+// projeto" não tem um único termo de domínio, então o crivo ficava cego e
+// despejava o perfil inteiro do usuário. Duas fontes, nesta ordem:
+//
+//  1. `developerDomain` — a conversa está em modo desenvolvedor com repositório
+//     vinculado. É um fato estrutural, não um palpite: vale mais que qualquer
+//     contagem de palavra.
+//  2. As últimas mensagens do usuário NESTA conversa. Exige margem folgada
+//     (>=4 pontos e o dobro do segundo colocado) porque aqui um palpite errado
+//     contamina todo o resto.
+//
+// Não se usa o NOME do projeto de propósito: "SPED-HUB" é um projeto de
+// software cujo nome cai direto no dicionário contábil — classificá-lo por aí
+// puxaria exatamente a memória errada.
+async function conversationDomain(conversationId, developerDomain = null) {
+  if (developerDomain) return developerDomain;
+  if (!conversationId) return null;
+  try {
+    const rows = await db.prepare(
+      `SELECT content FROM messages WHERE conversation_id=? AND role='user'
+       ORDER BY created_at DESC, seq DESC LIMIT 12`).all(conversationId);
+    if (!rows.length) return null;
+    const { scores } = detectContentDomain(rows.map(r => r.content).join('\n').slice(0, 8000));
+    const ranked = Object.entries(scores).sort((a, b) => b[1] - a[1]);
+    const [top, second] = [ranked[0], ranked[1]];
+    if (!top || top[1] < 4) return null;
+    if (second && second[1] > 0 && top[1] < second[1] * 2) return null;
+    return top[0];
+  } catch {
+    return null;
+  }
+}
+
+export async function buildContext({ userId, conversationId, assistantId, clientScope, userText, historyLimit = 60, model = null, developerDomain = null }) {
   const settings = getSettings();
   const capInfo = modelContextCap(model);
   const budget = contextBudgetForModel(model, settings);
@@ -218,8 +254,12 @@ export async function buildContext({ userId, conversationId, assistantId, client
 
   // ─── Analise do prompt atual ───────────────────────────────────────
   // Identifica intencao, dominio, projeto e entidades ANTES de buscar
-  // memorias/conversas. Esta analise guia toda a selecao abaixo.
-  const promptAnalysis = analyzePrompt(userText);
+  // memorias/conversas. Esta analise guia toda a selecao abaixo. O dominio da
+  // CONVERSA entra junto, para que um pedido curto ("vamos continuar o
+  // projeto") nao fique sem assunto nenhum e desligue o crivo.
+  const contextDomain = await conversationDomain(conversationId, developerDomain);
+  const promptAnalysis = analyzePrompt(userText, { contextDomain });
+  meta.contextDomain = contextDomain;
 
   const scopes = unique(['global', 'office', assistantId, clientScope]);
   meta.scopes = scopes.map(scope => ({ scope, label: scopeLabel(scope) }));
@@ -292,9 +332,11 @@ export async function buildContext({ userId, conversationId, assistantId, client
     const limit = Math.max(0, Math.min(Number(settings.max_memories) || 0, budget < 20000 ? 6 : 16));
     const candidates = limit ? (await searchMemories(userId, userText, { scopes, limit: limit * 2 })).filter(m => !seen.has(m.id)) : [];
     for (const m of candidates) {
-      // Usa a similaridade semantica retornada pela busca (_sim)
+      // Usa a similaridade semantica retornada pela busca (_sim). O _simKind
+      // diz se veio de embedding (faixa comprimida do e5, precisa calibrar) ou
+      // da contagem de palavras do modo degradado (ja nasce em 0..1).
       const semanticSim = m._sim || 0;
-      const scoreResult = scoreMemory(m, promptAnalysis, semanticSim);
+      const scoreResult = scoreMemory(m, promptAnalysis, semanticSim, m._simKind);
       const validation = validateRelevance(m.content, promptAnalysis, scoreResult);
       diagMemCandidates.push({ id: m.id, type: m.type, content: m.content, scoreResult });
       if (validation.valid && scoreResult.shouldInclude) {
@@ -314,7 +356,7 @@ export async function buildContext({ userId, conversationId, assistantId, client
     const chunkCandidates = limit ? await searchChunks(userId, userText, { excludeConversationId: conversationId, scopes: chunkScopes, limit: limit * 2 }) : [];
     for (const c of chunkCandidates) {
       const semanticSim = c._sim || 0;
-      const scoreResult = scoreConversation(c, promptAnalysis, semanticSim);
+      const scoreResult = scoreConversation(c, promptAnalysis, semanticSim, c._simKind);
       const validation = validateRelevance(c.content, promptAnalysis, scoreResult);
       diagChunkCandidates.push({ id: c.id, source_title: c.source_title, content: c.content, scoreResult });
       if (validation.valid && scoreResult.shouldInclude) {
