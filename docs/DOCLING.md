@@ -83,6 +83,21 @@ extração** (mesmo Markdown, mesmas tabelas, mesmas referências de página) �
 de re-extrair por modelo. Um segundo modelo revisor recebe os trechos usados + a
 resposta do primeiro + as referências de página.
 
+O bloco `document-content` é injetado nos **três** caminhos de execução, porque
+cada um monta as suas próprias mensagens:
+
+| Caminho | Onde entra |
+|---|---|
+| Chat comum e Modo Desenvolvedor | `agent/loop.js` (com a `DOC_PRECEDENCE_NOTE`) |
+| Multimodelo (comparar/conselho/debate/pipeline) | `agent/multiModel.js` — participantes e coordenador |
+| Modo Equipe | `agent/orchestrator.js` — especialistas e coordenador |
+
+Isto é essencial nos modos de **parecer**: compare/council/debate **não executam
+ferramentas**, então este bloco é a única forma de o modelo ler o documento —
+exatamente o mesmo argumento do extrato de repositório (`repository-digest`).
+Até 2026-07-25 o conteúdo só chegava ao executor (`runAgent`) e os participantes
+opinavam sobre um documento que nunca tinham visto.
+
 ## Segurança e LGPD
 
 Processamento na própria infraestrutura (serviço interno, sem porta pública, sem
@@ -194,6 +209,26 @@ Em vez de um "falhou" genérico, cada erro é classificado e explicado (seção
   tentar de novo apenas quando fizer sentido (`canRetry`).
 - Testes: `backend/src/docling/failures.test.js`.
 
+## Andamento e cancelamento
+
+O serviço publica o estágio de cada job (`recebido` → `analisando` →
+`convertendo` → `exportando` → `concluído`); o `runner` repassa por `onProgress`
+e o `service.js` **grava a mudança de estágio** em `stats.stage`/`stats.progress`
+— uma UPDATE por etapa, não a cada poll. O painel mostra o estágio e a barra de
+progresso.
+
+O **cancelamento** é de ponta a ponta: `POST /api/docling/documents/:id/cancel`
+→ `abortProcessing` (registro de `AbortController` por processamento) → o runner
+aborta o polling e chama `DELETE /jobs/:id` no serviço → a linha vira
+`canceled`. Se o backend tiver reiniciado no meio (o controller não existe mais
+em memória), a rota marca a linha como cancelada assim mesmo, para nenhum
+documento ficar "processando" para sempre.
+
+> Antes de 2026-07-25, `stage`/`progress` eram calculados e descartados (o painel
+> tinha a tabela de rótulos, mas `stats.stage` nunca era preenchido) e o
+> cancelamento existia no serviço e no runner sem rota nem botão — o usuário não
+> tinha como parar um PDF de 600 páginas.
+
 ## O que falta (refinamentos menores)
 
 - OCR por página (parcialmente digitalizado) e reprocesso com outro mecanismo.
@@ -212,6 +247,17 @@ tempo e memória:
   parcialmente ilegível · protegido por senha · centenas de páginas · páginas
   duplicadas.
 
-Os módulos puros (hash, otimização de Markdown, chunking, seleção de trechos,
-tokens, `configVersion`) têm testes automatizados em
-`backend/src/docling/docling.test.js`.
+Testes automatizados:
+
+| Arquivo | Cobre |
+|---|---|
+| `docling.test.js` | módulos puros: hash, otimização, chunking, seleção, tokens, `configVersion` |
+| `pipeline.test.js` | o fluxo completo Markdown cru → otimizado → chunks → tabelas → seleção, com documento contábil, relatório de 120 páginas, tabela malformada e entradas vazias/corrompidas |
+| `runner.test.js` | contrato com o serviço: submissão, polling, progresso, cache, timeout, cancelamento, falha e erro transitório de rede |
+| `tables.test.js` · `semantic.test.js` · `vision.test.js` · `failures.test.js` · `retention.test.js` · `adminConfig.test.js` | tabelas/CSV, ranqueamento por embeddings, elementos visuais, taxonomia de falhas, retenção e configuração do admin |
+
+Dois casos do `pipeline.test.js` nasceram de bugs reais encontrados na auditoria
+de 2026-07-25 e continuam ali como regressão: um relatório fiscal de 120 páginas
+que era **totalmente esvaziado** pelo otimizador, e páginas que diferiam só nos
+valores sendo descartadas como duplicatas. A causa nos dois era a mesma —
+mascarar os dígitos ao comparar linhas, num domínio em que o número É o conteúdo.

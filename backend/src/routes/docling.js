@@ -2,12 +2,12 @@
 // (Markdown otimizado, JSON completo, chunks). Alimentam o painel de
 // processamento na interface e permitem auditar/baixar o que foi extraído.
 import fs from 'node:fs';
-import { db } from '../db.js';
+import { db, now } from '../db.js';
 import { makeRouter, isAdmin } from './helpers.js';
 import { isDoclingEnabled } from '../docling/config.js';
 import { resolvedOptions, writeOverrides, readOverrides, adminEditable } from '../docling/adminConfig.js';
 import { doclingHealth } from '../docling/runner.js';
-import { getProcessingById, listProcessingsForConversation, readArtifacts, kickProcessing, mimeForName } from '../docling/service.js';
+import { getProcessingById, listProcessingsForConversation, readArtifacts, kickProcessing, mimeForName, abortProcessing } from '../docling/service.js';
 import { summarizeTables, tableToCsv } from '../docling/tables.js';
 import { purgeProcessing } from '../docling/retention.js';
 import { workspaceFor } from '../sandbox.js';
@@ -125,6 +125,25 @@ router.post('/docling/documents/:id/reprocess', async (req, res) => {
   // verdade (era um no-op: o processFile devolvia o resultado cacheado).
   kickProcessing({ userId: req.userId, conversationId: conv.conversation_id, fileId: f.id, filePath, filename: f.name, mime: f.mime || mimeForName(f.name), hash: f.hash || row.hash, force: true });
   res.json({ ok: true, status: 'processing' });
+});
+
+// Cancela um processamento em andamento (documento grande, OCR demorado...).
+// O caminho existia inteiro no serviço Python (DELETE /jobs/:id) e no runner
+// (AbortSignal), mas não havia rota nem botão — o usuário não tinha como parar.
+router.post('/docling/documents/:id/cancel', async (req, res) => {
+  const row = await getProcessingById(req.userId, req.params.id);
+  if (!row) return res.status(404).json({ error: 'Não encontrado' });
+  if (!['queued', 'processing'].includes(row.status)) {
+    return res.status(409).json({ error: 'Este documento não está em processamento.' });
+  }
+  const aborted = abortProcessing(req.userId, row.hash, row.configVersion);
+  // Não estar em memória significa que o backend reiniciou no meio: a linha
+  // ficaria "processando" para sempre. Marcamos como cancelada de qualquer forma.
+  if (!aborted) {
+    await db.prepare("UPDATE document_processings SET status='canceled', updated_at=? WHERE id=? AND user_id=?")
+      .run(now(), req.params.id, req.userId);
+  }
+  res.json({ ok: true, aborted });
 });
 
 // LGPD: apaga os dados DERIVADOS de um documento (JSON/Markdown/chunks/

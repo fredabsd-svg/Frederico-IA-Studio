@@ -1,5 +1,188 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 🔍 Auditoria de ponta a ponta: integração com o PC + camada Docling (2026-07-25 — branch `claude/github-homepage-update-wx2dev`)
+
+
+Auditoria completa das duas frentes (execução no computador do usuário e
+compreensão documental), com correção dos bugs encontrados. **Baseline antes:**
+452 testes (450 passando). **Depois:** 494 testes (492 passando, 2 pulados por
+exigirem PostgreSQL — pré-existente).
+
+
+### 🔴 Execução no PC — a guarda protegia só metade do caminho
+
+
+**`run_python` não passava por guarda nenhuma.** O `guardCommand` (tabela de
+padrões destrutivos) era aplicado APENAS ao `bash`. O comentário do próprio
+módulo dizia que ele existia para "evitar que código gerado apague os arquivos
+REAIS do usuário montados em /mnt/pc" — mas o `run_python`, a ferramenta que os
+modelos mais usam, ia direto para o sandbox. Um `shutil.rmtree('/mnt/pc/Clientes')`
+executava sem validação, sem confirmação e sem registro. O `bash` também era
+contornável por heredoc (`python - <<'PY'`).
+
+
+**Correção em três camadas** (`backend/src/execGuard.js`, módulo novo e puro):
+1. **Docker (enforcement real):** no chat comum as Pastas do PC entram
+   **somente-leitura**, a menos que o pedido DESTE turno peça claramente para
+   gravar/alterar/apagar/organizar — mesmo idioma já usado para a rede do
+   sandbox (`explicitlyAuthorizesPcWrite`, função pura e testada, com 21 testes).
+   No Modo Desenvolvedor nada muda: escolher um projeto gravável + um modo de
+   escrita já é a autorização, e ela já é escopada àquela pasta.
+2. **Guarda textual:** `guardPythonCode` analisa linha a linha e bloqueia
+   (a) escrita/remoção em caminho de sistema — sempre; (b) alteração de
+   `/mnt/pc` sem autorização do turno; (c) fuga para o shell (`os.system`,
+   `subprocess`) — o literal embutido passa pela MESMA guarda do bash. Ler
+   `/mnt/pc` e escrever no `/workspace` continuam livres (testado).
+3. **Auditoria:** toda execução que toca `/mnt/pc` vira uma linha em
+   `companion_audit` com ferramenta, pastas tocadas, se havia autorização e o
+   código. A tabela e o `audit()` já existiam desde o PR #114, mas **nenhuma
+   ação do agente era registrada** — só as trocas de permissão feitas pelo
+   próprio usuário.
+
+
+**Bug do `rm -rf`:** o padrão exigia espaço/barra/asterisco/fim depois da barra,
+então `rm -rf /home` e `rm -rf /var` passavam. O alvo agora lista os diretórios
+de sistema por nome. `/mnt/pc/...` fica de fora de propósito (cai na regra de
+autorização, que o usuário pode liberar); só `/mnt` inteiro é bloqueado de vez.
+
+
+**`destroyAllSandboxes()` era global.** Um usuário adicionando/alterando uma
+pasta do PC derrubava os containers de TODOS os usuários — matando execução em
+andamento de terceiros. Agora aceita `userId` e as rotas de `pc_folders` passam
+o dono; sem argumento (boot/manutenção) o comportamento antigo continua.
+
+
+### 🔴 Docling — recursos que existiam só no encanamento
+
+
+**Progresso era calculado e jogado fora.** O serviço publicava
+`stage`/`progress`, o runner repassava por `onProgress`, o `service.js` aceitava
+o callback... e ninguém gravava nada. O painel tinha a tabela `STAGE_LABEL` mas
+lia `stats.stage`, que **nunca era preenchido** — o usuário via sempre a mesma
+frase genérica. A função `setStatus()` que gravaria isso era **código morto**
+(zero chamadas). Agora `setStage` grava a cada MUDANÇA de estágio (uma UPDATE
+por etapa, não por poll) e a UI mostra estágio + barra de progresso.
+
+
+**Cancelamento não tinha como ser acionado.** `DELETE /jobs/:id` no Python,
+`cancelJob` no runner e o parâmetro `signal` no `processFile` — tudo pronto,
+sem rota, sem botão e sem ninguém guardando o `AbortController`. Um PDF de 600
+páginas era impossível de interromper. Agora: registro `inFlight` por
+processamento, `POST /api/docling/documents/:id/cancel`, status `canceled`
+próprio (não é tratado como falha) e botão no painel. Se o backend reiniciou no
+meio, a rota marca a linha como cancelada assim mesmo — nenhum documento fica
+"processando" para sempre.
+
+
+**`pypdf` usado sem ser declarado.** `_is_encrypted_pdf` importava pypdf dentro
+de um `try/except Exception`: sem o pacote no `requirements.txt`, o ImportError
+era engolido e a detecção de PDF protegido por senha **nunca acontecia** — todo
+PDF com senha virava erro genérico no meio do pipeline. Declarado, e a ausência
+agora é logada uma vez em vez de silenciosa.
+
+
+**Docling não chegava ao multimodelo nem ao Modo Equipe.** `buildDocumentContext`
+só era chamado no `loop.js`. Nos modos de parecer (comparar/conselho/debate) e no
+Modo Equipe os modelos **não executam ferramentas** — o `repository-digest` já
+tinha sido injetado por exatamente esse motivo, mas o conteúdo dos documentos
+não. Com um PDF anexado e uma pergunta que não citasse o anexo
+(`detectToolRequirement` só exige ferramentas quando o texto REFERENCIA o
+arquivo), os modelos respondiam sobre um documento que nunca viram. O bloco
+`document-content` agora entra nos três caminhos, para participantes e
+coordenador.
+
+
+### 🔴 Otimizador de Markdown — duas rotas de PERDA DE DADOS
+
+
+Os dois bugs mais graves da auditoria, encontrados pelos testes novos. A causa
+raiz era a mesma: `norm()` mascarava **todos os dígitos** ao comparar linhas —
+num domínio (contábil/fiscal) em que o número É o conteúdo.
+
+
+1. **Relatório de 120 páginas virava string vazia.** Linhas que diferiam só nos
+   valores (`Valor apurado: 1.000,00` × `Valor apurado: 2.500,00`) normalizavam
+   igual, atingiam o limiar de "cabeçalho repetido" e eram removidas de todas as
+   páginas. Resultado: `optimized.md` vazio, `chunks` vazio, status `done` — e o
+   `context.js` pulando o documento em silêncio. Perda total, sem erro nenhum.
+2. **Páginas legítimas descartadas como duplicatas.** `dropDuplicatePages`
+   assinava a página inteira com os dígitos mascarados; um demonstrativo mensal
+   de 6 páginas idênticas exceto pelos valores perdia 5.
+3. **Bônus, em documento curto:** as fatias de início e fim de página se
+   sobrepõem quando a página tem ≤ 2×`edge` linhas, então a MESMA linha física
+   era contada duas vezes e um título único sozinho batia o limiar.
+
+
+**Correções:** `norm()` preserva os dígitos; só linhas de **paginação**
+("Página 1 de 3", "- 12 -", detectadas por `PAGINATION_RE`) são comparadas com
+os dígitos mascarados; a contagem usa ÍNDICES de linha (sem dupla contagem) e no
+máximo uma ocorrência por página; a assinatura de duplicata é montada linha a
+linha com a mesma regra; e há uma **rede de segurança**: se a limpeza esvaziaria
+uma página que tinha conteúdo, a página inteira é devolvida. Otimizar nunca pode
+custar informação.
+
+
+### 🟡 Serviço Python e operação
+
+
+- **Cache de resultados sem teto de memória:** `DOCLING_RESULT_CACHE=200`
+  contava ENTRADAS, mas cada entrada carrega o JSON completo + Markdown + até 20
+  imagens em base64 — 200 documentos grandes estouravam o `mem_limit` de 4 GB e
+  o container entrava em laço de reinício. Agora há teto em bytes
+  (`DOCLING_RESULT_CACHE_MB`, padrão 256) com despejo LRU, e um resultado maior
+  que o teto simplesmente não é cacheado.
+- **`_gc_jobs` coletava jobs VIVOS:** um documento demorado que cruzasse o TTL
+  perdia suas opções (`_JOB_OPTIONS`) e seguia rodando com a configuração padrão
+  — OCR e idioma errados, em silêncio. Só jobs terminados são coletados.
+- **Hash recebido era ignorado:** o comentário prometia conferir a integridade e
+  o valor não era comparado. Agora divergência devolve 400 (cache envenenado é
+  pior que reprocessar).
+- **`DOCLING_ENABLED=true` sem o serviço no ar** (o compose exige
+  `--profile docling`, flag independente) fazia CADA documento falhar sozinho,
+  sem nada nos logs indicando a causa. Checagem no boot com instrução do comando
+  a rodar; também avisa quando `DOCLING_INTERNAL_TOKEN` está vazio (nesse caso o
+  serviço aceita qualquer container da mesma rede).
+- **Código morto removido:** `setStatus` (service.js) e o import `JSONResponse`
+  (app.py).
+- **`frontend/dist/` estava versionado** — artefato de build aparecendo em toda
+  busca no repositório e divergindo da fonte. Removido do índice e ignorado.
+- **7 variáveis `DOCLING_*` usadas no código e não documentadas** no
+  `.env.example` (timeout, poll, tabelas, fórmulas, TTL de job, cache, limite de
+  figuras para visão). Documentadas.
+- **Regex de acentos** em `sandbox.js` estava escrita com caracteres combinantes
+  literais (invisíveis no editor); padronizada para `\\u0300-\\u036f`, como no
+  resto do projeto.
+
+
+### ✅ Testes
+
+
+Novos: `execGuard.test.js` (21), `docling/runner.test.js` (10),
+`docling/pipeline.test.js` (11). O `runner.test.js` cobre o contrato com o
+serviço Python inteiro (submissão, polling, progresso, cache, timeout,
+cancelamento, falha, erro transitório de rede) — antes sem teste nenhum. O
+`pipeline.test.js` percorre a cadeia real de produção e fixa como regressão os
+dois bugs de perda de dados.
+
+
+Validado: backend 494 testes (492 ✓, 2 pulados), frontend 29 ✓, build do
+frontend ✓, `docker compose config` (dev e prod) ✓, sintaxe do `app.py` ✓,
+perfil `docling` resolvendo os 5 serviços ✓.
+
+
+### ⚠️ Fica pendente (fora do escopo desta frente)
+
+
+`npm audit` do backend aponta 7 vulnerabilidades (1 crítica), TODAS herdadas de
+`@xenova/transformers` (protobufjs, onnxruntime-web, sharp, uuid). O "fix"
+sugerido é um **downgrade major** para `@xenova/transformers@1.4.2`, que
+quebraria os embeddings (memória/RAG e a seleção semântica do Docling). O
+caminho correto é migrar para `@huggingface/transformers` (sucessor mantido),
+com validação própria — não cabia junto de uma correção de outro subsistema.
+Exposição real é baixa: o pacote roda um modelo local sobre texto do próprio
+usuário, não desserializa protobuf de terceiros pela rede.
+
+
 ## 📄 Repaginação do README — a vitrine do produto no GitHub (2026-07-25 — branch `claude/github-homepage-update-wx2dev`)
 
 

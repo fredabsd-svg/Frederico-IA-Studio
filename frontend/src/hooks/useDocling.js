@@ -72,11 +72,16 @@ export function useDocling(conversationId) {
     try { await fetch(`${API}/api/docling/documents/${encodeURIComponent(id)}/reprocess`, { method: 'POST' }); await refresh(); } catch {}
   }, [refresh]);
 
+  // Interrompe um processamento em andamento (documento grande/OCR demorado).
+  const cancel = useCallback(async (id) => {
+    try { await fetch(`${API}/api/docling/documents/${encodeURIComponent(id)}/cancel`, { method: 'POST' }); await refresh(); } catch {}
+  }, [refresh]);
+
   // Apaga os dados DERIVADOS de um documento (LGPD) — não o arquivo original.
   const purge = useCallback(async (id) => {
     try { await fetch(`${API}/api/docling/documents/${encodeURIComponent(id)}`, { method: 'DELETE' }); await refresh(); } catch {}
   }, [refresh]);
 
   const processing = docs.some(d => ACTIVE.has(d.status));
-  return { enabled, isAdmin, config, health, docs, processing, refresh, reprocess, purge, saveConfig };
+  return { enabled, isAdmin, config, health, docs, processing, refresh, reprocess, cancel, purge, saveConfig };
 }

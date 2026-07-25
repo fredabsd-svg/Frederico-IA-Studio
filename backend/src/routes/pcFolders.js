@@ -48,19 +48,19 @@ router.post('/pc-folders', async (req, res) => {
   const id = nanoid();
   await db.prepare('INSERT INTO pc_folders (id,user_id,label,host_path,writable,created_at) VALUES (?,?,?,?,?,?)')
     .run(id, req.userId, label, hostPath, req.body?.writable ? 1 : 0, now());
-  await destroyAllSandboxes(); // aplica o novo mount às conversas em andamento
+  await destroyAllSandboxes(req.userId); // aplica o novo mount só às conversas DESTE usuário
   res.json({ id, label, host_path: hostPath, writable: req.body?.writable ? 1 : 0 });
 });
 router.put('/pc-folders/:id', async (req, res) => {
   if (!requirePcFolders(res)) return;
   await db.prepare('UPDATE pc_folders SET writable=? WHERE id=? AND user_id=?').run(req.body?.writable ? 1 : 0, req.params.id, req.userId);
-  await destroyAllSandboxes();
+  await destroyAllSandboxes(req.userId);
   res.json({ ok: true });
 });
 router.delete('/pc-folders/:id', async (req, res) => {
   if (!requirePcFolders(res)) return;
   await db.prepare('DELETE FROM pc_folders WHERE id=? AND user_id=?').run(req.params.id, req.userId);
-  await destroyAllSandboxes();
+  await destroyAllSandboxes(req.userId);
   res.json({ ok: true });
 });
 

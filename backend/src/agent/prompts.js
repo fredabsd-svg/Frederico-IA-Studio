@@ -52,7 +52,8 @@ ${list}
 Como usar (via run_python ou bash, com os caminhos acima):
 - Procurar/analisar: liste e leia os arquivos normalmente (os, pathlib, pandas, PyMuPDF...).
 - Organizar (somente nas pastas marcadas LEITURA + ESCRITA): use shutil.move / os.rename para renomear e reorganizar.
-- CUIDADO — são arquivos reais e insubstituíveis: NUNCA apague nada sem o usuário pedir explicitamente; prefira MOVER para uma subpasta (ex.: "_Organizado") em vez de excluir; confirme antes de operações em massa. Ao terminar, resuma o que foi alterado.`;
+- CUIDADO — são arquivos reais e insubstituíveis: prefira MOVER para uma subpasta (ex.: "_Organizado") em vez de excluir. Ao terminar, resuma o que foi alterado.
+- O backend BLOQUEIA qualquer alteração nessas pastas quando o pedido atual não pede claramente para gravar/alterar/apagar/organizar arquivos — e o próprio mount entra somente-leitura. Se a operação for recusada, NÃO tente contornar: peça ao usuário, em uma frase, que confirme explicitamente o que quer alterar, e repita depois da confirmação.`;
 }
 
 // Lista os arquivos enviados pelo usuário para avisar o modelo que eles já
