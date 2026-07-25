@@ -15,7 +15,7 @@ autenticação Better Auth (e-mail/senha, GitHub, Google).
 **Prontidão para produção: 🟡 amarelo — apto com restrições.**
 Critérios, condições de operação e caminho para o verde em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Branch:** `claude/frederico-audit-production-gduf4s`
+- **Branch:** `claude/frederico-audit-production-gduf4s` → **PR [#133](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/133)**
 - **Última validação:** 2026-07-25 — **536 testes, todos passando** (backend 495,
   frontend 37, Python 4), com PostgreSQL real e **zero pulados**; 20 migrações aplicadas
   em banco vazio, reexecução idempotente; boot do backend e `/api/health` verificados.
@@ -23,7 +23,7 @@ Critérios, condições de operação e caminho para o verde em `docs/AUDITORIA_
 
 ---
 
-## O que mudou por último (auditoria de produção, 2026-07-25)
+## O que mudou por último (auditoria de produção, 2026-07-25 — PR #133)
 
 | Commit | Assunto |
 | --- | --- |
@@ -31,9 +31,20 @@ Critérios, condições de operação e caminho para o verde em `docs/AUDITORIA_
 | `1ff3c4f` | Backup com chave mestra + manifesto/checksum/trava; administração persistida em `user_roles` com auditoria |
 | `fd70dac` | Uploads por streaming em disco, tetos e cotas; antivírus com status honesto |
 | `ad7879c` | CI com PostgreSQL real, migrações, todos os testes do frontend, smoke de boot e portão de autenticação |
+| `7a56b1f` | Reorganização da documentação e relatório da auditoria |
 
 Detalhe de cada achado (evidência, causa raiz, correção, testes) em
 `docs/AUDITORIA_2026-07.md`.
+
+### Ao atualizar uma instalação existente para esta versão
+
+1. **Faça backup antes** (`GET /api/backup` — agora leva a chave mestra junto).
+2. Suba normalmente. No log do boot, confira as duas linhas novas:
+   `[workspace] migração de layout: N movido(s)…` e `[sandbox] reconciliação: …`.
+3. Acesse uma rota administrativa uma vez para o papel de admin ser gravado em
+   `user_roles` (o `ADMIN_EMAIL` atual continua valendo como bootstrap).
+4. Em instalação pública, revise: `CLAMAV_REQUIRED=true`, `ADMIN_USER_ID`,
+   `UPLOAD_USER_QUOTA_MB`. Ver `docs/SECURITY.md` §10.
 
 ---
 
