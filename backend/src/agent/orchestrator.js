@@ -51,7 +51,7 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
     userText,
     webSearch: Boolean(webSearch && !lowSignalTurn),
     developer: Boolean(developer && !lowSignalTurn),
-    hasUploads: !lowSignalTurn && Boolean(uploadsNote(conversationId))
+    hasUploads: !lowSignalTurn && Boolean(uploadsNote(userId, conversationId))
   });
   // Modo desenvolvedor no Modo Equipe: os especialistas e o coordenador precisam
   // saber QUAL projeto/repositório está selecionado e que o app já tem acesso ao

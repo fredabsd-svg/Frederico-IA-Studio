@@ -116,11 +116,11 @@ export function textOutputPathFromClaim(text) {
   return relative.startsWith('outputs/') ? relative : null;
 }
 
-export function materializeTextOutput(conversationId, text) {
+export function materializeTextOutput(userId, conversationId, text) {
   const relative = textOutputPathFromClaim(text);
   if (!relative) return null;
   if (path.posix.dirname(relative) !== 'outputs') return null;
-  const ws = workspaceFor(conversationId);
+  const ws = workspaceFor(conversationId, userId);
   const outputRoot = path.resolve(ws.outputs);
   const target = path.resolve(ws.base, ...relative.split('/'));
   if (!target.startsWith(outputRoot + path.sep) || fs.existsSync(target)) return null;

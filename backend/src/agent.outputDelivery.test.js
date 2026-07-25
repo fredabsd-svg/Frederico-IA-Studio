@@ -45,8 +45,8 @@ test('accepts only direct Markdown or text claims inside outputs for the fallbac
 test('materializes a promised Markdown report as a real output file', () => {
   const conversationId = `output-delivery-${Date.now()}`;
   const text = 'Relatório concluído. Baixe em /workspace/outputs/relatorio.md.';
-  const relative = materializeTextOutput(conversationId, text);
-  const target = path.join(process.env.WORKSPACE_ROOT, conversationId, relative);
+  const relative = materializeTextOutput('user-output-delivery', conversationId, text);
+  const target = path.join(process.env.WORKSPACE_ROOT, 'users', 'user-output-delivery', conversationId, relative);
 
   assert.equal(relative, 'outputs/relatorio.md');
   assert.equal(fs.readFileSync(target, 'utf8'), text);
