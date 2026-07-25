@@ -1,7 +1,19 @@
-# CI: roda os testes do backend e os testes + build do frontend a cada push/PR.
-# Os testes são unitários e não precisam de Postgres nem de Docker; o install
-# usa --ignore-scripts (pula binários nativos do sharp/transformers, que os
-# testes não exercitam — os embeddings entram em modo degradado nos testes).
+# CI do Frederico AI Studio.
+#
+# O que mudou depois da auditoria de 2026-07 (antes o CI cobria bem menos do que
+# a documentação sugeria):
+#   * o frontend rodava só 3 dos 7 arquivos de teste — agora roda TODOS;
+#   * nenhum job tinha PostgreSQL, então todo teste que toca o banco era pulado
+#     em silêncio e as 20 migrações nunca eram exercitadas — agora há um job com
+#     Postgres real que aplica as migrações do zero, confere idempotência e roda
+#     a suíte inteira sem `skip`;
+#   * não havia checagem de sintaxe fora do que os testes importam (`lint`);
+#   * não havia validação do docker compose nem boot real do backend;
+#   * a contagem de testes vivia escrita à mão na documentação — agora sai da
+#     execução real, no resumo do job.
+#
+# As versões de Node seguem a mesma linha da imagem de produção (Node 20) e a
+# atual em suporte (Node 22): o que roda na VPS é testado no CI.
 name: CI
 
 on:
@@ -10,6 +22,17 @@ on:
   pull_request:
 
 jobs:
+  lint:
+    name: Sintaxe (backend + frontend)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node backend/scripts/lint.mjs
+      - run: node frontend/scripts/lint.mjs
+
   artifacts:
     name: Artefatos (Excel real)
     runs-on: ubuntu-latest
@@ -19,26 +42,119 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install openpyxl==3.1.5
-      - run: python -m unittest discover -s sandbox -p '*_test.py'
+      - run: python -m unittest discover -s sandbox -p '*_test.py' -v
 
-  backend:
-    name: Backend (testes)
+  backend-unit:
+    name: Backend — testes unitários (sem banco)
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: backend
+    strategy:
+      fail-fast: false
+      matrix:
+        # Node 20 = o da imagem de produção; Node 22 = a linha LTS atual.
+        node: [20, 22]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ matrix.node }}
           cache: npm
           cache-dependency-path: backend/package-lock.json
       - run: npm ci --ignore-scripts
-      - run: node --test 'src/**/*.test.js'
+      # DATABASE_URL apontando para o vazio: confirma que a suíte se degrada com
+      # `skip` em vez de falhar quando não há Postgres (uso local do time).
+      - run: npm test
+        env:
+          DATABASE_URL: postgres://indisponivel@127.0.0.1:1/indisponivel
+
+  backend-integration:
+    name: Backend — integração (PostgreSQL real + migrações)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        # Mesma imagem da produção (docker-compose.prod.yml): a extensão pgvector
+        # muda o caminho da busca semântica, então testar com postgres puro
+        # esconderia diferenças de comportamento.
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: studio
+          POSTGRES_PASSWORD: studio
+          POSTGRES_DB: studio
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U studio -d studio"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://studio:studio@localhost:5432/studio
+      ENCRYPTION_KEY: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+      BETTER_AUTH_SECRET: ci-secret-ci-secret-ci-secret-ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci --ignore-scripts
+
+      # 1) Banco vazio → todas as migrações → reexecução no-op → tabelas
+      #    essenciais → escrita/leitura/cascade.
+      - name: Migrações em banco vazio
+        run: node scripts/check-migrations.mjs
+
+      # 2) Suíte completa COM banco: aqui nenhum teste pode ser pulado por falta
+      #    de Postgres — se algum for, o passo abaixo falha.
+      - name: Suíte completa (sem skips permitidos)
+        run: |
+          set -o pipefail
+          npm test | tee /tmp/backend-test.log
+          SKIPPED=$(grep -oE '^# skipped [0-9]+$' /tmp/backend-test.log | grep -oE '[0-9]+$' || echo 0)
+          if [ "${SKIPPED:-0}" -ne 0 ]; then
+            echo "::error::$SKIPPED teste(s) pulado(s) mesmo com PostgreSQL disponível — o CI de integração precisa exercitar todos."
+            exit 1
+          fi
+
+      # 3) Boot real do backend contra o banco: prova que migrações, caches,
+      #    reconciliação de sandbox e as rotas sobem de verdade — e que
+      #    /api/health responde. É o smoke test que não existia.
+      - name: Boot do backend + /api/health
+        run: |
+          WORKSPACE_ROOT=/tmp/ci-ws DATA_DIR=/tmp/ci-data PORT=3199 node src/server.js > /tmp/boot.log 2>&1 &
+          BOOT=$!
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3199/api/health -o /tmp/health.json; then break; fi
+            sleep 1
+          done
+          kill $BOOT 2>/dev/null || true
+          echo "--- health ---"; cat /tmp/health.json; echo
+          echo "--- log ---"; cat /tmp/boot.log
+          grep -q '"ok":true' /tmp/health.json
+
+      # 4) Rotas exigem autenticação: nenhuma rota /api (fora health e auth) pode
+      #    responder sem sessão. Regressão barata de pegar e cara de descobrir.
+      - name: Portão de autenticação das rotas
+        run: |
+          WORKSPACE_ROOT=/tmp/ci-ws2 DATA_DIR=/tmp/ci-data2 PORT=3198 node src/server.js > /tmp/boot2.log 2>&1 &
+          BOOT=$!
+          for i in $(seq 1 30); do curl -sf http://localhost:3198/api/health -o /dev/null && break; sleep 1; done
+          FALHAS=0
+          for rota in conversations memories tasks schedules backup me clients templates assistants; do
+            CODIGO=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:3198/api/$rota")
+            echo "GET /api/$rota -> $CODIGO"
+            [ "$CODIGO" = "401" ] || { echo "::error::/api/$rota respondeu $CODIGO sem autenticação (esperado 401)"; FALHAS=1; }
+          done
+          kill $BOOT 2>/dev/null || true
+          exit $FALHAS
 
   frontend:
-    name: Frontend (testes + build)
+    name: Frontend (TODOS os testes + build)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -47,9 +163,82 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 20
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci --ignore-scripts
-      - run: node --test src/authUrls.test.js src/sse.test.js src/alibabaCredentialCsv.test.js
+      # `src/**/*.test.js` cobre os 7 arquivos (inclusive src/hooks/) — antes o
+      # workflow listava 3 deles à mão e os outros 4 nunca rodavam no CI.
+      - run: npm test
       - run: npm run build
+      - name: Orçamento do bundle (catraca de desempenho)
+        run: |
+          # Medido em 2026-07-25: 932 KB de JS num único chunk (287 KB gzip).
+          # O teto é uma CATRACA — impede o crescimento silencioso enquanto o
+          # code splitting do App.jsx não é feito (ver docs/ARCHITECTURE.md,
+          # "Desempenho"). Ao reduzir de verdade, baixe o teto junto.
+          TETO_KB=1000
+          TOTAL_KB=$(du -sk dist/assets/*.js | awk '{s+=$1} END {print s}')
+          GZIP_KB=$(cat dist/assets/*.js | gzip -9 | wc -c | awk '{print int($1/1024)}')
+          echo "JS em dist/assets: ${TOTAL_KB} KB (${GZIP_KB} KB gzip) — teto ${TETO_KB} KB"
+          echo "- Bundle JS: **${TOTAL_KB} KB** (${GZIP_KB} KB gzip), teto ${TETO_KB} KB" >> $GITHUB_STEP_SUMMARY
+          if [ "$TOTAL_KB" -gt "$TETO_KB" ]; then
+            echo "::error::o bundle passou do orçamento (${TOTAL_KB} KB > ${TETO_KB} KB). Faça code splitting ou reveja a dependência nova."
+            exit 1
+          fi
+
+  compose:
+    name: Docker Compose (validação)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Compose não era validado: um erro de YAML/variável só aparecia no deploy.
+      # Os dois arquivos usam `env_file: .env`, então a validação parte do
+      # .env.example — o que também prova que o exemplo continua utilizável.
+      - name: Preparar .env a partir do exemplo
+        run: |
+          cp .env.example .env
+          echo "DOMAIN=exemplo.test" >> .env
+      - name: Validar docker-compose.yml
+        run: docker compose -f docker-compose.yml config --quiet
+      - name: Validar docker-compose.prod.yml
+        run: docker compose -f docker-compose.prod.yml config --quiet
+      - name: Build da imagem do backend
+        run: docker build -f Dockerfile -t frederico-backend:ci .
+
+  contagem:
+    name: Contagem de testes (para a documentação)
+    runs-on: ubuntu-latest
+    needs: [backend-integration, frontend, artifacts]
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: studio
+          POSTGRES_PASSWORD: studio
+          POSTGRES_DB: studio
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U studio -d studio"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://studio:studio@localhost:5432/studio
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install openpyxl==3.1.5
+      - run: cd backend && npm ci --ignore-scripts
+      - run: cd frontend && npm ci --ignore-scripts
+      # A contagem vai para o resumo da execução: a documentação cita ESTE
+      # número, em vez de um valor digitado à mão que envelhece em silêncio.
+      - name: Contar e publicar
+        run: |
+          echo "## Testes executados" >> $GITHUB_STEP_SUMMARY
+          node backend/scripts/count-tests.mjs >> $GITHUB_STEP_SUMMARY
