@@ -23,7 +23,7 @@ npm run check            # lint + test
 
 # frontend
 cd frontend
-npm test                 # TODOS os arquivos src/**/*.test.js (inclusive src/hooks/)
+npm test                 # TODOS os arquivos *.test.js de src/ (inclusive src/hooks/)
 npm run check            # lint + test + build
 
 # sandbox (Python)
@@ -79,6 +79,12 @@ const needsDb = dbReady ? false : 'requer PostgreSQL (DATABASE_URL)';
 test('...', { skip: needsDb }, async () => { /* ... */ });
 ```
 
+**A descoberta dos testes é feita por `scripts/run-tests.mjs`**, não pelo glob do
+`node --test`. Motivo: a expansão de padrão pelo próprio runner só existe a partir do
+Node 22, e no Node 20 — a versão da imagem de produção — `node --test 'src/**/*.test.js'`
+procura o caminho literal e falha. Adicionar um arquivo `*.test.js` em qualquer lugar de
+`src/` basta: ele é encontrado sozinho, em qualquer versão.
+
 **Testes que tocam disco** usam `fs.mkdtempSync(os.tmpdir(), ...)` e definem
 `process.env.WORKSPACE_ROOT` / `DATA_DIR` **antes** do `await import(...)` do módulo sob
 teste — vários módulos leem essas variáveis no momento da importação.
@@ -100,8 +106,9 @@ teste — vários módulos leem essas variáveis no momento da importação.
 | `backend/src/routes/upload.http.test.js` | **Integrado**: rota Express real + Postgres + multipart de verdade — grava no workspace do dono, registra no banco, isola entre usuários, 413 por lote e por `Content-Length`, sem temporários residuais |
 | Acréscimos em `backend/src/clamav.test.js` | `scanPolicy` descreve o modo vigente; o lote **nunca** se declara "verificado" sem análise; arquivo em disco é escaneado por streaming |
 
-Scripts de apoio: `backend/scripts/check-migrations.mjs`, `backend/scripts/count-tests.mjs`,
-`backend/scripts/lint.mjs`, `frontend/scripts/lint.mjs`.
+Scripts de apoio: `backend/scripts/run-tests.mjs` e `frontend/scripts/run-tests.mjs`
+(descoberta de testes independente da versão do Node), `backend/scripts/check-migrations.mjs`,
+`backend/scripts/count-tests.mjs`, `backend/scripts/lint.mjs`, `frontend/scripts/lint.mjs`.
 
 ---
 

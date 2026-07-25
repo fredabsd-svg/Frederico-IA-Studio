@@ -167,8 +167,11 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci --ignore-scripts
-      # `src/**/*.test.js` cobre os 7 arquivos (inclusive src/hooks/) — antes o
-      # workflow listava 3 deles à mão e os outros 4 nunca rodavam no CI.
+      # `npm test` roda scripts/run-tests.mjs, que DESCOBRE os arquivos em JS.
+      # Não use `node --test 'src/**/*.test.js'`: a expansão de glob pelo runner
+      # só existe no Node 22+, e no Node 20 (o da imagem de produção) o padrão
+      # chega literal e o comando falha. Antes o workflow listava 3 arquivos à
+      # mão e os outros 4 nunca rodavam no CI.
       - run: npm test
       - run: npm run build
       - name: Orçamento do bundle (catraca de desempenho)

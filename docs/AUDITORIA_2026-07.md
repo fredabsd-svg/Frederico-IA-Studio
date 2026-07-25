@@ -228,7 +228,9 @@ PostgreSQL real e **zero pulados**. Linha de base antes da auditoria: 452 no bac
   da produção) que aplica as migrações do zero, confere idempotência, tabelas essenciais e
   cascade, roda a suíte completa e **falha se algum teste for pulado**; smoke de boot real
   com `/api/health`; verificação do portão de autenticação (9 rotas → 401); frontend com
-  `src/**/*.test.js` + build + catraca de bundle; matriz Node 20/22; validação dos dois
+  todos os arquivos de teste + build + catraca de bundle; matriz Node 20/22 (que já
+  pegou uma regressão real: o glob do `node --test` não existe no Node 20 — ver §7);
+  validação dos dois
   `docker-compose` e build da imagem; `count-tests.mjs` publicando a contagem real.
 - **Resultado:** as 20 migrações verificadas em banco vazio; 26 tabelas essenciais;
   0 testes pulados.
@@ -334,6 +336,32 @@ se comporta em todas as paletas e no mobile real.
 | **Comportamento novo no boot** | Migração de layout de workspace + remoção de containers órfãos do app. |
 | **Atualização** | Backup → `git pull` → `up -d --build` → conferir no log `[workspace] migração de layout:` e `[sandbox] reconciliação:` → `/api/health`. |
 | **Rollback** | Reverter o código; as migrações são aditivas e a versão anterior roda contra o schema novo. O layout de workspace precisa ser desfeito à mão (`docs/OPERATIONS.md` §4). |
+
+---
+
+## 7. Regressão pega pelo próprio CI novo
+
+O primeiro run do CI reprovou três jobs — e a causa foi uma **regressão introduzida por
+esta auditoria**, exposta exatamente pelo mecanismo que ela adicionou:
+
+- **Sintoma:** `Could not find '.../src/**/*.test.js'`, exit 1, em ~15 s.
+- **Causa:** os scripts padronizados usavam `node --test 'src/**/*.test.js'`. A expansão de
+  glob pelo próprio runner só existe a partir do **Node 22**; no **Node 20** — a versão da
+  imagem de produção (`node:20-slim`) — o padrão entre aspas chega literal.
+- **Por que não apareceu antes:** a validação local rodou em Node 22.
+- **O que pegou:** a matriz Node 20/22 do job `backend-unit`, adicionada nesta auditoria.
+  O job em Node 22 passou; o em Node 20 falhou. Sem a matriz, a quebra chegaria à `main`
+  e só apareceria em produção.
+- **Correção:** `backend/scripts/run-tests.mjs` e `frontend/scripts/run-tests.mjs` fazem a
+  descoberta dos arquivos em JS e passam caminhos explícitos ao `node --test` —
+  independente da versão. `count-tests.mjs` usa o mesmo runner, para a contagem bater com
+  o que o CI executa.
+- **Confirmação do resto:** no mesmo run, o passo de migrações **passou** (20 aplicadas,
+  reexecução no-op, 26 tabelas essenciais, cascade), assim como `lint`, `artifacts` e
+  `compose`.
+
+Vale registrar: é o comportamento desejado de um CI. A alternativa — descobrir isso num
+`docker compose up` da VPS — era o cenário anterior.
 
 ---
 

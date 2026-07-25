@@ -13,9 +13,12 @@ import { fileURLToPath } from 'node:url';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
+// Usa o MESMO runner dos scripts `npm test` (scripts/run-tests.mjs): a expansão
+// de glob do `node --test` só existe no Node 22+, e a contagem precisa bater com
+// o que o CI realmente executa, em qualquer versão.
 const SUITES = [
-  { nome: 'Backend (Node)', cwd: path.join(repoRoot, 'backend'), cmd: process.execPath, args: ['--test', 'src/**/*.test.js'] },
-  { nome: 'Frontend (Node)', cwd: path.join(repoRoot, 'frontend'), cmd: process.execPath, args: ['--test', 'src/**/*.test.js'] },
+  { nome: 'Backend (Node)', cwd: path.join(repoRoot, 'backend'), cmd: process.execPath, args: ['scripts/run-tests.mjs'] },
+  { nome: 'Frontend (Node)', cwd: path.join(repoRoot, 'frontend'), cmd: process.execPath, args: [path.join(repoRoot, 'frontend', 'scripts', 'run-tests.mjs')] },
   { nome: 'Sandbox (Python)', cwd: repoRoot, cmd: 'python3', args: ['-m', 'unittest', 'discover', '-s', 'sandbox', '-p', '*_test.py', '-v'] }
 ];
 
