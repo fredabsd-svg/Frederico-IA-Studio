@@ -6,8 +6,26 @@ import { createCache } from '../cache.js';
 // Modelo multilíngue pequeno (~112 MB, baixado uma vez para ./data/models).
 // Se o modelo não puder ser carregado (sem internet na 1ª vez, etc.), o app
 // entra em modo degradado e a busca semântica vira busca por palavras.
+//
+// BIBLIOTECA: `@huggingface/transformers` — o sucessor mantido do
+// `@xenova/transformers`, que estava parado na 2.17 e carregava a árvore
+// vulnerável (protobufjs com execução arbitrária de código, onnxruntime-web,
+// onnx-proto). A API que usamos aqui é idêntica nas duas.
 
 const MODEL = process.env.EMBEDDING_MODEL || 'Xenova/multilingual-e5-small';
+
+// QUANTIZAÇÃO FIXA — não é detalhe de performance, é COMPATIBILIDADE DE VETOR.
+// O `@xenova/transformers` v2 carregava `model_quantized.onnx` (int8) por
+// padrão; o `@huggingface/transformers` v4 passou a carregar `model.onnx`
+// (fp32). Deixar o padrão novo teria dois efeitos, os dois ruins:
+//   1. os vetores mudariam de valor — e os que já estão gravados no banco e nos
+//      artefatos do Docling foram gerados com o modelo quantizado, então a
+//      comparação por cosseno passaria a misturar duas escalas diferentes,
+//      silenciosamente (sem erro, só recuperação pior);
+//   2. o download saltaria de ~113 MB para ~470 MB, com o consumo de memória
+//      proporcional — num app que roda em VPS pequena.
+// Fixando `q8` usamos exatamente o MESMO arquivo de pesos de antes.
+const DTYPE = process.env.EMBEDDING_DTYPE || 'q8';
 
 // Cache de vetores: embeddings são DETERMINÍSTICOS (mesmo texto → mesmo vetor),
 // então recomputá-los é puro desperdício de CPU no caminho da resposta. A mesma
@@ -26,7 +44,42 @@ function embedCacheKey(kind, text) {
   // longas, sem manter cópias do conteúdo original como chave do Map.
   return `${kind}:${crypto.createHash('sha1').update(text).digest('base64')}`;
 }
-export const embeddingModelId = MODEL;
+// IDENTIDADE do vetor: tudo que, se mudar, torna os vetores já gravados
+// incomparáveis com os novos. Não basta o nome do modelo — a quantização muda
+// os valores tanto quanto trocar de modelo. `maybeReindexOnModelChange` compara
+// esta string com a guardada em `settings` e dispara a reindexação sozinho.
+export const embeddingModelId = `${MODEL}@${DTYPE}`;
+// Nome do modelo puro, para exibição/logs (a identidade acima é interna).
+export const embeddingModelName = MODEL;
+
+// Quantização usada por TODA versão anterior do app: o `@xenova/transformers`
+// carregava o modelo quantizado por padrão, e a identidade gravada era só o nome
+// do modelo, sem sufixo. Comparação MEDIDA na migração: os vetores gerados pelo
+// `@xenova/transformers@2.17.2` e pelo `@huggingface/transformers@4` com
+// `dtype: 'q8'` são BIT A BIT IDÊNTICOS (diferença máxima por componente 0,
+// cosseno 1,000000 nos textos de prova). Por isso a identidade sem sufixo é
+// aceita como equivalente a `@q8` — do contrário toda instalação existente
+// reindexaria a memória inteira sem necessidade nenhuma.
+const LEGACY_DTYPE = 'q8';
+
+// A ÚNICA combinação que existiu antes desta migração. Os artefatos do Docling
+// gravados no formato antigo (array puro, sem identidade) vieram daqui — o
+// chamador passa esta constante em vez de deixar a função adivinhar. Assim, se
+// a instalação tiver trocado de modelo OU de quantização, os vetores antigos são
+// corretamente recusados em vez de comparados com uma escala diferente.
+export const LEGACY_EMBEDDING_IDENTITY = 'Xenova/multilingual-e5-small';
+
+// Uma identidade gravada antes ainda produz vetores comparáveis com os de hoje?
+// Função pura: é o que decide entre reaproveitar o que está no banco e reindexar.
+// `null`/`undefined` = nada gravado (instalação nova), não "desconhecido": quem
+// tem um valor legado precisa passá-lo explicitamente.
+export function isEmbeddingIdentityCompatible(stored) {
+  if (stored == null || stored === '') return true;  // nada gravado: nada a comparar
+  if (stored === embeddingModelId) return true;      // idêntica
+  // Formato legado (sem sufixo) equivale ao modelo com a quantização antiga.
+  if (!stored.includes('@')) return `${stored}@${LEGACY_DTYPE}` === embeddingModelId;
+  return false;
+}
 let pipePromise = null;
 let degraded = false;
 
@@ -34,11 +87,11 @@ async function getPipe() {
   if (degraded) return null;
   if (!pipePromise) {
     pipePromise = (async () => {
-      const { pipeline, env: tenv } = await import('@xenova/transformers');
+      const { pipeline, env: tenv } = await import('@huggingface/transformers');
       const dataDir = path.resolve(process.env.DATA_DIR || './data');
       tenv.cacheDir = process.env.TRANSFORMERS_CACHE || path.join(dataDir, 'models');
       tenv.allowLocalModels = false;
-      return await pipeline('feature-extraction', MODEL);
+      return await pipeline('feature-extraction', MODEL, { dtype: DTYPE });
     })().catch(err => {
       console.error('[memória] embeddings indisponíveis (usando busca por palavras):', err.message);
       degraded = true;

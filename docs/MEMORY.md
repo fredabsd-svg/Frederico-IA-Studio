@@ -55,7 +55,7 @@ e frequentemente o correto.
 
 | Camada | Comportamento |
 | --- | --- |
-| `embeddings.js` | `@xenova/transformers` **local** (sem custo, sem enviar dados a terceiros) |
+| `embeddings.js` | `@huggingface/transformers` **local** (sem custo, sem enviar dados a terceiros), quantização `q8` fixa |
 | Degradação | Sem o modelo disponível, `embeddingsDegraded` liga e a busca cai para lexical — o app **não** para |
 | `vectorStore.js` | Usa **pgvector** quando a extensão existe; senão, varredura em JS |
 | Troca de modelo | `maybeReindexOnModelChange()` no boot detecta a mudança e reindexa |
