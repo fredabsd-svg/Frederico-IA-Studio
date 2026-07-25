@@ -27,6 +27,63 @@ adversarial não foram executados. Critérios e caminho em `docs/AUDITORIA_2026-
 
 ---
 
+## O que mudou por último (embeddings sem a árvore vulnerável, 2026-07-25 — PR novo)
+
+Migração de `@xenova/transformers@2.17.2` (parado, sem manutenção) para
+`@huggingface/transformers@4` — o sucessor mantido. **`npm audit --omit=dev`:
+7 vulnerabilidades (1 crítica, 4 altas) → 2 moderadas.**
+
+| Antes | Depois |
+| --- | --- |
+| `protobufjs` — execução arbitrária de código (**crítica**) | eliminada |
+| `onnx-proto`, `onnxruntime-web` (altas) | eliminadas |
+| `sharp <0.35.0` — CVEs herdadas do libvips (alta) | `override` para `^0.35.3` |
+| `adm-zip <0.6.0` — ZIP forjado aloca 4 GB (alta, via `onnxruntime-node`) | `override` para `^0.6.0` |
+| `uuid <11.1.1` via `dockerode` (moderada) | **mantida, com justificativa** |
+
+O `npm` marcava `sharp` e `adm-zip` como "sem correção" porque as versões
+corrigidas estão fora do range declarado pelas dependências; `overrides` no
+`package.json` resolve. A do `uuid` exigiria forçar um major no `dockerode`
+(que declara `^10.0.0`) — e o `dockerode` só chama `uuid.v4()` sem o parâmetro
+`buf`, então o caminho vulnerável (bounds check em v3/v5/v6 com `buf`) é
+**inalcançável**. Forçar o major arriscaria a execução de código no sandbox
+para fechar um risco que não existe aqui.
+
+### A armadilha real: a quantização
+
+A v4 mudou o padrão de `model_quantized.onnx` (int8) para `model.onnx` (fp32).
+Aceitar o padrão novo teria dois efeitos silenciosos: o download saltaria de
+**113 MB para 470 MB** (com a RAM proporcional, numa VPS pequena) e — pior — os
+**vetores mudariam de valor**. Os que já estão no banco e nos artefatos do
+Docling foram gerados com o modelo quantizado; a comparação por cosseno passaria
+a misturar duas escalas, sem erro nenhum, só recuperação pior.
+
+Correção em três partes:
+1. `dtype: 'q8'` fixo (`EMBEDDING_DTYPE`) — exatamente o mesmo arquivo de pesos.
+2. A **identidade do vetor** passou a incluir a quantização
+   (`Xenova/multilingual-e5-small@q8`). `maybeReindexOnModelChange` compara essa
+   identidade, então qualquer mudança futura de modelo OU de quantização dispara
+   a reindexação sozinha — antes só o nome do modelo era comparado.
+3. Os vetores dos artefatos do Docling ficam **fora** do alcance do `reindexAll`
+   (que só cobre `memory` e `conversation_chunks`) e a chave do cache do Docling
+   não inclui o modelo. Agora a identidade é gravada junto do `embeddings.json` e
+   conferida na leitura; quando não bate, os vetores são descartados e o
+   `context.js` cai na seleção por palavras — pior, porém correta.
+
+**Medição, não suposição:** instalando as duas bibliotecas lado a lado e gerando
+os mesmos textos, os vetores do `@xenova/transformers@2.17.2` e do
+`@huggingface/transformers@4` com `q8` são **bit a bit idênticos** (diferença
+máxima por componente 0, cosseno 1,000000). Por isso a identidade legada (sem
+sufixo) é aceita como equivalente: **nenhuma instalação existente reindexa nem
+reprocessa documento** por causa desta troca.
+
+**Validação:** backend 590 testes (577 ✓, 13 pulados por exigirem PostgreSQL),
+frontend 45 ✓, build ✓. Testes novos: `memory/embeddings.test.js` (14) e
+`docling/artifacts.test.js` (7), cobrindo identidade, compatibilidade retroativa
+e as entradas degeneradas dos artefatos.
+
+---
+
 ## O que mudou por último (auditoria PC + Docling, 2026-07-25 — PR #132)
 
 Auditoria de ponta a ponta da integração com o computador do usuário e da camada

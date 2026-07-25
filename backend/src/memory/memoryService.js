@@ -1,6 +1,6 @@
 import { db, now } from '../db.js';
 import { nanoid } from 'nanoid';
-import { embed, embedOne, cosine, keywordScore, embeddingsDegraded, embeddingModelId } from './embeddings.js';
+import { embed, embedOne, cosine, keywordScore, embeddingsDegraded, embeddingModelId, isEmbeddingIdentityCompatible } from './embeddings.js';
 import { vectorSearchAvailable, toVectorLiteral, saveEmbeddingVec, knnCandidates } from './vectorStore.js';
 
 // Se o modelo de embeddings mudou desde a última execução, os vetores antigos
@@ -9,7 +9,12 @@ import { vectorSearchAvailable, toVectorLiteral, saveEmbeddingVec, knnCandidates
 export async function maybeReindexOnModelChange() {
   try {
     const prev = (await db.prepare("SELECT value FROM settings WHERE key='embedding_model'").get())?.value;
-    if (prev && prev !== embeddingModelId) {
+    // A comparação passa por `isEmbeddingIdentityCompatible` em vez de `!==`
+    // direto: a identidade agora inclui a quantização, e o valor gravado pelas
+    // versões anteriores não tinha sufixo. Sem esta ponte, toda instalação
+    // existente reindexaria a memória inteira só pela mudança de formato do
+    // rótulo — os vetores em si são idênticos (medido na migração).
+    if (prev && !isEmbeddingIdentityCompatible(prev)) {
       console.log(`[memória] modelo de embeddings mudou (${prev} → ${embeddingModelId}); reindexando em segundo plano...`);
       reindexAll().then(() => console.log('[memória] reindexação concluída.')).catch(e => console.error('[memória] reindex falhou:', e.message));
     }

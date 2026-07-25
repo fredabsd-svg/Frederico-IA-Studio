@@ -18,7 +18,7 @@ import { estimateTokens, savings } from './tokens.js';
 import { summarizeTables } from './tables.js';
 import { chunkEmbedText } from './semantic.js';
 import { classifyFailure } from './failures.js';
-import { embed, embeddingsDegraded } from '../memory/embeddings.js';
+import { embed, embeddingsDegraded, embeddingModelId, isEmbeddingIdentityCompatible, LEGACY_EMBEDDING_IDENTITY } from '../memory/embeddings.js';
 
 export function cacheRoot() {
   return process.env.DOCLING_CACHE_ROOT || path.resolve(process.env.WORKSPACE_ROOT || './workspaces', '..', 'docling-cache');
@@ -59,10 +59,32 @@ export function readArtifacts(userId, hash, cfg) {
   let chunks = null; try { const c = read('chunks.json'); chunks = c ? JSON.parse(c) : null; } catch {}
   // Vetores dos chunks (base64 → Buffer Float32), alinhados a chunks. null quando
   // não houver busca semântica para este documento.
+  //
+  // COMPATIBILIDADE: estes vetores ficam FORA do alcance do `reindexAll` (que só
+  // cobre memory e conversation_chunks), e a chave do cache do Docling
+  // (configVersion) não inclui o modelo de embeddings. Se a identidade do vetor
+  // mudar — troca de modelo ou de quantização —, comparar o vetor gravado com um
+  // vetor de pergunta novo produz cosseno sem sentido: nenhum erro, só seleção de
+  // trechos pior. Por isso a identidade é gravada junto e conferida aqui; quando
+  // não bate, os vetores são descartados e o context.js cai na seleção por
+  // palavras (pior, porém correta) até o documento ser reprocessado.
   let embeddings = null;
   try {
     const e = read('embeddings.json');
-    if (e) embeddings = JSON.parse(e).map(b => (b ? Buffer.from(b, 'base64') : null));
+    if (e) {
+      const parsed = JSON.parse(e);
+      // Formato antigo = array puro, gravado quando só existia uma combinação de
+      // modelo e quantização (LEGACY_EMBEDDING_IDENTITY). Passar a identidade
+      // explicitamente — em vez de assumir "compatível" — mantém os artefatos já
+      // processados valendo nesta migração, mas recusa os vetores se a instalação
+      // tiver trocado de modelo ou de quantização.
+      const legacy = Array.isArray(parsed);
+      const list = legacy ? parsed : parsed?.vectors;
+      const identity = legacy ? LEGACY_EMBEDDING_IDENTITY : parsed?.model;
+      if (Array.isArray(list) && identity && isEmbeddingIdentityCompatible(identity)) {
+        embeddings = list.map(b => (b ? Buffer.from(b, 'base64') : null));
+      }
+    }
   } catch {}
   // Figuras/gráficos: metadados + caminho ABSOLUTO do PNG (para anexar a um
   // modelo com visão). `file` vem relativo no JSON e é resolvido aqui.
@@ -218,7 +240,13 @@ export async function processFile({ userId, conversationId, fileId, filePath, fi
         const vecs = await embed(chunks.map(chunkEmbedText), 'passage');
         if (vecs.some(Boolean)) {
           const b64 = vecs.map(v => (v ? Buffer.from(v).toString('base64') : null));
-          fs.writeFileSync(path.join(dir, 'embeddings.json'), JSON.stringify(b64), 'utf8');
+          // Grava a IDENTIDADE do vetor junto: sem ela não há como saber, depois,
+          // se estes vetores ainda são comparáveis com os que o app gera hoje.
+          fs.writeFileSync(
+            path.join(dir, 'embeddings.json'),
+            JSON.stringify({ model: embeddingModelId, vectors: b64 }),
+            'utf8',
+          );
           semanticReady = true;
         }
       }

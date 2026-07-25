@@ -254,7 +254,7 @@ upload → kickProcessing → processFile
 
 ```
 indexer.js       → após cada resposta, fatia e indexa a conversa (conversation_chunks)
-embeddings.js    → @xenova/transformers local; degrada para busca lexical se indisponível
+embeddings.js    → @huggingface/transformers local (q8); degrada para busca lexical se indisponível
 vectorStore.js   → pgvector quando a extensão existe; senão, varredura em JS
 memoryService.js → memórias explícitas (memory) + sugestões (memory_suggestions)
 relevanceScorer.js → Context Builder 3.0: pontua CADA memória e CADA conversa antiga
