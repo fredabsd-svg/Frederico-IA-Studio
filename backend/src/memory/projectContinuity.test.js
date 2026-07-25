@@ -13,6 +13,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+// Sem modelo de embeddings: a busca semântica cai para comparação por palavras.
+// Precisa vir ANTES de qualquer import que carregue embeddings.js.
+//
+// O CI instala com `npm ci --ignore-scripts`, então o binário nativo do `sharp`
+// (dependência do transformers.js) não é compilado. No Node 20 a falha do import
+// escapa como `unhandledRejection` e o runner a atribui ao teste em execução.
+// Um `process.on('unhandledRejection')` NÃO resolve: o node:test rastreia
+// rejeições por conta própria e falha o teste mesmo assim. Desligar na origem
+// funciona nas duas versões de Node e ainda torna o teste determinístico (sem
+// depender de baixar ~112 MB de modelo).
+//
+// Este é o único teste da suíte que exercita o caminho de embeddings com banco.
+// As asserções aqui são sobre vínculo de projeto e recência, não sobre
+// similaridade semântica — o modo por palavras não enfraquece nenhuma delas.
+process.env.EMBEDDINGS_DISABLED = '1';
+
 // Sonda a conexão de verdade em vez de olhar só a variável: o CI aponta
 // DATABASE_URL para um Postgres inalcançável de propósito, justamente para
 // conferir que a suíte degrada com `skip` em vez de falhar.

@@ -26,6 +26,14 @@ const MODEL = process.env.EMBEDDING_MODEL || 'Xenova/multilingual-e5-small';
 //      proporcional — num app que roda em VPS pequena.
 // Fixando `q8` usamos exatamente o MESMO arquivo de pesos de antes.
 const DTYPE = process.env.EMBEDDING_DTYPE || 'q8';
+// Desliga o modelo local por configuração: a busca semântica vira busca por
+// palavras (o mesmo modo degradado de quando o modelo não carrega). Serve para:
+//   * instalação offline, onde o download do modelo nunca vai acontecer;
+//   * ambientes que instalam com `npm ci --ignore-scripts` — o binário nativo do
+//     `sharp` (dependência do transformers.js) não é compilado, e em algumas
+//     versões do Node a falha do import escapa como `unhandledRejection`;
+//   * testes determinísticos, que não devem depender de baixar ~112 MB.
+const EMBEDDINGS_DISABLED = /^(1|true|yes|on)$/i.test(String(process.env.EMBEDDINGS_DISABLED || ''));
 
 // Cache de vetores: embeddings são DETERMINÍSTICOS (mesmo texto → mesmo vetor),
 // então recomputá-los é puro desperdício de CPU no caminho da resposta. A mesma
@@ -81,7 +89,7 @@ export function isEmbeddingIdentityCompatible(stored) {
   return false;
 }
 let pipePromise = null;
-let degraded = false;
+let degraded = EMBEDDINGS_DISABLED;
 
 async function getPipe() {
   if (degraded) return null;
