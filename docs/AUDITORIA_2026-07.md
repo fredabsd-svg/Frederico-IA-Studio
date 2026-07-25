@@ -32,15 +32,16 @@ As cinco foram **corrigidas, testadas e commitadas**. Junto vieram containers ó
 (F-03), a política honesta do antivírus (F-10) e um CI que passou a exercitar
 PostgreSQL real, as 20 migrações e todos os testes do frontend (F-08, F-09).
 
-**Permanece aberto** o risco arquitetural do `docker.sock` montado no backend (F-04) e um
-conjunto de lacunas de teste e de frontend (F-12 a F-23) que exigem trabalho maior que uma
-auditoria.
+O sexto risco crítico — **F-04, o `docker.sock` montado no backend** — foi corrigido numa
+segunda rodada, com um guarda validador dedicado (§3, F-04). Permanecem abertas as lacunas
+de teste e de frontend (F-11 a F-23), que são ausências de cobertura, não defeitos
+reproduzidos.
 
 **Classificação final: 🟡 AMARELO — apto com restrições.** Critérios e condições em §6.
 
-**Testes:** 536 no total (backend 495, frontend 37, Python 4), **todos passando**, com
-PostgreSQL real e **zero pulados**. Linha de base antes da auditoria: 452 no backend
-(2 pulados), 34 no frontend — dos quais o CI executava 10.
+**Testes:** 578 no total (backend 497, frontend 37, guarda do Docker 40, Python 4),
+**todos passando**, com PostgreSQL real e **zero pulados**. Linha de base antes da
+auditoria: 452 no backend (2 pulados), 34 no frontend — dos quais o CI executava 10.
 
 ---
 
@@ -51,7 +52,7 @@ PostgreSQL real e **zero pulados**. Linha de base antes da auditoria: 452 no bac
 | F-01 | Workspace e sandbox sem dono na chave física | 🔴 Crítica | ✅ Corrigido |
 | F-02 | `destroyAllSandboxes()` global disparado por ação de um usuário | 🔴 Crítica | ✅ Corrigido |
 | F-03 | Containers órfãos após queda do backend | 🟠 Alta | ✅ Corrigido |
-| F-04 | `/var/run/docker.sock` montado no backend | 🔴 Crítica | ⚠️ **Aberto** (mitigado + plano) |
+| F-04 | `/var/run/docker.sock` montado no backend | 🔴 Crítica | ✅ **Corrigido** (guarda validador) |
 | F-05 | Backup sem a chave mestra → restauração perde todos os segredos | 🔴 Crítica | ✅ Corrigido |
 | F-06 | Admin por e-mail não verificado, sem auditoria | 🔴 Crítica | ✅ Corrigido |
 | F-07 | Upload em memória (~1 GB/requisição), sem cota nem concorrência | 🟠 Alta | ✅ Corrigido |
@@ -106,7 +107,7 @@ PostgreSQL real e **zero pulados**. Linha de base antes da auditoria: 452 no bac
   acesso, sem sobrescrever destino existente.
 - **Testes adicionados:** `sandbox.isolation.test.js` (11 casos) e
   `routes/upload.http.test.js` (isolamento em rota real).
-- **Resultado:** 536 testes passando, 0 falhas.
+- **Resultado:** 578 testes passando, 0 falhas.
 - **Risco de regressão:** **médio** — mudança de assinatura ampla. Mitigado por
   `userId` obrigatório (um chamador esquecido **falha**, não grava em caminho sem dono) e
   por `grep` exaustivo dos pontos de chamada.
@@ -151,6 +152,66 @@ PostgreSQL real e **zero pulados**. Linha de base antes da auditoria: 452 no bac
 - **Risco de regressão:** baixo para instalação de processo único (a suposição do app).
   Com dois backends no mesmo daemon, é preciso `SANDBOX_RECONCILE_ON_BOOT=false` —
   documentado em `docs/OPERATIONS.md`.
+
+### F-04 — `/var/run/docker.sock` montado no backend
+
+- **Severidade:** Crítica · **Status:** Corrigido (segunda rodada, 2026-07-25)
+- **Evidência:** `docker-compose.prod.yml` e `docker-compose.yml` →
+  `volumes: - /var/run/docker.sock:/var/run/docker.sock` no serviço `backend`.
+- **Impacto:** o socket do Docker equivale a root no host — basta criar um container com
+  `Privileged: true` e `/` montado. Uma RCE no processo Node deixava de ser "comprometeu o
+  backend" e virava "comprometeu a máquina".
+- **Superfície de entrada:** dependências npm, parsing de upload,
+  `spawn('git'|'pg_dump'|'tar'|'chown')`, Chromium headless do `web_fetch`, e conteúdo
+  controlado pelo modelo chegando a essas bordas.
+- **Por que o plano original não bastava:** a primeira rodada recomendou um
+  `docker-socket-proxy` de prateleira. Esses proxies filtram **método e caminho**; como o
+  app precisa de `POST /containers/create`, liberar a rota libera junto o corpo que cria o
+  container privilegiado. **Filtrar rota não fecharia o buraco** — a correção precisava ler
+  e validar o corpo da requisição.
+- **Correção implementada:** serviço `docker-guard/` (Node, **sem dependências npm** — a
+  menor superfície possível no processo que carrega o privilégio). É o único container com
+  o socket; o backend fala HTTP com ele (`DOCKER_HOST=tcp://docker-guard:2375`). Como o
+  dockerode fala o mesmo protocolo por TCP ou socket, o código de sandbox do backend não
+  mudou. O guarda aplica:
+  1. **allowlist de rotas** — só ping, version, inspect de imagem, list/create/start/kill/
+     wait/remove/inspect de container e create/start/inspect de exec. `build`,
+     `images/create`, `volumes`, `networks`, `commit`, `swarm`, `plugins`, `attach`,
+     `archive` e `containers/{id}/update` são 403;
+  2. **validação do corpo de `/containers/create`** — recusa `Privileged`, `CapAdd`,
+     `Devices`, GPU, `PidMode`, `IpcMode`/`UTSMode`/`UsernsMode` do host, `CgroupParent`,
+     `Sysctls`, `NetworkMode: host|container:*`, volume nomeado e `Mounts` não-bind;
+  3. **endurecimento obrigatório (fail-closed)** — exige `CapDrop:[ALL]`,
+     `no-new-privileges:true` e `PidsLimit`/`Memory`/`NanoCpus` dentro de tetos;
+  4. **binds** — origem tem de estar sob a raiz autorizada (com `..` normalizado e sem
+     confundir prefixo), e há blocklist absoluta de `/`, `/var/run`, `/proc`, `/sys`,
+     `/dev`, `/etc`, `/root`, `/usr`, `/var/lib/docker` e qualquer `docker.sock`;
+  5. **posse por label** — operar container/exec exige `com.frederico.app`; alvo
+     desconhecido é recusado. Um backend comprometido não derruba o Postgres do compose;
+  6. **imagem** — só `SANDBOX_IMAGE`.
+  O `hijack`/upgrade do exec (por onde toda ferramenta executa) é validado uma vez e vira
+  túnel de bytes, preservando o protocolo de frames do Docker.
+- **Como reproduzir (antes):** com o socket no backend, um `POST /containers/create` com
+  `{"HostConfig":{"Privileged":true,"Binds":["/:/host"]}}` daria root no host. Hoje o
+  guarda responde 403 e a requisição **não chega** ao daemon — é exatamente o que os testes
+  verificam.
+- **Testes adicionados:** `docker-guard/src/policy.test.js` (28 casos, um por fuga
+  conhecida) e `docker-guard/src/server.test.js` (12 casos — proxy real contra um daemon
+  Docker **falso** num socket unix, incluindo o hijack do exec);
+  `backend/src/sandbox.dockerAccess.test.js` (2). O job `compose` do CI reprova o build se
+  alguém devolver o socket ao backend em qualquer um dos `docker-compose`.
+- **Resultado:** 578 testes passando, 0 falhas.
+- **Risco de regressão:** **médio-baixo** no caminho feliz (o backend não mudou de
+  biblioteca nem de chamadas), **mas** o guarda passa a ser um ponto no caminho de toda
+  execução de ferramenta: se a política recusar algo legítimo, a ferramenta falha. Mitigado
+  por (a) todo pedido legítimo do `createContainer` atual estar coberto por teste, (b) toda
+  recusa ser registrada com motivo (`[guard] RECUSADO ...`), (c) `/api/health` mostrar o
+  modo vigente.
+- **Rollback:** devolver `- /var/run/docker.sock:/var/run/docker.sock` ao backend e remover
+  `DOCKER_HOST`. O backend volta a falar direto com o daemon (e o CI passa a reprovar, de
+  propósito).
+- **Pendências:** Docker rootless/Podman continua recomendado como camada extra — reduz o
+  impacto de uma falha no *próprio* guarda. Egress do sandbox segue sem allowlist (F-05b).
 
 ### F-05 — Backup sem a chave mestra
 
@@ -266,25 +327,6 @@ PostgreSQL real e **zero pulados**. Linha de base antes da auditoria: 452 no bac
 
 ## 4. Riscos abertos
 
-### F-04 — `/var/run/docker.sock` montado no backend
-
-- **Severidade:** Crítica · **Status:** **Aberto** (mitigado, com plano)
-- **Evidência:** `docker-compose.prod.yml` → `volumes: - /var/run/docker.sock:/var/run/docker.sock`.
-- **Impacto:** o socket do Docker equivale a root no host. Uma RCE no processo Node deixa
-  de ser "comprometeu o backend" e vira "comprometeu a máquina".
-- **Por que não foi corrigido:** substituir exige um serviço de gerenciamento de sandbox
-  ou um proxy Docker — mudança de arquitetura e de topologia de deploy, com risco de
-  quebrar a execução de ferramentas. O enunciado é explícito: *"não remova o sandbox sem
-  oferecer uma arquitetura funcional de substituição"*. Entregar meia migração seria pior
-  que documentar o risco com um plano.
-- **Mitigações presentes:** backend sem porta exposta; nenhum `spawn` monta argumento por
-  concatenação de entrada do usuário; caminhos por `safeJoin`/`realInside`; o socket
-  **nunca** é montado dentro do sandbox; container sem privilégios e sem rede por padrão.
-- **Plano (esforço crescente):** (1) `docker-socket-proxy` com allowlist de endpoints e
-  recusa de `Privileged`/binds fora do `WORKSPACE_ROOT`; (2) Docker rootless ou Podman;
-  (3) serviço `sandbox-manager` dedicado, autenticado por token interno.
-  Detalhes em `docs/SECURITY.md` §4.2.
-
 ### F-05b — Egress do sandbox sem allowlist quando a rede é habilitada
 
 - **Severidade:** Média · **Status:** Aberto
@@ -374,14 +416,17 @@ teste que reproduz o problema; migrações, boot e portão de autenticação pas
 verificados em CI com PostgreSQL real; a recuperação de desastre deixou de ser uma perda
 silenciosa de segredos.
 
-**Por que não verde:** F-04 (`docker.sock`) é um risco crítico **aberto**, e testes
-essenciais listados no próprio escopo da auditoria — SSE integrado, retomada após
-interrupção real, pipeline retomável, injeção adversarial — **não foram executados**.
-O enunciado é claro: não se classifica como pronto enquanto isso for verdade.
+**Por que ainda não verde:** com o F-04 corrigido, **não há mais risco crítico aberto**.
+O que impede o verde agora é só a segunda condição do enunciado: testes essenciais
+listados no próprio escopo — SSE integrado, retomada após interrupção real do processo,
+pipeline multimodelo retomável, injeção adversarial — **não foram executados**. Não se
+classifica como pronto enquanto isso for verdade.
 
 **Condições para operar em amarelo:**
 
-1. Host **dedicado** ao Frederico AI Studio (por causa do F-04), sem outras cargas.
+1. `docker-guard` no ar, com `/api/health` mostrando `sandbox.docker.modo = "guarda"`.
+   Host dedicado continua recomendado — agora como defesa em profundidade, não como
+   única barreira.
 2. `CLAMAV_REQUIRED=true`.
 3. `ADMIN_USER_ID` fixado, e `user_roles` conferido depois do primeiro boot.
 4. `UPLOAD_USER_QUOTA_MB` definido.
@@ -395,13 +440,13 @@ O enunciado é claro: não se classifica como pronto enquanto isso for verdade.
 
 | # | Item | Achado |
 | --- | --- | --- |
-| 1 | Proxy Docker com allowlist (ou rootless) | F-04 |
-| 2 | Teste integrado de SSE: duas conversas, troca rápida, reconexão | F-12 |
-| 3 | Provedor HTTP simulado completo | F-13 |
-| 4 | Retomada após interrupção real do processo | F-14 |
-| 5 | Coordenador durável do pipeline multimodelo | F-15 |
-| 6 | Bateria adversarial de injeção de prompt | F-17 |
-| 7 | Suíte de relevância de memória com casos negativos | F-16 |
-| 8 | Egress controlado quando a rede do sandbox é habilitada | F-05b |
+| 1 | Teste integrado de SSE: duas conversas, troca rápida, reconexão | F-12 |
+| 2 | Provedor HTTP simulado completo | F-13 |
+| 3 | Retomada após interrupção real do processo | F-14 |
+| 4 | Coordenador durável do pipeline multimodelo | F-15 |
+| 5 | Bateria adversarial de injeção de prompt | F-17 |
+| 6 | Suíte de relevância de memória com casos negativos | F-16 |
+| 7 | Egress controlado quando a rede do sandbox é habilitada | F-05b |
+| 8 | Docker rootless/Podman (camada extra sobre o guarda) | F-04 |
 | 9 | Validação de artefato com arquivos reais | F-23 |
 | 10 | Decomposição do `App.jsx` + code splitting | F-20 |

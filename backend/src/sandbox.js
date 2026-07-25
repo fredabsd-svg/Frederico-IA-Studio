@@ -7,9 +7,42 @@ import { nanoid } from 'nanoid';
 import { db } from './db.js';
 import { healthMetrics } from './healthMetrics.js';
 
-let docker = new Docker({ socketPath: '/var/run/docker.sock' });
+// Conexão com o Docker. Em produção o backend NÃO enxerga /var/run/docker.sock:
+// ele fala com o GUARDA (docker-guard), que detém o socket e valida cada
+// requisição — allowlist de rotas, inspeção do corpo de /containers/create e
+// posse por label. Ver docs/SECURITY.md §4 (achado F-04).
+//
+// O dockerode fala o mesmo protocolo por TCP ou por socket, então basta apontar
+// DOCKER_HOST=tcp://docker-guard:2375; nada muda no restante deste arquivo.
+function createDockerClient() {
+  const host = String(process.env.DOCKER_HOST || '').trim();
+  if (host) {
+    try {
+      const url = new URL(host.replace(/^tcp:/, 'http:'));
+      return new Docker({ host: url.hostname, port: Number(url.port || 2375), protocol: 'http' });
+    } catch {
+      console.error(`[sandbox] DOCKER_HOST inválido (${host}); usando o socket local.`);
+    }
+  }
+  const socketPath = process.env.DOCKER_SOCKET || '/var/run/docker.sock';
+  // Aviso alto: sem o guarda, uma RCE no backend vira comprometimento do host.
+  if (process.env.NODE_ENV === 'production') {
+    console.warn(`[sandbox] ATENÇÃO: falando direto com ${socketPath}. Em produção, use o serviço docker-guard (DOCKER_HOST=tcp://docker-guard:2375) — ver docs/SECURITY.md §4.`);
+  }
+  return new Docker({ socketPath });
+}
+
+let docker = createDockerClient();
 // Só para testes: injeta um cliente Docker falso (o node:test não tem daemon).
 export function _setDockerClient(client) { docker = client; }
+
+// Exposto no /api/health: o operador precisa enxergar se o guarda está no
+// caminho ou se o backend está com o socket na mão.
+export function dockerAccessMode() {
+  return String(process.env.DOCKER_HOST || '').trim()
+    ? { modo: 'guarda', destino: process.env.DOCKER_HOST }
+    : { modo: 'socket-direto', destino: process.env.DOCKER_SOCKET || '/var/run/docker.sock' };
+}
 
 // ---- Identidade dos containers do Frederico (labels) ------------------------
 // Todo sandbox criado por este backend leva estas labels. Elas são a base da

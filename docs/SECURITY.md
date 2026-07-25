@@ -78,10 +78,10 @@ Provas: `backend/src/sandbox.isolation.test.js` (11 casos) e
 | Saída | Teto de 8 MB acumulados no backend (evita OOM com `yes`) |
 | Comandos | `GUARD_PATTERNS` bloqueia destrutivos/escalada — defesa em profundidade, não a fronteira |
 
-### 4.2 O risco que permanece: `/var/run/docker.sock` no backend
+### 4.2 O risco original: `/var/run/docker.sock` no backend (F-04 — CORRIGIDO)
 
-`docker-compose.prod.yml` monta o socket do Docker no container do backend. **Quem
-controla esse socket controla o host** (é possível criar um container privilegiado com
+Até 2026-07-25 o `docker-compose.prod.yml` montava o socket do Docker no container do
+backend. **Quem controla esse socket controla o host** (é possível criar um container privilegiado com
 `/` montado). Ou seja: uma RCE no processo Node deixa de ser "comprometeu o backend" e
 passa a ser "comprometeu a máquina".
 
@@ -89,33 +89,76 @@ passa a ser "comprometeu a máquina".
 parsing de upload, `spawn('git'|'pg_dump'|'tar'|'chown')`, Chromium headless do `web_fetch`,
 e conteúdo controlado pelo modelo chegando a essas bordas.
 
-**Mitigações já presentes:** o backend não expõe porta; nenhum argumento de `spawn` é
-concatenado a partir de string do usuário; caminhos passam por `safeJoin`/`realInside`;
-o sandbox não recebe o socket.
+### 4.3 A correção: o guarda validador (`docker-guard`)
 
-**O que NÃO foi feito** (decisão consciente desta auditoria — reescrever a arquitetura de
-execução é grande demais para uma auditoria e removeria o sandbox sem substituto pronto):
-serviço separado de gerenciamento de sandbox, proxy Docker com allowlist, socket rootless.
+**Status: F-04 CORRIGIDO.** O backend não monta mais o socket. Quem o detém é um serviço
+dedicado — `docker-guard/` — e o backend fala HTTP com ele
+(`DOCKER_HOST=tcp://docker-guard:2375`).
 
-**Arquitetura de substituição recomendada** (ordem de esforço crescente):
+#### Por que não um proxy de socket pronto
 
-1. **Proxy Docker com allowlist** (baixo esforço, ganho alto).
-   Subir um `docker-socket-proxy` na rede interna, dar ao backend `DOCKER_HOST=tcp://…` e
-   liberar **apenas** `containers create/start/exec/inspect/remove/list` e `images inspect`.
-   Bloquear `POST /containers/create` com `Privileged`, `Binds` fora de `WORKSPACE_ROOT`,
-   `PidMode`, `NetworkMode: host` e montagem do próprio socket. O backend deixa de poder
-   pedir um container privilegiado mesmo se comprometido.
-2. **Rootless Docker ou Podman** para o daemon que atende os sandboxes: o socket passa a
-   valer os privilégios de um usuário sem poder, não de root.
-3. **Serviço `sandbox-manager` dedicado** (esforço maior): único com o socket, API HTTP
-   mínima autenticada por token interno, rede isolada, que valida imagem por digest, recusa
-   mounts arbitrários e aplica cotas. O backend nunca fala Docker diretamente.
+Os proxies conhecidos de socket Docker filtram por **método e caminho**. O app precisa
+legitimamente de `POST /containers/create`; liberar essa rota libera junto o **corpo** que
+cria um container privilegiado com `/` montado. **Filtrar rota não fecha o buraco.** Por
+isso o guarda lê e valida o corpo — é o que o plano anterior desta seção não previa.
 
-Até que uma delas exista, a instalação deve ser tratada como **confiável no host**:
-não colocar dados de terceiros num host compartilhado com outras cargas. Registrado
-como **risco aberto F-04**.
+#### O que o guarda faz
 
-### 4.3 Egress quando a rede é habilitada
+| Camada | Regra |
+| --- | --- |
+| **Allowlist de rotas** | Só o que o sandbox usa: ping, version, inspect de imagem, list/create/start/kill/wait/remove/inspect de container, create/start/inspect de exec. Tudo mais é 403 — inclusive `build`, `images/create`, `volumes`, `networks`, `commit`, `swarm`, `plugins`, `attach`, `archive` (ler/escrever arquivos dentro de containers) e `containers/{id}/update` (afrouxar limites depois de criado). |
+| **Corpo de `/containers/create`** | Recusa `Privileged`, `CapAdd`, `Devices`, `DeviceRequests` (GPU), `PidMode`, `IpcMode` (host), `UTSMode`, `UsernsMode`, `CgroupParent`, `Sysctls`, `NetworkMode: host` ou `container:*`, volumes nomeados e `Mounts` que não sejam bind. |
+| **Endurecimento obrigatório** (fail-closed) | **Exige** `CapDrop: [ALL]`, `no-new-privileges:true`, `PidsLimit`, `Memory` e `NanoCpus` dentro de tetos. Um backend comprometido não consegue pedir um container "mole". |
+| **Imagem** | Só `SANDBOX_IMAGE`. Não dá para subir nada do registry. |
+| **Binds** | Toda origem precisa estar sob a raiz de workspace autorizada, com `..` normalizado antes da comparação e sem confundir prefixo (`/ws-outro` **não** está dentro de `/ws`). Blocklist absoluta: `/`, `/var/run`, `/proc`, `/sys`, `/dev`, `/etc`, `/root`, `/usr`, `/var/lib/docker` e **qualquer caminho terminado em `docker.sock`**. |
+| **Posse por label** | Operações sobre um container/exec específico só passam se o alvo tiver `com.frederico.app=frederico-ai-studio`. Um backend comprometido não derruba o Postgres nem lê outro container. Exec é resolvido até o container dono. Fail-closed: alvo desconhecido = recusa. |
+| **Label obrigatória na criação** | Sem ela o container ficaria invisível para a reconciliação de órfãos e para a checagem de posse. |
+
+O `hijack`/upgrade do exec — por onde **toda** execução de ferramenta passa — é validado
+uma vez e então vira túnel de bytes, preservando o protocolo de frames do Docker.
+
+O guarda **não tem dependências npm**: só `http`/`net` do Node. O processo que carrega o
+privilégio tem a menor superfície possível.
+
+#### O que isso muda na prática
+
+Antes: RCE no backend ⇒ **root no host**.
+Depois: RCE no backend ⇒ o atacante consegue, no máximo, o que o sandbox já podia fazer —
+criar/derrubar sandboxes do próprio app, sem privilégio, sem capabilities, sem montar nada
+fora do workspace e sem tocar em containers de terceiros.
+
+#### Provas
+
+`docker-guard/src/policy.test.js` (28 casos) e `docker-guard/src/server.test.js` (12 casos,
+proxy real contra um daemon Docker **falso** num socket unix). Cada teste de bloqueio
+verifica também que a requisição **não chegou** ao daemon. O CI ainda reprova o build se
+alguém devolver o socket ao backend em qualquer um dos `docker-compose`.
+
+#### Configuração
+
+| Variável (no serviço `docker-guard`) | Padrão | Papel |
+| --- | --- | --- |
+| `GUARD_WORKSPACE_ROOT` | `HOST_WORKSPACE_ROOT` | Raiz autorizada dos binds, **no caminho do host** |
+| `GUARD_ALLOW_PC_FOLDERS` | `false` | Libera binds fora do workspace (instalação pessoal). A blocklist continua valendo |
+| `GUARD_EXTRA_BIND_ROOTS` | vazio | Restringe as pastas do PC a raízes declaradas |
+| `GUARD_MAX_MEMORY_MB` / `GUARD_MAX_CPUS` / `GUARD_MAX_PIDS` | 8192 / 4 / 1024 | Tetos por container |
+| `GUARD_LOG_ALLOWED` | `false` | Registra também o que passou (depuração) |
+
+Toda recusa é registrada com motivo (`[guard] RECUSADO ...`). `/api/health` mostra em
+`sandbox.docker` se o backend está atrás do guarda (`modo: "guarda"`) ou com o socket na
+mão (`modo: "socket-direto"`) — este último ainda é possível em desenvolvimento local e
+emite aviso no boot em produção.
+
+#### Camadas ainda recomendadas (defesa em profundidade)
+
+O guarda remove a escalada trivial. Duas medidas adicionais valem num ambiente hostil:
+
+1. **Docker rootless ou Podman** para o daemon dos sandboxes — o socket passa a valer os
+   privilégios de um usuário sem poder, não de root. Reduz o impacto de uma falha *no
+   próprio guarda*.
+2. **Host dedicado** continua sendo boa prática, ainda que não seja mais a única barreira.
+
+### 4.4 Egress quando a rede é habilitada
 
 Com `networkEnabled`, o container ganha a rede padrão do Docker — **sem** allowlist de
 destino. Um script gerado pelo modelo pode alcançar a rede interna do compose (Postgres,
@@ -212,5 +255,6 @@ Ver `backend/src/privacy.js`.
 - [ ] `UPLOAD_USER_QUOTA_MB` definido
 - [ ] `FRONTEND_URL`/`BETTER_AUTH_URL` corretos (CORS)
 - [ ] Backup automatizado **incluindo** a chave mestra, com restauração testada
-- [ ] Proxy Docker com allowlist **ou** aceitação formal do risco F-04
+- [ ] `docker-guard` no ar e `/api/health` mostrando `sandbox.docker.modo = "guarda"`
+- [ ] `GUARD_ALLOW_PC_FOLDERS=false` (a menos que seja instalação pessoal)
 - [ ] `/api/health` monitorado (antivírus degradado, órfãos de sandbox, `unhandledRejections`)

@@ -13,12 +13,16 @@ ferramentas em sandbox Docker, geração de documentos, Docling, conector GitHub
 autenticação Better Auth (e-mail/senha, GitHub, Google).
 
 **Prontidão para produção: 🟡 amarelo — apto com restrições.**
-Critérios, condições de operação e caminho para o verde em `docs/AUDITORIA_2026-07.md` §6.
+**Nenhum risco crítico aberto** desde o fechamento do F-04 (o backend não detém mais o
+socket do Docker — ver `docs/SECURITY.md` §4.3). O que ainda impede o verde é a cobertura
+de testes: SSE integrado, retomada após interrupção real, pipeline retomável e injeção
+adversarial não foram executados. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
 - **Branch:** `claude/frederico-audit-production-gduf4s` → **PR [#133](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/133)**
-- **Última validação:** 2026-07-25 — **536 testes, todos passando** (backend 495,
-  frontend 37, Python 4), com PostgreSQL real e **zero pulados**; 20 migrações aplicadas
-  em banco vazio, reexecução idempotente; boot do backend e `/api/health` verificados.
+- **Última validação:** 2026-07-25 — **578 testes, todos passando** (backend 497,
+  frontend 37, guarda do Docker 40, Python 4), com PostgreSQL real e **zero pulados**;
+  20 migrações aplicadas em banco vazio, reexecução idempotente; boot do backend e
+  `/api/health` verificados.
   A contagem vem de `cd backend && npm run test:count` — não a escreva à mão.
 
 ---
@@ -31,6 +35,7 @@ Critérios, condições de operação e caminho para o verde em `docs/AUDITORIA_
 | `1ff3c4f` | Backup com chave mestra + manifesto/checksum/trava; administração persistida em `user_roles` com auditoria |
 | `fd70dac` | Uploads por streaming em disco, tetos e cotas; antivírus com status honesto |
 | `ad7879c` | CI com PostgreSQL real, migrações, todos os testes do frontend, smoke de boot e portão de autenticação |
+| PR seguinte | **F-04 fechado**: serviço `docker-guard` — o backend perdeu o socket do Docker |
 | `7a56b1f` | Reorganização da documentação e relatório da auditoria |
 
 Detalhe de cada achado (evidência, causa raiz, correção, testes) em
@@ -63,7 +68,12 @@ em `docs/CHANGELOG_HISTORY.md`. Piso configurável por `MEMORY_MIN_SIM`.
    `[workspace] migração de layout: N movido(s)…` e `[sandbox] reconciliação: …`.
 3. Acesse uma rota administrativa uma vez para o papel de admin ser gravado em
    `user_roles` (o `ADMIN_EMAIL` atual continua valendo como bootstrap).
-4. Em instalação pública, revise: `CLAMAV_REQUIRED=true`, `ADMIN_USER_ID`,
+4. Confira em `/api/health` que `sandbox.docker.modo` é `"guarda"` — o backend deve
+   alcançar o Docker **só** pelo serviço `docker-guard`.
+5. Em instalação PESSOAL com "Pastas do PC" ligadas, ponha também
+   `GUARD_ALLOW_PC_FOLDERS=true` no serviço `docker-guard` — do contrário os mounts de
+   pastas do host serão recusados (de propósito).
+6. Em instalação pública, revise: `CLAMAV_REQUIRED=true`, `ADMIN_USER_ID`,
    `UPLOAD_USER_QUOTA_MB`. Ver `docs/SECURITY.md` §10.
 
 ---
@@ -72,7 +82,6 @@ em `docs/CHANGELOG_HISTORY.md`. Piso configurável por `MEMORY_MIN_SIM`.
 
 | ID | Risco | Severidade |
 | --- | --- | --- |
-| **F-04** | `/var/run/docker.sock` montado no backend — uma RCE no Node vira comprometimento do host. Plano de substituição em `docs/SECURITY.md` §4.2. | 🔴 Crítica |
 | F-15 | Pipeline multimodelo sem coordenador durável: reinício não retoma a próxima etapa pendente. | 🟠 Alta |
 | F-12 | Sem teste integrado de SSE (duas conversas simultâneas, troca rápida, reconexão). | 🟠 Alta |
 | F-14 | Sem teste de retomada após interrupção **real** do processo. | 🟠 Alta |
@@ -86,17 +95,15 @@ em `docs/CHANGELOG_HISTORY.md`. Piso configurável por `MEMORY_MIN_SIM`.
 
 ## Próximos passos (em ordem)
 
-1. **F-04** — subir um `docker-socket-proxy` com allowlist e apontar `DOCKER_HOST` do
-   backend para ele. Maior ganho de segurança por esforço de todo o backlog.
-2. **F-12/F-13** — provedor HTTP simulado + teste integrado de SSE. Destrava boa parte
+1. **F-12/F-13** — provedor HTTP simulado + teste integrado de SSE. Destrava boa parte
    das outras lacunas de teste.
-3. **F-14** — retomada após `kill -9` no meio de um run, com checkpoint real.
-4. **F-15** — tabela `pipeline_runs` (`pipeline_run_id`, `current_stage`,
+2. **F-14** — retomada após `kill -9` no meio de um run, com checkpoint real.
+3. **F-15** — tabela `pipeline_runs` (`pipeline_run_id`, `current_stage`,
    `completed_stages`, `pending_stages`, `artifact_versions`, `status`, `checkpoint`,
    `updated_at`) e retomada no boot.
-5. **F-17** — casos adversariais: README malicioso no repositório, memória envenenada,
+4. **F-17** — casos adversariais: README malicioso no repositório, memória envenenada,
    delimitador fechado à força, resposta maliciosa de outro modelo.
-6. **F-20** — extrair de `App.jsx`, por etapas: shell → estado da conversa → estado da
+5. **F-20** — extrair de `App.jsx`, por etapas: shell → estado da conversa → estado da
    execução → drawers/configurações. `React.lazy` nos painéis pesados.
 
 ---
@@ -133,6 +140,10 @@ cd frontend && npm run check   # lint + testes + build
 - **Comentários explicam o porquê**, não o quê — em especial o problema que a linha
   resolve. É o padrão do repositório e o que torna este código legível meses depois.
 - **Commits pequenos e rastreáveis**, um assunto por commit.
+
+- **Docker só pelo guarda.** O backend não monta `/var/run/docker.sock`; quem monta é o
+  `docker-guard`, que valida cada requisição. Rota nova para o daemon exige liberar em
+  `docker-guard/src/policy.js` — negar por padrão é a regra.
 
 **Mapa da documentação:** `docs/ARCHITECTURE.md` (como funciona) ·
 `docs/SECURITY.md` (ameaças e controles) · `docs/OPERATIONS.md` (runbook) ·

@@ -68,6 +68,39 @@ services:
       retries: 3
       start_period: 60s
 
+  # GUARDA DO DOCKER — o único container que enxerga /var/run/docker.sock.
+  # Fecha o achado F-04 da auditoria: antes o backend detinha o socket, e uma RCE
+  # no Node viraria root no host (basta criar um container privilegiado com "/"
+  # montado). Agora o backend fala HTTP com este serviço, que valida CADA
+  # requisição — allowlist de rotas, inspeção do CORPO de /containers/create
+  # (Privileged, binds, capabilities, imagem, cotas) e posse por label.
+  # Sem `ports`: alcançável só pela rede interna do compose.
+  # Ver docs/SECURITY.md §4.
+  docker-guard:
+    build:
+      context: .
+      dockerfile: docker-guard/Dockerfile
+    environment:
+      - SANDBOX_IMAGE=${SANDBOX_IMAGE:-frederico-ai-sandbox:latest}
+      # Raiz PERMITIDA para os binds, no caminho do HOST (o daemon interpreta
+      # binds como caminhos do host). Precisa casar com HOST_WORKSPACE_ROOT.
+      - GUARD_WORKSPACE_ROOT=${PWD}/workspaces
+      # "Pastas do PC" montam caminhos fora do workspace. Numa VPS pública fica
+      # desligado; em instalação pessoal, ligue AQUI também (a blocklist de
+      # /etc, /proc, docker.sock etc. continua valendo em qualquer caso).
+      - GUARD_ALLOW_PC_FOLDERS=${GUARD_ALLOW_PC_FOLDERS:-false}
+      - GUARD_EXTRA_BIND_ROOTS=${GUARD_EXTRA_BIND_ROOTS:-}
+      - GUARD_MAX_MEMORY_MB=${GUARD_MAX_MEMORY_MB:-8192}
+      - GUARD_MAX_CPUS=${GUARD_MAX_CPUS:-4}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:2375/_ping').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
   backend:
     build: .
     ports:
@@ -89,11 +122,15 @@ services:
       - DOCLING_SERVICE_URL=http://docling-service:8000
       - DOCLING_INTERNAL_TOKEN=${DOCLING_INTERNAL_TOKEN:-}
       - DOCLING_CACHE_ROOT=/app/data/docling-cache
+      # Todo acesso ao Docker passa pelo guarda validador (ver F-04).
+      - DOCKER_HOST=tcp://docker-guard:2375
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+      # SEM /var/run/docker.sock: o backend não fala com o daemon direto (F-04).
       - ./workspaces:/app/workspaces
       - ./data:/app/data
     depends_on:
+      docker-guard:
+        condition: service_started
       sandbox-image:
         condition: service_completed_successfully
       postgres:
