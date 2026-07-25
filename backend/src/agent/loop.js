@@ -26,7 +26,7 @@ import { saveCheckpoint, clearCheckpoint, isResumableReason, buildResumeMessages
 import { untrustedContext } from './promptRegistry.js';
 import { emitExecutionState, finalExecutionState } from './executionState.js';
 import { resolveSandboxNetwork, isToolCallAllowed } from './assistantPolicy.js';
-import { SUBAGENT_TOOL_NAME, subagentToolDefinition, shouldOfferSubagentTool, maxSubagentsPerRun, runSubagent } from './subagents.js';
+import { SUBAGENT_TOOL_NAME, subagentToolDefinition, shouldOfferSubagentTool, maxSubagentsPerRun, createSubagentLimiter, runSubagent } from './subagents.js';
 import { buildDocumentContext, DOC_PRECEDENCE_NOTE } from '../docling/context.js';
 import { doclingImageParts, visualElementsNote } from '../docling/vision.js';
 
@@ -155,6 +155,8 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   });
   if (subagentsOffered) requestedTools = [...requestedTools, subagentToolDefinition];
   const subagentBudget = maxSubagentsPerRun();
+  // Teto de delegações SIMULTÂNEAS (as do mesmo lote correm em paralelo).
+  const delegationSlot = createSubagentLimiter();
   let subagentRuns = 0;
 
   const uploadNoteForRun = !lowSignalTurn ? uploadsNote(conversationId) : null;
@@ -849,8 +851,37 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
       completedNaturally = true;
       break;
     }
+    // DELEGAÇÕES EM PARALELO: as chamadas de sub-agente deste lote são lançadas
+    // ANTES do laço, todas de uma vez (respeitando o teto de simultâneas). As
+    // demais ferramentas continuam em série, e o laço abaixo apenas AGUARDA a
+    // delegação quando chega a vez dela — assim os resultados entram na ordem
+    // das tool_calls (o array de mensagens exige esse pareamento), mas o tempo
+    // de parede é o da delegação mais lenta, não a soma de todas.
+    const delegations = new Map();
+    for (const call of stepToolCalls) {
+      if (call.function.name !== SUBAGENT_TOOL_NAME) continue;
+      if (!isToolCallAllowed(SUBAGENT_TOOL_NAME, tools) || subagentRuns >= subagentBudget) break;
+      subagentRuns += 1;
+      let delegationArgs = {};
+      try { delegationArgs = JSON.parse(call.function.arguments || '{}'); } catch {}
+      onEvent({ type: 'tool_start', id: call.id, name: SUBAGENT_TOOL_NAME, preview: String(delegationArgs.tarefa || '').slice(0, 400) });
+      emitExecutionState(onEvent, 'tool_running', SUBAGENT_TOOL_NAME, { runId, step, tool: SUBAGENT_TOOL_NAME });
+      delegations.set(call.id, delegationSlot(() => runSubagent({
+        userId,
+        conversationId,
+        args: delegationArgs,
+        model: chosenModel,
+        effort,
+        control,
+        onEvent,
+        depth: subagentDepth,
+        webSearch: webSearchActive,
+        delegationId: call.id
+      })));
+    }
     for (let callIdx = 0; callIdx < stepToolCalls.length; callIdx++) {
       const call = stepToolCalls[callIdx];
+      const pendingDelegation = delegations.get(call.id) || null;
       if (await gate(control, onEvent)) {
         stopped = true;
         // Parada ENTRE chamadas do mesmo lote: o assistant já foi empilhado com
@@ -861,6 +892,15 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
         // resultado "cancelado" para cada chamada restante, mantendo o par
         // tool_call/tool_result íntegro e o checkpoint retomável.
         for (let k = callIdx; k < stepToolCalls.length; k++) {
+          // Delegação já lançada e ainda em voo: o filho enxerga o mesmo
+          // controle e encerra sozinho — esperamos por ele só para somar a
+          // usage do trabalho que chegou a acontecer antes da parada.
+          const inFlight = delegations.get(stepToolCalls[k].id);
+          if (inFlight) {
+            const partial = await inFlight;
+            if (partial?.usage) addUsage(usage, partial.usage);
+            onEvent({ type: 'tool_result', id: stepToolCalls[k].id, name: SUBAGENT_TOOL_NAME, content: partial?.result?.slice(0, 2000) || '' });
+          }
           messages.push({ role: 'tool', tool_call_id: stepToolCalls[k].id, content: JSON.stringify({ error: 'Execução interrompida pelo usuário antes desta ferramenta.', code: 'CANCELED' }) });
         }
         break;
@@ -875,8 +915,11 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
       // conteúdo escrito (o resultado só traz o caminho) para o painel de detalhe
       // mostrar o que a IA de fato salvou. Limitado para não pesar no stream.
       const detail = name === 'write_file' ? String(args.content || '').slice(0, 4000) : '';
-      onEvent({ type: 'tool_start', name, preview, ...(detail ? { detail } : {}) });
-      emitExecutionState(onEvent, 'tool_running', name, { runId, step, tool: name });
+      // As delegações já anunciaram o início ao serem lançadas (acima).
+      if (!pendingDelegation) {
+        onEvent({ type: 'tool_start', id: call.id, name, preview, ...(detail ? { detail } : {}) });
+        emitExecutionState(onEvent, 'tool_running', name, { runId, step, tool: name });
+      }
       let result;
       const allowedToolCall = isToolCallAllowed(name, tools);
       const isWebTool = name === 'web_search' || name === 'web_fetch';
@@ -894,23 +937,13 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
         result = JSON.stringify({ error: 'Esta URL já foi consultada nesta tarefa. Use uma fonte nova ou conclua com as evidências obtidas.', code: 'DUPLICATE_WEB_FETCH', url: args.url });
       } else if (name === SUBAGENT_TOOL_NAME) {
         // Delegação: NÃO passa pelo runTool (o sub-agente não roda no sandbox —
-        // ele é outro runAgent). O teto por execução é aplicado aqui, no estilo
-        // dos demais freios do loop: devolve erro e o modelo segue sem delegar.
-        if (subagentRuns >= subagentBudget) {
+        // ele é outro runAgent). Sem promessa lançada, a chamada ficou fora do
+        // teto desta execução: devolve erro e o modelo segue sem delegar, no
+        // estilo dos demais freios do loop.
+        if (!pendingDelegation) {
           result = JSON.stringify({ error: `O limite de ${subagentBudget} delegações desta tarefa foi alcançado. Conclua a subtarefa você mesmo.`, code: 'SUBAGENT_LIMIT' });
         } else {
-          subagentRuns += 1;
-          const delegation = await runSubagent({
-            userId,
-            conversationId,
-            args,
-            model: chosenModel,
-            effort,
-            control,
-            onEvent,
-            depth: subagentDepth,
-            webSearch: webSearchActive
-          });
+          const delegation = await pendingDelegation;
           // A usage do filho entra na do pai — o custo real nunca some do painel.
           if (delegation.usage) addUsage(usage, delegation.usage);
           if (delegation.stopped) stopped = true;
@@ -936,7 +969,7 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
       // `content` é cortado em 2000 chars e o caminho poderia ficar de fora.
       let thumb = '';
       if (name === 'web_fetch') { try { thumb = JSON.parse(result).thumb || ''; } catch {} }
-      onEvent({ type: 'tool_result', name, content: result.slice(0, 2000), ...(thumb ? { thumb } : {}) });
+      onEvent({ type: 'tool_result', id: call.id, name, content: result.slice(0, 2000), ...(thumb ? { thumb } : {}) });
       emitExecutionState(onEvent, 'processing_result', name, { runId, step, tool: name });
       messages.push({ role: 'tool', tool_call_id: call.id, content: result });
       // Freio de loop: conta falhas consecutivas das ferramentas

@@ -9,6 +9,8 @@ const {
   MAX_SUBAGENT_DEPTH,
   SUBAGENT_TOOL_NAME,
   buildSubagentTask,
+  createSubagentLimiter,
+  maxParallelSubagents,
   maxSubagentsPerRun,
   runSubagent,
   shouldOfferSubagentTool,
@@ -147,6 +149,19 @@ test('summarizeSubagentResult trunca resultado longo e marca subtarefa incomplet
 
 // ---- Stream: o texto do filho não pode vazar na resposta do pai ----
 
+test('subagentEventForwarder prefixa o id da chamada com o da delegação', () => {
+  // Com duas delegações em paralelo, os ids de ferramenta dos dois filhos podem
+  // coincidir (cada provedor numera do seu jeito). Sem o prefixo, a interface
+  // fecharia o cartão da delegação errada.
+  const vistos = [];
+  const forwardA = subagentEventForwarder(ev => vistos.push(ev), 'Fiscal', 'call_a');
+  const forwardB = subagentEventForwarder(ev => vistos.push(ev), 'Contábil', 'call_b');
+  forwardA({ type: 'tool_start', id: 'call_1', name: 'bash' });
+  forwardB({ type: 'tool_start', id: 'call_1', name: 'bash' });
+  assert.deepEqual(vistos.map(ev => ev.id), ['call_a:call_1', 'call_b:call_1']);
+  assert.deepEqual(vistos.map(ev => ev.parentId), ['call_a', 'call_b']);
+});
+
 test('subagentEventForwarder repassa ferramentas e bloqueia o texto do sub-agente', () => {
   const vistos = [];
   const forward = subagentEventForwarder(ev => vistos.push(ev), 'Fiscal');
@@ -176,6 +191,59 @@ test('maxSubagentsPerRun tem padrão seguro e respeita o teto absoluto', () => {
     assert.equal(maxSubagentsPerRun(), 4);
   } finally {
     if (previous === undefined) delete process.env.SUBAGENT_MAX_PER_RUN; else process.env.SUBAGENT_MAX_PER_RUN = previous;
+  }
+});
+
+// ---- Paralelismo entre delegações do mesmo lote ----
+
+test('createSubagentLimiter roda em paralelo até o teto e enfileira o resto', async () => {
+  const limitar = createSubagentLimiter(2);
+  const iniciadas = [];
+  let ativas = 0;
+  let pico = 0;
+  const resolvers = new Map();
+  const tarefa = (n) => () => new Promise(resolve => {
+    iniciadas.push(n);
+    ativas += 1;
+    pico = Math.max(pico, ativas);
+    resolvers.set(n, () => { ativas -= 1; resolve(n); });
+  });
+
+  const promessas = [limitar(tarefa(1)), limitar(tarefa(2)), limitar(tarefa(3))];
+  await new Promise(setImmediate);
+  assert.deepEqual(iniciadas, [1, 2], 'só duas delegações começam de imediato');
+
+  resolvers.get(1)();                        // libera a primeira vaga
+  await new Promise(setImmediate);
+  assert.deepEqual(iniciadas, [1, 2, 3], 'a terceira começou ao abrir vaga');
+  assert.equal(pico, 2, 'nunca passou do teto de simultâneas');
+
+  resolvers.get(2)();
+  resolvers.get(3)();
+  assert.deepEqual(await Promise.all(promessas), [1, 2, 3]);
+});
+
+test('createSubagentLimiter não trava a fila quando uma delegação falha', async () => {
+  const limitar = createSubagentLimiter(1);
+  const falha = limitar(() => Promise.reject(new Error('quebrou')));
+  const depois = limitar(() => Promise.resolve('seguiu'));
+  await assert.rejects(falha, /quebrou/);
+  assert.equal(await depois, 'seguiu');
+});
+
+test('maxParallelSubagents tem padrão conservador e teto absoluto', () => {
+  const previous = process.env.SUBAGENT_MAX_PARALLEL;
+  try {
+    delete process.env.SUBAGENT_MAX_PARALLEL;
+    assert.equal(maxParallelSubagents(), 2);
+    process.env.SUBAGENT_MAX_PARALLEL = '3';
+    assert.equal(maxParallelSubagents(), 3);
+    process.env.SUBAGENT_MAX_PARALLEL = '50';
+    assert.equal(maxParallelSubagents(), 4, 'nunca acima de 4 delegações simultâneas');
+    process.env.SUBAGENT_MAX_PARALLEL = '0';
+    assert.equal(maxParallelSubagents(), 2);
+  } finally {
+    if (previous === undefined) delete process.env.SUBAGENT_MAX_PARALLEL; else process.env.SUBAGENT_MAX_PARALLEL = previous;
   }
 });
 

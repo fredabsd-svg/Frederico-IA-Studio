@@ -36,6 +36,30 @@ export function maxSubagentsPerRun() {
   return Math.min(Math.floor(configured), 10);
 }
 
+// Quantas delegações do MESMO lote podem correr ao mesmo tempo. As paralelas
+// dividem o sandbox da conversa e disputam o mesmo provedor, então o padrão é
+// conservador: ganho de tempo real sem multiplicar rate limit e CPU.
+export function maxParallelSubagents() {
+  const configured = Number(process.env.SUBAGENT_MAX_PARALLEL);
+  if (!Number.isFinite(configured) || configured <= 0) return 2;
+  return Math.min(Math.floor(configured), 4);
+}
+
+// Limitador de concorrência: a tarefa começa assim que houver vaga e a chamada
+// devolve, na hora, a promessa do resultado — quem lança não bloqueia.
+export function createSubagentLimiter(limit = maxParallelSubagents()) {
+  const active = new Set();
+  return (task) => {
+    const slot = active.size >= limit ? Promise.race([...active]) : Promise.resolve();
+    const promise = slot.then(task);
+    // A fila só acompanha a CONCLUSÃO (erro incluído) — uma rejeição aqui não
+    // pode derrubar o Promise.race de quem está esperando vaga.
+    const tracked = promise.then(() => {}, () => {}).then(() => { active.delete(tracked); });
+    active.add(tracked);
+    return promise;
+  };
+}
+
 export function subagentResultChars() {
   const configured = Number(process.env.SUBAGENT_RESULT_CHARS);
   return Number.isFinite(configured) && configured >= 1000 ? Math.floor(configured) : DEFAULT_RESULT_CHARS;
@@ -114,10 +138,18 @@ export function summarizeSubagentResult(result, { especialista = null, limit = n
 }
 
 // Filtra e etiqueta os eventos do filho antes de repassá-los ao stream do pai.
-export function subagentEventForwarder(onEvent, label) {
+// O `id` da chamada é prefixado com o id da delegação: com duas delegações em
+// paralelo, os ids de ferramenta dos dois filhos poderiam coincidir e a
+// interface fecharia o cartão errado.
+export function subagentEventForwarder(onEvent, label, delegationId = '') {
   return (event) => {
     if (!event || !FORWARDED_EVENTS.has(event.type)) return;
-    onEvent({ ...event, subagent: label });
+    onEvent({
+      ...event,
+      ...(event.id ? { id: `${delegationId}:${event.id}` } : {}),
+      subagent: label,
+      ...(delegationId ? { parentId: delegationId } : {})
+    });
   };
 }
 
@@ -163,6 +195,7 @@ export async function runSubagent({
   onEvent,
   depth = 0,
   webSearch = false,
+  delegationId = '',
   runner = null
 }) {
   if (depth >= MAX_SUBAGENT_DEPTH) {
@@ -189,7 +222,7 @@ export async function runSubagent({
       webSearch,
       effort: subagentEffort(effort),
       control,                          // herda pausar/parar do pai
-      onEvent: subagentEventForwarder(onEvent, label),
+      onEvent: subagentEventForwarder(onEvent, label, delegationId),
       saveUserMessage: false,
       persistReply: false,
       subagentDepth: depth + 1,

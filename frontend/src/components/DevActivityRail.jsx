@@ -49,12 +49,17 @@ const STATE_LABELS = {
 // Agrupa chamadas CONSECUTIVAS da mesma ferramenta num só item ("3 comandos no
 // terminal" em vez de 3 cartões soltos) — cada item guarda os passos originais
 // para o detalhe, ao expandir.
+//
+// O agrupamento também considera QUEM executou: com sub-agentes em paralelo, as
+// etapas de dois deles chegam intercaladas, e juntar um `bash` do Fiscal com um
+// `bash` do Contábil num "2× comando" contaria uma história que não aconteceu.
 function groupSteps(steps) {
   const groups = [];
   for (const s of steps) {
+    const owner = s.subagent || null;
     const last = groups[groups.length - 1];
-    if (last && last.name === s.name) last.items.push(s);
-    else groups.push({ name: s.name, items: [s] });
+    if (last && last.name === s.name && last.owner === owner) last.items.push(s);
+    else groups.push({ name: s.name, owner, items: [s] });
   }
   return groups;
 }
@@ -108,6 +113,7 @@ function ActivityList({ steps }) {
           <span className="devActItemCat"><CatIcon size={13}/></span>
           <span className="devActItemText">
             <b>{multi ? `${g.items.length}× ${info.label}` : info.label}</b>
+            {g.owner && <span className="devActWho">{g.owner}</span>}
             {!multi && info.detail && <small>{info.detail}</small>}
           </span>
           {multi && <ChevronDown size={14} className={`devActChev ${open ? 'up' : ''}`}/>}

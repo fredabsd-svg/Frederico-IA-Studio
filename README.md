@@ -46,7 +46,7 @@ você escolhe é enviado direto ao provedor, sem substituição.
 | 🔀 | **Multiconversa** | Várias conversas processando AO MESMO TEMPO (teto configurável); indicador girando na barra lateral mostra quais estão ativas, e trocar de conversa não interrompe nem mistura nada — ao voltar, o andamento reconecta ao vivo |
 | ⏭️ | **Retomada real (checkpoint)** | Tarefa interrompida por limite de ciclos, queda do provedor ou watchdog salva o estado no banco; o botão **Continuar de onde parei** retoma do ponto exato (sem refazer ferramentas nem arquivos já prontos) e sobrevive a reinício do backend |
 | 👥 | **Modo Equipe** | Combina perspectivas de vários assistentes |
-| 🧬 | **Sub-agentes** | O agente decide sozinho, no meio do trabalho, delegar uma subtarefa pesada a um sub-agente com **contexto próprio**, que executa ferramentas de verdade no mesmo workspace e devolve só o resultado — o passo a passo dele não ocupa a conversa. Com teto de delegações por execução, sem cascata (sub-agente não delega) e desligável por variável de ambiente |
+| 🧬 | **Sub-agentes** | O agente decide sozinho, no meio do trabalho, delegar uma subtarefa pesada a um sub-agente com **contexto próprio**, que executa ferramentas de verdade no mesmo workspace e devolve só o resultado — o passo a passo dele não ocupa a conversa. Delegações do mesmo lote correm **em paralelo**, e no Ambiente de Trabalho as ações de cada sub-agente aparecem **recuadas dentro da delegação** que as disparou, com o nome de quem executou. Com teto de delegações por execução, sem cascata (sub-agente não delega) e desligável por variável de ambiente |
 | 🧩 | **Sistema Multimodelo** | 2+ modelos de IA na mesma mensagem: Comparação lado a lado, Conselho de IAs (coordenador consolida), Debate em rodadas e Especialistas em sequência — com função por modelo, estimativa de custo, orçamento máximo, interrupção por modelo e equipes salvas (presets) |
 | 🖥️ | **Sandbox Docker** | Um container por conversa para Python, Bash e geração de arquivos |
 | 🛠️ | **Ambiente de Trabalho da IA** | As ações da IA (terminal, código, arquivos, pesquisa, navegador) ficam agrupadas em **uma sessão ao vivo** — cartão compacto no chat que expande numa janela com o passo a passo, o detalhe de cada ação e a **miniatura real** das páginas abertas |
@@ -140,8 +140,20 @@ ele gera aparecem normalmente em `outputs/` —, mas não é dono da conversa: n
 grava mensagem, não grava checkpoint (a linha de retomada pertence ao run do
 pai), não herda autorização de escrita no GitHub e não delega de novo. Só o
 resultado resumido entra no contexto do agente principal, e a `usage` do filho é
-somada à do pai para o custo real nunca sumir do painel. Ajuste em
-`SUBAGENTS_ENABLED`, `SUBAGENT_MAX_PER_RUN` e `SUBAGENT_RESULT_CHARS`.
+somada à do pai para o custo real nunca sumir do painel.
+
+As delegações pedidas no MESMO lote são lançadas todas de uma vez (até
+`SUBAGENT_MAX_PARALLEL`) e o laço de ferramentas apenas aguarda cada uma quando
+chega a vez dela: os resultados entram na ordem das `tool_calls` — o array de
+mensagens exige esse pareamento — mas o tempo de parede é o da delegação mais
+lenta, não a soma de todas. Como isso deixa várias ferramentas em execução ao
+mesmo tempo, cada `tool_start`/`tool_result` viaja com o `id` da chamada e a
+interface casa o resultado por esse id (`frontend/src/hooks/useChat.js`) em vez
+de fechar "a última em execução". No Ambiente de Trabalho, as ações dos
+sub-agentes são recolhidas para dentro da delegação que as originou
+(`frontend/src/executionSteps.js`), com o nome de quem executou. Ajuste em
+`SUBAGENTS_ENABLED`, `SUBAGENT_MAX_PER_RUN`, `SUBAGENT_MAX_PARALLEL` e
+`SUBAGENT_RESULT_CHARS`.
 
 **Memória + cache.** A **memória de longo prazo** (perfil, notas, fatos e
 recuperação semântica de conversas antigas) preserva o contexto entre mensagens:
