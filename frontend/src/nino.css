@@ -1,0 +1,128 @@
+/* Nino — o personagem do copiloto. Importe DEPOIS de companion.css em main.jsx.
+   Substitui o bloco "---- Personagem (avatar) ----" + "Estados visuais" +
+   "Nível de animação" + os @keyframes cmp* do companion.css (ver LEIA-ME.md).
+
+   Regras: só transform e opacity animam (nada de filter/blur em laço); o nível
+   de animação do usuário entra pela prop `quiet` do componente e por
+   .anim-reduzido / .anim-nenhum na raiz do Companion; prefers-reduced-motion
+   desliga por conta própria. */
+
+.ninoRoot {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: block;
+  color: #c67139;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform .18s ease, filter .18s ease;
+}
+.ninoRoot svg { display: block; overflow: visible; }
+.ninoRoot:hover { transform: translateY(-4px); filter: brightness(1.05) saturate(1.06); }
+.ninoRoot:active { transform: translateY(-1px) scale(.98); }
+
+.ninoBody { transform-origin: 60px 116px; }
+.ninoEyes { transform-origin: 60px 64px; }
+.ninoHalo { transform-origin: 60px 72px; transition: opacity .28s ease; }
+.ninoSprout { transform-origin: 64px 22px; animation: ninoLeafSway 4.6s ease-in-out infinite; }
+.ninoGlyph { font-family: Caprasimo, Georgia, serif; transform-origin: 100px 30px; animation: ninoDot 1.6s ease-in-out infinite; }
+.ninoGlyph.fast { animation-duration: 1s; }
+
+.ninoTalkMouth { transform-origin: 60px 89px; animation: ninoTalk .34s ease-in-out infinite; }
+.ninoRing { transform-origin: 60px 70px; animation: ninoSpin 5s linear infinite; }
+
+.ninoDot { animation: ninoDot 1.1s ease-in-out infinite; }
+.ninoDot.d2 { animation-delay: .16s; }
+.ninoDot.d3 { animation-delay: .32s; }
+.ninoSpark { animation: ninoSpark 1.1s ease-out infinite; }
+.ninoSpark.s2 { animation-delay: .12s; }
+.ninoSpark.s3 { animation-delay: .24s; }
+.ninoSpark.s4 { animation-delay: .36s; }
+.ninoSpark.s5 { animation-delay: .48s; }
+.ninoSpark.s6 { animation-delay: .6s; }
+.ninoSparks { transform-origin: 83px 9px; animation: ninoSpark 1.5s ease-out infinite; }
+
+/* Fala curta ao cutucar */
+.ninoPhrase {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% - 6px);
+  transform: translateX(-50%);
+  background: #f5ead8;
+  color: #201e1d;
+  font-weight: 700;
+  font-size: 13px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  white-space: nowrap;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, .28);
+  animation: ninoBubbleIn .22s ease-out;
+  pointer-events: none;
+  z-index: 2;
+}
+
+@keyframes ninoFloat { 0%, 100% { transform: translateY(0) rotate(0); } 50% { transform: translateY(-5px) rotate(-1.2deg); } }
+@keyframes ninoBob { 0%, 100% { transform: translateY(0) scale(1, 1); } 50% { transform: translateY(-2px) scale(1.015, .985); } }
+@keyframes ninoThink { 0%, 100% { transform: translateY(0) rotate(-3deg); } 50% { transform: translateY(-3px) rotate(3deg); } }
+@keyframes ninoPulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.045); } }
+@keyframes ninoTilt { 0%, 100% { transform: rotate(-7deg); } 50% { transform: rotate(7deg); } }
+@keyframes ninoHop {
+  0% { transform: translateY(0) scale(1, 1); }
+  25% { transform: translateY(-16px) scale(.93, 1.09); }
+  55% { transform: translateY(0) scale(1.1, .9); }
+  75% { transform: translateY(-5px) scale(.98, 1.02); }
+  100% { transform: translateY(0) scale(1, 1); }
+}
+@keyframes ninoShake {
+  0%, 100% { transform: translateX(0) rotate(0); }
+  20% { transform: translateX(-5px) rotate(-3deg); }
+  45% { transform: translateX(5px) rotate(3deg); }
+  70% { transform: translateX(-3px) rotate(-1.5deg); }
+}
+@keyframes ninoBoing {
+  0% { transform: scale(1, 1); }
+  30% { transform: scale(1.16, .84) translateY(4px); }
+  55% { transform: scale(.9, 1.14) translateY(-8px); }
+  80% { transform: scale(1.04, .97); }
+  100% { transform: scale(1, 1); }
+}
+@keyframes ninoSpin { to { transform: rotate(360deg); } }
+@keyframes ninoDot { 0%, 100% { transform: translateY(0) scale(.86); opacity: .5; } 50% { transform: translateY(-3px) scale(1); opacity: 1; } }
+@keyframes ninoSpark { 0% { transform: scale(.3); opacity: 0; } 35% { opacity: 1; } 100% { transform: scale(1.5); opacity: 0; } }
+@keyframes ninoTalk { 0%, 100% { transform: scaleY(.45); } 50% { transform: scaleY(1); } }
+@keyframes ninoLeafSway { 0%, 100% { transform: rotate(-6deg); } 50% { transform: rotate(8deg); } }
+@keyframes ninoBubbleIn { from { opacity: 0; transform: translateY(6px) scale(.9); } to { opacity: 1; transform: none; } }
+
+/* Níveis de animação escolhidos pelo usuário (a raiz do Companion já carrega
+   .anim-reduzido / .anim-nenhum). As EXPRESSÕES nunca são desligadas — só o
+   movimento —, porque é a expressão que carrega o significado do estado. */
+.anim-reduzido .ninoSprout,
+.anim-reduzido .ninoRing,
+.anim-reduzido .ninoDot,
+.anim-reduzido .ninoSpark,
+.anim-reduzido .ninoSparks { animation-duration: 8s !important; }
+.anim-nenhum .ninoBody,
+.anim-nenhum .ninoSprout,
+.anim-nenhum .ninoRing,
+.anim-nenhum .ninoDot,
+.anim-nenhum .ninoSpark,
+.anim-nenhum .ninoSparks,
+.anim-nenhum .ninoGlyph,
+.anim-nenhum .ninoTalkMouth { animation: none !important; }
+.anim-nenhum .ninoRoot:hover { transform: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ninoBody, .ninoSprout, .ninoRing, .ninoDot, .ninoSpark, .ninoSparks,
+  .ninoGlyph, .ninoTalkMouth, .ninoPhrase { animation: none !important; }
+  .ninoRoot { transition: none; }
+}
+
+/* Celular: quando ocioso, encolhe e se encosta na borda direita. A classe é
+   posta/retirada pelo Companion (timer de 8s, qualquer toque devolve). */
+@media (max-width: 560px) {
+  .companionRoot.tucked .cmpAvatarWrap {
+    transform: translateX(30%) scale(.84);
+    opacity: .8;
+    transition: transform .3s ease, opacity .3s ease;
+  }
+  .companionRoot .cmpAvatarWrap { transition: transform .3s ease, opacity .3s ease; }
+}

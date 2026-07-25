@@ -10,6 +10,7 @@ import './landing.css';
 import './dev-handoff.css';
 import './camera.css';
 import './companion.css';
+import './nino.css';
 import './docling.css';
 import './promptcoach.css';
 import './copilot.css';

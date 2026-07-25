@@ -1,5 +1,70 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 🌱 Redesign do copiloto: o personagem agora é o Nino (2026-07-25 — branch `claude/nino-copilot-redesign`)
+
+
+**Motivação:** o personagem era um "orb" azul genérico com antena — dois olhos, uma
+boca e sete estados que quase não se distinguiam entre si. Ele não comunicava o que
+o Studio estava fazendo (`pensando` e `executando` eram visualmente parecidos) nem
+tinha identidade própria. O redesign troca a apresentação inteira, sem mexer em
+NADA da mecânica: arrastar com posição no `localStorage`, minimizar, níveis de
+animação, fila de eventos, isolamento do chat do copiloto e o balão proativo de
+revisão continuam exatamente como estavam.
+
+
+**O personagem (`components/NinoAvatar.jsx` + `nino.css`, ambos novos):** corpo
+super-arredondado em terracota com broto de folha no topo, olhos grandes que
+acompanham o cursor, bochechas coradas, 6 formas de boca e um halo que comunica
+urgência sem texto. Exporta `NinoAvatar` (props `state`, `name`, `quiet`) e
+`NINO_CAPTION` (a legenda de cada estado). Cutucar o personagem gera uma reação
+com fala curta — o `pointerdown` NÃO é consumido, então arrastar/abrir seguem
+funcionando no mesmo evento.
+
+
+**Máquina de estados mais fina (`Companion.jsx`):** o que era um par
+`pensando`/`executando` virou `pensando` (sem pista), `analisando` (ferramenta,
+sandbox, arquivo, planilha) e `digitando` (escrita/resposta em stream), lidos do
+`statusText` que o chat já publicava — nada de estado inventado. `alerta` se
+separou em `sugestao` (aviso real ou balão oferecendo revisão) e `duvida` (eventos
+não lidos sem gravidade); `ausente` saiu porque não era alcançável. O balão de
+revisão agora avisa o personagem via `onPhase`, então ele reage junto. No celular,
+após 8s de ociosidade o personagem encolhe e se encosta na borda direita — qualquer
+toque ou tecla o traz de volta.
+
+
+**Painel e configuração:** `CopilotWorkspace.jsx` põe o personagem no cabeçalho com
+a legenda do estado ao vivo, carinha ao lado de cada resposta e no indicador de
+digitação, e estados vazios com ele no lugar de ícones genéricos; as abas viraram
+"Conversa/Documentos" em pílula. `CompanionConfig.jsx` ganhou prévia ao vivo (reage
+ao nível de animação e a cliques antes de salvar) e uma dica por nível.
+
+
+**Nome padrão:** `Nino` no `useCompanion.js`, no `COMPANION_DEFAULTS` do backend e
+como primeiro preset em `CHARACTER_PRESETS`. O campo segue livre — quem já salvou
+outro nome não é afetado, porque o valor persistido tem prioridade sobre o padrão.
+
+
+**Desempenho e acessibilidade:** só `transform` e `opacity` animam (nenhum
+`filter`/`blur` em laço). O olhar usa UM listener passivo por instância com o centro
+do personagem em cache (recalculado só em `scroll`/`resize`) — sem re-render do
+React e sem leitura de layout por pixel. O nível "nenhum" (prop `quiet`) desliga
+listener, piscada e movimento, mas mantém as EXPRESSÕES, porque é a expressão que
+carrega o significado do estado. `prefers-reduced-motion: reduce` desliga tudo
+sozinho, no CSS. Foco de teclado com anel próprio de 2px na cor do personagem.
+
+
+**Limpeza:** o bloco do avatar antigo saiu do `companion.css` (`.cmpAvatarWrap`
+original, `.cmpAvatar`, `.cmpPulse`, todas as regras `.state-*`, o bloco de nível de
+animação e os `@keyframes cmp*` do personagem). O restante do arquivo — painel,
+alertas, formulário, balão e tema claro — ficou intacto e recebeu no fim o ajuste
+de cores/tamanhos do novo personagem.
+
+
+**Validação:** build do frontend ✓; `node --test src/*.test.js` → 29/29; backend
+`node --test 'src/**/*.test.js'` → 450 passam, 2 pulados (exigem PostgreSQL,
+pré-existente).
+
+
 ## 🚀 Botões de GitHub no modo desenvolvedor: "Enviar para o GitHub" e "Continuar no repositório" (1 clique) (2026-07-25 — PR #129, branch `claude/dev-github-buttons`)
 
 

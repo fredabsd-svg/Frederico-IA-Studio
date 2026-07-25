@@ -15,85 +15,6 @@
   user-select: none;
 }
 
-/* ---- Personagem (avatar) ---- */
-.cmpAvatarWrap {
-  position: relative;
-  width: 66px;
-  height: 66px;
-  cursor: grab;
-  filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.35));
-  touch-action: none;
-}
-.cmpAvatarWrap:active { cursor: grabbing; }
-
-.cmpAvatar {
-  width: 100%;
-  height: 100%;
-  position: relative;
-  transition: transform 0.25s ease;
-}
-.cmpAvatar svg { display: block; overflow: visible; }
-
-.cmpBody { transition: transform 0.3s ease; transform-origin: 50px 56px; }
-.cmpEye { transition: transform 0.15s ease, r 0.15s ease; }
-.cmpMouth { transition: d 0.2s ease; }
-.cmpAntennaDot { transition: transform 0.3s ease; transform-origin: 50px 4px; }
-
-.cmpPulse {
-  position: absolute;
-  inset: 6px;
-  border-radius: 50%;
-  border: 2px solid currentColor;
-  opacity: 0;
-  pointer-events: none;
-}
-
-/* Estados visuais */
-.state-disponivel .cmpBody { animation: cmpFloat 3.4s ease-in-out infinite; }
-.state-disponivel .cmpAntennaDot { animation: cmpBlinkDot 3s ease-in-out infinite; }
-
-.state-pensando .cmpAntennaDot { animation: cmpThink 0.9s ease-in-out infinite; }
-.state-pensando .cmpBody { animation: cmpFloat 1.6s ease-in-out infinite; }
-.state-pensando .cmpEye { transform: translateY(-1px); }
-
-.state-executando .cmpBody { animation: cmpBusy 0.8s linear infinite; }
-.state-executando { color: #38bdf8; }
-.state-executando .cmpPulse { animation: cmpPing 1.1s ease-out infinite; color: #38bdf8; }
-
-.state-escutando { color: #22c55e; }
-.state-escutando .cmpPulse { animation: cmpPing 1.4s ease-out infinite; color: #22c55e; }
-.state-escutando .cmpAntennaDot { animation: cmpThink 0.6s ease-in-out infinite; }
-
-.state-sucesso { color: #22c55e; }
-.state-sucesso .cmpBody { animation: cmpPop 0.5s ease; }
-.state-sucesso .cmpMouth { d: path("M40 66 Q50 78 60 66"); }
-
-.state-alerta { color: #f0a340; }
-.state-alerta .cmpAntennaDot { animation: cmpBlinkDot 1s ease-in-out infinite; }
-
-.state-erro { color: #ef4444; }
-.state-erro .cmpBody { animation: cmpShake 0.5s ease; }
-.state-erro .cmpMouth { d: path("M40 72 Q50 64 60 72"); }
-
-.state-silencioso { opacity: 0.55; filter: saturate(0.5); }
-
-/* Nível de animação */
-.anim-reduzido .cmpBody,
-.anim-reduzido .cmpAntennaDot,
-.anim-reduzido .cmpPulse { animation-duration: 6s !important; }
-.anim-nenhum .cmpBody,
-.anim-nenhum .cmpAntennaDot,
-.anim-nenhum .cmpEye,
-.anim-nenhum .cmpPulse { animation: none !important; }
-
-@keyframes cmpFloat { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
-@keyframes cmpBusy { 0%, 100% { transform: rotate(-3deg); } 50% { transform: rotate(3deg); } }
-@keyframes cmpPop { 0% { transform: scale(1); } 40% { transform: scale(1.12); } 100% { transform: scale(1); } }
-@keyframes cmpShake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-3px); } 75% { transform: translateX(3px); } }
-@keyframes cmpBlinkDot { 0%, 92%, 100% { transform: scale(1); opacity: 1; } 96% { transform: scale(0.6); opacity: 0.5; } }
-@keyframes cmpThink { 0%, 100% { transform: translateY(0) scale(1); } 50% { transform: translateY(-3px) scale(1.15); } }
-@keyframes cmpPing { 0% { transform: scale(0.8); opacity: 0.7; } 100% { transform: scale(1.5); opacity: 0; } }
-
 .cmpBadge {
   position: absolute;
   top: -2px;
@@ -470,3 +391,161 @@ body:not(.dark) .companionPanel {
 .app.theme-light .cwMsg.assistant .cwBubble { background: rgba(0, 0, 0, 0.05); color: #1e293b; }
 .app.theme-light .cwEmpty b, .app.theme-light .cwDocInfo b, .app.theme-light .cwAlertTitle { color: #0f172a; }
 .app.theme-light .cwComposer textarea { background: rgba(0, 0, 0, 0.04); color: #1e293b; border-color: rgba(0, 0, 0, 0.12); }
+
+/* ============================================================================
+   Nino — ajustes no companion.css existente.
+   Cole este bloco NO FINAL do frontend/src/companion.css (ele vence por ordem
+   de carga) e apague do arquivo os blocos listados no LEIA-ME.md.
+   ============================================================================ */
+
+/* ---- Personagem no canto ---- */
+.cmpAvatarWrap {
+  position: relative;
+  width: 82px;                     /* era 66px — presença maior, ainda discreta */
+  height: 97px;                    /* proporção do viewBox 120x142 */
+  cursor: grab;
+  filter: drop-shadow(0 10px 20px rgba(0, 0, 0, .45));
+  touch-action: none;
+}
+.cmpAvatarWrap:active { cursor: grabbing; }
+.companionRoot.open .cmpAvatarWrap { filter: drop-shadow(0 6px 14px rgba(0, 0, 0, .35)); }
+
+/* Pílula do estado minimizado: a carinha espia dentro de um círculo. */
+.cmpMinBubble {
+  padding: 7px 15px 7px 8px;
+  background: rgba(20, 26, 40, .94);
+  border-color: rgba(198, 113, 57, .45);
+  color: #e8ddcd;
+  font-weight: 600;
+}
+.cmpMinBubble:hover { border-color: rgba(198, 113, 57, .8); color: #fff; }
+.cmpMinFace {
+  flex: none;
+  width: 30px; height: 30px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: #1a2338;
+  display: flex; align-items: flex-end; justify-content: center;
+}
+.cmpMinFace > div { width: 34px; height: 40px; margin-bottom: -7px; }
+
+/* ---- Balão proativo: a cor passa a ser a do Nino ---- */
+.cmpBubble {
+  bottom: 108px;                   /* acima do personagem de 97px + folga */
+  background: #f5ead8;
+  border: 1px solid rgba(198, 113, 57, .4);
+  border-radius: 22px;
+  color: #201e1d;
+  padding: 14px 15px;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, .45);
+}
+.cmpBubbleArrow { background: #f5ead8; border-right-color: rgba(198, 113, 57, .4); border-bottom-color: rgba(198, 113, 57, .4); }
+.cmpBubbleText { color: #201e1d; font-size: 14px; font-weight: 600; }
+.cmpBubbleLabel { color: #6b6154; }
+.cmpBubbleErr { color: #a33; }
+.cmpBubbleBtns button, .cmpBubbleDismiss { border-radius: 999px; font-weight: 600; }
+.cmpBubbleYes { background: #c67139; color: #fff; font-weight: 700; }
+.cmpBubbleYes:hover { background: #a85c2c; }
+.cmpBubbleNo { background: rgba(32, 30, 29, .07); color: #5c5347; }
+.cmpBubbleNo:hover { background: rgba(32, 30, 29, .14); color: #201e1d; }
+.cmpBubbleCard {
+  background: rgba(198, 113, 57, .1);
+  border: 1px solid rgba(198, 113, 57, .4);
+  border-radius: 14px;
+  color: #201e1d;
+}
+.cmpBubbleCard:hover { background: rgba(198, 113, 57, .2); }
+.cmpBubbleDismiss { color: #7a7064; }
+.cmpBubbleDismiss:hover { color: #201e1d; }
+.cmpBubbleSpin { border-top-color: #c67139; }
+.cmpBubbleYes:focus-visible, .cmpBubbleNo:focus-visible, .cmpBubbleCard:focus-visible,
+.cmpAvatarWrap:focus-visible, .cmpMinBubble:focus-visible {
+  outline: 2px solid #c67139;
+  outline-offset: 2px;
+}
+
+/* ---- Painel do copiloto: cabeçalho com o personagem ---- */
+.cwHeadFace { display: block; width: 40px; height: 47px; flex: none; }
+.cwDrawer .modalHead { gap: 12px; background: linear-gradient(180deg, rgba(198, 113, 57, .13), rgba(198, 113, 57, 0)); }
+.cwCaption {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12.5px; color: #c69a72; padding: 0 2px 10px;
+}
+.cwCaption::before {
+  content: ''; width: 6px; height: 6px; border-radius: 50%;
+  background: #c67139; box-shadow: 0 0 0 3px rgba(198, 113, 57, .2);
+}
+
+/* Abas em pílula, com a cor do personagem no estado ativo. */
+.cwTabs button { border-radius: 999px; font-weight: 600; }
+.cwTabs button.on {
+  background: rgba(198, 113, 57, .18);
+  border-color: rgba(198, 113, 57, .55);
+  color: #f0c9a8;
+  font-weight: 700;
+}
+.cwTabs button:focus-visible { outline: 2px solid #c67139; outline-offset: 2px; }
+.cwCount { background: #c67139; font-weight: 800; }
+
+/* Mensagens do Nino: carinha ao lado da bolha e recorte do texto revisado. */
+.cwMsg.assistant { align-items: flex-end; gap: 9px; }
+.cwMsgFace { width: 30px; height: 35px; flex: none; margin-bottom: 2px; }
+.cwMsg.assistant .cwBubble { border-radius: 16px 16px 16px 4px; }
+.cwMsg.user .cwBubble { border-radius: 16px 16px 4px 16px; }
+.cwRevised {
+  margin-top: 9px;
+  background: rgba(198, 113, 57, .12);
+  border: 1px solid rgba(198, 113, 57, .4);
+  border-radius: 12px;
+  padding: 10px 12px;
+  color: #f2e6d8;
+}
+.cwTyping span { background: #c67139; }
+
+/* Composer e ações do painel na cor do personagem. */
+.cwSend { background: #c67139; border-radius: 12px; }
+.cwSend:hover:not(:disabled) { background: #a85c2c; }
+.cwToolBtn { border-radius: 12px; }
+.cwToolBtn.on { background: rgba(198, 113, 57, .2); color: #e0a878; }
+.cwComposer textarea { border-radius: 14px; }
+.cwComposer textarea:focus { border-color: rgba(198, 113, 57, .6); }
+.cwToolsChips button { border-radius: 999px; }
+.cwToolsChips button:hover:not(:disabled) { background: rgba(198, 113, 57, .16); color: #f0c9a8; }
+.cwLink { color: #c67139; }
+
+/* Documentos: ícones e selos quentes. */
+.cwDoc { border-radius: 14px; }
+.cwDocIcon { color: #e0a878; }
+.cwDocKind { background: rgba(198, 113, 57, .18); color: #e0a878; font-weight: 600; }
+.cwEmpty .cwEmptyFace { width: 96px; height: 113px; margin-bottom: 2px; }
+.cwEmpty svg { color: #c67139; }
+.cwDocModalFoot .primary { background: #c67139; }
+
+/* ---- Configuração: prévia ao vivo do personagem ---- */
+.cmpPreview {
+  display: flex; align-items: center; gap: 14px;
+  padding: 13px 15px; border-radius: 14px;
+  background: rgba(122, 138, 94, .12);
+  border: 1px solid rgba(122, 138, 94, .3);
+}
+.cmpPreviewFace { width: 56px; height: 66px; flex: none; }
+.cmpPreview span { font-size: 12.5px; color: #c8d3b4; line-height: 1.5; }
+.cmpPresets button.on { background: rgba(198, 113, 57, .22); border-color: rgba(198, 113, 57, .6); color: #f0c9a8; font-weight: 700; }
+.cmpRadio.on { background: rgba(198, 113, 57, .16); border-color: rgba(198, 113, 57, .55); }
+.cmpFormActions .primary { background: #c67139; border-radius: 999px; font-weight: 700; }
+.cmpFormActions .ghost { border-radius: 999px; }
+.cmpFormActions .primary:hover { background: #a85c2c; }
+.cmpFieldNote svg { color: #c67139; }
+
+/* ---- Tema claro ---- */
+.app.theme-light .cmpMinBubble { background: #fff; color: #201e1d; border-color: rgba(198, 113, 57, .45); }
+.app.theme-light .cmpMinFace { background: #f1e6d4; }
+.app.theme-light .cwCaption { color: #8a4a22; }
+.app.theme-light .cwRevised { color: #201e1d; }
+.app.theme-light .cwTabs button.on { color: #8a4a22; }
+
+/* ---- Celular ---- */
+@media (max-width: 560px) {
+  .cmpAvatarWrap { width: 74px; height: 88px; }
+  .cmpBubble { bottom: 98px; }
+}

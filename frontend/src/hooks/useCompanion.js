@@ -11,7 +11,7 @@ import { API } from '../constants.js';
 
 const DEFAULTS = {
   enabled: true,
-  characterName: 'Luma',
+  characterName: 'Nino',
   assistantId: null,
   model: '',
   mode: 'auxiliar',

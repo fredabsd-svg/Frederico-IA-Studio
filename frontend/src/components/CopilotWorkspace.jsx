@@ -3,9 +3,10 @@ import { API } from '../constants.js';
 import { Drawer, Modal } from '../components.jsx';
 import { PROMPT_ACTIONS, buildCoachMessage } from '../promptCoach.js';
 import {
-  MessageSquare, FolderOpen, Send, Trash2, Eraser, Sparkles, Bell,
+  MessageSquare, FolderOpen, Send, Trash2, Eraser, Bell,
   FileText, Download, Eye, X, Wand2,
 } from 'lucide-react';
+import { NinoAvatar, NINO_CAPTION } from './NinoAvatar.jsx';
 
 const DOC_KIND_LABEL = {
   texto: 'Nota', texto_revisado: 'Texto revisado', log: 'Registro', print: 'Captura', relatorio: 'Relatório',
@@ -22,9 +23,12 @@ function fmtSize(bytes) {
 
 // O espaço PRÓPRIO do copiloto: aberto pelo avatar, com duas abas — Chat (com
 // contexto isolado do chat principal) e Documentos (a caixa própria dele).
-export function CopilotWorkspace({ copilot, companion, onClose }) {
+// O cabeçalho agora traz o personagem e a legenda do estado ao vivo, em vez de
+// um ícone genérico.
+export function CopilotWorkspace({ copilot, companion, state = 'aguardando', onClose }) {
   const [tab, setTab] = useState('chat');
-  const name = companion?.settings?.characterName || 'Copiloto';
+  const name = companion?.settings?.characterName || 'Nino';
+  const quiet = companion?.settings?.animationLevel === 'nenhum';
   const unread = useMemo(
     () => (companion?.events || []).filter(e => e.status === 'novo' || e.status === 'visto'),
     [companion?.events]
@@ -33,11 +37,15 @@ export function CopilotWorkspace({ copilot, companion, onClose }) {
   useEffect(() => { copilot.loadChat(); }, []); // eslint-disable-line
   useEffect(() => { if (tab === 'docs') copilot.loadDocuments(); }, [tab]); // eslint-disable-line
 
+  const face = <span className="cwHeadFace"><NinoAvatar state={state} name={name} quiet={quiet} /></span>;
+
   return (
-    <Drawer title={name} icon={<Sparkles size={18} />} onClose={onClose} className="cwDrawer">
+    <Drawer title={name} icon={face} onClose={onClose} className="cwDrawer">
+      <div className="cwCaption">{NINO_CAPTION[state] || NINO_CAPTION.aguardando}</div>
+
       <div className="cwTabs" role="tablist">
         <button role="tab" aria-selected={tab === 'chat'} className={tab === 'chat' ? 'on' : ''} onClick={() => setTab('chat')}>
-          <MessageSquare size={14} /> Chat
+          <MessageSquare size={14} /> Conversa
         </button>
         <button role="tab" aria-selected={tab === 'docs'} className={tab === 'docs' ? 'on' : ''} onClick={() => setTab('docs')}>
           <FolderOpen size={14} /> Documentos {copilot.documents.length > 0 && <span className="cwCount">{copilot.documents.length}</span>}
@@ -45,13 +53,13 @@ export function CopilotWorkspace({ copilot, companion, onClose }) {
       </div>
 
       {tab === 'chat'
-        ? <ChatTab copilot={copilot} companion={companion} name={name} unread={unread} />
-        : <DocsTab copilot={copilot} />}
+        ? <ChatTab copilot={copilot} companion={companion} name={name} unread={unread} quiet={quiet} />
+        : <DocsTab copilot={copilot} name={name} quiet={quiet} />}
     </Drawer>
   );
 }
 
-function ChatTab({ copilot, companion, name, unread }) {
+function ChatTab({ copilot, companion, name, unread, quiet }) {
   const { messages, sending, loading, error, send, clearChat } = copilot;
   const [text, setText] = useState('');
   const [tools, setTools] = useState(false);
@@ -98,17 +106,23 @@ function ChatTab({ copilot, companion, name, unread }) {
         {loading && messages.length === 0 && <div className="cwLoading">Carregando conversa…</div>}
         {!loading && messages.length === 0 && (
           <div className="cwEmpty">
-            <Sparkles size={26} />
+            <span className="cwEmptyFace"><NinoAvatar state="observando" name={name} quiet={quiet} /></span>
             <b>Oi! Eu sou o {name}.</b>
             <span>Este é o nosso canto — separado do chat principal. Me use para revisar textos, lapidar prompts, organizar ideias ou tirar dúvidas do Studio.</span>
           </div>
         )}
         {messages.map(m => (
           <div key={m.id} className={`cwMsg ${m.role} ${m.pending ? 'pending' : ''}`}>
+            {m.role === 'assistant' && <span className="cwMsgFace"><NinoAvatar state="aguardando" name={name} quiet={quiet} /></span>}
             <div className="cwBubble">{m.content}</div>
           </div>
         ))}
-        {sending && <div className="cwMsg assistant"><div className="cwBubble cwTyping"><span></span><span></span><span></span></div></div>}
+        {sending && (
+          <div className="cwMsg assistant">
+            <span className="cwMsgFace"><NinoAvatar state="digitando" name={name} quiet={quiet} /></span>
+            <div className="cwBubble cwTyping"><span /><span /><span /></div>
+          </div>
+        )}
       </div>
 
       {error && <div className="cwError" role="alert">{error}</div>}
@@ -132,9 +146,9 @@ function ChatTab({ copilot, companion, name, unread }) {
           value={text}
           onChange={e => setText(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); } }}
-          placeholder={`Fale com o ${name}…`}
+          placeholder={`Fala aí, o que você precisa…`}
           rows={1}
-          aria-label="Mensagem para o copiloto"
+          aria-label={`Mensagem para o ${name}`}
         />
         <button type="submit" className="cwSend" disabled={!text.trim() || sending} aria-label="Enviar"><Send size={16} /></button>
       </form>
@@ -145,7 +159,7 @@ function ChatTab({ copilot, companion, name, unread }) {
   );
 }
 
-function DocsTab({ copilot }) {
+function DocsTab({ copilot, name, quiet }) {
   const { documents, docsLoading, deleteDocument } = copilot;
   const [view, setView] = useState(null);
 
@@ -153,7 +167,7 @@ function DocsTab({ copilot }) {
   if (!documents.length) {
     return (
       <div className="cwEmpty docs">
-        <FolderOpen size={28} />
+        <span className="cwEmptyFace"><NinoAvatar state="duvida" name={name} quiet={quiet} /></span>
         <b>Ainda não guardei nada por aqui</b>
         <span>Textos que eu revisar, registros de ações e notas ficam nesta caixa — separada dos arquivos das conversas.</span>
       </div>

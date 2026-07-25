@@ -26,14 +26,14 @@ const router = makeRouter();
 const MODES = ['silencioso', 'auxiliar', 'proativo', 'foco', 'apresentacao'];
 const ANIMATION_LEVELS = ['completo', 'reduzido', 'nenhum'];
 const EVENT_STATUS = ['novo', 'visto', 'dispensado', 'resolvido'];
-const CHARACTER_PRESETS = ['Luma', 'Clara', 'Pixel', 'Nova', 'Nexo', 'Fred', 'Echo'];
+const CHARACTER_PRESETS = ['Nino', 'Luma', 'Clara', 'Pixel', 'Nova', 'Nexo', 'Fred', 'Echo'];
 
 // Configuração padrão de um usuário que ainda não personalizou o Companion.
 // Padrão conservador (seção 5): começa em modo "auxiliar" e permissão nível 1
 // (somente leitura) — nada é executado sem o usuário pedir.
 export const COMPANION_DEFAULTS = Object.freeze({
   enabled: true,
-  characterName: 'Luma',
+  characterName: 'Nino',
   assistantId: null,   // persona: qual assistente do Studio dá voz ao Companion
   model: '',           // vazio = usa o modelo atual da conversa/app
   mode: 'auxiliar',
