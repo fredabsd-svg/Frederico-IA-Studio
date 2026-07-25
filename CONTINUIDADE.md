@@ -1,5 +1,34 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 🔑 ENCRYPTION_KEY automática (self-hosted sem terminal) + correção do repositório sumindo no modo dev (2026-07-24 — PRs #127 e #128)
+
+
+**Correção do modo dev (PR #127 — branch `claude/dev-mode-repo-persist`):** ao
+reabrir uma conversa de projeto, o vínculo com o repositório GitHub (repo/branch),
+o modo e as regras eram PERDIDOS — `openConversation` zerava `developerSession` e
+nada o reconstruía. Sem `developer.github`, o backend não recebia o vínculo e o
+agente dizia "não encontro o repositório", travando o desenvolvimento (o clone
+seguia no workspace da conversa em disco; o agente só deixava de saber que
+existia). Agora a sessão é RECONSTRUÍDA a partir do projeto dono (persistido no
+navegador com seus `conversationIds`) — mesmo padrão que já restaurava o modelo da
+conversa. Novo helper puro `developerSessionForConversation` (com teste), resolver
+via ref em `useConversations`, e volta ao workspace de desenvolvimento.
+
+
+**ENCRYPTION_KEY automática (PR #128 — branch `claude/auto-encryption-key`):**
+antes, a `ENCRYPTION_KEY` (que cifra token do GitHub + chaves de API por usuário)
+era obrigatória no `.env` e, se mudasse entre deploys, os segredos ficavam
+ilegíveis ("perdi o acesso ao GitHub"). Complicado demais para o usuário comum que
+apenas instala o app. Agora `backend/src/crypto.js` resolve a chave por
+prioridade: (1) env `ENCRYPTION_KEY` se definida (SaaS/secret manager); (2) senão,
+o arquivo `DATA_DIR/encryption.key`; (3) senão, gera uma e a PERSISTE nesse arquivo
+(0600) — no MESMO volume do banco. Resultado: `docker compose up` funciona de
+primeira, sem `openssl`/terminal, e a chave fica estável entre reinícios (lida
+sempre do arquivo, nunca regenerada à toa; arquivo inválido lança em vez de
+sobrescrever). `.env.example`/README documentam que a env é opcional e tem
+prioridade. Decisão pura `chooseKeyHex` testada + teste e2e da geração/persistência.
+
+
 ## 🤖 Copiloto com espaço próprio: Chat + Documentos isolados, config nas Configurações e balão proativo de revisão (2026-07-24 — PR #126, branch `claude/copilot-refactor`)
 
 
