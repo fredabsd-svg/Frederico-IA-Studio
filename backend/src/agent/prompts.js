@@ -364,6 +364,9 @@ export function toolAvailabilityNote(tools, { includeInventory = false, sandboxN
   if (names.has('github_clone') && !names.has('github_push')) lines.push('- PUBLICAÇÃO NÃO AUTORIZADA nesta tarefa: você NÃO tem github_push/github_create_pr. NUNCA rode git push/pull/fetch/clone pelo bash (o sandbox não tem rede nem credenciais — sempre falha). Deixe o commit local pronto e PARE, pedindo ao usuário que autorize a publicação (ele pode dizer, por exemplo, "pode publicar/commitar/enviar") para as ferramentas de push serem liberadas.');
   if (names.has('github_create_pr')) lines.push('- github_create_pr: abrir um Pull Request no GitHub (faça github_push antes).');
   if (names.has('github_list_repos')) lines.push('- github_list_repos: listar os repositórios GitHub da conta conectada.');
+  // Delegação: o modelo precisa saber que o sub-agente NÃO vê a conversa, senão
+  // manda "continue a análise" e o filho não tem contexto nenhum para trabalhar.
+  if (names.has('delegar_subagente')) lines.push('- delegar_subagente: delegar uma subtarefa AUTOCONTIDA a um sub-agente com contexto próprio, que executa ferramentas e devolve só o resultado. Vale a pena quando a subtarefa é pesada e isolável (varrer muitos arquivos, ler um documento longo, apurar um ponto específico) e o passo a passo dela não precisa ocupar esta conversa. Ele NÃO enxerga o histórico daqui: escreva a tarefa inteira, com caminhos, números e regras. Para pedido curto que você já resolve direto, NÃO delegue.');
   if (!tools.length) lines.push('- Este assistente está CONFIGURADO sem ferramentas de execução. Não diga que o modelo ou o aplicativo é incapaz de ler PDFs ou gerar arquivos; explique que as ferramentas deste assistente estão desativadas e oriente o usuário a habilitá-las no Assistant Studio ou escolher outro assistente.');
 
   if (includeInventory && names.has('run_python')) {
