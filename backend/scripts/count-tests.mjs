@@ -19,6 +19,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const SUITES = [
   { nome: 'Backend (Node)', cwd: path.join(repoRoot, 'backend'), cmd: process.execPath, args: ['scripts/run-tests.mjs'] },
   { nome: 'Frontend (Node)', cwd: path.join(repoRoot, 'frontend'), cmd: process.execPath, args: [path.join(repoRoot, 'frontend', 'scripts', 'run-tests.mjs')] },
+  { nome: 'Guarda do Docker', cwd: path.join(repoRoot, 'docker-guard'), cmd: process.execPath, args: [path.join(repoRoot, 'docker-guard', 'scripts', 'run-tests.mjs')] },
   { nome: 'Sandbox (Python)', cwd: repoRoot, cmd: 'python3', args: ['-m', 'unittest', 'discover', '-s', 'sandbox', '-p', '*_test.py', '-v'] }
 ];
 

@@ -1,0 +1,14 @@
+{
+  "name": "frederico-docker-guard",
+  "version": "1.0.0",
+  "description": "Guarda validador entre o backend e o daemon Docker (fecha o risco F-04).",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node src/server.js",
+    "lint": "node scripts/lint.mjs",
+    "test": "node scripts/run-tests.mjs",
+    "test:unit": "node scripts/run-tests.mjs",
+    "check": "npm run lint && npm test"
+  }
+}

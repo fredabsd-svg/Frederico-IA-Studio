@@ -12,12 +12,13 @@
 | Serviço | Imagem/base | Papel | Depende de |
 | --- | --- | --- | --- |
 | `web` | Caddy (`frontend/Dockerfile`) | Serve o SPA e faz proxy de `/api` para o backend. Único serviço com portas expostas (80/443). | `backend` |
-| `backend` | `node:20-slim` (`Dockerfile`) | API HTTP + SSE, agente, ferramentas, memória, Docling, conectores. Processo **único** (estado em memória). | `postgres`, Docker socket, `clamav` (opcional), `docling-service` (opcional) |
+| `backend` | `node:20-slim` (`Dockerfile`) | API HTTP + SSE, agente, ferramentas, memória, Docling, conectores. Processo **único** (estado em memória). **Não** enxerga o socket do Docker. | `postgres`, `docker-guard`, `clamav` (opcional), `docling-service` (opcional) |
+| `docker-guard` | `node:20-slim`, sem dependências (`docker-guard/Dockerfile`) | **Único** container com `/var/run/docker.sock`. Valida cada requisição ao daemon (allowlist de rotas, corpo de `create`, posse por label). Sem portas expostas. | Docker socket do host |
 | `postgres` | `pgvector/pgvector:pg16` | Banco único de tudo, inclusive as tabelas do Better Auth e os embeddings (pgvector). | — |
 | `clamav` | `clamav/clamav:stable` | Antivírus dos uploads (protocolo INSTREAM por TCP). Opcional. | — |
 | `docling-service` | `docling-service/Dockerfile` (Python) | Conversão documental (PDF/OCR → JSON + Markdown). Perfil `docling`, sem portas. | — |
 | `sandbox-image` | `sandbox/Dockerfile` | **Não é serviço**: build one-shot da imagem `frederico-ai-sandbox:latest` usada pelos containers efêmeros. | — |
-| sandboxes | `frederico-ai-sandbox:latest` | Containers efêmeros criados pelo backend via `dockerode`, um por (usuário, conversa). | Docker socket do host |
+| sandboxes | `frederico-ai-sandbox:latest` | Containers efêmeros criados pelo backend via `dockerode`, um por (usuário, conversa) — **através do `docker-guard`**. | `docker-guard` |
 
 **Estado em memória do backend** (não sobrevive a reinício, e não é compartilhável entre réplicas):
 `liveStream.js` (buffer SSE por conversa), `sandbox.js` (`sessions`, `creating`, `pcFoldersByUser`),
@@ -154,6 +155,7 @@ POST /chat
 
 ```
 execInSandbox(conversationId, cmd, timeout, { userId, ...política })
+  └─ (dockerode → DOCKER_HOST=tcp://docker-guard:2375 → valida → socket do daemon)
   └─ getContainer → chave de sessão `${userDirName(userId)}/${conversationId}`
        ├─ política bate? reusa   |   não bate? dropSession + recria
        ├─ single-flight por (usuário, conversa)

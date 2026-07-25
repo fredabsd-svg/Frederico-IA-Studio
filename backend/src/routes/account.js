@@ -7,6 +7,7 @@ import { enabledSocialProviders } from '../auth.js';
 import { validate, schemas } from '../validation.js';
 import { makeRouter, isAdmin, PC_FOLDERS_ENABLED, scheduleTimeZone } from './helpers.js';
 import { UPLOAD_LIMITS } from '../uploads.js';
+import { dockerAccessMode } from '../sandbox.js';
 
 const router = makeRouter();
 
@@ -25,7 +26,7 @@ router.get('/health', (_, res) => res.json({
   bootAt: healthMetrics.bootAt,
   unhandledRejections: healthMetrics.unhandledRejections,
   antivirus: { ...scanPolicy(), degradado: scanHealth.arquivosNaoVerificados > 0, ultimoErroEm: scanHealth.ultimoErroEm, naoVerificados: scanHealth.arquivosNaoVerificados, infectados: scanHealth.arquivosInfectados },
-  sandbox: { ativos: healthMetrics.sandboxesActive ?? 0, orfaosRemovidos: healthMetrics.sandboxOrphansRemoved ?? 0, ultimaReconciliacao: healthMetrics.sandboxLastReconcileAt ?? null, erroReconciliacao: healthMetrics.sandboxReconcileError ?? null },
+  sandbox: { ativos: healthMetrics.sandboxesActive ?? 0, orfaosRemovidos: healthMetrics.sandboxOrphansRemoved ?? 0, ultimaReconciliacao: healthMetrics.sandboxLastReconcileAt ?? null, erroReconciliacao: healthMetrics.sandboxReconcileError ?? null, docker: dockerAccessMode() },
   uploads: { maxArquivoMb: Math.round(UPLOAD_LIMITS.maxFileBytes / 1048576), maxRequisicaoMb: Math.round(UPLOAD_LIMITS.maxRequestBytes / 1048576), maxArquivos: UPLOAD_LIMITS.maxFiles, maxSimultaneosPorUsuario: UPLOAD_LIMITS.maxConcurrentPerUser, cotaPorUsuarioMb: UPLOAD_LIMITS.userQuotaBytes ? Math.round(UPLOAD_LIMITS.userQuotaBytes / 1048576) : null }
 }));
 

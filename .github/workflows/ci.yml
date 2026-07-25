@@ -32,6 +32,7 @@ jobs:
           node-version: 20
       - run: node backend/scripts/lint.mjs
       - run: node frontend/scripts/lint.mjs
+      - run: node docker-guard/scripts/lint.mjs
 
   artifacts:
     name: Artefatos (Excel real)
@@ -43,6 +44,26 @@ jobs:
           python-version: '3.12'
       - run: python -m pip install openpyxl==3.1.5
       - run: python -m unittest discover -s sandbox -p '*_test.py' -v
+
+  docker-guard:
+    name: Guarda do Docker (política + proxy)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: docker-guard
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      # Sem dependências npm de propósito (menor superfície no processo que
+      # detém o socket) — nada a instalar. Os testes sobem um daemon Docker
+      # FALSO num socket unix, então não exigem Docker no runner.
+      - run: npm test
 
   backend-unit:
     name: Backend — testes unitários (sem banco)
@@ -208,11 +229,22 @@ jobs:
         run: docker compose -f docker-compose.prod.yml config --quiet
       - name: Build da imagem do backend
         run: docker build -f Dockerfile -t frederico-backend:ci .
+      - name: Build da imagem do guarda
+        run: docker build -f docker-guard/Dockerfile -t frederico-docker-guard:ci .
+      - name: O backend NÃO pode montar o socket do Docker (regressão do F-04)
+        run: |
+          # Guarda-corpo permanente: se alguém devolver o socket ao backend, o
+          # CI reprova. A montagem só é legítima no serviço docker-guard.
+          for arquivo in docker-compose.yml docker-compose.prod.yml; do
+            SERVICO=$(docker compose -f $arquivo config --format json | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const c=JSON.parse(s);const maus=Object.entries(c.services).filter(([n,v])=>(v.volumes||[]).some(m=>String(m.source||m).includes('docker.sock'))).map(([n])=>n);console.log(maus.join(','))})")
+            echo "$arquivo → serviços com o socket: ${SERVICO:-nenhum}"
+            [ "$SERVICO" = "docker-guard" ] || { echo "::error::em $arquivo, o socket do Docker está em '$SERVICO' (esperado apenas 'docker-guard')"; exit 1; }
+          done
 
   contagem:
     name: Contagem de testes (para a documentação)
     runs-on: ubuntu-latest
-    needs: [backend-integration, frontend, artifacts]
+    needs: [backend-integration, frontend, artifacts, docker-guard]
     services:
       postgres:
         image: pgvector/pgvector:pg16

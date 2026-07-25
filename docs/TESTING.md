@@ -55,10 +55,11 @@ semântica, e testar com Postgres puro esconderia diferenças de comportamento.
 | --- | --- |
 | `lint` | `node --check` em todo `.js`/`.mjs` do backend e do frontend |
 | `artifacts` | Testes Python do gerador de Excel (openpyxl real) |
+| `docker-guard` | Política do guarda + proxy real contra um daemon Docker falso, em Node 20 e 22 |
 | `backend-unit` | Suíte do backend **sem** banco, em Node 20 e Node 22 |
 | `backend-integration` | Postgres real: migrações do zero + idempotência + tabelas + cascade; suíte completa **sem skips**; boot real do backend + `/api/health`; portão de autenticação (9 rotas → 401) |
 | `frontend` | Todos os 7 arquivos de teste + build + catraca de bundle (≤ 1.000 KB) |
-| `compose` | `docker compose config` dos dois arquivos (a partir do `.env.example`) + build da imagem do backend |
+| `compose` | `docker compose config` dos dois arquivos + build das imagens do backend e do guarda + **checagem de que só o `docker-guard` monta o socket** (regressão do F-04) |
 | `contagem` | Executa tudo e publica a contagem no resumo |
 
 Node 20 = o da imagem de produção; Node 22 = a linha LTS atual. O que roda na VPS é testado.
@@ -105,6 +106,9 @@ teste — vários módulos leem essas variáveis no momento da importação.
 | `backend/src/uploads.test.js` | Armazenamento é em disco (não memória); tetos vindos do ambiente; recusa pelo `Content-Length`; teto de envios simultâneos por usuário; cota; hash por streaming; `commit` do temporário; limpeza de parciais e de abandonados |
 | `backend/src/routes/upload.http.test.js` | **Integrado**: rota Express real + Postgres + multipart de verdade — grava no workspace do dono, registra no banco, isola entre usuários, 413 por lote e por `Content-Length`, sem temporários residuais |
 | Acréscimos em `backend/src/clamav.test.js` | `scanPolicy` descreve o modo vigente; o lote **nunca** se declara "verificado" sem análise; arquivo em disco é escaneado por streaming |
+| `docker-guard/src/policy.test.js` | Cada fuga conhecida é barrada: container privilegiado, bind de `/`, bind do próprio `docker.sock`, `/etc`/`/proc`/`/root`, travessia com `..`, prefixo parecido (`/ws-outro` não é `/ws`), `CapAdd`, GPU, `PidMode`/`UsernsMode` do host, rede do host, outra imagem, volume nomeado; endurecimento e cotas obrigatórios; rotas perigosas (`build`, `images/create`, `archive`, `update`, `swarm`…) recusadas |
+| `docker-guard/src/server.test.js` | **Proxy real** contra um daemon Docker falso num socket unix: cada bloqueio verifica que a requisição **não chegou** ao daemon; posse por label impede derrubar o Postgres do compose; o `hijack` do exec faz o túnel de bytes e é recusado em container de terceiro |
+| `backend/src/sandbox.dockerAccess.test.js` | O backend reporta em `/api/health` se está atrás do guarda ou com o socket na mão |
 
 Scripts de apoio: `backend/scripts/run-tests.mjs` e `frontend/scripts/run-tests.mjs`
 (descoberta de testes independente da versão do Node), `backend/scripts/check-migrations.mjs`,

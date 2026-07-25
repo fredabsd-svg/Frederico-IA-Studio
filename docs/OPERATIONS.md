@@ -18,6 +18,10 @@ docker compose -f docker-compose.prod.yml --profile docling up -d --build
 git pull && docker compose -f docker-compose.prod.yml up -d --build
 ```
 
+> **Ordem dos serviços:** `docker-guard` sobe antes do backend (é ele que detém o socket
+> do Docker). Se o guarda estiver fora do ar, o backend sobe, mas nenhuma ferramenta de
+> sandbox executa — `/api/health` mostra `sandbox.erroReconciliacao`.
+
 O boot do backend, em ordem: migrações → pgvector → caches (settings, pastas do PC) →
 **migração do layout de workspace** → reindexação se o modelo de embeddings mudou →
 tarefas `running` voltam para a fila → HTTP → **reconciliação de sandboxes órfãos** →
@@ -42,7 +46,8 @@ Rota pública (sem autenticação), pensada para alerta automatizado:
   "antivirus": { "enabled": true, "mode": "obrigatorio", "degradado": false,
                  "ultimoErroEm": null, "naoVerificados": 0, "infectados": 0 },
   "sandbox":   { "ativos": 3, "orfaosRemovidos": 2,
-                 "ultimaReconciliacao": "...", "erroReconciliacao": null },
+                 "ultimaReconciliacao": "...", "erroReconciliacao": null,
+                 "docker": { "modo": "guarda", "destino": "tcp://docker-guard:2375" } },
   "uploads":   { "maxArquivoMb": 50, "maxRequisicaoMb": 200, "maxArquivos": 20,
                  "maxSimultaneosPorUsuario": 2, "cotaPorUsuarioMb": null }
 }
@@ -52,7 +57,8 @@ Rota pública (sem autenticação), pensada para alerta automatizado:
 | --- | --- | --- |
 | **Crítico** | `ok` ausente / sem resposta | Backend fora do ar |
 | **Crítico** | `antivirus.degradado = true` em produção | Arquivos entraram **sem verificação** — ver §4 |
-| Aviso | `sandbox.erroReconciliacao` não nulo | Docker inacessível: órfãos vão acumular |
+| **Crítico** | `sandbox.docker.modo = "socket-direto"` em produção | O backend está com o socket do Docker na mão — o risco F-04 voltou. Confira `DOCKER_HOST` e o serviço `docker-guard` |
+| Aviso | `sandbox.erroReconciliacao` não nulo | Docker inacessível (guarda fora do ar?): órfãos vão acumular e as ferramentas param |
 | Aviso | `unhandledRejections` crescendo | Bug engolido em algum caminho async |
 | Aviso | `sandbox.ativos` sempre no teto | Usuários disputando sandbox; reveja `MAX_SANDBOXES_PER_USER` |
 
@@ -121,6 +127,27 @@ Apagar entrega de usuário é decisão do operador — por isso a maioria vem de
 4. Arquivos aceitos durante a degradação estão marcados `scanStatus: "degradado"` na
    resposta da API. Não há quarentena/reprocessamento automático — **lacuna conhecida
    (F-11)**. Reprocesso manual: reenviar o arquivo com o clamd de pé.
+
+### Ferramentas do sandbox pararam de funcionar
+
+Quase sempre é o guarda recusando algo ou fora do ar.
+
+```bash
+docker compose -f docker-compose.prod.yml logs docker-guard | grep RECUSADO | tail -20
+curl -fsS https://SEU_DOMINIO/api/health | grep -o '"docker":{[^}]*}'
+```
+
+Uma linha `[guard] RECUSADO POST /containers/create — ...` diz exatamente qual regra
+barrou. Os dois casos legítimos mais comuns:
+
+- **"está fora de <raiz>"** → `GUARD_WORKSPACE_ROOT` não bate com `HOST_WORKSPACE_ROOT`.
+  Os binds usam o caminho do **host**; alinhe os dois.
+- **"para permitir pastas do PC, ligue GUARD_ALLOW_PC_FOLDERS=true"** → instalação pessoal
+  com "Pastas do PC" ativas. Ligue a variável **no serviço `docker-guard`** (a blocklist de
+  `/etc`, `/proc`, `docker.sock` etc. continua valendo).
+
+Se a recusa **não** for um desses, trate como sinal de segurança antes de afrouxar a
+política: alguém pediu ao daemon algo que o app não deveria pedir.
 
 ### Containers órfãos acumulando
 
