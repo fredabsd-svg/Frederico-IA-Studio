@@ -1,12 +1,16 @@
 // Utilitários COMPARTILHADOS pelos routers (movidos do server.js na
 // modularização — mesma lógica, mesmo comportamento).
+import fs from 'node:fs';
 import { Router } from 'express';
-import multer from 'multer';
 import { nanoid } from 'nanoid';
 import { db, now } from '../db.js';
 import { workspaceFor } from '../sandbox.js';
 import { resolveScheduleTimeZone, scheduleDateKey } from '../scheduling.js';
 import { scanUploadBatch } from '../clamav.js';
+import {
+  upload, UPLOAD_LIMITS, cleanupRequestUploads, totalUploadBytes,
+  rejectOversizedRequest, acquireUploadSlot, directorySize, quotaVerdict
+} from '../uploads.js';
 
 // Router com o mesmo "shim" async do app: com as rotas assíncronas (Postgres),
 // uma rejeição de Promise num handler NÃO é encaminhada ao middleware de erro
@@ -124,7 +128,58 @@ export async function recordAdminAction(req, action, detail = null) {
 // por padrão — habilite com ENABLE_PC_FOLDERS=true só em uso pessoal confiável.
 export const PC_FOLDERS_ENABLED = process.env.ENABLE_PC_FOLDERS === 'true';
 
-export const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024, files: 20 } });
+// Recebimento de arquivos: streaming para disco, com tetos por arquivo, por
+// requisição, de concorrência e de cota. Ver src/uploads.js para a política e o
+// problema de memória que ela corrige.
+export { upload, UPLOAD_LIMITS, cleanupRequestUploads };
+
+// Portão de entrada de TODA rota de upload. Devolve null (e já respondeu ao
+// cliente) quando o envio deve ser recusado; caso contrário devolve
+// { release } — o chamador tem de chamar release() no finally.
+//
+// Ordem das checagens, da mais barata para a mais cara:
+//   1) Content-Length declarado (antes de ler um byte do corpo);
+//   2) vaga de concorrência do usuário;
+//   3) — o corpo é lido pelo multer, direto para disco —
+//   4) total real da requisição;
+//   5) cota de disco do usuário.
+export function beginUpload(req, res) {
+  if (rejectOversizedRequest(req, res)) return null;
+  const release = acquireUploadSlot(req.userId);
+  if (!release) {
+    res.status(429).json({
+      error: `Você já tem ${UPLOAD_LIMITS.maxConcurrentPerUser} envio(s) em andamento. Aguarde terminar antes de iniciar outro.`,
+      code: 'upload_too_many_concurrent'
+    });
+    return null;
+  }
+  return { release };
+}
+
+// Aplica os tetos que só podem ser conferidos DEPOIS do parsing (total real e
+// cota em disco). Devolve false e responde ao cliente quando recusa — sempre
+// limpando os temporários.
+export function enforceUploadLimits(req, res, { quotaDir = null } = {}) {
+  const files = req.files || [];
+  const incoming = totalUploadBytes(files);
+  if (incoming > UPLOAD_LIMITS.maxRequestBytes) {
+    cleanupRequestUploads(req);
+    res.status(413).json({
+      error: `O envio total (${Math.round(incoming / 1048576)} MB) passa do limite de ${Math.round(UPLOAD_LIMITS.maxRequestBytes / 1048576)} MB por requisição. Envie em lotes menores.`,
+      code: 'upload_request_too_large'
+    });
+    return false;
+  }
+  if (UPLOAD_LIMITS.userQuotaBytes && quotaDir) {
+    const verdict = quotaVerdict({ usedBytes: directorySize(quotaDir), incomingBytes: incoming });
+    if (!verdict.ok) {
+      cleanupRequestUploads(req);
+      res.status(413).json({ error: verdict.error, code: verdict.code, usadoMb: Math.round(verdict.usedBytes / 1048576), cotaMb: Math.round(verdict.quotaBytes / 1048576) });
+      return false;
+    }
+  }
+  return true;
+}
 
 // multer/busboy entrega originalname em latin1; reconverte para UTF-8 para não
 // corromper acentos (ex.: "Razão.pdf" virava "RazÃ£o.pdf").
@@ -133,11 +188,16 @@ export function decodeUploadName(name) { return Buffer.from(name, 'latin1').toSt
 // Passa o lote pelo antivírus (ClamAV). Devolve null e responde ao cliente se o
 // scanner for obrigatório e estiver fora do ar; senão devolve { scanned, clean,
 // rejected: [{name, virus}] } com os nomes já decodificados para exibição.
-export async function scanOrReject(res, files) {
+export async function scanOrReject(res, files, req = null) {
   try {
     const scan = await scanUploadBatch(files);
+    // Os infectados saem do disco imediatamente (o staging inteiro é removido
+    // no finally da rota, mas não deixamos um arquivo com vírus vivo enquanto o
+    // resto do lote é processado).
+    for (const r of scan.rejected) { if (r.file?.path) { try { fs.rmSync(r.file.path, { force: true }); } catch {} } }
     return { ...scan, rejected: scan.rejected.map(r => ({ name: decodeUploadName(r.file.originalname), virus: r.virus })) };
   } catch (err) {
+    if (req) cleanupRequestUploads(req);
     res.status(err.status || 503).json({ error: err.message });
     return null;
   }

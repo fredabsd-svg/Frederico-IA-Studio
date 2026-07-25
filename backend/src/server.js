@@ -38,6 +38,7 @@ import companionRouter from './routes/companion.js';
 import copilotRouter from './routes/copilot.js';
 import doclingRouter from './routes/docling.js';
 import { healthMetrics } from './healthMetrics.js';
+import { sweepStaleUploadTemps } from './uploads.js';
 import { sweepExpiredArtifacts, RETENTION_DAYS as DOCLING_RETENTION_DAYS } from './docling/retention.js';
 import { startHealthSampling } from './companion/health.js';
 
@@ -217,6 +218,11 @@ app.use((err, req, res, _next) => {
   //     backend/host) é removido agora, e uma varredura periódica recolhe o que
   //     escapar do mapa em memória. Só toca em containers com a label do app.
   startSandboxReconciliation();
+  // Temporários de upload abandonados (queda do processo no meio de um envio):
+  // varredura no boot e a cada hora. O staging normal já é removido no finally
+  // de cada rota — isto é a rede de segurança.
+  sweepStaleUploadTemps();
+  setInterval(() => { try { sweepStaleUploadTemps(); } catch {} }, 60 * 60 * 1000).unref();
   startSchedulers();
   startHealthSampling(); // amostragem de saúde (memória/CPU) para o copiloto
   setTimeout(() => processTasks().catch(() => {}), 2000);

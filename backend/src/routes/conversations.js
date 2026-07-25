@@ -15,10 +15,10 @@ import { validate, schemas } from '../validation.js';
 import { getUserProvider } from '../userProvider.js';
 import { enforceFreeTierLimits, bumpFreeTierUsage, logFreeTierEvent, freeTierStatusFor } from '../freeTier.js';
 import { acquireFreeSlot, cancelFreeJob, freeQueueSnapshot } from '../freeQueue.js';
-import { makeRouter, upload, scanOrReject, decodeUploadName, loadAssistant, ensureConversation, enforceDailyLimit, looksLikeFailedAssistantReply } from './helpers.js';
+import { makeRouter, upload, scanOrReject, decodeUploadName, loadAssistant, ensureConversation, enforceDailyLimit, looksLikeFailedAssistantReply, beginUpload, enforceUploadLimits, cleanupRequestUploads } from './helpers.js';
+import { commitUploadedFile, hashFileStreamSync } from '../uploads.js';
 import { runGithubTool } from '../connectors/github.js';
 import { validateAttachmentManifest } from '../attachments.js';
-import { hashBuffer } from '../docling/hash.js';
 import { kickProcessing, mimeForName } from '../docling/service.js';
 import { purgeIfOrphan } from '../docling/retention.js';
 
@@ -111,31 +111,50 @@ router.delete('/conversations/:id', async (req, res) => {
   res.json({ ok: true });
 });
 
-router.post('/conversations/:id/upload', upload.array('files'), async (req, res) => {
-  if (!await ensureConversation(req.userId, req.params.id)) return res.status(404).json({ error: 'Não encontrado' });
-  const scan = await scanOrReject(res, req.files || []);
-  if (!scan) return;
-  const ws = workspaceFor(req.params.id, req.userId);
-  const saved = [];
-  for (const file of scan.clean) {
-    const original = decodeUploadName(file.originalname);
-    const safe = original.replace(/[^a-zA-Z0-9._ -]/g, '_');
-    const name = `${Date.now()}_${nanoid(8)}_${safe}`;
-    const target = path.join(ws.uploads, name);
-    fs.writeFileSync(target, file.buffer);
-    try { fs.chownSync(target, 1000, 1000); } catch {}
-    const id = nanoid();
-    // Hash de conteúdo (base do cache/dedup do Docling) e MIME por extensão.
-    const hash = hashBuffer(file.buffer);
-    const mime = file.mimetype && file.mimetype !== 'application/octet-stream' ? file.mimetype : mimeForName(original);
-    await db.prepare('INSERT INTO files (id,conversation_id,kind,name,path,size,hash,mime,created_at) VALUES (?,?,?,?,?,?,?,?,?)')
-      .run(id, req.params.id, 'upload', original, `uploads/${name}`, file.size, hash, mime, now());
-    // Pré-processa com o Docling em segundo plano (se ligado e tipo suportado);
-    // não bloqueia a resposta do upload.
-    kickProcessing({ userId: req.userId, conversationId: req.params.id, fileId: id, filePath: target, filename: original, mime, hash });
-    saved.push({ id, name: original, path: `uploads/${name}`, size: file.size });
+router.post('/conversations/:id/upload', (req, res, next) => {
+  // Portão ANTES do multer: recusa pelo Content-Length e limita a concorrência
+  // por usuário (ver routes/helpers.js → beginUpload).
+  const gate = beginUpload(req, res);
+  if (!gate) return;
+  res.on('close', gate.release);
+  res.on('finish', gate.release);
+  next();
+}, upload.array('files'), async (req, res) => {
+  try {
+    if (!await ensureConversation(req.userId, req.params.id)) {
+      cleanupRequestUploads(req);
+      return res.status(404).json({ error: 'Não encontrado' });
+    }
+    const ws = workspaceFor(req.params.id, req.userId);
+    // Cota de disco: mede a árvore INTEIRA do usuário, não só desta conversa.
+    if (!enforceUploadLimits(req, res, { quotaDir: path.dirname(ws.base) })) return;
+    const scan = await scanOrReject(res, req.files || [], req);
+    if (!scan) return;
+    const saved = [];
+    for (const file of scan.clean) {
+      const original = decodeUploadName(file.originalname);
+      const safe = original.replace(/[^a-zA-Z0-9._ -]/g, '_');
+      const name = `${Date.now()}_${nanoid(8)}_${safe}`;
+      const target = path.join(ws.uploads, name);
+      // Hash por streaming ANTES de mover (o arquivo nunca é lido inteiro na RAM).
+      const hash = hashFileStreamSync(file.path);
+      const size = commitUploadedFile(file.path, target);
+      const id = nanoid();
+      const mime = file.mimetype && file.mimetype !== 'application/octet-stream' ? file.mimetype : mimeForName(original);
+      await db.prepare('INSERT INTO files (id,conversation_id,kind,name,path,size,hash,mime,created_at) VALUES (?,?,?,?,?,?,?,?,?)')
+        .run(id, req.params.id, 'upload', original, `uploads/${name}`, size, hash, mime, now());
+      // Pré-processa com o Docling em segundo plano (se ligado e tipo suportado);
+      // não bloqueia a resposta do upload.
+      kickProcessing({ userId: req.userId, conversationId: req.params.id, fileId: id, filePath: target, filename: original, mime, hash });
+      saved.push({ id, name: original, path: `uploads/${name}`, size });
+    }
+    // `scanned` e `scanStatus` dizem a VERDADE sobre a verificação: com o
+    // antivírus fora do ar (modo degradado) a interface não pode exibir selo de
+    // "arquivo verificado".
+    res.json({ files: saved, scanned: scan.scanned, scanStatus: scan.status, rejected: scan.rejected });
+  } finally {
+    cleanupRequestUploads(req); // temporários somem mesmo em erro/abortos
   }
-  res.json({ files: saved, scanned: scan.scanned, rejected: scan.rejected });
 });
 
 router.get('/conversations/:id/files', async (req, res) => {
