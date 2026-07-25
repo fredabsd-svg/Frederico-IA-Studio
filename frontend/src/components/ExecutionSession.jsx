@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Terminal, FolderOpen, Globe, Search, Image as ImageIcon, FileCog,
-  X, Maximize2, CheckCircle2, AlertCircle, Circle, Cpu, Loader, ExternalLink
+  X, Maximize2, CheckCircle2, AlertCircle, Circle, Cpu, Loader, ExternalLink, Users
 } from 'lucide-react';
 import { API } from '../constants.js';
+import { groupExecutionSteps, delegationSummary } from '../executionSteps.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Ambiente de Trabalho da IA
@@ -29,8 +30,11 @@ export const TOOL_META = {
   web_search:     { cat: 'search',   running: 'Pesquisando na internet',          done: 'Pesquisa na internet' },
   web_fetch:      { cat: 'browser',  running: 'Abrindo página no navegador',      done: 'Página aberta no navegador' },
   generate_image: { cat: 'image',    running: 'Gerando imagem',                   done: 'Imagem gerada' },
-  consultar_cnpj: { cat: 'search',   running: 'Consultando CNPJ',                 done: 'CNPJ consultado' }
+  consultar_cnpj: { cat: 'search',   running: 'Consultando CNPJ',                 done: 'CNPJ consultado' },
+  delegar_subagente: { cat: 'agent', running: 'Sub-agente trabalhando',           done: 'Sub-agente concluiu' }
 };
+
+export { SUBAGENT_TOOL } from '../executionSteps.js';
 
 export const CAT_META = {
   terminal: { Icon: Terminal,   label: 'Terminal',  inputLabel: 'Comando' },
@@ -39,6 +43,7 @@ export const CAT_META = {
   search:   { Icon: Search,     label: 'Pesquisa',  inputLabel: 'Consulta' },
   browser:  { Icon: Globe,      label: 'Navegador', inputLabel: 'Endereço' },
   image:    { Icon: ImageIcon,  label: 'Imagem',    inputLabel: 'Descrição' },
+  agent:    { Icon: Users,      label: 'Sub-agente', inputLabel: 'Subtarefa delegada' },
   other:    { Icon: Cpu,        label: 'Ações',     inputLabel: 'Entrada' }
 };
 
@@ -48,7 +53,7 @@ export function describe(step) {
   const meta = metaOf(step.name);
   const cat = CAT_META[meta.cat] || CAT_META.other;
   const label = step.status === 'running' ? meta.running : meta.done;
-  return { cat: meta.cat, catMeta: cat, label, detail: (step.preview || '').trim() };
+  return { cat: meta.cat, catMeta: cat, label, detail: (step.preview || '').trim(), subagent: step.subagent || null };
 }
 
 const fmtDuration = ms => {
@@ -74,17 +79,19 @@ function summarize(steps, now) {
   const commands = count('bash') + count('run_python');
   const searches = count('web_search') + count('web_fetch');
   const reads = count('read_file') + count('list_files');
+  const delegations = count(SUBAGENT_TOOL);
   const errors = steps.filter(s => s.status === 'error').length;
   const starts = steps.map(s => s.started).filter(Boolean);
   const ends = steps.map(s => s.ended).filter(Boolean);
   const first = starts.length ? Math.min(...starts) : now;
   const last = steps.some(s => s.status === 'running') || !ends.length ? now : Math.max(...ends);
-  return { total: steps.length, files, commands, searches, reads, errors, elapsed: fmtDuration(last - first) };
+  return { total: steps.length, files, commands, searches, reads, delegations, errors, elapsed: fmtDuration(last - first) };
 }
 
 // Frase-resumo montada a partir das categorias presentes (sem inventar nada).
 function summaryPhrase(s) {
   const parts = [];
+  if (s.delegations) parts.push(s.delegations === 1 ? 'delegando para um sub-agente' : `delegando para ${s.delegations} sub-agentes`);
   if (s.searches) parts.push('pesquisando na internet');
   if (s.reads) parts.push('analisando arquivos');
   if (s.commands) parts.push('executando comandos');
@@ -106,6 +113,22 @@ function ResultView({ step, conversationId }) {
 
   const parsed = tryParse(step.result);
   const cat = metaOf(step.name).cat;
+
+  // Delegação a sub-agente: o que volta ao agente principal é só isto — o
+  // resultado resumido e os arquivos gerados. Vem ANTES do tratamento genérico
+  // de erro porque uma subtarefa incompleta traz as duas coisas (o motivo da
+  // falha E o que deu tempo de apurar), e esconder o parcial não ajuda ninguém.
+  if (step.name === SUBAGENT_TOOL && (parsed?.resultado != null || parsed?.arquivos)) {
+    return <div className="esDelegation">
+      {parsed.especialista && <div className="esDelegWho"><Users size={13} /> {parsed.especialista}</div>}
+      {parsed.error && <pre className="esOutput err">{parsed.error}</pre>}
+      <pre className="esOutput">{parsed.resultado || '(o sub-agente não devolveu texto)'}</pre>
+      {Array.isArray(parsed.arquivos) && parsed.arquivos.length > 0 && <>
+        <span className="esBlockLabel">Arquivos gerados pelo sub-agente</span>
+        <ul className="esFileList">{parsed.arquivos.map(f => <li key={f}>{f}</li>)}</ul>
+      </>}
+    </div>;
+  }
 
   if (parsed?.error) return <pre className="esOutput err">{parsed.error}</pre>;
 
@@ -205,9 +228,13 @@ function WorkspaceOverlay({ steps, live, sum, conversationId, onClose }) {
     return ['all', ...Object.keys(CAT_META).filter(c => present.has(c))];
   }, [steps]);
 
-  const visible = steps
-    .map((s, i) => ({ s, i }))
-    .filter(({ s }) => filter === 'all' || metaOf(s.name).cat === filter);
+  // As etapas dos sub-agentes aparecem recuadas DENTRO da delegação que as
+  // disparou (ver executionSteps.js). Com o filtro por categoria ligado, o
+  // recuo perde o sentido — a lista já não é a sequência completa.
+  const grouped = useMemo(() => groupExecutionSteps(steps), [steps]);
+  const visible = filter === 'all'
+    ? grouped
+    : grouped.filter(({ s }) => metaOf(s.name).cat === filter).map(row => ({ ...row, depth: 0 }));
 
   const active = selected != null ? steps[selected] : null;
   const activeInfo = active ? describe(active) : null;
@@ -237,6 +264,7 @@ function WorkspaceOverlay({ steps, live, sum, conversationId, onClose }) {
           {sum.reads > 0 && <span><b>{sum.reads}</b> leituras</span>}
           {sum.commands > 0 && <span><b>{sum.commands}</b> comandos</span>}
           {sum.searches > 0 && <span><b>{sum.searches}</b> pesquisas</span>}
+          {sum.delegations > 0 && <span><b>{sum.delegations}</b> {sum.delegations === 1 ? 'delegação' : 'delegações'}</span>}
           {sum.files > 0 && <span><b>{sum.files}</b> arquivos</span>}
           <span className={sum.errors ? 'esStatErr' : ''}><b>{sum.errors}</b> {sum.errors === 1 ? 'erro' : 'erros'}</span>
           <span className="esWinTime">{sum.elapsed}</span>
@@ -254,16 +282,17 @@ function WorkspaceOverlay({ steps, live, sum, conversationId, onClose }) {
 
         <div className="esWinBody">
           <ol className="esSteps" ref={listRef}>
-            {visible.map(({ s, i }) => {
+            {visible.map(({ s, i, depth }) => {
               const info = describe(s);
               const CatIcon = info.catMeta.Icon;
               return (
-                <li key={i} className="esStepIn">
+                <li key={i} className={`esStepIn${depth ? ' esStepSub' : ''}`}>
                   <button className={`esStep ${s.status} ${selected === i ? 'sel' : ''}`} onClick={() => pick(i)}>
                     <span className="esStepStat">{statusIcon(s.status)}</span>
                     <span className="esStepCat"><CatIcon size={14} /></span>
                     <span className="esStepText">
                       <b>{info.label}</b>
+                      {info.subagent && <span className="esStepWho">{info.subagent}</span>}
                       {info.detail && <small>{info.detail}</small>}
                     </span>
                   </button>
@@ -326,6 +355,7 @@ function ExecutionSessionInner({ steps, live, conversationId }) {
   }, [live]);
 
   const sum = useMemo(() => summarize(steps, now), [steps, now]);
+  const delegs = useMemo(() => delegationSummary(steps), [steps]);
   if (!steps.length) return null;
 
   const running = steps.find(s => s.status === 'running');
@@ -342,9 +372,11 @@ function ExecutionSessionInner({ steps, live, conversationId }) {
     if (sum.files) chips.push(`${sum.files} ${sum.files === 1 ? 'arquivo' : 'arquivos'}`);
     if (sum.commands) chips.push(`${sum.commands} ${sum.commands === 1 ? 'comando' : 'comandos'}`);
     if (sum.searches) chips.push(`${sum.searches} ${sum.searches === 1 ? 'pesquisa' : 'pesquisas'}`);
+    if (sum.delegations) chips.push(`${sum.delegations} ${sum.delegations === 1 ? 'delegação' : 'delegações'}`);
     chips.push(hasError ? `${sum.errors} ${sum.errors === 1 ? 'erro' : 'erros'}` : 'nenhum erro');
   } else {
     chips.push(`${sum.total} ${sum.total === 1 ? 'etapa' : 'etapas'}`);
+    if (delegs.running) chips.push(`${delegs.running} ${delegs.running === 1 ? 'sub-agente' : 'sub-agentes'} em andamento`);
     if (sum.files) chips.push(`${sum.files} ${sum.files === 1 ? 'arquivo' : 'arquivos'}`);
   }
 

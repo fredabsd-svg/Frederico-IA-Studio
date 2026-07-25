@@ -26,6 +26,7 @@ import { saveCheckpoint, clearCheckpoint, isResumableReason, buildResumeMessages
 import { untrustedContext } from './promptRegistry.js';
 import { emitExecutionState, finalExecutionState } from './executionState.js';
 import { resolveSandboxNetwork, isToolCallAllowed } from './assistantPolicy.js';
+import { SUBAGENT_TOOL_NAME, subagentToolDefinition, shouldOfferSubagentTool, maxSubagentsPerRun, createSubagentLimiter, runSubagent } from './subagents.js';
 import { buildDocumentContext, DOC_PRECEDENCE_NOTE } from '../docling/context.js';
 import { doclingImageParts, visualElementsNote } from '../docling/vision.js';
 
@@ -63,7 +64,11 @@ export function buildOutputBaseline(files = [], { acceptAll = false, continuatio
 // um run interrompido — array de mensagens do agente, modelo ativo, cadeia de
 // failover já tentada e o objetivo. Com ele, o loop CONTINUA de onde parou (com
 // orçamento de ciclos NOVO), em vez de recomeçar do zero. Ver checkpoint.js.
-export async function runAgent({ userId, conversationId, userText, model, assistant, webSearch, effort, developer, onEvent, saveUserMessage = true, existingUserMessageId = null, executionBriefing = null, forceExecution = false, control: inheritedControl = null, resume = null, gitWriteAuthorization = null, persistReply = true, continuationOutputPaths = [] }) {
+export async function runAgent({ userId, conversationId, userText, model, assistant, webSearch, effort, developer, onEvent, saveUserMessage = true, existingUserMessageId = null, executionBriefing = null, forceExecution = false, control: inheritedControl = null, resume = null, gitWriteAuthorization = null, persistReply = true, continuationOutputPaths = [], subagentDepth = 0 }) {
+  // Execução DELEGADA (sub-agente): compartilha a conversa e o workspace com o
+  // pai, mas não é dona da conversa — não grava mensagem, não grava checkpoint
+  // e não delega de novo. Quem responde ao usuário e é retomável é o pai.
+  const isSubagent = subagentDepth > 0;
   const requestedModel = resume?.model || model || assistant?.model || '';
   const provider = await getUserProvider(userId, requestedModel); // chave dona do modelo
   const client = provider.client;                          // sombreia o cliente global
@@ -138,6 +143,21 @@ export async function runAgent({ userId, conversationId, userText, model, assist
     requestedTools = [...requestedTools, ...githubTools];
   }
   if (lowSignalTurn) requestedTools = [];
+  // SUB-AGENTES: a ferramenta de delegação só é oferecida quando delegar faz
+  // sentido — há ferramentas na mesa, não é um turno social, não estamos já
+  // dentro de um sub-agente e a conta não está no modo gratuito (ver os
+  // guard-rails em subagents.js).
+  const subagentsOffered = shouldOfferSubagentTool({
+    depth: subagentDepth,
+    lowSignalTurn,
+    providerSource: provider.source,
+    hasTools: requestedTools.length > 0
+  });
+  if (subagentsOffered) requestedTools = [...requestedTools, subagentToolDefinition];
+  const subagentBudget = maxSubagentsPerRun();
+  // Teto de delegações SIMULTÂNEAS (as do mesmo lote correm em paralelo).
+  const delegationSlot = createSubagentLimiter();
+  let subagentRuns = 0;
 
   const uploadNoteForRun = !lowSignalTurn ? uploadsNote(userId, conversationId) : null;
   // Docling: quando ligado e houver documentos já processados nesta conversa,
@@ -170,11 +190,15 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   try {
   // No resume NÃO gravamos uma nova mensagem de usuário — o objetivo já está na
   // conversa e no checkpoint (evita duplicar o pedido e criar execução nova).
-  const userMsgId = resume
-    ? (existingUserMessageId || null)
-    : (saveUserMessage || !existingUserMessageId
-        ? await saveMessage(userId, conversationId, 'user', userText)
-        : existingUserMessageId);
+  // Sub-agente NÃO grava a mensagem de usuário: o pedido dele é uma instrução
+  // interna do agente principal, não uma fala da pessoa na conversa.
+  const userMsgId = isSubagent
+    ? null
+    : (resume
+        ? (existingUserMessageId || null)
+        : (saveUserMessage || !existingUserMessageId
+            ? await saveMessage(userId, conversationId, 'user', userText)
+            : existingUserMessageId));
   emitExecutionState(onEvent, developerContext ? 'planning' : 'analyzing', resume ? 'Retomando do checkpoint seguro' : 'Preparando a execução', { runId });
 
   // BYOK: sem chave de API configurada, orienta a cadastrar e encerra.
@@ -185,9 +209,11 @@ export async function runAgent({ userId, conversationId, userText, model, assist
     onEvent({ type: 'status', content: 'Chave de API não configurada' });
     onEvent({ type: 'delta', content: finalText });
     const execution = emitExecutionState(onEvent, 'awaiting_user', 'Configuração do provedor necessária', { runId });
-    const assistantMessageId = await saveMessage(userId, conversationId, 'assistant', finalText, { executionMeta: execution });
-    onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId });
-    return { text: finalText, usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }, model: chosenModel, stopped: false };
+    if (!isSubagent) {
+      const assistantMessageId = await saveMessage(userId, conversationId, 'assistant', finalText, { executionMeta: execution });
+      onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId });
+    }
+    return { text: finalText, usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }, model: chosenModel, stopped: false, ...(isSubagent ? { incomplete: true, failureMessage: 'Provedor sem chave para o modelo do sub-agente.' } : {}) };
   }
 
   if (modelPlan.blocked) {
@@ -198,15 +224,18 @@ export async function runAgent({ userId, conversationId, userText, model, assist
     onEvent({ type: 'status', content: status });
     onEvent({ type: 'delta', content: finalText });
     const execution = emitExecutionState(onEvent, 'fatal_error', status, { runId, compatibility: modelPlan.blocked.capability });
-    const assistantMessageId = await saveMessage(userId, conversationId, 'assistant', finalText, { executionMeta: execution });
-    onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId });
-    indexAfterReply(userId, conversationId).catch(() => {});
+    if (!isSubagent) {
+      const assistantMessageId = await saveMessage(userId, conversationId, 'assistant', finalText, { executionMeta: execution });
+      onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId });
+      indexAfterReply(userId, conversationId).catch(() => {});
+    }
     return {
       text: finalText,
       usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
       model: chosenModel,
       stopped: false,
-      compatibility: modelPlan.blocked.capability
+      compatibility: modelPlan.blocked.capability,
+      ...(isSubagent ? { incomplete: true, failureMessage: status } : {})
     };
   }
   let environmentNote = null;
@@ -827,8 +856,37 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
       completedNaturally = true;
       break;
     }
+    // DELEGAÇÕES EM PARALELO: as chamadas de sub-agente deste lote são lançadas
+    // ANTES do laço, todas de uma vez (respeitando o teto de simultâneas). As
+    // demais ferramentas continuam em série, e o laço abaixo apenas AGUARDA a
+    // delegação quando chega a vez dela — assim os resultados entram na ordem
+    // das tool_calls (o array de mensagens exige esse pareamento), mas o tempo
+    // de parede é o da delegação mais lenta, não a soma de todas.
+    const delegations = new Map();
+    for (const call of stepToolCalls) {
+      if (call.function.name !== SUBAGENT_TOOL_NAME) continue;
+      if (!isToolCallAllowed(SUBAGENT_TOOL_NAME, tools) || subagentRuns >= subagentBudget) break;
+      subagentRuns += 1;
+      let delegationArgs = {};
+      try { delegationArgs = JSON.parse(call.function.arguments || '{}'); } catch {}
+      onEvent({ type: 'tool_start', id: call.id, name: SUBAGENT_TOOL_NAME, preview: String(delegationArgs.tarefa || '').slice(0, 400) });
+      emitExecutionState(onEvent, 'tool_running', SUBAGENT_TOOL_NAME, { runId, step, tool: SUBAGENT_TOOL_NAME });
+      delegations.set(call.id, delegationSlot(() => runSubagent({
+        userId,
+        conversationId,
+        args: delegationArgs,
+        model: chosenModel,
+        effort,
+        control,
+        onEvent,
+        depth: subagentDepth,
+        webSearch: webSearchActive,
+        delegationId: call.id
+      })));
+    }
     for (let callIdx = 0; callIdx < stepToolCalls.length; callIdx++) {
       const call = stepToolCalls[callIdx];
+      const pendingDelegation = delegations.get(call.id) || null;
       if (await gate(control, onEvent)) {
         stopped = true;
         // Parada ENTRE chamadas do mesmo lote: o assistant já foi empilhado com
@@ -839,6 +897,15 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
         // resultado "cancelado" para cada chamada restante, mantendo o par
         // tool_call/tool_result íntegro e o checkpoint retomável.
         for (let k = callIdx; k < stepToolCalls.length; k++) {
+          // Delegação já lançada e ainda em voo: o filho enxerga o mesmo
+          // controle e encerra sozinho — esperamos por ele só para somar a
+          // usage do trabalho que chegou a acontecer antes da parada.
+          const inFlight = delegations.get(stepToolCalls[k].id);
+          if (inFlight) {
+            const partial = await inFlight;
+            if (partial?.usage) addUsage(usage, partial.usage);
+            onEvent({ type: 'tool_result', id: stepToolCalls[k].id, name: SUBAGENT_TOOL_NAME, content: partial?.result?.slice(0, 2000) || '' });
+          }
           messages.push({ role: 'tool', tool_call_id: stepToolCalls[k].id, content: JSON.stringify({ error: 'Execução interrompida pelo usuário antes desta ferramenta.', code: 'CANCELED' }) });
         }
         break;
@@ -853,8 +920,11 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
       // conteúdo escrito (o resultado só traz o caminho) para o painel de detalhe
       // mostrar o que a IA de fato salvou. Limitado para não pesar no stream.
       const detail = name === 'write_file' ? String(args.content || '').slice(0, 4000) : '';
-      onEvent({ type: 'tool_start', name, preview, ...(detail ? { detail } : {}) });
-      emitExecutionState(onEvent, 'tool_running', name, { runId, step, tool: name });
+      // As delegações já anunciaram o início ao serem lançadas (acima).
+      if (!pendingDelegation) {
+        onEvent({ type: 'tool_start', id: call.id, name, preview, ...(detail ? { detail } : {}) });
+        emitExecutionState(onEvent, 'tool_running', name, { runId, step, tool: name });
+      }
       let result;
       const allowedToolCall = isToolCallAllowed(name, tools);
       const isWebTool = name === 'web_search' || name === 'web_fetch';
@@ -870,6 +940,20 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
         result = JSON.stringify({ error: 'A pesquisa web já atingiu o limite desta tarefa. Conclua com as evidências obtidas.', code: 'WEB_RESEARCH_STOPPED' });
       } else if (repeatedFetch) {
         result = JSON.stringify({ error: 'Esta URL já foi consultada nesta tarefa. Use uma fonte nova ou conclua com as evidências obtidas.', code: 'DUPLICATE_WEB_FETCH', url: args.url });
+      } else if (name === SUBAGENT_TOOL_NAME) {
+        // Delegação: NÃO passa pelo runTool (o sub-agente não roda no sandbox —
+        // ele é outro runAgent). Sem promessa lançada, a chamada ficou fora do
+        // teto desta execução: devolve erro e o modelo segue sem delegar, no
+        // estilo dos demais freios do loop.
+        if (!pendingDelegation) {
+          result = JSON.stringify({ error: `O limite de ${subagentBudget} delegações desta tarefa foi alcançado. Conclua a subtarefa você mesmo.`, code: 'SUBAGENT_LIMIT' });
+        } else {
+          const delegation = await pendingDelegation;
+          // A usage do filho entra na do pai — o custo real nunca some do painel.
+          if (delegation.usage) addUsage(usage, delegation.usage);
+          if (delegation.stopped) stopped = true;
+          result = delegation.result;
+        }
       } else {
         const activeTool = beginToolRequest(control);
         try {
@@ -890,7 +974,7 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
       // `content` é cortado em 2000 chars e o caminho poderia ficar de fora.
       let thumb = '';
       if (name === 'web_fetch') { try { thumb = JSON.parse(result).thumb || ''; } catch {} }
-      onEvent({ type: 'tool_result', name, content: result.slice(0, 2000), ...(thumb ? { thumb } : {}) });
+      onEvent({ type: 'tool_result', id: call.id, name, content: result.slice(0, 2000), ...(thumb ? { thumb } : {}) });
       emitExecutionState(onEvent, 'processing_result', name, { runId, step, tool: name });
       messages.push({ role: 'tool', tool_call_id: call.id, content: result });
       // Freio de loop: conta falhas consecutivas das ferramentas
@@ -909,17 +993,22 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
     // Checkpoint seguro entre lotes: nunca é gravado no meio de uma ferramenta.
     // Se o backend cair no próximo stream, a retomada parte daqui sem repetir
     // as chamadas que já terminaram. Uma conclusão limpa apaga este registro.
-    await saveCheckpoint({
-      userId, conversationId, runId,
-      objective: resume?.objective || userText,
-      reason: 'progress',
-      model: chosenModel,
-      triedModels: [...triedModels],
-      step: (resume?.step || 0) + step,
-      messages,
-      usage,
-      meta: { safePoint: 'after_tool_batch', webSearch: Boolean(webSearch), effort: effort || null, developer: developer || null, assistantId: assistant?.id || null }
-    });
+    // O sub-agente NÃO grava: o checkpoint tem uma linha por CONVERSA, então o
+    // filho sobrescreveria (e, ao terminar, apagaria) o checkpoint do pai — que
+    // é o run de verdade, o único retomável pelo botão "Continuar".
+    if (!isSubagent) {
+      await saveCheckpoint({
+        userId, conversationId, runId,
+        objective: resume?.objective || userText,
+        reason: 'progress',
+        model: chosenModel,
+        triedModels: [...triedModels],
+        step: (resume?.step || 0) + step,
+        messages,
+        usage,
+        meta: { safePoint: 'after_tool_batch', webSearch: Boolean(webSearch), effort: effort || null, developer: developer || null, assistantId: assistant?.id || null }
+      });
+    }
     // Etapa produtiva: executou ferramenta(s) e a última não falhou em cadeia.
     // Serve de sinal para permitir passar do orçamento base (ver topo do loop).
     if (consecutiveFailures === 0) lastProductiveStep = step;
@@ -1009,8 +1098,11 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
     finalText += modelSwitchNote;
     onEvent({ type: 'delta', content: modelSwitchNote });
   }
+  // Validação dos artefatos: pulada no sub-agente. Os arquivos que ele gerou
+  // estão no MESMO workspace e entram no `newFiles` do pai, que os valida uma
+  // vez só — validar duas vezes seria custo de sandbox repetido.
   let checks = {};
-  if (newFiles.length && !stopped) {
+  if (newFiles.length && !stopped && !isSubagent) {
     emitExecutionState(onEvent, 'validating', 'Validando os artefatos antes da entrega', { runId });
     checks = await validateOutputs(conversationId, newFiles, onEvent, sandboxOptions);
     if (Object.values(checks).some(check => check?.ok === false)) {
@@ -1026,8 +1118,13 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
   // contrário (conclusão limpa, ou falha de qualidade), limpa qualquer
   // checkpoint antigo — não há o que retomar. `messages.length > 3` evita salvar
   // um checkpoint que seja só o preâmbulo, sem trabalho de verdade.
+  // O checkpoint da conversa pertence ao PAI: o sub-agente não grava nem limpa.
+  // Se a subtarefa foi interrompida, o pai recebe isso no resultado da
+  // ferramenta e decide (refazer, seguir sem ela ou parar) — e é o run dele que
+  // fica retomável pelo botão "Continuar".
+  const ownsCheckpoint = !isSubagent;
   let resumable = false;
-  if (isResumableReason(checkpointReason) && messages.length > 3) {
+  if (ownsCheckpoint && isResumableReason(checkpointReason) && messages.length > 3) {
     resumable = await saveCheckpoint({
       userId, conversationId, runId,
       objective: resume?.objective || userText,
@@ -1042,7 +1139,7 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
     // Avisa a interface AO VIVO que dá para retomar (sem esperar um reload):
     // o botão "Continuar" aparece na mensagem interrompida.
     if (resumable) onEvent({ type: 'resumable', value: true });
-  } else {
+  } else if (ownsCheckpoint) {
     await clearCheckpoint(conversationId);
   }
   const finalState = finalExecutionState({ stopped, awaitingUserReply, resumable, providerFailure, incomplete });
@@ -1058,7 +1155,11 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
   });
   // Persistência e cartões só acontecem depois da validação. O estado gravado
   // é a fonte de verdade quando a conversa for reaberta.
-  const shouldPersistReply = persistReply || stopped || resumable || providerFailure || incomplete || awaitingUserReply;
+  // O sub-agente NUNCA persiste: mesmo interrompido ou incompleto, o texto dele
+  // é resultado de ferramenta do pai, não uma resposta na conversa. (Sem este
+  // `!isSubagent`, o `persistReply: false` seria ignorado justamente nos casos
+  // de falha — que são os mais comuns numa subtarefa que dá errado.)
+  const shouldPersistReply = !isSubagent && (persistReply || stopped || resumable || providerFailure || incomplete || awaitingUserReply);
   let msgId = null;
   if (shouldPersistReply) {
     const persisted = await persistAssistantReply(userId, conversationId, finalText, memoryMeta, newFiles, { executionMeta: execution });
