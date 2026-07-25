@@ -12,9 +12,9 @@ const VISION_MAX_BYTES = 8 * 1024 * 1024; // ignora imagens acima de 8 MB no env
 // VISÃO MULTIMODAL: monta as imagens dos uploads como partes image_url (base64)
 // para enviar direto ao modelo — só usado quando o modelo TEM visão. As mais
 // recentes primeiro, com limites de quantidade e tamanho.
-export function imageUploadParts(conversationId) {
+export function imageUploadParts(userId, conversationId) {
   let dir;
-  try { dir = workspaceFor(conversationId).uploads; } catch { return []; }
+  try { dir = workspaceFor(conversationId, userId).uploads; } catch { return []; }
   let entries = [];
   try {
     entries = fs.readdirSync(dir)

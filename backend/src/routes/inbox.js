@@ -5,7 +5,8 @@ import path from 'path';
 import { nanoid } from 'nanoid';
 import { db, now } from '../db.js';
 import { workspaceFor } from '../sandbox.js';
-import { makeRouter, upload, scanOrReject, decodeUploadName } from './helpers.js';
+import { makeRouter, upload, scanOrReject, decodeUploadName, beginUpload, enforceUploadLimits, cleanupRequestUploads } from './helpers.js';
+import { commitUploadedFile } from '../uploads.js';
 
 const router = makeRouter();
 
@@ -13,9 +14,12 @@ const router = makeRouter();
 // Um lugar para acumular documentos de um cliente e, com 1 clique, abrir uma
 // conversa nova já com todos anexados para a IA processar.
 const inboxRoot = path.join(path.resolve(process.env.DATA_DIR || './data'), 'inbox');
+function safeUserKey(userId) {
+  return String(userId || 'anon').replace(/[^a-zA-Z0-9_-]/g, '_') || 'anon';
+}
 function inboxDir(userId, client) {
   // Escopo por usuário: um usuário não pode ler a caixa de entrada de outro.
-  const uKey = String(userId || 'anon').replace(/[^a-zA-Z0-9_-]/g, '_') || 'anon';
+  const uKey = safeUserKey(userId);
   const key = String(client || 'geral').replace(/[^a-zA-Z0-9_-]/g, '_') || 'geral';
   const d = path.join(inboxRoot, uKey, key);
   fs.mkdirSync(d, { recursive: true });
@@ -31,18 +35,29 @@ router.get('/inbox/:client', (req, res) => {
   }).filter(Boolean);
   res.json(files);
 });
-router.post('/inbox/:client/upload', upload.array('files'), async (req, res) => {
-  const scan = await scanOrReject(res, req.files || []);
-  if (!scan) return;
-  const d = inboxDir(req.userId, req.params.client);
-  let count = 0;
-  for (const file of scan.clean) {
-    const original = decodeUploadName(file.originalname);
-    const safe = original.replace(/[^a-zA-Z0-9._ -]/g, '_');
-    fs.writeFileSync(path.join(d, `${Date.now()}_${count}_${nanoid(6)}_${safe}`), file.buffer);
-    count++;
+router.post('/inbox/:client/upload', (req, res, next) => {
+  const gate = beginUpload(req, res);
+  if (!gate) return;
+  res.on('close', gate.release);
+  res.on('finish', gate.release);
+  next();
+}, upload.array('files'), async (req, res) => {
+  try {
+    const d = inboxDir(req.userId, req.params.client);
+    if (!enforceUploadLimits(req, res, { quotaDir: path.join(inboxRoot, safeUserKey(req.userId)) })) return;
+    const scan = await scanOrReject(res, req.files || [], req);
+    if (!scan) return;
+    let count = 0;
+    for (const file of scan.clean) {
+      const original = decodeUploadName(file.originalname);
+      const safe = original.replace(/[^a-zA-Z0-9._ -]/g, '_');
+      commitUploadedFile(file.path, path.join(d, `${Date.now()}_${count}_${nanoid(6)}_${safe}`));
+      count++;
+    }
+    res.json({ ok: true, count, scanned: scan.scanned, scanStatus: scan.status, rejected: scan.rejected });
+  } finally {
+    cleanupRequestUploads(req);
   }
-  res.json({ ok: true, count, scanned: scan.scanned, rejected: scan.rejected });
 });
 router.delete('/inbox/:client/:stored', (req, res) => {
   const d = inboxDir(req.userId, req.params.client);
@@ -59,7 +74,7 @@ router.post('/inbox/:client/to-conversation', async (req, res) => {
   const clientId = req.params.client === 'geral' ? null : req.params.client;
   await db.prepare('INSERT INTO conversations (id,user_id,title,model,client_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?)')
     .run(convId, req.userId, `Documentos recebidos — ${t.slice(0, 10)}`, process.env.DEEPSEEK_MODEL || 'deepseek-chat', clientId, t, t);
-  const ws = workspaceFor(convId);
+  const ws = workspaceFor(convId, req.userId);
   for (const n of files) {
     // Prefixo de comprimento fixo (nanoid(6)) — a versão antiga com `+_` guloso
     // comia até o último "_" e mutilava nomes como "Nota_Fiscal_123.pdf".

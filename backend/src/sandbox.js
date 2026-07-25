@@ -1,11 +1,31 @@
 import Docker from 'dockerode';
+import crypto from 'node:crypto';
 import fs from 'fs';
 import path from 'path';
 import { PassThrough } from 'stream';
 import { nanoid } from 'nanoid';
 import { db } from './db.js';
+import { healthMetrics } from './healthMetrics.js';
 
-const docker = new Docker({ socketPath: '/var/run/docker.sock' });
+let docker = new Docker({ socketPath: '/var/run/docker.sock' });
+// Só para testes: injeta um cliente Docker falso (o node:test não tem daemon).
+export function _setDockerClient(client) { docker = client; }
+
+// ---- Identidade dos containers do Frederico (labels) ------------------------
+// Todo sandbox criado por este backend leva estas labels. Elas são a base da
+// RECONCILIAÇÃO no boot e da coleta periódica de órfãos: sem label, não há como
+// distinguir um container nosso de um container qualquer do host — e apagar
+// container de terceiro seria destrutivo.
+export const SANDBOX_LABEL_APP = 'com.frederico.app';
+export const SANDBOX_LABEL_USER = 'com.frederico.user';
+export const SANDBOX_LABEL_CONVERSATION = 'com.frederico.conversation';
+export const SANDBOX_LABEL_INSTANCE = 'com.frederico.instance';
+export const SANDBOX_LABEL_VERSION = 'com.frederico.manager-version';
+export const SANDBOX_APP_VALUE = 'frederico-ai-studio';
+export const SANDBOX_MANAGER_VERSION = '2';
+// Identidade DESTE processo. Um container com outra instância é, por definição,
+// de um backend que já morreu (o app roda em processo único — ver liveStream.js).
+export const SANDBOX_INSTANCE_ID = process.env.SANDBOX_INSTANCE_ID || nanoid(12);
 
 // Pastas do computador do usuário liberadas para o assistente. Cada uma vira
 // um mount em /mnt/pc/<label> dentro do sandbox (só leitura ou leitura+escrita).
@@ -48,15 +68,35 @@ export function pcFolderMounts(userId) {
   });
 }
 
-// Descarta todos os sandboxes ativos (usado quando as pastas do PC mudam,
-// para que os novos mounts entrem em vigor na próxima execução).
-export async function destroyAllSandboxes() {
-  for (const [id, entry] of sessions) {
-    sessions.delete(id);
-    try { await entry.container.remove({ force: true }); } catch {}
+// Descarta os sandboxes ativos DE UM USUÁRIO (usado quando as pastas do PC
+// dele mudam, para que os novos mounts entrem em vigor na próxima execução).
+//
+// SEGURANÇA/DISPONIBILIDADE (multi-tenant): a versão antiga (destroyAllSandboxes)
+// derrubava os containers de TODOS os usuários sempre que UM mexia nas próprias
+// pastas — matando execuções e tarefas em andamento de terceiros. A invalidação
+// agora é direcionada: os sandboxes dos outros usuários seguem intactos.
+export async function destroySandboxesForUser(userId) {
+  const scope = String(userId || '');
+  let destroyed = 0;
+  for (const [key, entry] of [...sessions]) {
+    if (String(entry.userId || '') !== scope) continue;
+    sessions.delete(key);
+    try { await entry.container.remove({ force: true }); destroyed++; } catch {}
   }
   // As pastas do PC podem ter mudado; atualiza o cache para os novos mounts
   // entrarem em vigor na próxima execução.
+  await loadPcFolders();
+  return destroyed;
+}
+
+// Descarta TODOS os sandboxes. Continua existindo para desligamento
+// ordenado/manutenção e testes — NÃO deve ser chamado por uma ação de usuário
+// comum (ver destroySandboxesForUser).
+export async function destroyAllSandboxes() {
+  for (const [id, entry] of [...sessions]) {
+    sessions.delete(id);
+    try { await entry.container.remove({ force: true }); } catch {}
+  }
   await loadPcFolders();
 }
 const root = path.resolve(process.env.WORKSPACE_ROOT || './workspaces');
@@ -72,7 +112,44 @@ const cpus = Number(process.env.SANDBOX_CPUS || 1);
 const MAX_SANDBOXES_PER_USER = Math.max(1, Number(process.env.MAX_SANDBOXES_PER_USER || 2));
 
 fs.mkdirSync(root, { recursive: true });
-const sessions = new Map(); // id -> { container, lastUsed, policyKey, userId }
+// Chave: `${userDirName}/${conversationId}` (NUNCA só a conversa) — ver
+// sessionKey(). Valor: { container, containerId, lastUsed, policyKey, userId }.
+const sessions = new Map();
+// Só para testes de isolamento (dois usuários com sandbox simultâneo).
+export const _sessionsForTests = sessions;
+
+// ---- Escopo físico do workspace: WORKSPACE_ROOT/users/<userDir>/<conversa> --
+// Antes o workspace era WORKSPACE_ROOT/<conversationId>: a chave física NÃO
+// tinha dono, então qualquer defesa contra acesso cruzado dependia unicamente
+// de a checagem de posse no banco nunca falhar e de os ids de conversa jamais
+// colidirem. Agora o dono faz parte do CAMINHO — defesa em profundidade: mesmo
+// que uma rota esqueça o WHERE user_id, o arquivo de outro usuário está em
+// outra árvore de diretórios.
+//
+// O nível intermediário fixo "users" impede colisão com os diretórios legados
+// (um id de conversa tem no mínimo 6 caracteres — ver CONVERSATION_ID_RE —,
+// então nenhuma conversa pode se chamar "users").
+export const WORKSPACE_USERS_DIR = 'users';
+
+// Nome de diretório para um userId. INJETIVO: ids que já são seguros viram eles
+// mesmos; qualquer outro vira um hash (nunca uma substituição "com colisão",
+// que faria dois usuários compartilharem a mesma pasta).
+export function userDirName(userId) {
+  const raw = String(userId ?? '').trim();
+  if (!raw) {
+    const error = new Error('Escopo de usuário obrigatório para acessar o workspace.');
+    error.code = 'WORKSPACE_SCOPE_REQUIRED';
+    throw error;
+  }
+  if (/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(raw)) return raw;
+  return `h_${crypto.createHash('sha256').update(raw).digest('hex').slice(0, 40)}`;
+}
+
+// Chave do mapa de sandboxes: usuário + conversa. Duas conversas de donos
+// diferentes nunca compartilham entrada, mesmo com o mesmo id de conversa.
+export function sessionKey(userId, conversationId) {
+  return `${userDirName(userId)}/${assertConversationId(conversationId)}`;
+}
 
 const CONVERSATION_ID_RE = /^[A-Za-z0-9_-]{6,128}$/;
 
@@ -94,12 +171,13 @@ export function assertConversationId(value) {
 const IDLE_TTL_MS = Number(process.env.SANDBOX_IDLE_TTL_MS || 30 * 60 * 1000);
 setInterval(async () => {
   const cutoff = Date.now() - IDLE_TTL_MS;
-  for (const [id, entry] of sessions) {
+  for (const [id, entry] of [...sessions]) {
     if (entry.lastUsed < cutoff) {
       sessions.delete(id);
       try { await entry.container.remove({ force: true }); } catch {}
     }
   }
+  healthMetrics.sandboxesActive = sessions.size;
 }, 60 * 1000).unref();
 
 // Coletor de lixo de DISCO (o reaper acima só recicla CONTAINERS). Num soak
@@ -113,12 +191,35 @@ setInterval(async () => {
 const TMP_SCRIPT_TTL_MS = 2 * 60 * 60 * 1000;
 const OUTPUT_RETENTION_DAYS = Math.max(0, Number(process.env.OUTPUT_RETENTION_DAYS || 0));
 const DISK_SWEEP_INTERVAL_MS = Math.max(60 * 1000, Number(process.env.DISK_SWEEP_INTERVAL_MS || 30 * 60 * 1000));
+// Todas as bases de conversa em disco: as novas (root/users/<user>/<conversa>)
+// e as legadas ainda não migradas (root/<conversa>).
+function allConversationBases() {
+  const bases = [];
+  let top = [];
+  try { top = fs.readdirSync(root, { withFileTypes: true }).filter(d => d.isDirectory()); } catch { return bases; }
+  for (const entry of top) {
+    if (entry.name === WORKSPACE_USERS_DIR) {
+      const usersRoot = path.join(root, WORKSPACE_USERS_DIR);
+      let users = [];
+      try { users = fs.readdirSync(usersRoot, { withFileTypes: true }).filter(d => d.isDirectory()); } catch { continue; }
+      for (const user of users) {
+        const userRoot = path.join(usersRoot, user.name);
+        try {
+          for (const conv of fs.readdirSync(userRoot, { withFileTypes: true })) {
+            if (conv.isDirectory()) bases.push(path.join(userRoot, conv.name));
+          }
+        } catch {}
+      }
+      continue;
+    }
+    bases.push(path.join(root, entry.name)); // legado (pré-migração)
+  }
+  return bases;
+}
+
 function reapDisk() {
   const nowMs = Date.now();
-  let convDirs = [];
-  try { convDirs = fs.readdirSync(root, { withFileTypes: true }).filter(d => d.isDirectory()).map(d => d.name); } catch { return; }
-  for (const conv of convDirs) {
-    const convBase = path.join(root, conv);
+  for (const convBase of allConversationBases()) {
     // 1) scripts temporários órfãos direto na base da conversa
     try {
       for (const name of fs.readdirSync(convBase)) {
@@ -146,9 +247,66 @@ function reapDisk() {
 }
 setInterval(reapDisk, DISK_SWEEP_INTERVAL_MS).unref();
 
-export function workspaceFor(id) {
+// Migração preguiçosa dos workspaces legados (root/<conversa>) para o layout
+// com dono (root/users/<userDir>/<conversa>). Executada na PRIMEIRA vez que a
+// conversa é acessada depois da atualização; a migração em lote no boot
+// (migrateLegacyWorkspaces) cuida das conversas que ninguém abrir.
+// Nunca sobrescreve um destino já existente — em caso de conflito, o legado é
+// preservado no lugar (nada é apagado) e o incidente é registrado.
+function migrateLegacyWorkspace(conversationId, base) {
+  const legacy = path.join(root, conversationId);
+  if (base === legacy) return false;
+  let legacyIsDir = false;
+  try { legacyIsDir = fs.statSync(legacy).isDirectory(); } catch { return false; }
+  if (!legacyIsDir) return false;
+  if (fs.existsSync(base)) {
+    console.warn(`[workspace] conflito ao migrar ${conversationId}: destino já existe; o diretório legado foi mantido em ${legacy}.`);
+    return false;
+  }
+  try {
+    fs.mkdirSync(path.dirname(base), { recursive: true });
+    fs.renameSync(legacy, base);
+    console.log(`[workspace] migrado ${conversationId} para o layout por usuário.`);
+    return true;
+  } catch (e) {
+    console.error(`[workspace] falha ao migrar ${conversationId}: ${e.message}`);
+    return false;
+  }
+}
+
+// Migração em lote no boot: move os workspaces legados para o diretório do
+// respectivo dono, consultando a tabela de conversas. Idempotente e tolerante a
+// falhas (um diretório problemático não impede os demais).
+export async function migrateLegacyWorkspaces() {
+  let legacyDirs = [];
+  try {
+    legacyDirs = fs.readdirSync(root, { withFileTypes: true })
+      .filter(d => d.isDirectory() && d.name !== WORKSPACE_USERS_DIR && isConversationId(d.name))
+      .map(d => d.name);
+  } catch { return { migrated: 0, orphans: 0 }; }
+  if (!legacyDirs.length) return { migrated: 0, orphans: 0 };
+  let migrated = 0, orphans = 0;
+  for (const conversationId of legacyDirs) {
+    let owner = null;
+    try { owner = await db.prepare('SELECT user_id FROM conversations WHERE id=?').get(conversationId); } catch { break; }
+    if (!owner?.user_id) { orphans++; continue; } // sem dono conhecido: NÃO adivinha, deixa onde está
+    try {
+      if (migrateLegacyWorkspace(conversationId, path.join(root, WORKSPACE_USERS_DIR, userDirName(owner.user_id), conversationId))) migrated++;
+    } catch {}
+  }
+  if (migrated || orphans) {
+    console.log(`[workspace] migração de layout: ${migrated} movido(s), ${orphans} sem dono no banco (mantido(s) no lugar).`);
+  }
+  return { migrated, orphans };
+}
+
+// Caminho do workspace da conversa, SEMPRE escopado pelo dono. O `userId` é
+// obrigatório: sem ele lança WORKSPACE_SCOPE_REQUIRED, para que um chamador
+// esquecido apareça no teste em vez de gravar num caminho sem dono.
+export function workspaceFor(id, userId) {
   const conversationId = assertConversationId(id);
-  const base = path.join(root, conversationId);
+  const base = path.join(root, WORKSPACE_USERS_DIR, userDirName(userId), conversationId);
+  migrateLegacyWorkspace(conversationId, base);
   const uploads = path.join(base, 'uploads');
   const outputs = path.join(base, 'outputs');
   fs.mkdirSync(uploads, { recursive: true });
@@ -189,36 +347,51 @@ export function sandboxPolicy(options = {}) {
   };
 }
 
-async function dropSession(conversationId) {
-  const entry = sessions.get(conversationId);
+async function dropSession(key) {
+  const entry = sessions.get(key);
   if (!entry) return;
-  sessions.delete(conversationId);
+  sessions.delete(key);
   try { await entry.container.remove({ force: true }); } catch {}
 }
 
 export async function getContainer(conversationId, options = {}) {
   conversationId = assertConversationId(conversationId);
-  const userId = options.userId ? String(options.userId) : null;
+  const userId = requireUserScope(options.userId);
+  const key = sessionKey(userId, conversationId);
   const policy = sandboxPolicy(options);
-  const entry = sessions.get(conversationId);
+  const entry = sessions.get(key);
   if (entry?.policyKey === policy.key) { entry.lastUsed = Date.now(); return entry.container; }
-  if (entry) await dropSession(conversationId);
-  // Single-flight POR CONVERSA (não por política): uma conversa tem no máximo UM
-  // container. A chave antiga incluía a política, então duas chamadas
-  // concorrentes na MESMA conversa com políticas diferentes (ex.: read-only x
-  // default) não se viam, criavam DOIS containers e `sessions.set` sobrescrevia
-  // o primeiro — que ficava rodando (`sleep infinity`) fora do mapa, sem ser
-  // reciclado pelo reaper nem por destroyConversation. Serializando por conversa,
-  // a segunda chamada espera a primeira e então reavalia: se a política bater,
-  // reusa o container; se não, dropSession remove o anterior de forma limpa.
-  if (creating.has(conversationId)) {
-    await creating.get(conversationId).catch(() => {});
+  if (entry) await dropSession(key);
+  // Single-flight POR (USUÁRIO, CONVERSA) — não por política: uma conversa tem
+  // no máximo UM container. A chave antiga incluía a política, então duas
+  // chamadas concorrentes na MESMA conversa com políticas diferentes (ex.:
+  // read-only x default) não se viam, criavam DOIS containers e `sessions.set`
+  // sobrescrevia o primeiro — que ficava rodando (`sleep infinity`) fora do
+  // mapa, sem ser reciclado pelo reaper nem por destroyConversation.
+  // Serializando por conversa, a segunda chamada espera a primeira e então
+  // reavalia: se a política bater, reusa o container; se não, dropSession
+  // remove o anterior de forma limpa.
+  if (creating.has(key)) {
+    await creating.get(key).catch(() => {});
     return getContainer(conversationId, options);
   }
   const p = createContainer(conversationId, policy, userId);
-  creating.set(conversationId, p);
+  creating.set(key, p);
   try { return await p; }
-  finally { creating.delete(conversationId); }
+  finally { creating.delete(key); }
+}
+
+// O escopo de usuário é obrigatório em toda operação de sandbox: um container
+// sem dono não pode ser contabilizado no teto por usuário, nem invalidado
+// seletivamente, nem reconciliado por label.
+function requireUserScope(userId) {
+  const raw = userId == null ? '' : String(userId).trim();
+  if (!raw) {
+    const error = new Error('Escopo de usuário obrigatório para operar o sandbox.');
+    error.code = 'WORKSPACE_SCOPE_REQUIRED';
+    throw error;
+  }
+  return raw;
 }
 
 // Mantém no máximo MAX_SANDBOXES_PER_USER sandboxes ativos por usuário:
@@ -235,11 +408,14 @@ async function enforceUserSandboxCap(userId) {
   }
 }
 
-async function createContainer(conversationId, policy, userId = null) {
+async function createContainer(conversationId, policy, userId) {
   await ensureSandboxImage();
   await enforceUserSandboxCap(userId);
-  const { base } = workspaceFor(conversationId);
-  const hostBase = path.join(hostRoot, conversationId);
+  workspaceFor(conversationId, userId); // cria/migra a árvore antes do bind
+  const scope = userDirName(userId);
+  // O bind é interpretado pelo DAEMON, então usa o caminho do HOST — que precisa
+  // espelhar exatamente o layout escopado por usuário criado acima.
+  const hostBase = path.join(hostRoot, WORKSPACE_USERS_DIR, scope, conversationId);
   const name = `frederico-ai-${conversationId}-${nanoid(5)}`;
   // Pastas do PC do usuário viram mounts /mnt/pc/<label> (Mounts evita o
   // problema de parsing de caminhos do Windows com ":" no formato de Bind).
@@ -257,6 +433,16 @@ async function createContainer(conversationId, policy, userId = null) {
     Cmd: ['sleep', 'infinity'],
     Tty: false,
     OpenStdin: false,
+    // Identidade do container: permite reconciliar/coletar órfãos no boot sem
+    // NUNCA tocar em containers que não sejam do Frederico (ver
+    // selectOrphanContainers / reconcileSandboxes).
+    Labels: {
+      [SANDBOX_LABEL_APP]: SANDBOX_APP_VALUE,
+      [SANDBOX_LABEL_USER]: userDirName(userId),
+      [SANDBOX_LABEL_CONVERSATION]: conversationId,
+      [SANDBOX_LABEL_INSTANCE]: SANDBOX_INSTANCE_ID,
+      [SANDBOX_LABEL_VERSION]: SANDBOX_MANAGER_VERSION
+    },
     // Rede fechada por padrão. Uma autorização explícita do pedido atual muda
     // a política e recria o container, evitando que a permissão vaze entre turnos.
     NetworkDisabled: !policy.networkEnabled,
@@ -273,8 +459,86 @@ async function createContainer(conversationId, policy, userId = null) {
     }
   });
   await container.start();
-  sessions.set(conversationId, { container, lastUsed: Date.now(), policyKey: policy.key, userId });
+  sessions.set(sessionKey(userId, conversationId), {
+    container,
+    containerId: container.id,
+    lastUsed: Date.now(),
+    policyKey: policy.key,
+    userId,
+    conversationId
+  });
+  healthMetrics.sandboxesActive = sessions.size;
   return container;
+}
+
+// ---- Reconciliação de containers órfãos -------------------------------------
+// PURA e testável: dada a lista do Docker, decide o que remover. Um container só
+// entra na lista de órfãos se:
+//   1) carrega a label do Frederico (jamais tocamos em container de terceiros);
+//   2) é de OUTRA instância do backend (o processo que o criou já morreu), OU
+//      é desta instância mas sumiu do mapa `sessions` e já passou da carência
+//      (criação abortada no meio, exceção perdida, mapa zerado).
+export function selectOrphanContainers(list, { known = new Set(), instanceId, graceMs = 0, nowMs = Date.now() } = {}) {
+  const orphans = [];
+  for (const c of list || []) {
+    const labels = c.Labels || c.labels || {};
+    if (labels[SANDBOX_LABEL_APP] !== SANDBOX_APP_VALUE) continue;
+    const id = c.Id || c.id;
+    const fromAnotherInstance = labels[SANDBOX_LABEL_INSTANCE] !== instanceId;
+    const createdMs = Number(c.Created || 0) * 1000;
+    const olderThanGrace = !createdMs || (nowMs - createdMs) >= graceMs;
+    if (fromAnotherInstance || (!known.has(id) && olderThanGrace)) {
+      orphans.push({ id, name: (c.Names && c.Names[0]) || labels[SANDBOX_LABEL_CONVERSATION] || id, reason: fromAnotherInstance ? 'instancia-anterior' : 'fora-do-mapa' });
+    }
+  }
+  return orphans;
+}
+
+const RECONCILE_ON_BOOT = process.env.SANDBOX_RECONCILE_ON_BOOT !== 'false';
+const ORPHAN_GRACE_MS = Math.max(0, Number(process.env.SANDBOX_ORPHAN_GRACE_MS ?? 10 * 60 * 1000));
+const RECONCILE_INTERVAL_MS = Math.max(0, Number(process.env.SANDBOX_RECONCILE_INTERVAL_MS ?? 15 * 60 * 1000));
+
+// Remove os containers órfãos do Frederico. Chamada no boot (carência 0: tudo
+// que sobrou de um processo anterior é lixo) e periodicamente (com carência,
+// para não competir com uma criação em andamento).
+export async function reconcileSandboxes({ graceMs = ORPHAN_GRACE_MS } = {}) {
+  let list = [];
+  try {
+    list = await docker.listContainers({
+      all: true,
+      filters: JSON.stringify({ label: [`${SANDBOX_LABEL_APP}=${SANDBOX_APP_VALUE}`] })
+    });
+  } catch (e) {
+    healthMetrics.sandboxReconcileError = String(e?.message || e).slice(0, 200);
+    return { checked: 0, removed: 0, failed: 0, error: e?.message };
+  }
+  const known = new Set([...sessions.values()].map(e => e.containerId).filter(Boolean));
+  const orphans = selectOrphanContainers(list, { known, instanceId: SANDBOX_INSTANCE_ID, graceMs });
+  let removed = 0, failed = 0;
+  for (const orphan of orphans) {
+    try { await docker.getContainer(orphan.id).remove({ force: true }); removed++; }
+    catch { failed++; }
+  }
+  healthMetrics.sandboxesActive = sessions.size;
+  healthMetrics.sandboxOrphansRemoved = (healthMetrics.sandboxOrphansRemoved || 0) + removed;
+  healthMetrics.sandboxLastReconcileAt = new Date().toISOString();
+  healthMetrics.sandboxReconcileError = null;
+  if (removed || failed) console.log(`[sandbox] reconciliação: ${removed} órfão(s) removido(s), ${failed} falha(s), ${list.length} container(es) do app inspecionado(s).`);
+  return { checked: list.length, removed, failed };
+}
+
+// Arma a reconciliação: uma varredura imediata no boot (sem carência) e depois
+// varreduras periódicas com carência. SANDBOX_RECONCILE_ON_BOOT=false desliga
+// (necessário se um dia houver mais de uma réplica no MESMO daemon Docker).
+export function startSandboxReconciliation() {
+  if (!RECONCILE_ON_BOOT) {
+    console.warn('[sandbox] reconciliação desligada (SANDBOX_RECONCILE_ON_BOOT=false): containers órfãos precisarão de limpeza manual.');
+    return;
+  }
+  void reconcileSandboxes({ graceMs: 0 }).catch(() => {});
+  if (RECONCILE_INTERVAL_MS > 0) {
+    setInterval(() => { void reconcileSandboxes().catch(() => {}); }, RECONCILE_INTERVAL_MS).unref();
+  }
 }
 
 function parseMemory(value) {
@@ -289,11 +553,14 @@ const MAX_OUTPUT_BYTES = Number(process.env.SANDBOX_MAX_OUTPUT_BYTES || 8 * 1024
 export async function execInSandbox(conversationId, cmd, timeoutMs = Number(process.env.TOOL_TIMEOUT_MS || 45000), options = {}) {
   conversationId = assertConversationId(conversationId);
   const { signal, ...sandboxOptions } = options || {};
+  // Chave composta: toda remocao/troca de sessao abaixo mira SO o sandbox
+  // (usuario, conversa) deste run — nunca o de outro usuario.
+  const key = sessionKey(requireUserScope(sandboxOptions.userId), conversationId);
   const canceledResult = () => ({ exitCode: 130, output: '[INTERROMPIDO: comando cancelado pelo usuario]' });
   if (signal?.aborted) return canceledResult();
   let container = await getContainer(conversationId, sandboxOptions);
   if (signal?.aborted) {
-    sessions.delete(conversationId);
+    sessions.delete(key);
     void container.kill().catch(() => {});
     return canceledResult();
   }
@@ -304,7 +571,7 @@ export async function execInSandbox(conversationId, cmd, timeoutMs = Number(proc
   } catch {
     // Container morreu (ex.: kill por timeout anterior + AutoRemove).
     // Remove a referência morta e recria uma vez.
-    sessions.delete(conversationId);
+    sessions.delete(key);
     container = await getContainer(conversationId, sandboxOptions);
     exec = await makeExec(container);
   }
@@ -312,7 +579,7 @@ export async function execInSandbox(conversationId, cmd, timeoutMs = Number(proc
   let finishExecution = null;
   const interrupt = () => {
     interrupted = true;
-    sessions.delete(conversationId);
+    sessions.delete(key);
     void container.kill().catch(() => {});
     void finishExecution?.();
   };
@@ -344,7 +611,7 @@ export async function execInSandbox(conversationId, cmd, timeoutMs = Number(proc
     // não do Node): evita OOM com `yes`/prints gigantes.
     if (bytes > MAX_OUTPUT_BYTES && !tooBig) {
       tooBig = true;
-      sessions.delete(conversationId);
+      sessions.delete(key);
       void container.kill().catch(() => {});
     }
   };
@@ -352,7 +619,7 @@ export async function execInSandbox(conversationId, cmd, timeoutMs = Number(proc
   stderr.on('data', onData);
   const timer = setTimeout(() => {
     timedOut = true;
-    sessions.delete(conversationId); // referência ficaria morta após o kill
+    sessions.delete(key); // referência ficaria morta após o kill
     void container.kill().catch(() => {});
   }, timeoutMs);
   return await new Promise((resolve) => {
@@ -387,9 +654,9 @@ export async function execInSandbox(conversationId, cmd, timeoutMs = Number(proc
 // no timeout, apenas desiste da leitura (o container do usuário segue intacto).
 // De propósito NÃO atualiza lastUsed: observar não prolonga a vida do sandbox
 // (senão o polling do monitor impediria o reaper de reciclá-lo para sempre).
-export async function execInActiveSandbox(conversationId, cmd, timeoutMs = 20000) {
+export async function execInActiveSandbox(userId, conversationId, cmd, timeoutMs = 20000) {
   conversationId = assertConversationId(conversationId);
-  const entry = sessions.get(conversationId);
+  const entry = sessions.get(sessionKey(requireUserScope(userId), conversationId));
   if (!entry) return null;
   const container = entry.container;
   try {
@@ -421,13 +688,19 @@ export async function execInActiveSandbox(conversationId, cmd, timeoutMs = 20000
 }
 
 // Remove o sandbox e o diretório de workspace de uma conversa (usado ao apagar)
-export async function destroyConversation(conversationId) {
+export async function destroyConversation(conversationId, userId) {
   conversationId = assertConversationId(conversationId);
-  const entry = sessions.get(conversationId);
+  const scope = requireUserScope(userId);
+  const key = sessionKey(scope, conversationId);
+  const entry = sessions.get(key);
   if (entry) {
-    sessions.delete(conversationId);
+    sessions.delete(key);
     try { await entry.container.remove({ force: true }); } catch {}
+    healthMetrics.sandboxesActive = sessions.size;
   }
+  // Remove o diretório escopado E o legado (conversa criada antes da migração
+  // de layout e nunca reaberta) — apagar a conversa não pode deixar rastro.
+  try { fs.rmSync(path.join(root, WORKSPACE_USERS_DIR, userDirName(scope), conversationId), { recursive: true, force: true }); } catch {}
   try { fs.rmSync(path.join(root, conversationId), { recursive: true, force: true }); } catch {}
 }
 

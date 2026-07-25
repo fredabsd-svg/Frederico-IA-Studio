@@ -5,7 +5,8 @@
 //                                 mensagens restantes, horário de renovação.
 //   POST /api/free-tier/opt-in  — adere/sai do modo gratuito (1º acesso).
 //
-// Administrador (ADMIN_EMAIL, mesmas regras do backup):
+// Administrador (papel persistido em user_roles — ver migrations/020; toda
+// alteração fica registrada em admin_audit):
 //   GET    /api/admin/free-tier             — visão geral (usuários, consumo,
 //                                             erros, bloqueados, configurações)
 //   PUT    /api/admin/free-tier/settings    — liga/desliga, limite diário,
@@ -14,7 +15,7 @@
 //   DELETE /api/admin/free-tier/block/:id   — desbloqueia
 //   PUT    /api/admin/free-tier/user-limit  — limite individual (ou remove)
 import { db, now } from '../db.js';
-import { makeRouter, isAdmin } from './helpers.js';
+import { makeRouter, isAdmin, requireAdmin, recordAdminAction } from './helpers.js';
 import { getUserProvider } from '../userProvider.js';
 import { freeQueueSnapshot } from '../freeQueue.js';
 import {
@@ -26,7 +27,7 @@ const router = makeRouter();
 
 // ---- Usuário ----
 router.get('/free-tier/status', async (req, res) => {
-  if (!freeTierConfigured()) return res.json({ configured: false, isAdmin: isAdmin(req) });
+  if (!freeTierConfigured()) return res.json({ configured: false, isAdmin: await isAdmin(req) });
   const prov = await getUserProvider(req.userId);
   const status = await freeTierStatusFor(req.userId, { source: prov.source });
   res.json({
@@ -34,7 +35,7 @@ router.get('/free-tier/status', async (req, res) => {
     hasOwnKey: prov.source === 'user',
     hasAnyKey: prov.hasKey,         // já consegue conversar (própria/servidor/free)?
     queue: freeQueueSnapshot(),
-    isAdmin: isAdmin(req)
+    isAdmin: await isAdmin(req)
   });
 });
 
@@ -46,15 +47,10 @@ router.post('/free-tier/opt-in', async (req, res) => {
   res.json({ ok: true, optedIn: enable, active: prov.source === 'free' });
 });
 
-// ---- Admin ----
-function requireAdmin(req, res) {
-  if (isAdmin(req)) return true;
-  res.status(403).json({ error: 'Apenas o administrador pode acessar este painel.' });
-  return false;
-}
+// ---- Admin ---- (o portão vive em routes/helpers.js: papel persistido + auditoria)
 
 router.get('/admin/free-tier', async (req, res) => {
-  if (!requireAdmin(req, res)) return;
+  if (!await requireAdmin(req, res, 'Apenas o administrador pode acessar este painel.')) return;
   const config = await getFreeTierConfig();
   const today = new Date().toISOString().slice(0, 10);
   const since30 = new Date(Date.now() - 30 * 86_400_000).toISOString();
@@ -141,7 +137,7 @@ router.get('/admin/free-tier', async (req, res) => {
 });
 
 router.put('/admin/free-tier/settings', async (req, res) => {
-  if (!requireAdmin(req, res)) return;
+  if (!await requireAdmin(req, res, 'Apenas o administrador pode acessar este painel.')) return;
   const body = req.body || {};
   if (body.enabled !== undefined) await saveFreeTierSetting('enabled', body.enabled ? '1' : '0');
   if (body.msgsPerDay !== undefined) {
@@ -153,30 +149,34 @@ router.put('/admin/free-tier/settings', async (req, res) => {
     const list = Array.isArray(body.disabledModels) ? body.disabledModels.map(String).slice(0, 50) : [];
     await saveFreeTierSetting('disabled_models', JSON.stringify(list));
   }
+  await recordAdminAction(req, 'free-tier.settings.update', { chaves: Object.keys(body) });
   res.json({ ok: true, config: await getFreeTierConfig() });
 });
 
 router.post('/admin/free-tier/block', async (req, res) => {
-  if (!requireAdmin(req, res)) return;
+  if (!await requireAdmin(req, res, 'Apenas o administrador pode acessar este painel.')) return;
   const userId = String(req.body?.userId || '').trim();
   if (!userId) return res.status(400).json({ error: 'Informe o usuário.' });
   await blockFreeTierUser(userId, req.body?.reason);
+  await recordAdminAction(req, 'free-tier.user.block', { alvo: userId });
   res.json({ ok: true });
 });
 
 router.delete('/admin/free-tier/block/:userId', async (req, res) => {
-  if (!requireAdmin(req, res)) return;
+  if (!await requireAdmin(req, res, 'Apenas o administrador pode acessar este painel.')) return;
   await unblockFreeTierUser(req.params.userId);
+  await recordAdminAction(req, 'free-tier.user.unblock', { alvo: req.params.userId });
   res.json({ ok: true });
 });
 
 router.put('/admin/free-tier/user-limit', async (req, res) => {
-  if (!requireAdmin(req, res)) return;
+  if (!await requireAdmin(req, res, 'Apenas o administrador pode acessar este painel.')) return;
   const userId = String(req.body?.userId || '').trim();
   if (!userId) return res.status(400).json({ error: 'Informe o usuário.' });
   const value = req.body?.msgsPerDay;
   if (value === null || value === undefined || value === '') {
     await db.prepare('DELETE FROM free_tier_user_limits WHERE user_id=?').run(userId);
+    await recordAdminAction(req, 'free-tier.user-limit.remove', { alvo: userId });
     return res.json({ ok: true, removed: true });
   }
   const limit = Math.max(1, Math.min(10_000, Number(value) || 0));
@@ -184,6 +184,7 @@ router.put('/admin/free-tier/user-limit', async (req, res) => {
   await db.prepare(`INSERT INTO free_tier_user_limits (user_id, msgs_per_day, updated_at) VALUES (?,?,?)
     ON CONFLICT (user_id) DO UPDATE SET msgs_per_day=excluded.msgs_per_day, updated_at=excluded.updated_at`)
     .run(userId, limit, now());
+  await recordAdminAction(req, 'free-tier.user-limit.set', { alvo: userId, limite: limit });
   res.json({ ok: true, msgsPerDay: limit });
 });
 

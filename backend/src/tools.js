@@ -612,7 +612,7 @@ export async function runTool(conversationId, name, args = {}, sandboxOptions = 
     // falhar, `thumb` fica ausente e o web_fetch segue igual (só o texto).
     if (res && !res.error && res.url) {
       try {
-        const ws = workspaceFor(conversationId);
+        const ws = workspaceFor(conversationId, sandboxOptions.userId);
         const rel = path.posix.join('.thumbs', `${nanoid(10)}.jpg`);
         const ok = await captureThumbnail(res.url, path.join(ws.base, '.thumbs', path.basename(rel)), { signal });
         if (ok) res.thumb = rel;
@@ -623,7 +623,7 @@ export async function runTool(conversationId, name, args = {}, sandboxOptions = 
   if (name === 'consultar_cnpj') return JSON.stringify(await consultarCnpj(args.cnpj || '', { signal }));
   // Conector GitHub: roda no BACKEND (o token do usuário nunca entra no sandbox).
   if (name.startsWith('github_')) return JSON.stringify(await runGithubTool(name, args, { userId: sandboxOptions.userId, conversationId, signal }));
-  const ws = workspaceFor(conversationId);
+  const ws = workspaceFor(conversationId, sandboxOptions.userId);
   // Pastas do PC deste usuário (isolamento multi-tenant): sem userId, nenhuma.
   const pcMounts = pcFolderMounts(sandboxOptions.userId);
   if (name === 'generate_image') return JSON.stringify(await generateImage(ws, args, { signal, userId: sandboxOptions.userId }));
