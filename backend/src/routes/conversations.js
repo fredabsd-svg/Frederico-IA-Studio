@@ -16,6 +16,7 @@ import { getUserProvider } from '../userProvider.js';
 import { enforceFreeTierLimits, bumpFreeTierUsage, logFreeTierEvent, freeTierStatusFor } from '../freeTier.js';
 import { acquireFreeSlot, cancelFreeJob, freeQueueSnapshot } from '../freeQueue.js';
 import { makeRouter, upload, scanOrReject, decodeUploadName, loadAssistant, ensureConversation, enforceDailyLimit, looksLikeFailedAssistantReply } from './helpers.js';
+import { runGithubTool } from '../connectors/github.js';
 import { validateAttachmentManifest } from '../attachments.js';
 import { hashBuffer } from '../docling/hash.js';
 import { kickProcessing, mimeForName } from '../docling/service.js';
@@ -292,6 +293,32 @@ router.post('/conversations/:id/control', validate(schemas.control), async (req,
   }
   res.json({ ok: true, action, paused: control.paused, stopped: control.stopped });
 });
+
+// ---- Ações do GitHub por BOTÃO (modo desenvolvedor) -------------------------
+// Disparam github_clone/github_push DIRETO no backend, com o token do usuário,
+// SEM passar pela IA nem depender do modo/frase — determinístico e sem gastar
+// tokens. Reaproveitam runGithubTool (o mesmo motor das ferramentas github_*),
+// escopado à conversa do usuário (posse checada). Resolve o caso em que o commit
+// já está pronto no workspace e só falta o push: 1 clique e sobe.
+async function conversationGithubAction(req, res, tool) {
+  const conv = await db.prepare('SELECT id FROM conversations WHERE id=? AND user_id=?').get(req.params.id, req.userId);
+  if (!conv) return res.status(404).json({ error: 'Não encontrado' });
+  const repo = String(req.body?.repo || '').trim();
+  if (!repo) return res.status(400).json({ error: 'Nenhum repositório vinculado a esta conversa.' });
+  const args = { repo };
+  if (req.body?.branch) args.branch = String(req.body.branch);
+  if (tool === 'github_push' && req.body?.commit_message) args.commit_message = String(req.body.commit_message);
+  const result = await runGithubTool(tool, args, { userId: req.userId, conversationId: req.params.id });
+  if (result?.error) {
+    // Sinaliza ao front quando o push só precisa de uma mensagem de commit (há
+    // mudanças não commitadas) — aí ele pede o texto e repete.
+    const needsCommitMessage = /commit_message|não commitadas/i.test(result.error);
+    return res.status(result.recoverable === false ? 422 : 400).json({ ...result, needsCommitMessage });
+  }
+  res.json(result);
+}
+router.post('/conversations/:id/github/clone', async (req, res) => conversationGithubAction(req, res, 'github_clone'));
+router.post('/conversations/:id/github/push', async (req, res) => conversationGithubAction(req, res, 'github_push'));
 
 // Multimodelo: interrompe UM modelo da execução em andamento, sem derrubar os
 // demais (o botão "parar tudo" continua sendo o /control com action=stop).

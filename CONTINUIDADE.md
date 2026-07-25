@@ -1,5 +1,37 @@
 # CONTINUIDADE — Estado do projeto Frederico AI Studio
 
+## 🚀 Botões de GitHub no modo desenvolvedor: "Enviar para o GitHub" e "Continuar no repositório" (1 clique) (2026-07-25 — PR #129, branch `claude/dev-github-buttons`)
+
+
+**Motivação:** enviar o trabalho de uma conversa de dev ao GitHub dependia de
+duas condições nada óbvias — estar num MODO DE ESCRITA (build/fix/auto) E a
+mensagem AUTORIZAR o push com palavras soltas (`explicitlyAuthorizesGitWrite`). Se
+faltasse alguma, as ferramentas `github_push`/`github_create_pr` nem apareciam e o
+modelo caía no `git push` pelo bash do sandbox (que falha de propósito — sem
+credencial lá), às vezes sugerindo ao usuário rodar `git push` num caminho que só
+existe DENTRO do sandbox. Resultado: commit pronto no workspace e nenhum jeito
+óbvio de subir.
+
+
+**Correção — ação determinística por botão, sem IA:**
+- Backend `routes/conversations.js`: dois endpoints escopados por conversa (posse
+  checada) — `POST /conversations/:id/github/clone` e `.../github/push` — que
+  chamam `runGithubTool('github_clone'|'github_push', …)` DIRETO no backend, com o
+  token do usuário. Sem passar pelo modelo, sem depender de modo/frase, sem gastar
+  tokens. O push devolve `needsCommitMessage` quando há mudanças pendentes, para o
+  front pedir a mensagem e repetir.
+- Frontend `App.jsx`: na barra do modo desenvolvedor, quando há repositório
+  vinculado, dois botões — **"Continuar no repositório"** (clone/atualiza nesta
+  conversa) e **"Enviar para o GitHub"** (commit se preciso + push). Estado de
+  carregando por botão; ao faltar mensagem de commit, pede via `askPrompt` e
+  repete. `styles.css`: estilo dos botões.
+
+
+**Efeito:** o caso clássico "o commit já está pronto no workspace e só falta o
+push" vira **1 clique**. Combina com o PR #127 (que restaura o vínculo do repo ao
+reabrir a conversa): reabre → clica em "Enviar para o GitHub" → sobe.
+
+
 ## 🔑 ENCRYPTION_KEY automática (self-hosted sem terminal) + correção do repositório sumindo no modo dev (2026-07-24 — PRs #127 e #128)
 
 
