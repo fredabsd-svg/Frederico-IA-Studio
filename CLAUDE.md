@@ -35,16 +35,22 @@ Detalhes:
 ## Validação antes de qualquer commit
 
 ```bash
-cd backend  && node --test "src/**/*.test.js"
-cd frontend && node --test src/*.test.js && npm run build
+cd backend  && npm run check    # lint + testes
+cd frontend && npm run check    # lint + testes + build
 ```
 
-Os testes que exigem PostgreSQL são pulados fora do Docker — isso é esperado.
+Os testes que exigem PostgreSQL são pulados fora do Docker — isso é esperado
+(a CI roda com Postgres real). Para a contagem de testes use
+`cd backend && npm run test:count`, nunca escreva o número à mão.
 Nunca declare que algo funciona sem ter rodado a validação.
 
 ## Processo
 
-- `CONTINUIDADE.md` é o registro do projeto: estado, decisões, armadilhas e
-  próximos passos. Leia antes de iniciar uma frente e atualize ao concluir.
+- `CONTINUIDADE.md` é **curto** de propósito: só o presente — estado, riscos
+  abertos e como retomar. Leia antes de iniciar uma frente e atualize ao
+  concluir. O histórico vai para `docs/CHANGELOG_HISTORY.md`.
+- Antes de criar um documento novo em `docs/`, confira o que já existe
+  (`ARCHITECTURE`, `SECURITY`, `OPERATIONS`, `TESTING`, `MEMORY`, `MULTIMODEL`,
+  `DOCLING`...) e escreva lá. Duas páginas sobre o mesmo assunto divergem.
 - Commits e PRs em português, descritivos — o "porquê" importa mais que o "o quê".
 - Só anunciar (README, interface, selos) o que está de fato ativo no código.

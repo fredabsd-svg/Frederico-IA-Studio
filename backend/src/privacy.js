@@ -54,7 +54,7 @@ export async function deleteConversationDeep(userId, conversationId) {
   await db.prepare("DELETE FROM memory_suggestions WHERE source_type='auto' AND source_id=? AND user_id=?").run(conversationId, userId);
   // Sem isto, uma tarefa na fila recriaria a conversa apagada ao ser executada.
   await db.prepare("DELETE FROM tasks WHERE conversation_id=? AND user_id=? AND status<>'running'").run(conversationId, userId);
-  await destroyConversation(conversationId); // remove container e pasta do workspace
+  await destroyConversation(conversationId, userId); // remove container e pasta do workspace
   try { await purgeOrphansForHashes(userId, hashes); } catch {} // LGPD: derivados do Docling
 }
 
@@ -131,7 +131,7 @@ export async function deleteAccount(userId) {
     return { ok: false, error: 'Há uma conversa ainda processando uma resposta. Pare o processamento e tente de novo.' };
   }
   for (const { id } of convs) {
-    try { await destroyConversation(id); } catch {}
+    try { await destroyConversation(id, userId); } catch {}
   }
   // Caixa de entrada em disco (data/inbox/<userId>/...)
   try {

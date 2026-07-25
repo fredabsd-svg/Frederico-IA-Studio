@@ -155,7 +155,7 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   }
   if (lowSignalTurn) requestedTools = [];
 
-  const uploadNoteForRun = !lowSignalTurn ? uploadsNote(conversationId) : null;
+  const uploadNoteForRun = !lowSignalTurn ? uploadsNote(userId, conversationId) : null;
   // Docling: quando ligado e houver documentos já processados nesta conversa,
   // injeta o CONTEÚDO pré-extraído (Markdown otimizado / chunks relevantes com
   // página) — mesma extração para todos os modelos, sem re-extrair por modelo.
@@ -271,7 +271,12 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
   let memoryMeta = null;
   // Memória de longo prazo: perfil, notas, resumos e recuperação semântica
   try {
-    const contextPlan = await buildContext({ userId, conversationId, assistantId: assistant?.id, clientScope: await clientScopeFor(userId, conversationId), userText, historyLimit, model: chosenModel });
+    // developerDomain: estar em modo desenvolvedor (com projeto/repositório) é
+    // um fato estrutural sobre o assunto da conversa. Sem ele, um pedido curto
+    // como "vamos continuar o projeto" não tem domínio nenhum e o crivo de
+    // memória se desliga, trazendo o perfil contábil inteiro para dentro de uma
+    // conversa de software.
+    const contextPlan = await buildContext({ userId, conversationId, assistantId: assistant?.id, clientScope: await clientScopeFor(userId, conversationId), userText, historyLimit, model: chosenModel, developerDomain: developerContext ? 'software' : null });
     const ctxBlocks = contextPlan.blocks || [];
     memoryMeta = contextPlan.meta || null;
     for (const b of ctxBlocks) {
@@ -338,7 +343,7 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
   if (!resume && modelPlan.capabilities?.vision === true) {
     // Imagens dos uploads + figuras/gráficos extraídos pelo Docling (quando o
     // documento foi processado) — o modelo com visão enxerga ambos.
-    const visualParts = [...imageUploadParts(conversationId), ...doclingImageParts(docContext?.pictures || [])];
+    const visualParts = [...imageUploadParts(userId, conversationId), ...doclingImageParts(docContext?.pictures || [])];
     visionApplied = attachImagesToLastUserMessage(messages, visualParts);
     if (visionApplied) onEvent({ type: 'status', content: 'Enviando a imagem para o modelo analisar...' });
   }
@@ -358,7 +363,7 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
     messages[1] = { role: 'system', content: toolAvailabilityNote(tools, { includeInventory: includeEnvironmentInventory, sandboxNetworkEnabled }) };
     if (!resume) {
       if (candidatePlan.capabilities?.vision === true) {
-        visionApplied = attachImagesToLastUserMessage(messages, imageUploadParts(conversationId));
+        visionApplied = attachImagesToLastUserMessage(messages, imageUploadParts(userId, conversationId));
       } else {
         stripImagePartsFromMessages(messages);
         visionApplied = false;
@@ -424,7 +429,7 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
   // como "entregáveis desta conclusão": assim eles reaparecem como download na
   // resposta final e não disparam o falso alarme de "arquivo não gerado" quando
   // a retomada só finaliza sem recriar o que já estava pronto.
-  const outputsBefore = buildOutputBaseline(listOutputs(conversationId), {
+  const outputsBefore = buildOutputBaseline(listOutputs(userId, conversationId), {
     acceptAll: Boolean(resume),
     continuationPaths: continuationOutputPaths
   });
@@ -793,7 +798,7 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
         step -= 1;
         continue;
       }
-      const outputsSoFar = listOutputs(conversationId);
+      const outputsSoFar = listOutputs(userId, conversationId);
       if (shouldContinueAfterTruncation(finishReason, truncationContinuationAttempts)) {
         truncationContinuationAttempts += 1;
         messages.push({ role: 'system', content: RESPONSE_TRUNCATED_REPAIR_NOTE });
@@ -973,16 +978,16 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
     onEvent({ type: 'delta', content: note });
   }
   // Detecta os arquivos gerados NESTA resposta e os anexa à mensagem
-  let outputsAfter = listOutputs(conversationId);
+  let outputsAfter = listOutputs(userId, conversationId);
   let newFiles = outputsAfter.filter(f => outputsBefore.get(f.path) !== fileSignature(f));
   if (!newFiles.length && mentionsOutputPath(finalText)) {
     await recoverAlternateOutputs(conversationId, sandboxOptions);
-    outputsAfter = listOutputs(conversationId);
+    outputsAfter = listOutputs(userId, conversationId);
     newFiles = outputsAfter.filter(f => outputsBefore.get(f.path) !== fileSignature(f));
   }
   if (!newFiles.length && mentionsOutputPath(finalText)) newFiles = referencedOutputFiles(finalText, outputsAfter);
-  if (!newFiles.length && mentionsOutputPath(finalText) && materializeTextOutput(conversationId, finalText)) {
-    outputsAfter = listOutputs(conversationId);
+  if (!newFiles.length && mentionsOutputPath(finalText) && materializeTextOutput(userId, conversationId, finalText)) {
+    outputsAfter = listOutputs(userId, conversationId);
     newFiles = outputsAfter.filter(f => outputsBefore.get(f.path) !== fileSignature(f));
   }
   // Turno encerrado numa pergunta ao usuário: não é execução incompleta — o

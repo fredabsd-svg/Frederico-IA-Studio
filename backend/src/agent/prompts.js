@@ -59,8 +59,8 @@ Como usar (via run_python ou bash, com os caminhos acima):
 // Lista os arquivos enviados pelo usuário para avisar o modelo que eles já
 // existem no sandbox (senão o modelo pede para "reenviar" um arquivo que já
 // está lá). Retorna null se não houver uploads.
-export function uploadsNote(conversationId) {
-  const files = listWorkspaceUploads(conversationId);
+export function uploadsNote(userId, conversationId) {
+  const files = listWorkspaceUploads(userId, conversationId);
   if (!files.length) return null;
   const list = files.map(file => `- ${safeLabel(`/workspace/${file.path}`)} (${file.size} bytes)`).join('\n');
   return `O usuário JÁ enviou os arquivos abaixo — eles estão disponíveis no sandbox agora:

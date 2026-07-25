@@ -12,8 +12,8 @@ test('accepts the NanoID-shaped conversation identifiers used by the app', () =>
 
 test('rejects traversal and other unsafe conversation identifiers before creating a workspace', () => {
   assert.equal(isConversationId('../data'), false);
-  assert.throws(() => workspaceFor('../data'), /invalido/i);
-  assert.throws(() => workspaceFor('short'), /invalido/i);
+  assert.throws(() => workspaceFor('../data', 'dono'), /invalido/i);
+  assert.throws(() => workspaceFor('short', 'dono'), /invalido/i);
 });
 
 test('sandbox network is off by default and part of the session policy key', () => {

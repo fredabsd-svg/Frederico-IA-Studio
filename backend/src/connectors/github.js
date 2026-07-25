@@ -415,12 +415,12 @@ function chownTree(dir) {
   });
 }
 
-function repoRoot(conversationId) {
-  return path.join(workspaceFor(conversationId).base, 'repo');
+function repoRoot(userId, conversationId) {
+  return path.join(workspaceFor(conversationId, userId).base, 'repo');
 }
 
-function cloneDirFor(conversationId, fullName) {
-  return path.join(repoRoot(conversationId), repoDirName(fullName));
+function cloneDirFor(userId, conversationId, fullName) {
+  return path.join(repoRoot(userId, conversationId), repoDirName(fullName));
 }
 
 async function currentBranch(dir) {
@@ -470,12 +470,12 @@ const NOT_CONNECTED =
 
 // ---- Implementação das ferramentas ----
 
-async function githubClone(conn, conversationId, args, signal) {
+async function githubClone(conn, userId, conversationId, args, signal) {
   const fullName = String(args.repo || '').trim();
   if (!isValidRepoFullName(fullName)) return toolError('Nome de repositório inválido — use o formato owner/repositorio (ex.: fulano/meu-app).');
   const branch = String(args.branch || '').trim();
   if (branch && !isValidBranchName(branch)) return toolError(`Nome de branch inválido: "${branch}".`);
-  const dir = cloneDirFor(conversationId, fullName);
+  const dir = cloneDirFor(userId, conversationId, fullName);
   const sandboxPath = `/workspace/repo/${repoDirName(fullName)}`;
 
   if (fs.existsSync(path.join(dir, '.git'))) {
@@ -508,7 +508,7 @@ async function githubClone(conn, conversationId, args, signal) {
     const pull = upstream.code === 0
       ? await runGit(dir, ['pull', '--ff-only', 'origin'], { token: conn.token, timeoutMs: CLONE_TIMEOUT_MS, signal })
       : { code: 0, stderr: '' };
-    await chownTree(repoRoot(conversationId));
+    await chownTree(repoRoot(userId, conversationId));
     const atualBranch = await currentBranch(dir);
     return {
       ok: true,
@@ -521,13 +521,13 @@ async function githubClone(conn, conversationId, args, signal) {
     };
   }
 
-  fs.mkdirSync(repoRoot(conversationId), { recursive: true });
+  fs.mkdirSync(repoRoot(userId, conversationId), { recursive: true });
   const cloneArgs = ['clone', ...(branch ? ['--branch', branch, '--single-branch'] : []), `https://github.com/${fullName}.git`, dir];
-  let clone = await runGit(repoRoot(conversationId), cloneArgs, { token: conn.token, timeoutMs: CLONE_TIMEOUT_MS, signal });
+  let clone = await runGit(repoRoot(userId, conversationId), cloneArgs, { token: conn.token, timeoutMs: CLONE_TIMEOUT_MS, signal });
   let createdBranch = false;
   if (clone.code !== 0 && branch && /Remote branch .* not found|Could not find remote branch/i.test(clone.stderr)) {
     // Branch pedida ainda não existe no GitHub: clona a padrão e cria a branch.
-    clone = await runGit(repoRoot(conversationId), ['clone', `https://github.com/${fullName}.git`, dir], { token: conn.token, timeoutMs: CLONE_TIMEOUT_MS, signal });
+    clone = await runGit(repoRoot(userId, conversationId), ['clone', `https://github.com/${fullName}.git`, dir], { token: conn.token, timeoutMs: CLONE_TIMEOUT_MS, signal });
     if (clone.code === 0) {
       const nb = await runGit(dir, ['checkout', '-b', branch], { signal });
       createdBranch = nb.code === 0;
@@ -552,7 +552,7 @@ async function githubClone(conn, conversationId, args, signal) {
   // github_push saem em nome da conta conectada, com o e-mail noreply do GitHub.
   await runGit(dir, ['config', 'user.name', conn.name || conn.login || 'Frederico AI Studio']);
   await runGit(dir, ['config', 'user.email', `${conn.login || 'frederico-ai'}@users.noreply.github.com`]);
-  await chownTree(repoRoot(conversationId));
+  await chownTree(repoRoot(userId, conversationId));
   const atual = await currentBranch(dir);
   return {
     ok: true,
@@ -564,10 +564,10 @@ async function githubClone(conn, conversationId, args, signal) {
   };
 }
 
-async function githubPush(conn, conversationId, args, signal) {
+async function githubPush(conn, userId, conversationId, args, signal) {
   const fullName = String(args.repo || '').trim();
   if (!isValidRepoFullName(fullName)) return toolError('Informe o repositório no formato owner/repositorio.');
-  const dir = cloneDirFor(conversationId, fullName);
+  const dir = cloneDirFor(userId, conversationId, fullName);
   if (!fs.existsSync(path.join(dir, '.git'))) return toolError(`O repositório ${fullName} ainda não foi clonado nesta conversa. Chame github_clone primeiro.`);
   const targetBranch = String(args.branch || '').trim();
   if (targetBranch && !isValidBranchName(targetBranch)) return toolError(`Nome de branch inválido: "${targetBranch}".`);
@@ -593,7 +593,7 @@ async function githubPush(conn, conversationId, args, signal) {
   }
 
   const push = await runGit(dir, ['push', 'origin', `HEAD:refs/heads/${branch}`], { token: conn.token, signal });
-  await chownTree(repoRoot(conversationId));
+  await chownTree(repoRoot(userId, conversationId));
   if (push.code !== 0) {
     const detail = (push.stderr || push.stdout || '').trim().slice(0, 400);
     const cfg = serverConfigGitFailure(detail);
@@ -616,12 +616,12 @@ async function githubPush(conn, conversationId, args, signal) {
   };
 }
 
-async function githubCreatePr(conn, conversationId, args, signal) {
+async function githubCreatePr(conn, userId, conversationId, args, signal) {
   const fullName = String(args.repo || '').trim();
   if (!isValidRepoFullName(fullName)) return toolError('Informe o repositório no formato owner/repositorio.');
   const title = String(args.title || '').trim();
   if (!title) return toolError('Informe o título do Pull Request.');
-  const dir = cloneDirFor(conversationId, fullName);
+  const dir = cloneDirFor(userId, conversationId, fullName);
   let head = String(args.head || '').trim();
   if (!head && fs.existsSync(path.join(dir, '.git'))) head = (await currentBranch(dir)) || '';
   if (!head || !isValidBranchName(head)) return toolError('Não consegui identificar a branch de origem (head). Informe o parâmetro head.');
@@ -659,9 +659,9 @@ export async function runGithubTool(name, args = {}, { userId, conversationId, s
       if (r.error) return toolError(r.error);
       return { account: conn.login, repos: r.repos.slice(0, 60) };
     }
-    if (name === 'github_clone') return await githubClone(conn, conversationId, args, signal);
-    if (name === 'github_push') return await githubPush(conn, conversationId, args, signal);
-    if (name === 'github_create_pr') return await githubCreatePr(conn, conversationId, args, signal);
+    if (name === 'github_clone') return await githubClone(conn, userId, conversationId, args, signal);
+    if (name === 'github_push') return await githubPush(conn, userId, conversationId, args, signal);
+    if (name === 'github_create_pr') return await githubCreatePr(conn, userId, conversationId, args, signal);
   } catch (e) {
     return toolError(`Falha inesperada na integração com o GitHub: ${scrubSecrets(e.message, conn.token).slice(0, 300)}`);
   }

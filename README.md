@@ -185,10 +185,12 @@ chave única do servidor para uso pessoal/de equipe.
 | | |
 |---|---|
 | 🔐 **Segredos cifrados** | Chaves de IA e token do GitHub em AES-256-GCM; senhas com hash (scrypt) |
-| 🛡️ **Antivírus nos uploads** | Todo arquivo enviado é escaneado (ClamAV) antes de ser salvo |
+| 🐳 **Backend sem o socket do Docker** | Quem o detém é o serviço `docker-guard`, que valida cada requisição ao daemon (allowlist de rotas, inspeção do corpo de `/containers/create`, posse por label) |
+| 🛡️ **Antivírus honesto nos uploads** | Todo arquivo é escaneado (ClamAV) antes de ser salvo, e a resposta diz se foi `verificado`, `degradado` ou `sem-antivirus` — **nada é apresentado como verificado sem ter sido analisado** |
 | 🧱 **Camada HTTP endurecida** | `helmet`, CORS restrito à própria origem, rate limiting por IP e validação `zod` |
 | 🛰️ **Anti-SSRF no `web_fetch`** | Bloqueia IPs internos e **resolve o DNS validando cada IP** antes de conectar, revalidando a cada redirect |
-| 🩺 **Healthcheck com métricas** | `GET /api/health` expõe uptime e promessas rejeitadas — alerta precoce de regressão |
+| 🖥️ **Guarda de execução** | `bash` e `run_python` passam pela mesma validação; alterar arquivos reais do PC exige pedido explícito e fica registrado em auditoria |
+| 🩺 **Healthcheck com métricas** | `GET /api/health` expõe uptime, política do antivírus, sandboxes ativos/órfãos e os limites de upload vigentes |
 | 📋 **LGPD embutida** | Consentimento registrado (art. 8º), exportar tudo em JSON, apagar histórico e excluir conta — **hard delete** |
 
 <details>
@@ -196,11 +198,12 @@ chave única do servidor para uso pessoal/de equipe.
 
 <br>
 
-- O backend recebe o **socket Docker** — permissão privilegiada. Use uma máquina
-  **dedicada** a este app.
-- A sandbox roda **sem privilégios** e com limites de CPU/memória, mas a rede fica
-  habilitada para pesquisas e automações — código executado por um usuário tem
-  acesso à internet (controlável em Configurações → Sandbox e rede).
+- A sandbox roda **sem privilégios** (`CapDrop: ALL`, `no-new-privileges`, uid 1000),
+  com limites de CPU/memória/processos e **rede desligada por padrão** — abrir a rede
+  exige autorização do próprio pedido e recria o container. Com a rede aberta ainda
+  **não há allowlist de destino** (risco F-05b em [docs/AUDITORIA_2026-07.md](docs/AUDITORIA_2026-07.md)).
+- Máquina **dedicada** segue recomendada como defesa em profundidade, mesmo com o
+  `docker-guard` no lugar do acesso direto ao socket.
 - **Site público:** qualquer pessoa pode se cadastrar. Para uso amplo/indexado,
   considere confirmação de e-mail e/ou aprovação de conta; enquanto isso, prefira
   divulgar "por link" e mantenha os limites de uso ativos.
@@ -242,9 +245,20 @@ chave única do servidor para uso pessoal/de equipe.
 
 | Documento | Conteúdo |
 |---|---|
-| [CONTINUIDADE.md](CONTINUIDADE.md) | 📌 **Leia antes de iniciar uma frente de trabalho** — arquitetura, decisões, riscos e próximos passos |
-| [docs/ARQUITETURA.md](docs/ARQUITETURA.md) | Fluxo de dados, módulos, execução confiável, memória e cache |
-| [docs/CONFIGURACAO.md](docs/CONFIGURACAO.md) | Variáveis de ambiente, acesso pelo celular e validação local |
+| [CONTINUIDADE.md](CONTINUIDADE.md) | 📌 **Leia antes de iniciar uma frente** — estado atual, riscos abertos e como retomar (curto) |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Arquitetura real: serviços, fluxos, persistência, lacunas |
+| [docs/SECURITY.md](docs/SECURITY.md) | Modelo de ameaça, isolamento, sandbox, segredos, LGPD |
+| [docs/OPERATIONS.md](docs/OPERATIONS.md) | Runbook: monitoramento, limites, procedimentos, rollback |
+| [docs/CONFIGURACAO.md](docs/CONFIGURACAO.md) | Primeira configuração, modo gratuito, Docling e acesso pelo celular |
+| [docs/BACKUP_RESTORE.md](docs/BACKUP_RESTORE.md) | Backup completo e restauração passo a passo |
+| [docs/TESTING.md](docs/TESTING.md) | Como rodar os testes, convenções e lacunas conhecidas |
+| [docs/AUDITORIA_2026-07.md](docs/AUDITORIA_2026-07.md) | Auditoria de produção: achados, correções e prontidão |
+| [docs/MULTIMODEL.md](docs/MULTIMODEL.md) | Modos multimodelo e o que ainda falta |
+| [docs/MEMORY.md](docs/MEMORY.md) | Memória semântica e recuperação de contexto |
+| [docs/DOCLING.md](docs/DOCLING.md) | Camada de compreensão documental |
+| [VPS-DEPLOY.md](VPS-DEPLOY.md) | Publicação em VPS com HTTPS |
+| [NOTEBOOK-SERVIDOR.md](NOTEBOOK-SERVIDOR.md) | Acesso remoto com notebook e Tailscale |
+| [docs/CHANGELOG_HISTORY.md](docs/CHANGELOG_HISTORY.md) | Histórico completo do projeto |
 | [VPS-DEPLOY.md](VPS-DEPLOY.md) | Publicação em VPS com HTTPS |
 | [NOTEBOOK-SERVIDOR.md](NOTEBOOK-SERVIDOR.md) | Acesso remoto com notebook e Tailscale |
 | [docs/DOCLING.md](docs/DOCLING.md) | Camada de compreensão documental |
@@ -252,10 +266,9 @@ chave única do servidor para uso pessoal/de equipe.
 
 ## 🤝 Contribuir
 
-Toda mudança relevante precisa atualizar o `CONTINUIDADE.md`, passar por
-validação, receber um commit descritivo em português e ser enviada ao GitHub na
-mesma sessão. A CI (`.github/workflows/ci.yml`) roda testes de backend, frontend
-e build de produção a cada push/PR.
+Toda mudança relevante precisa: atualizar o `CONTINUIDADE.md` (que é **curto** — o
+histórico vai para `docs/CHANGELOG_HISTORY.md`), passar por `npm run check` nos dois
+lados, receber um commit descritivo em português e ser enviada ao GitHub na mesma sessão.
 
 <div align="center">
 

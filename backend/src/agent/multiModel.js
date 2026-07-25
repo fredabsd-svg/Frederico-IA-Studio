@@ -210,7 +210,7 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
       return { text: finalText, usage, model: config.coordinator };
     }
 
-    const hasUploads = Boolean(uploadsNote(conversationId));
+    const hasUploads = Boolean(uploadsNote(userId, conversationId));
     const multiRequirement = detectToolRequirement({
       userText,
       webSearch: Boolean(webSearch),
@@ -639,7 +639,7 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
           for (const file of executorResult.files || []) artifactOutputPaths.add(file.path);
           state.elapsedMs = Date.now() - t0;
           addSlotCost(state);
-          state.artifactVersion = snapshotArtifactVersion(conversationId, {
+          state.artifactVersion = snapshotArtifactVersion(userId, conversationId, {
             runId: artifactRunId,
             stage: state.slot,
             model: state.member.id,

@@ -2,7 +2,7 @@
 // mesmo comportamento). Montado em /api pelo server.js.
 import { nanoid } from 'nanoid';
 import { db, now } from '../db.js';
-import { destroyAllSandboxes } from '../sandbox.js';
+import { destroySandboxesForUser } from '../sandbox.js';
 import { makeRouter, PC_FOLDERS_ENABLED } from './helpers.js';
 
 const router = makeRouter();
@@ -48,19 +48,19 @@ router.post('/pc-folders', async (req, res) => {
   const id = nanoid();
   await db.prepare('INSERT INTO pc_folders (id,user_id,label,host_path,writable,created_at) VALUES (?,?,?,?,?,?)')
     .run(id, req.userId, label, hostPath, req.body?.writable ? 1 : 0, now());
-  await destroyAllSandboxes(req.userId); // aplica o novo mount só às conversas DESTE usuário
+  await destroySandboxesForUser(req.userId); // aplica o novo mount SÓ às conversas deste usuário
   res.json({ id, label, host_path: hostPath, writable: req.body?.writable ? 1 : 0 });
 });
 router.put('/pc-folders/:id', async (req, res) => {
   if (!requirePcFolders(res)) return;
   await db.prepare('UPDATE pc_folders SET writable=? WHERE id=? AND user_id=?').run(req.body?.writable ? 1 : 0, req.params.id, req.userId);
-  await destroyAllSandboxes(req.userId);
+  await destroySandboxesForUser(req.userId);
   res.json({ ok: true });
 });
 router.delete('/pc-folders/:id', async (req, res) => {
   if (!requirePcFolders(res)) return;
   await db.prepare('DELETE FROM pc_folders WHERE id=? AND user_id=?').run(req.params.id, req.userId);
-  await destroyAllSandboxes(req.userId);
+  await destroySandboxesForUser(req.userId);
   res.json({ ok: true });
 });
 

@@ -2,23 +2,41 @@
 // mesmo comportamento). Montado em /api pelo server.js.
 import { TERMS_VERSION, getLatestConsent, recordConsent, exportUserData, deleteAllConversations, deleteAccount } from '../privacy.js';
 import { healthMetrics } from '../healthMetrics.js';
+import { scanPolicy, scanHealth } from '../clamav.js';
 import { enabledSocialProviders } from '../auth.js';
 import { validate, schemas } from '../validation.js';
 import { makeRouter, isAdmin, PC_FOLDERS_ENABLED, scheduleTimeZone } from './helpers.js';
+import { UPLOAD_LIMITS } from '../uploads.js';
+import { dockerAccessMode } from '../sandbox.js';
 
 const router = makeRouter();
 
 // termsVersion: fonte ÚNICA da versão vigente dos Termos/Política (a página
 // legal pública do frontend lê daqui — nada de manter a data em dois lugares).
-router.get('/health', (_, res) => res.json({ ok: true, name: 'Frederico AI Studio', auth: true, scheduleTimeZone, socialProviders: enabledSocialProviders, termsVersion: TERMS_VERSION, bootAt: healthMetrics.bootAt, unhandledRejections: healthMetrics.unhandledRejections }));
+// Health check público (sem autenticação). Além do "está de pé?", expõe o que um
+// operador precisa para NÃO descobrir problema pelo log: política do antivírus e
+// se ele está degradado, sandboxes ativos e órfãos recolhidos, limites de upload.
+router.get('/health', (_, res) => res.json({
+  ok: true,
+  name: 'Frederico AI Studio',
+  auth: true,
+  scheduleTimeZone,
+  socialProviders: enabledSocialProviders,
+  termsVersion: TERMS_VERSION,
+  bootAt: healthMetrics.bootAt,
+  unhandledRejections: healthMetrics.unhandledRejections,
+  antivirus: { ...scanPolicy(), degradado: scanHealth.arquivosNaoVerificados > 0, ultimoErroEm: scanHealth.ultimoErroEm, naoVerificados: scanHealth.arquivosNaoVerificados, infectados: scanHealth.arquivosInfectados },
+  sandbox: { ativos: healthMetrics.sandboxesActive ?? 0, orfaosRemovidos: healthMetrics.sandboxOrphansRemoved ?? 0, ultimaReconciliacao: healthMetrics.sandboxLastReconcileAt ?? null, erroReconciliacao: healthMetrics.sandboxReconcileError ?? null, docker: dockerAccessMode() },
+  uploads: { maxArquivoMb: Math.round(UPLOAD_LIMITS.maxFileBytes / 1048576), maxRequisicaoMb: Math.round(UPLOAD_LIMITS.maxRequestBytes / 1048576), maxArquivos: UPLOAD_LIMITS.maxFiles, maxSimultaneosPorUsuario: UPLOAD_LIMITS.maxConcurrentPerUser, cotaPorUsuarioMb: UPLOAD_LIMITS.userQuotaBytes ? Math.round(UPLOAD_LIMITS.userQuotaBytes / 1048576) : null }
+}));
 
 // Dados do usuário logado + flags que a interface usa (ex.: mostrar o botão de
 // backup só para o administrador; esconder "Pastas do PC" quando desligado).
-router.get('/me', (req, res) => res.json({
+router.get('/me', async (req, res) => res.json({
   id: req.userId,
   email: req.user?.email || null,
   name: req.user?.name || null,
-  isAdmin: isAdmin(req),
+  isAdmin: await isAdmin(req),
   pcFoldersEnabled: PC_FOLDERS_ENABLED
 }));
 

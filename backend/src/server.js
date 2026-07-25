@@ -10,7 +10,7 @@ import { db } from './db.js';
 import { maybeReindexOnModelChange, loadSettings } from './memory/memoryService.js';
 import { initVectorStore } from './memory/vectorStore.js';
 import { ensureUserSeeded } from './seed.js';
-import { isConversationId, loadPcFolders } from './sandbox.js';
+import { isConversationId, loadPcFolders, migrateLegacyWorkspaces, startSandboxReconciliation } from './sandbox.js';
 import { auth, requireAuth } from './auth.js';
 import { toNodeHandler } from 'better-auth/node';
 import { runMigrations } from './migrate.js';
@@ -38,6 +38,7 @@ import companionRouter from './routes/companion.js';
 import copilotRouter from './routes/copilot.js';
 import doclingRouter from './routes/docling.js';
 import { healthMetrics } from './healthMetrics.js';
+import { sweepStaleUploadTemps } from './uploads.js';
 import { sweepExpiredArtifacts, RETENTION_DAYS as DOCLING_RETENTION_DAYS } from './docling/retention.js';
 import { isDoclingEnabled } from './docling/config.js';
 import { doclingHealth } from './docling/runner.js';
@@ -221,6 +222,10 @@ app.use((err, req, res, _next) => {
   // 2) Aquece os caches em memória (settings e pastas do PC).
   await loadSettings();
   await loadPcFolders();
+  // 2b) Layout do workspace por USUÁRIO (workspaces/users/<usuário>/<conversa>):
+  //     move as pastas legadas (workspaces/<conversa>) para o dono correto.
+  //     Idempotente — nada acontece depois da primeira execução.
+  try { await migrateLegacyWorkspaces(); } catch (e) { console.error('[workspace]', e.message); }
   try { await maybeReindexOnModelChange(); } catch {}
   // 3) Os seeds agora são POR USUÁRIO (ensureUserSeeded), disparados sob demanda
   //    pelo middleware após a autenticação — não há mais seed global no boot.
@@ -233,6 +238,15 @@ app.use((err, req, res, _next) => {
   await warnIfDoclingUnavailable();
   // 5) Sobe o servidor, arma as rotinas agendadas e dispara o worker de tarefas.
   app.listen(port, () => console.log(`Frederico AI Studio backend em http://localhost:${port}`));
+  // 5b) Containers órfãos: tudo que sobrou de um processo anterior (queda do
+  //     backend/host) é removido agora, e uma varredura periódica recolhe o que
+  //     escapar do mapa em memória. Só toca em containers com a label do app.
+  startSandboxReconciliation();
+  // Temporários de upload abandonados (queda do processo no meio de um envio):
+  // varredura no boot e a cada hora. O staging normal já é removido no finally
+  // de cada rota — isto é a rede de segurança.
+  sweepStaleUploadTemps();
+  setInterval(() => { try { sweepStaleUploadTemps(); } catch {} }, 60 * 60 * 1000).unref();
   startSchedulers();
   startHealthSampling(); // amostragem de saúde (memória/CPU) para o copiloto
   setTimeout(() => processTasks().catch(() => {}), 2000);

@@ -68,6 +68,30 @@ export async function setSettings(partial) {
   return loadSettings();
 }
 
+// ---- Piso de similaridade da busca ----
+// O multilingual-e5-small NÃO usa a faixa 0..1: dois textos quaisquer no mesmo
+// idioma ficam em ~0,74–0,90. Os pisos antigos (0,25 e 0,30) estavam MUITO
+// abaixo desse chão, então nenhum candidato era descartado — a busca devolvia
+// sempre o `limit` cheio, e a interface mostrava "85% de similaridade" para
+// conversas sem relação nenhuma com o pedido. 0,80 corta o ruído de fundo e
+// deixa passar o que de fato se parece. (A pontuação por palavras do modo
+// degradado tem escala própria e mantém os pisos antigos.)
+export const EMBEDDING_MIN_SIM = Number(process.env.MEMORY_MIN_SIM || 0.80);
+const KEYWORD_MIN_SIM_MEMORY = 0.15;
+const KEYWORD_MIN_SIM_CHUNK = 0.25;
+
+// Pontua uma linha e registra de ONDE veio a similaridade: sem isso a
+// calibração do e5 seria aplicada também à contagem de palavras, que já nasce
+// em 0..1 — e aí o modo degradado ficaria mudo.
+function simFor(row, qEmb, queryText) {
+  if (qEmb && row.embedding) return { ...row, _sim: cosine(qEmb, row.embedding), _simKind: 'embedding' };
+  return { ...row, _sim: keywordScore(queryText, row.content), _simKind: 'keyword' };
+}
+
+function simFloor(row, embeddingFloor, keywordFloor) {
+  return row._simKind === 'embedding' ? embeddingFloor : keywordFloor;
+}
+
 // ---- Proteção: nunca salvar segredos automaticamente ----
 const SENSITIVE = /(sk-[a-z0-9-]{8,}|api[_-]?key|senha|password|token\s*[:=]|bearer\s+[a-z0-9._-]{10,}|-----BEGIN)/i;
 export function looksSensitive(text) { return SENSITIVE.test(String(text || '')); }
@@ -223,7 +247,7 @@ function recencyBoost(iso) {
   return Math.exp(-days / 90);
 }
 
-export async function searchMemories(userId, queryText, { scopes = ['global'], excludeTypes = [], limit = 12, minScore = 0.25 } = {}) {
+export async function searchMemories(userId, queryText, { scopes = ['global'], excludeTypes = [], limit = 12, minScore = EMBEDDING_MIN_SIM } = {}) {
   const qEmb = await embedOne(queryText, 'query');
   const qLit = toVectorLiteral(qEmb);
   const ph = scopes.map(() => '?').join(',');
@@ -238,7 +262,8 @@ export async function searchMemories(userId, queryText, { scopes = ['global'], e
       // não estão no índice: varre só esse resíduo em JS e junta — sem isto
       // elas ficariam invisíveis à busca enquanto o pgvector estivesse ativo.
       const resid = await db.prepare(`SELECT * FROM memory WHERE scope IN (${ph}) AND user_id=? AND embedding_vec IS NULL LIMIT 500`).all(...scopes, userId);
-      rows = vecRows.concat(resid.map(r => ({ ...r, _sim: r.embedding ? cosine(qEmb, r.embedding) : keywordScore(queryText, r.content) })));
+      rows = vecRows.map(r => ({ ...r, _simKind: 'embedding' }))
+        .concat(resid.map(r => simFor(r, qEmb, queryText)));
     }
     // vecRows < limit: usuário com poucas memórias OU truncamento pós-filtro do
     // HNSW (pgvector < 0.8, sem scan iterativo) — cai na varredura completa, que
@@ -247,18 +272,18 @@ export async function searchMemories(userId, queryText, { scopes = ['global'], e
   if (!rows) {
     // Fallback (sem pgvector, embeddings degradados ou poucos candidatos).
     rows = (await db.prepare(`SELECT * FROM memory WHERE scope IN (${ph}) AND user_id=?`).all(...scopes, userId))
-      .map(r => ({ ...r, _sim: qEmb && r.embedding ? cosine(qEmb, r.embedding) : keywordScore(queryText, r.content) }));
+      .map(r => simFor(r, qEmb, queryText));
   }
   const scored = rows
     .filter(r => !excludeTypes.includes(r.type))
     .map(r => ({ ...r, _score: 0.6 * r._sim + 0.15 * ((r.importance || 3) / 5) + 0.15 * recencyBoost(r.updated_at || r.created_at) + (r.pinned ? 0.15 : 0) }))
-    .filter(r => r._sim >= (qEmb ? minScore : 0.15))
+    .filter(r => r._sim >= simFloor(r, minScore, KEYWORD_MIN_SIM_MEMORY))
     .sort((a, b) => b._score - a._score)
     .slice(0, limit);
   return scored.map(({ embedding, embedding_vec, ...r }) => r);
 }
 
-export async function searchChunks(userId, queryText, { excludeConversationId = null, scopes = ['global'], limit = 10, minScore = 0.3 } = {}) {
+export async function searchChunks(userId, queryText, { excludeConversationId = null, scopes = ['global'], limit = 10, minScore = EMBEDDING_MIN_SIM } = {}) {
   const qEmb = await embedOne(queryText, 'query');
   const qLit = toVectorLiteral(qEmb);
   let scored = null;
@@ -275,7 +300,8 @@ export async function searchChunks(userId, queryText, { excludeConversationId = 
     if (vecRows.length >= limit) {
       // Resíduo sem vetor (degradação/backfill pendente): pontua em JS e junta.
       const resid = await db.prepare(`SELECT * FROM conversation_chunks WHERE ${where} AND embedding_vec IS NULL LIMIT 500`).all(...params);
-      scored = vecRows.concat(resid.map(r => ({ ...r, _sim: r.embedding ? cosine(qEmb, r.embedding) : keywordScore(queryText, r.content) })))
+      scored = vecRows.map(r => ({ ...r, _simKind: 'embedding' }))
+        .concat(resid.map(r => simFor(r, qEmb, queryText)))
         .map(r => ({ ...r, _score: 0.8 * r._sim + 0.2 * recencyBoost(r.created_at) }));
     }
     // vecRows < limit → varredura completa abaixo (mesma razão de searchMemories).
@@ -287,12 +313,12 @@ export async function searchChunks(userId, queryText, { excludeConversationId = 
       .filter(r => allowed.has(r.scope || 'global')) // isolamento por cliente
       .filter(r => !excludeConversationId || r.conversation_id !== excludeConversationId)
       .map(r => {
-        const sim = qEmb && r.embedding ? cosine(qEmb, r.embedding) : keywordScore(queryText, r.content);
-        return { ...r, _sim: sim, _score: 0.8 * sim + 0.2 * recencyBoost(r.created_at) };
+        const scoredRow = simFor(r, qEmb, queryText);
+        return { ...scoredRow, _score: 0.8 * scoredRow._sim + 0.2 * recencyBoost(r.created_at) };
       });
   }
   return scored
-    .filter(r => r._sim >= (qEmb ? minScore : 0.25))
+    .filter(r => r._sim >= simFloor(r, minScore, KEYWORD_MIN_SIM_CHUNK))
     .sort((a, b) => b._score - a._score)
     .slice(0, limit)
     .map(({ embedding, embedding_vec, ...r }) => r);

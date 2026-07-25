@@ -3,7 +3,7 @@
 // processamento na interface e permitem auditar/baixar o que foi extraído.
 import fs from 'node:fs';
 import { db, now } from '../db.js';
-import { makeRouter, isAdmin } from './helpers.js';
+import { makeRouter, isAdmin, requireAdmin, recordAdminAction } from './helpers.js';
 import { isDoclingEnabled } from '../docling/config.js';
 import { resolvedOptions, writeOverrides, readOverrides, adminEditable } from '../docling/adminConfig.js';
 import { doclingHealth } from '../docling/runner.js';
@@ -20,14 +20,15 @@ router.get('/docling/status', async (req, res) => {
   const enabled = isDoclingEnabled();
   const health = enabled ? await doclingHealth() : { ok: false, disabled: true };
   const opts = await resolvedOptions();
-  res.json({ enabled, isAdmin: isAdmin(req), options: adminEditable(opts), overrides: await readOverrides(), health });
+  res.json({ enabled, isAdmin: await isAdmin(req), options: adminEditable(opts), overrides: await readOverrides(), health });
 });
 
 // Ajuste das opções do Docling (somente admin). Muda o configVersion → o cache
 // é invalidado e os documentos são reprocessados sob demanda.
 router.put('/docling/config', async (req, res) => {
-  if (!isAdmin(req)) return res.status(403).json({ error: 'Apenas o administrador pode alterar a configuração do Docling.' });
+  if (!await requireAdmin(req, res, 'Apenas o administrador pode alterar a configuração do Docling.')) return;
   const saved = await writeOverrides(req.body || {});
+  await recordAdminAction(req, 'docling.config.update', { chaves: Object.keys(req.body || {}) });
   res.json({ ok: true, overrides: saved, options: adminEditable(await resolvedOptions()) });
 });
 
@@ -118,7 +119,7 @@ router.post('/docling/documents/:id/reprocess', async (req, res) => {
   const f = await db.prepare('SELECT * FROM files WHERE id=(SELECT file_id FROM document_processings WHERE id=? AND user_id=?)').get(req.params.id, req.userId);
   const conv = await db.prepare('SELECT conversation_id FROM document_processings WHERE id=? AND user_id=?').get(req.params.id, req.userId);
   if (!f || !conv?.conversation_id) return res.status(409).json({ error: 'Arquivo original indisponível para reprocessar.' });
-  const ws = workspaceFor(conv.conversation_id);
+  const ws = workspaceFor(conv.conversation_id, req.userId);
   const filePath = path.join(ws.base, f.path);
   if (!fs.existsSync(filePath)) return res.status(409).json({ error: 'Arquivo original não está mais no disco.' });
   // force: ignora o cache — reprocessar com a mesma config deve reprocessar de
