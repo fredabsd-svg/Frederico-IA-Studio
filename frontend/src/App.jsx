@@ -245,6 +245,7 @@ export default function App({ user } = {}) {
   const copilot = useCopilot();
   const [copilotOpen, setCopilotOpen] = useState(false);
   const [companionConfigOpen, setCompanionConfigOpen] = useState(false);
+  const [devGitBusy, setDevGitBusy] = useState(null); // null | 'clone' | 'push'
   const [settingsHubOpen, setSettingsHubOpen] = useState(false);
 
   function changeMultiModel(next) {
@@ -586,6 +587,60 @@ export default function App({ user } = {}) {
       setWorkspace('developer');
     }
   }, [developerSession]); // eslint-disable-line
+
+  // Botões de GitHub do modo desenvolvedor: disparam clone/push DIRETO no backend
+  // (endpoint dedicado), sem depender do modo/frase nem gastar tokens da IA. É o
+  // caminho confiável para enviar o trabalho que já está no workspace da conversa.
+  async function devGithubClone() {
+    const gh = developerSession?.github;
+    if (!gh?.repo) return showToast('Nenhum repositório vinculado a esta conversa.');
+    const conv = await ensureConversation();
+    if (!conv?.id) return;
+    setDevGitBusy('clone');
+    try {
+      const r = await fetch(`${API}/api/conversations/${conv.id}/github/clone`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repo: gh.repo, branch: gh.branch || undefined }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { showToast(d.error || 'Não consegui preparar o repositório.'); return; }
+      showToast(d.note || `Repositório ${gh.repo} pronto${d.branch ? ` na branch ${d.branch}` : ''}.`, 'ok');
+    } catch { showToast('Falha de conexão ao preparar o repositório.'); }
+    finally { setDevGitBusy(null); }
+  }
+  async function devGithubPush(commitMessage) {
+    const gh = developerSession?.github;
+    if (!gh?.repo) return showToast('Nenhum repositório vinculado a esta conversa.');
+    const conv = await ensureConversation();
+    if (!conv?.id) return;
+    setDevGitBusy('push');
+    try {
+      const body = { repo: gh.repo, branch: gh.branch || undefined };
+      if (commitMessage) body.commit_message = commitMessage;
+      const r = await fetch(`${API}/api/conversations/${conv.id}/github/push`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        // Sem commit_message e há mudanças pendentes: pede a mensagem e repete.
+        if (d.needsCommitMessage && !commitMessage) {
+          setDevGitBusy(null);
+          const msg = await askPrompt({
+            title: 'Enviar para o GitHub',
+            label: 'Há alterações não salvas. Descreva o que mudou (mensagem do commit):',
+            confirmLabel: 'Commitar e enviar',
+          });
+          if (msg?.trim()) return devGithubPush(msg.trim());
+          return;
+        }
+        showToast(d.error || 'Não consegui enviar para o GitHub.');
+        return;
+      }
+      if (d.pushed === false) showToast(d.note || 'Nada novo para enviar — já está igual ao GitHub.', 'ok');
+      else showToast(`Enviado para ${gh.repo}${d.branch ? ` (${d.branch})` : ''}${d.commit ? ` · ${d.commit}` : ''}.`, 'ok');
+    } catch { showToast('Falha de conexão ao enviar para o GitHub.'); }
+    finally { setDevGitBusy(null); }
+  }
 
   // Colapso das colunas do ambiente de desenvolvimento (guardado entre sessões).
   function toggleDevLeft() { setDevLeftCollapsed(v => { localStorage.setItem('fred_dev_left', v ? '0' : '1'); return !v; }); }
@@ -1026,6 +1081,16 @@ export default function App({ user } = {}) {
         {developerSession && (!developerSession.conversationId || developerSession.conversationId === current?.id) && <div className="devSessionBar">
           <Code2 size={15}/><span>Modo desenvolvedor</span><b>{DEV_WORK_MODES.find(m => m.id === developerSession.mode)?.label || 'Ativo'}</b>
           {developerSession.github?.repo && <span className="muted" title={`Repositório GitHub${developerSession.github.branch ? ` · branch ${developerSession.github.branch}` : ''}`}>· {developerSession.github.repo}{developerSession.github.branch ? ` (${developerSession.github.branch})` : ''}</span>}
+          {developerSession.github?.repo && <div className="devGhActions">
+            <button className="devGhBtn" onClick={devGithubClone} disabled={devGitBusy !== null}
+              title="Clonar ou atualizar o repositório nesta conversa">
+              {devGitBusy === 'clone' ? <span className="spin sm"/> : <RefreshCw size={13}/>} Continuar no repositório
+            </button>
+            <button className="devGhBtn primary" onClick={() => devGithubPush()} disabled={devGitBusy !== null}
+              title="Commitar (se preciso) e enviar as mudanças para o GitHub">
+              {devGitBusy === 'push' ? <span className="spin sm"/> : <Upload size={13}/>} Enviar para o GitHub
+            </button>
+          </div>}
           <button onClick={() => setDeveloperSession(null)} title="Sair do modo desenvolvedor" aria-label="Sair do modo desenvolvedor"><X size={14}/></button>
         </div>}
         {uploads.length > 0 && <div className="attachChips">
