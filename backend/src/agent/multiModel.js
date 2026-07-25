@@ -24,6 +24,7 @@ import { indexAfterReply } from '../memory/indexer.js';
 import { runAgent } from './loop.js';
 import { clipForBriefing, developerTeamContextFor, protectedProfilePrompt, uploadsNote } from './prompts.js';
 import { buildRepoDigest } from '../connectors/github.js';
+import { buildDocumentContext } from '../docling/context.js';
 import { STREAM_RECOVERY_LIMIT, STREAM_RESUME_NOTE, STREAM_PAUSE_RESUME_NOTE, isRetryableStreamError, openRouterRouting, retryDelay, addUsage, friendlyApiError, applyPromptCache } from './provider.js';
 import { guardStreamStall, PROVIDER_CONNECT_TIMEOUT_MS } from './streamGuard.js';
 import { acquireConversationControl, releaseConversationControl, beginProviderRequest, releaseProviderRequest, controlInterruptReason, gate } from './control.js';
@@ -160,7 +161,7 @@ export function memberSystemPrompt(member, mode, { toolsEnabled = false } = {}) 
 // "me mande o link do repositório" / "não tenho acesso ao GitHub". Antes disso,
 // só o Modo Equipe (orchestrator.js) recebia essa nota; o multimodelo real
 // (compare/council/debate/pipeline) ficava sem contexto do repo.
-export function multiModelSystemBlocks(member, mode, developerTeamNote = null, repoDigest = null) {
+export function multiModelSystemBlocks(member, mode, developerTeamNote = null, repoDigest = null, documentContext = null) {
   // Nota do modo desenvolvedor consolidada no MESMO bloco system: vários
   // modelos tratam mal múltiplas mensagens system (alguns só honram a primeira).
   const sys = protectedProfilePrompt(memberSystemPrompt(member, mode));
@@ -168,6 +169,12 @@ export function multiModelSystemBlocks(member, mode, developerTeamNote = null, r
   // Código REAL do repositório (compare/council/debate não executam ferramentas,
   // então este extrato é a única forma de eles analisarem o código de verdade).
   if (repoDigest) blocks.push({ role: 'user', content: untrustedContext('repository-digest', repoDigest) });
+  // CONTEÚDO REAL dos documentos anexados, já extraído pela camada Docling. Vale
+  // exatamente o mesmo argumento do extrato de repositório: sem ferramentas,
+  // este bloco é a ÚNICA forma de um participante ler o PDF/planilha do usuário.
+  // Antes, o conteúdo só chegava ao executor (runAgent) — nos modos de parecer os
+  // modelos respondiam sobre um documento que nunca tinham visto.
+  if (documentContext) blocks.push({ role: 'user', content: untrustedContext('document-content', documentContext) });
   return blocks;
 }
 
@@ -301,6 +308,18 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
         }
       } catch { /* segue só com a nota textual (nome do repo) */ }
     }
+    // Conteúdo dos documentos já processados pela camada Docling (quando ligada).
+    // Uma leitura para todos os participantes E para o coordenador — a mesma
+    // extração que o chat comum usa, sem re-extrair por modelo.
+    let documentContext = null;
+    try {
+      const docCtx = await buildDocumentContext(userId, conversationId, { query: userText });
+      if (docCtx?.note) {
+        documentContext = docCtx.note;
+        onEvent({ type: 'status', content: 'Conteúdo dos documentos anexados carregado para os modelos.' });
+      }
+    } catch (e) { console.error('[docling] contexto do multimodelo falhou:', e.message); }
+
     const historyText = await buildHistoryText(conversationId, config.context);
     const baseUserContent = historyText
       ? `Contexto da conversa até aqui:\n${historyText}\n\nNOVA mensagem do usuário:\n${userText}`
@@ -388,7 +407,7 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
     }
 
     function slotMessages(state, extraUserContent = null) {
-      const msgs = multiModelSystemBlocks(state.member, config.mode, developerTeamNote, repoDigest);
+      const msgs = multiModelSystemBlocks(state.member, config.mode, developerTeamNote, repoDigest, documentContext);
       const prefixEnd = msgs.findIndex(message => message.role !== 'system');
       const staticPrefixEnd = prefixEnd < 0 ? msgs.length : prefixEnd;
       if (developerRules) msgs.push({ role: 'user', content: untrustedContext('project-rules', developerRules) });
@@ -406,6 +425,7 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
       const msgs = [
         { role: 'system', content: developerTeamNote ? `${coordinatorSys}\n\n${developerTeamNote}` : coordinatorSys },
         ...(repoDigest ? [{ role: 'user', content: untrustedContext('repository-digest', repoDigest) }] : []),
+        ...(documentContext ? [{ role: 'user', content: untrustedContext('document-content', documentContext) }] : []),
         ...(developerRules ? [{ role: 'user', content: untrustedContext('project-rules', developerRules) }] : []),
         { role: 'user', content: untrustedContext('multi-coordinator-material', taskPrompt) }
       ];

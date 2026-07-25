@@ -104,9 +104,36 @@ async function upsertRow(fields) {
   return id;
 }
 
-async function setStatus(userId, hash, cfg, status, extra = {}) {
-  await db.prepare('UPDATE document_processings SET status=?, stats=COALESCE(?,stats), updated_at=? WHERE user_id=? AND hash=? AND config_version=?')
-    .run(status, extra.stats ? JSON.stringify(extra.stats) : null, now(), userId, hash, cfg);
+// Grava o ESTÁGIO atual do processamento em `stats` para a interface mostrar
+// "Analisando estrutura", "Extraindo conteúdo"... Antes, o runner calculava
+// stage/progress e o valor era descartado: o painel tinha a tabela STAGE_LABEL
+// mas `stats.stage` nunca era preenchido, então o usuário via sempre a mesma
+// frase genérica. Só grava quando o estágio MUDA (uma UPDATE por etapa, não a
+// cada poll de 1,5s).
+async function setStage(userId, hash, cfg, { stage, progress }) {
+  await db.prepare(
+    `UPDATE document_processings SET stats=?, updated_at=? WHERE user_id=? AND hash=? AND config_version=?`
+  ).run(JSON.stringify({ stage: stage || null, progress: Number(progress) || 0 }), now(), userId, hash, cfg);
+}
+
+// Processamentos em andamento: chave -> { controller }. É o que torna o
+// cancelamento alcançável — o serviço Python sempre teve DELETE /jobs/:id e o
+// runner sempre aceitou um AbortSignal, mas nada guardava o controller, então
+// não havia como um clique do usuário chegar até lá.
+const inFlight = new Map();
+const flightKey = (userId, hash, cfg) => `${userId}::${hash}::${cfg}`;
+
+export function isProcessingInFlight(userId, hash, cfg) {
+  return inFlight.has(flightKey(userId, hash, cfg));
+}
+
+// Cancela um processamento em andamento. Retorna false quando já terminou (ou
+// nunca esteve em andamento neste processo do backend).
+export function abortProcessing(userId, hash, cfg) {
+  const entry = inFlight.get(flightKey(userId, hash, cfg));
+  if (!entry) return false;
+  entry.controller.abort();
+  return true;
 }
 
 // Entry point. Processa (ou reaproveita o cache de) um arquivo já salvo em disco.
@@ -137,12 +164,31 @@ export async function processFile({ userId, conversationId, fileId, filePath, fi
 
   // Marca 'processing' (a UI mostra o andamento).
   await upsertRow({ user_id: userId, conversation_id: conversationId, file_id: fileId, hash, mime, filename,
-    config_version: cfg, engine: 'docling', status: 'processing' });
+    config_version: cfg, engine: 'docling', status: 'processing',
+    stats: JSON.stringify({ stage: 'recebido', progress: 0 }) });
+
+  // Um controller por processamento, encadeado ao signal externo (quando houver),
+  // para que tanto o botão "Cancelar" quanto um cancelamento do chamador parem
+  // o job no serviço Python (runner faz DELETE /jobs/:id ao abortar).
+  const key = flightKey(userId, hash, cfg);
+  const controller = new AbortController();
+  if (signal) {
+    if (signal.aborted) controller.abort();
+    else signal.addEventListener('abort', () => controller.abort(), { once: true });
+  }
+  inFlight.set(key, { controller });
 
   try {
+    let lastStage = 'recebido';
     const result = await runDocling(filePath, {
-      hash, mime, filename, options: opts, timeoutMs: opts.timeoutMs, signal,
-      onProgress: (p) => { onProgress?.(p); },
+      hash, mime, filename, options: opts, timeoutMs: opts.timeoutMs, signal: controller.signal,
+      onProgress: (p) => {
+        onProgress?.(p);
+        if (p?.stage && p.stage !== lastStage) {
+          lastStage = p.stage;
+          setStage(userId, hash, cfg, p).catch(() => {});
+        }
+      },
     });
     // result: { status, markdown, docling_json, ocr_used, page_count, table_count, warnings, timing_ms }
     const rawMarkdown = String(result.markdown || '');
@@ -240,11 +286,22 @@ export async function processFile({ userId, conversationId, fileId, filePath, fi
     return serialize(await getProcessingByHash(userId, hash, cfg));
   } catch (e) {
     const msg = String(e.message || e).slice(0, 500);
+    // Cancelamento do usuário não é falha: vira status próprio, sem alarme no
+    // log e sem mensagem de erro técnica na interface.
+    if (controller.signal.aborted || /cancelad[oa]/i.test(msg)) {
+      await upsertRow({ user_id: userId, conversation_id: conversationId, file_id: fileId, hash, mime, filename,
+        config_version: cfg, engine: 'docling', status: 'canceled', error: null,
+        stats: JSON.stringify({ stage: 'cancelado', progress: 0 }) });
+      console.log(`[docling] processamento cancelado pelo usuário (${filename || hash.slice(0, 8)}).`);
+      return serialize(await getProcessingByHash(userId, hash, cfg));
+    }
     const failure = classifyFailure(msg); // motivo claro (senha/corrompido/timeout/...)
     await upsertRow({ user_id: userId, conversation_id: conversationId, file_id: fileId, hash, mime, filename,
       config_version: cfg, engine: 'docling', status: 'failed', error: msg, stats: JSON.stringify({ failure }) });
     console.error(`[docling] processFile falhou (${failure.kind}):`, msg);
     return serialize(await getProcessingByHash(userId, hash, cfg));
+  } finally {
+    inFlight.delete(key);
   }
 }
 

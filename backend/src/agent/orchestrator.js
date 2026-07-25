@@ -15,6 +15,7 @@ import { guardStreamStall, PROVIDER_CONNECT_TIMEOUT_MS } from './streamGuard.js'
 import { acquireConversationControl, releaseConversationControl, beginProviderRequest, releaseProviderRequest, controlInterruptReason, gate } from './control.js';
 import { clientScopeFor, memoryNote, saveMessage } from './persistence.js';
 import { untrustedContext } from './promptRegistry.js';
+import { buildDocumentContext } from '../docling/context.js';
 
 const TEAM_TOOL_AWARENESS = `CAPACIDADES DO APP:
 O Frederico AI Studio tem sandbox com Python 3, bash, LibreOffice/soffice, ffmpeg, OCR/PDF, vetores headless, Chromium/Playwright/Xvfb, toolchains C/C++/Go/Rust/Java/.NET/Kotlin, ML leve em CPU, qualidade e diagnóstico, bancos/clients remotos, Node com toolchain frontend, geração de arquivos e ferramentas de imagem/web quando habilitadas. Docker/Compose, GPU e builds nativos Android/iOS continuam deliberadamente fora do sandbox.
@@ -68,6 +69,17 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
     if (memoryMeta) onEvent({ type: 'memory_context', memory: memoryMeta });
   }
   catch { memory = await memoryNote(userId, null, await clientScopeFor(userId, conversationId)); }
+  // Conteúdo dos documentos já extraído pela camada Docling. Os especialistas
+  // desta etapa NÃO executam ferramentas — sem este bloco eles opinariam sobre
+  // um documento que nunca viram (mesma lacuna que a nota do repositório fechou
+  // para o código). O executor continua recebendo o seu por runAgent.
+  let documentContext = null;
+  if (!lowSignalTurn) {
+    try {
+      const docCtx = await buildDocumentContext(userId, conversationId, { query: userText });
+      documentContext = docCtx?.note || null;
+    } catch (e) { console.error('[docling] contexto do Modo Equipe falhou:', e.message); }
+  }
   // Histórico da conversa (a mensagem atual do usuário já foi salva — exclui ela).
   // Limites ampliados (antes 13 msgs × 600 chars): com o corte agressivo, um
   // documento longo colado no início da conversa ficava praticamente invisível
@@ -235,6 +247,7 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
     const directMsgs = [{ role: 'system', content: directSections.join('\n\n') }];
     const directPrefixEnd = directMsgs.length; // antes de memória/histórico
     if (memory) directMsgs.push({ role: 'user', content: untrustedContext('memory', memory) });
+    if (documentContext) directMsgs.push({ role: 'user', content: untrustedContext('document-content', documentContext) });
     if (developerRules) directMsgs.push({ role: 'user', content: untrustedContext('project-rules', developerRules) });
     for (const m of histRows) directMsgs.push({ role: m.role, content: String(m.content).slice(0, 2000) });
     directMsgs.push({ role: 'user', content: userText });
@@ -256,6 +269,7 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
         const msgs = [{ role: 'system', content: developerTeamNote ? `${sys}\n\n${developerTeamNote}` : sys }];
         const memberPrefixEnd = msgs.length; // antes de memória/histórico
         if (memory) msgs.push({ role: 'user', content: untrustedContext('memory', memory) });
+        if (documentContext) msgs.push({ role: 'user', content: untrustedContext('document-content', documentContext) });
         if (developerRules) msgs.push({ role: 'user', content: untrustedContext('project-rules', developerRules) });
         if (historyText) msgs.push({ role: 'user', content: untrustedContext('conversation-history', historyText) });
         msgs.push({ role: 'user', content: userText });

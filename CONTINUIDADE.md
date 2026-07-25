@@ -18,12 +18,41 @@ socket do Docker — ver `docs/SECURITY.md` §4.3). O que ainda impede o verde �
 de testes: SSE integrado, retomada após interrupção real, pipeline retomável e injeção
 adversarial não foram executados. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Branch:** `claude/frederico-audit-production-gduf4s` → **PR [#133](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/133)**
+- **Branch:** `claude/github-homepage-update-wx2dev` → **PR [#132](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/132)**
 - **Última validação:** 2026-07-25 — **578 testes, todos passando** (backend 497,
   frontend 37, guarda do Docker 40, Python 4), com PostgreSQL real e **zero pulados**;
   20 migrações aplicadas em banco vazio, reexecução idempotente; boot do backend e
   `/api/health` verificados.
   A contagem vem de `cd backend && npm run test:count` — não a escreva à mão.
+
+---
+
+## O que mudou por último (auditoria PC + Docling, 2026-07-25 — PR #132)
+
+Auditoria de ponta a ponta da integração com o computador do usuário e da camada
+documental. Achados corrigidos, com testes de regressão para cada um:
+
+| Área | Achado | Correção |
+| --- | --- | --- |
+| Execução | `run_python` **não passava por guarda nenhuma** — só o `bash` era validado, e ele era contornável por heredoc | Novo `backend/src/execGuard.js`: mount somente-leitura sem autorização do turno (garantia do Docker), análise linha a linha do Python e auditoria em `companion_audit` |
+| Execução | `rm -rf /home` e `/var` passavam pelo padrão antigo | Alvo passa a listar os diretórios de sistema por nome |
+| Docling | Progresso calculado e **descartado** — a UI lia `stats.stage`, nunca preenchido (`setStatus` era código morto) | Estágio persistido a cada mudança; barra de progresso no painel |
+| Docling | Cancelamento existia no serviço e no runner **sem rota nem botão** | `POST /docling/documents/:id/cancel` de ponta a ponta, com status `canceled` próprio |
+| Docling | `pypdf` importado sem estar declarado: a detecção de PDF com senha **nunca rodava** | Declarado no `requirements.txt`; ausência agora é logada |
+| Docling | Conteúdo dos documentos não chegava ao **multimodelo** nem ao **Modo Equipe** (modos que não executam ferramentas) | Bloco `document-content` nos três caminhos |
+| Markdown | **Perda total de dados**: relatório de 120 páginas virava string vazia; páginas que diferiam só nos valores eram descartadas como duplicatas | `norm()` preserva dígitos; só linhas de paginação são mascaradas; rede de segurança impede esvaziar página com conteúdo |
+| Serviço | Cache de resultados sem teto de memória; `_gc_jobs` coletava jobs vivos; hash recebido ignorado | Teto em bytes com LRU; só jobs terminados são coletados; hash conferido |
+
+Causa raiz das duas perdas de dados: mascarar todos os dígitos ao comparar linhas,
+num domínio contábil/fiscal em que **o número é o conteúdo**.
+
+Também nesta frente: `CLAUDE.md` (regra permanente de abrir PR ao concluir),
+repaginação do README como vitrine do produto, e `docs/CONFIGURACAO.md`.
+
+> Convergência com o PR #133: os dois PRs corrigiram, de forma independente, o
+> `destroyAllSandboxes` global que derrubava containers de todos os usuários. Ficou
+> a versão da `main` (`destroySandboxesForUser`), mais completa. O `docs/ARQUITETURA.md`
+> que esta frente criou foi removido em favor do `docs/ARCHITECTURE.md` do #133.
 
 ---
 

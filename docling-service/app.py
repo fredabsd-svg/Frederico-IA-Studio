@@ -39,7 +39,6 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from fastapi import FastAPI, UploadFile, Form, File, Header, HTTPException
-from fastapi.responses import JSONResponse
 
 # ---- Configuração via ambiente -------------------------------------------------
 INTERNAL_TOKEN = os.environ.get("DOCLING_INTERNAL_TOKEN", "")
@@ -49,6 +48,12 @@ MAX_FILE_MB = int(os.environ.get("DOCLING_MAX_FILE_MB", "50"))
 MAX_PAGES = int(os.environ.get("DOCLING_MAX_PAGES", "600"))
 JOB_TTL_SEC = int(os.environ.get("DOCLING_JOB_TTL_SEC", "1800"))
 RESULT_CACHE = int(os.environ.get("DOCLING_RESULT_CACHE", "200"))
+# Teto de MEMÓRIA do cache de resultados. Contar só o número de entradas era
+# insuficiente: cada resultado carrega o JSON completo do Docling, o Markdown e
+# até 20 imagens em base64 — 200 documentos grandes estouravam o mem_limit do
+# container e o serviço entrava em laço de reinício. Agora o cache respeita
+# entradas E bytes, descartando o mais antigo até caber.
+RESULT_CACHE_MB = int(os.environ.get("DOCLING_RESULT_CACHE_MB", "256"))
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s docling %(levelname)s %(message)s")
 log = logging.getLogger("docling-service")
@@ -81,6 +86,7 @@ class Job:
 JOBS: dict[str, Job] = {}
 CACHE: "dict[str, dict]" = {}     # cache_key -> result (dedup por hash+config)
 CACHE_ORDER: list[str] = []
+CACHE_BYTES: dict[str, int] = {}  # cache_key -> tamanho aproximado do resultado
 
 
 def require_auth(token: Optional[str]):
@@ -271,16 +277,29 @@ def _extract_pictures(doc, max_pictures: int = 20, max_px: int = 1600) -> list[d
     return out
 
 
+_pypdf_warned = False
+
+
 def _is_encrypted_pdf(path: str) -> bool:
     """Detecta PDF protegido por senha antes de tentar converter — assim o erro
-    volta claro ("password") em vez de uma falha genérica no meio do pipeline."""
+    volta claro ("password") em vez de uma falha genérica no meio do pipeline.
+
+    A ausência do pypdf é logada UMA vez: antes, o ImportError caía no mesmo
+    except do resto e a checagem ficava desligada sem ninguém perceber."""
+    global _pypdf_warned
+    if not path.lower().endswith(".pdf"):
+        return False
     try:
-        if not path.lower().endswith(".pdf"):
-            return False
         from pypdf import PdfReader
+    except ImportError:
+        if not _pypdf_warned:
+            _pypdf_warned = True
+            log.warning("pypdf ausente — a detecção de PDF protegido por senha está DESLIGADA")
+        return False
+    try:
         return bool(PdfReader(path).is_encrypted)
     except Exception:
-        return False
+        return False  # arquivo ilegível: o erro real aparece na conversão
 
 
 def _convert(path: str, options: dict, job: Job) -> dict:
@@ -374,19 +393,45 @@ def _cleanup(path: str):
         pass
 
 
+def _result_bytes(result: dict) -> int:
+    """Tamanho aproximado de um resultado em memória. Calculado UMA vez, no
+    momento de cachear (o job já levou segundos/minutos — o custo é irrelevante)."""
+    total = len(result.get("markdown") or "")
+    for pic in result.get("pictures") or []:
+        total += len(pic.get("image_b64") or "")
+    try:
+        total += len(json.dumps(result.get("docling_json") or {}))
+    except Exception:
+        total += 0
+    return total
+
+
 def _cache_put(key: str, result: dict):
     if key in CACHE:
         return
+    size = _result_bytes(result)
+    limit_bytes = max(1, RESULT_CACHE_MB) * 1024 * 1024
+    # Resultado sozinho maior que o teto: não cacheia (senão despejaria tudo).
+    if size > limit_bytes:
+        log.info("resultado grande demais para o cache (%.1f MB) — não cacheado", size / 1024 / 1024)
+        return
     CACHE[key] = result
+    CACHE_BYTES[key] = size
     CACHE_ORDER.append(key)
-    while len(CACHE_ORDER) > RESULT_CACHE:
+    while CACHE_ORDER and (len(CACHE_ORDER) > RESULT_CACHE or sum(CACHE_BYTES.values()) > limit_bytes):
         old = CACHE_ORDER.pop(0)
         CACHE.pop(old, None)
+        CACHE_BYTES.pop(old, None)
 
 
 def _gc_jobs():
+    """Remove jobs TERMINADOS mais velhos que o TTL. Um job ainda na fila ou em
+    processamento nunca é coletado: antes, um job demorado que cruzasse o TTL
+    perdia suas opções (_JOB_OPTIONS) e passava a rodar com a configuração
+    padrão — OCR e idioma errados, silenciosamente."""
     now = time.time()
-    for jid in [j for j, jb in JOBS.items() if now - jb.created > JOB_TTL_SEC]:
+    live = {"queued", "processing"}
+    for jid in [j for j, jb in JOBS.items() if now - jb.created > JOB_TTL_SEC and jb.status not in live]:
         JOBS.pop(jid, None)
         _JOB_OPTIONS.pop(jid, None)
 
@@ -418,8 +463,13 @@ async def create_job(
     data = await file.read()
     if len(data) > MAX_FILE_MB * 1024 * 1024:
         raise HTTPException(status_code=413, detail=f"arquivo acima de {MAX_FILE_MB} MB")
-    # Confirma a integridade do hash informado (dedup/cache confiável).
+    # Confirma a integridade do hash informado: se o backend calculou um sha256
+    # diferente do conteúdo que chegou, o arquivo foi corrompido no caminho e o
+    # cache ficaria envenenado. O comentário antigo prometia esta checagem, mas
+    # o valor recebido era simplesmente ignorado.
     real = hashlib.sha256(data).hexdigest()
+    if hash and hash != real:
+        raise HTTPException(status_code=400, detail="hash do arquivo não confere com o conteúdo recebido")
     cache_key = f"{real}:{hashlib.sha1(json.dumps(opts, sort_keys=True).encode()).hexdigest()[:12]}"
 
     # Cache hit: devolve um job já concluído, sem reprocessar.

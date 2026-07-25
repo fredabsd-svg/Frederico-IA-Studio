@@ -40,6 +40,8 @@ import doclingRouter from './routes/docling.js';
 import { healthMetrics } from './healthMetrics.js';
 import { sweepStaleUploadTemps } from './uploads.js';
 import { sweepExpiredArtifacts, RETENTION_DAYS as DOCLING_RETENTION_DAYS } from './docling/retention.js';
+import { isDoclingEnabled } from './docling/config.js';
+import { doclingHealth } from './docling/runner.js';
 import { startHealthSampling } from './companion/health.js';
 
 const app = express();
@@ -182,6 +184,23 @@ if (process.env.MODEL_CATALOG_SYNC !== '0') {
   setTimeout(() => runDailyCatalogSync().catch(e => console.error('[catálogo]', e.message)), 5 * 60 * 1000).unref();
 }
 
+// Diagnóstico de boot da camada documental. A flag do backend
+// (DOCLING_ENABLED) e o serviço (perfil `docling` do compose) são ligados
+// separadamente — quando divergem, o sintoma aparecia só documento a documento.
+async function warnIfDoclingUnavailable() {
+  if (!isDoclingEnabled()) return;
+  if (!process.env.DOCLING_INTERNAL_TOKEN) {
+    console.warn('[docling] AVISO: DOCLING_INTERNAL_TOKEN vazio — o serviço aceita requisições sem autenticação de qualquer container da mesma rede Docker. Defina um valor no .env.');
+  }
+  const health = await doclingHealth();
+  if (health.ok) {
+    console.log(`[docling] serviço disponível (modelos carregados: ${health.models_loaded ? 'sim' : 'ainda não'}).`);
+    return;
+  }
+  console.error(`[docling] ERRO: DOCLING_ENABLED=true, mas o serviço em ${process.env.DOCLING_SERVICE_URL || 'http://docling-service:8000'} não respondeu (${health.error || `HTTP ${health.status}`}).`);
+  console.error('[docling] Sem ele, TODO documento enviado vai falhar. Suba o serviço com: docker compose --profile docling up -d --build');
+}
+
 // 404 padrão para rotas de API desconhecidas
 app.use('/api', (_, res) => res.status(404).json({ error: 'Rota não encontrada' }));
 
@@ -212,6 +231,11 @@ app.use((err, req, res, _next) => {
   //    pelo middleware após a autenticação — não há mais seed global no boot.
   // 4) Tarefas que estavam "rodando" quando o servidor caiu voltam para a fila.
   try { await db.prepare("UPDATE tasks SET status='queued', progress_text='Reenfileirada após reinício' WHERE status='running'").run(); } catch {}
+  // 4b) Docling ligado: confere no boot se o serviço realmente responde.
+  //     Sem esta checagem, DOCLING_ENABLED=true sem o serviço no ar (é preciso
+  //     subir com `--profile docling`) fazia CADA documento falhar sozinho, em
+  //     silêncio, sem nada indicar a causa nos logs do backend.
+  await warnIfDoclingUnavailable();
   // 5) Sobe o servidor, arma as rotinas agendadas e dispara o worker de tarefas.
   app.listen(port, () => console.log(`Frederico AI Studio backend em http://localhost:${port}`));
   // 5b) Containers órfãos: tudo que sobrou de um processo anterior (queda do

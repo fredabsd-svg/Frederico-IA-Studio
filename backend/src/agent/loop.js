@@ -26,6 +26,7 @@ import { saveCheckpoint, clearCheckpoint, isResumableReason, buildResumeMessages
 import { untrustedContext } from './promptRegistry.js';
 import { emitExecutionState, finalExecutionState } from './executionState.js';
 import { resolveSandboxNetwork, isToolCallAllowed } from './assistantPolicy.js';
+import { explicitlyAuthorizesPcWrite } from '../execGuard.js';
 import { SUBAGENT_TOOL_NAME, subagentToolDefinition, shouldOfferSubagentTool, maxSubagentsPerRun, createSubagentLimiter, runSubagent } from './subagents.js';
 import { buildDocumentContext, DOC_PRECEDENCE_NOTE } from '../docling/context.js';
 import { doclingImageParts, visualElementsNote } from '../docling/vision.js';
@@ -124,9 +125,24 @@ export async function runAgent({ userId, conversationId, userText, model, assist
     ? Boolean(resume?.meta?.sandboxNetworkEnabled)
     : resolveSandboxNetwork(getSettings().sandbox_network_policy, userText));
   const promptManifest = promptManifestFor(assistant, developerContext ? ['developer'] : []);
+  // ESCRITA nas Pastas do PC (arquivos REAIS e insubstituíveis do usuário).
+  // No Modo Desenvolvedor, escolher um projeto gravável + um modo de escrita JÁ
+  // é a autorização, e ela é escopada àquela pasta. No chat comum, a decisão é
+  // do backend a partir do pedido DESTE turno — igual à rede do sandbox. Sem
+  // pedido explícito, as pastas são montadas somente-leitura (garantia do
+  // Docker, não só do prompt).
+  const pcWriteAuthorized = !lowSignalTurn && (developerContext
+    ? !developerContext.readOnlyProject
+    : explicitlyAuthorizesPcWrite(userText));
   // userId viaja junto: o sandbox monta só as pastas do PC DESTE usuário
   // (isolamento multi-tenant) e aplica o limite de sandboxes por usuário.
-  const sandboxOptions = { ...(developerContext?.sandboxOptions || {}), userId, model: chosenModel, networkEnabled: sandboxNetworkEnabled };
+  const sandboxOptions = {
+    ...(developerContext?.sandboxOptions || { readOnlyPc: !pcWriteAuthorized }),
+    userId,
+    model: chosenModel,
+    networkEnabled: sandboxNetworkEnabled,
+    pcWriteAuthorized
+  };
   const webSearchActive = Boolean(webSearch && !lowSignalTurn);
   let requestedTools = toolsFor(assistant);
   if (developerContext?.readOnlyProject) requestedTools = requestedTools.filter(tool => !['write_file', 'zip_outputs', 'generate_image'].includes(tool.function.name));

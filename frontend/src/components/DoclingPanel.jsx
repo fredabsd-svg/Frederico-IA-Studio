@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { API } from '../constants.js';
-import { FileText, Table, ScanLine, Coins, RefreshCw, AlertTriangle, CheckCircle2, Loader2, Braces, Sparkles, Settings, Image, Trash2 } from 'lucide-react';
+import { FileText, Table, ScanLine, Coins, RefreshCw, AlertTriangle, CheckCircle2, Loader2, Braces, Sparkles, Settings, Image, Trash2, XCircle, Ban } from 'lucide-react';
 
 // Painel de compreensão documental (Docling): mostra, por documento processado,
 // o andamento e as estatísticas (páginas, tabelas, OCR, economia de tokens) e dá
@@ -10,21 +10,26 @@ import { FileText, Table, ScanLine, Coins, RefreshCw, AlertTriangle, CheckCircle
 const STATUS_LABEL = {
   queued: 'Na fila', processing: 'Processando…', done: 'Pronto',
   done_warnings: 'Pronto (com alertas)', partial: 'Parcial', failed: 'Falhou',
+  canceled: 'Cancelado',
 };
+// Estágios publicados pelo backend em stats.stage (docling/service.js). Cada
+// mudança de estágio é gravada, então o usuário acompanha o andamento real.
 const STAGE_LABEL = {
   recebido: 'Enviando documento', analisando: 'Analisando estrutura',
   convertendo: 'Extraindo conteúdo', exportando: 'Gerando Markdown',
   'concluído': 'Documento pronto', cache: 'Recuperado do cache',
+  cancelado: 'Cancelado pelo usuário',
 };
 
 function StatusIcon({ status }) {
   if (status === 'processing' || status === 'queued') return <Loader2 size={15} className="spinIcon" />;
   if (status === 'failed') return <AlertTriangle size={15} />;
+  if (status === 'canceled') return <Ban size={15} />;
   if (status === 'done_warnings' || status === 'partial') return <AlertTriangle size={15} />;
   return <CheckCircle2 size={15} />;
 }
 
-export function DoclingPanel({ docs = [], onReprocess, onPurge, isAdmin = false, config = null, health = null, onSaveConfig }) {
+export function DoclingPanel({ docs = [], onReprocess, onCancel, onPurge, isAdmin = false, config = null, health = null, onSaveConfig }) {
   const [openMd, setOpenMd] = useState(null);   // { id, text }
   const [tables, setTables] = useState(null);   // { id, list }
   const [pics, setPics] = useState(null);       // { id, list }
@@ -68,7 +73,22 @@ export function DoclingPanel({ docs = [], onReprocess, onPurge, isAdmin = false,
             </div>
 
             {(d.status === 'processing' || d.status === 'queued') && (
-              <div className="doclingStage">{STAGE_LABEL[st.stage] || 'Preparando conteúdo para a IA…'}</div>
+              <div className="doclingStage">
+                <span>{STAGE_LABEL[st.stage] || 'Preparando conteúdo para a IA…'}</span>
+                {typeof st.progress === 'number' && st.progress > 0 && (
+                  <span className="doclingProgressBar"><i style={{ width: `${Math.min(100, Math.round(st.progress * 100))}%` }} /></span>
+                )}
+                <button className="doclingCancel" onClick={() => onCancel?.(d.id)} title="Interromper o processamento deste documento">
+                  <XCircle size={12} /> Cancelar
+                </button>
+              </div>
+            )}
+
+            {d.status === 'canceled' && (
+              <div className="doclingStage">
+                <span>Processamento interrompido. O conteúdo deste documento não foi enviado à IA.</span>
+                <button onClick={() => onReprocess?.(d.id)}><RefreshCw size={12} /> Processar de novo</button>
+              </div>
             )}
 
             {['done', 'done_warnings', 'partial'].includes(d.status) && (

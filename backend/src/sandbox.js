@@ -94,7 +94,7 @@ export function pcFolderMounts(userId) {
   const rows = (userId && pcFoldersByUser.get(String(userId))) || [];
   const used = new Set();
   return rows.map(r => {
-    let label = String(r.label || 'pasta').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9_-]/g, '_').slice(0, 30) || 'pasta';
+    let label = String(r.label || 'pasta').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9_-]/g, '_').slice(0, 30) || 'pasta';
     while (used.has(label)) label = `${label}_`;
     used.add(label);
     return { id: r.id, source: r.host_path, target: `/mnt/pc/${label}`, writable: !!r.writable, label: r.label };
