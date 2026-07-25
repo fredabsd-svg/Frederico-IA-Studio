@@ -164,7 +164,10 @@ Preencha ao menos estes valores no `.env`:
 ```env
 BETTER_AUTH_URL=http://localhost:5173
 BETTER_AUTH_SECRET=gere_com_openssl_rand_hex_32
-ENCRYPTION_KEY=gere_outro_com_openssl_rand_hex_32
+# ENCRYPTION_KEY é OPCIONAL: se ficar em branco, o backend gera uma chave sozinho
+# na primeira subida e a guarda em data/encryption.key (sem precisar de terminal).
+# Defina um valor só se quiser controlar a chave você mesmo.
+ENCRYPTION_KEY=
 ```
 
 Depois de entrar no aplicativo, abra **Provedores de IA** e cadastre uma ou
@@ -225,7 +228,7 @@ docker compose up --build -d
 | `OPENROUTER_ALLOW_FALLBACKS` | ligado | Mantém a resiliência: reroteia entre provedores da faixa de qualidade permitida se o preferido cair. Defina `0` para travar no provedor preferido (erro em vez de troca silenciosa) |
 | `BETTER_AUTH_URL` | http://localhost:5173 | Origem pública do app e callbacks OAuth |
 | `BETTER_AUTH_SECRET` | — | Segredo de sessão do Better Auth |
-| `ENCRYPTION_KEY` | — | Criptografa a chave de IA de cada usuário (BYOK) no banco |
+| `ENCRYPTION_KEY` | auto | Criptografa a chave de IA e o token do GitHub de cada usuário no banco. Opcional: em branco, é gerada e salva em `data/encryption.key` na 1ª subida. Definida, tem prioridade. Nunca troque depois de conectar contas. |
 | `FREE_TIER_API_KEY` | — | Liga o **modo gratuito**: chave da plataforma (só no servidor) para novos usuários conversarem sem configurar nada |
 | `FREE_TIER_BASE_URL` | OpenRouter | Base OpenAI-compatível do modo gratuito |
 | `FREE_TIER_MODELS` | modelos `:free` | Allowlist de modelos gratuitos, em ordem de preferência (o 1º é o padrão; os demais são reserva) |
