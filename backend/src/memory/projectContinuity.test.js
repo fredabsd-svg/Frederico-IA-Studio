@@ -13,8 +13,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-const hasDb = Boolean(process.env.DATABASE_URL);
-const maybe = hasDb ? test : (name, fn) => test(name, { skip: 'requer PostgreSQL (DATABASE_URL)' }, fn);
+// Sonda a conexão de verdade em vez de olhar só a variável: o CI aponta
+// DATABASE_URL para um Postgres inalcançável de propósito, justamente para
+// conferir que a suíte degrada com `skip` em vez de falhar.
+let hasDb = false;
+try {
+  const { db: probe } = await import('../db.js');
+  await probe.prepare('SELECT 1 AS ok').get();
+  hasDb = true;
+} catch { hasDb = false; }
+const maybe = (name, fn) => test(name, { skip: hasDb ? false : 'requer PostgreSQL (DATABASE_URL)' }, fn);
 
 let db, now, runMigrations, buildContext, upsertProject, linkConversationToProject, adoptConversations, addMemory, setSettings, loadSettings;
 
