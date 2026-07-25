@@ -246,22 +246,30 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   // Economia de tokens: menos mensagens de histórico consideradas por resposta
   const historyLimit = getSettings().economy_mode ? 20 : Number(process.env.AGENT_HISTORY_LIMIT || 60);
   const includeEnvironmentInventory = Boolean(developerContext) || ENVIRONMENT_QUERY_RE.test(String(userText || ''));
-  // QUALITY_BAR entra como 3o item: o índice 1 é reservado (reescrito adiante
-  // com a nota de ferramentas), então não pode ser deslocado.
+  // MENSAGENS SYSTEM CONSOLIDADAS: o app roda modelos heterogêneos via
+  // OpenRouter e vários tratam mal uma pilha de mensagens "system" (alguns só
+  // honram a primeira). O preâmbulo usa então POUCAS mensagens, alinhadas aos
+  // breakpoints do prompt caching:
+  //   [0] prompt-base + QUALITY_BAR — estável na conversa inteira (breakpoint 1);
+  //   [1] nota de ferramentas — índice RESERVADO, reescrito adiante quando as
+  //       ferramentas mudam (fallback sem tools, fim da pesquisa web);
+  //   depois, os dados não confiáveis (role user, com untrustedContext) e UMA
+  //   mensagem com as notas de sistema desta chamada, fechando o prefixo
+  //   estático (breakpoint 2 cai sobre ela por ser a última e ser system).
   const messages = [
-    { role: 'system', content: chosenPrompt },
-    { role: 'system', content: toolAvailabilityNote(tools, { includeInventory: includeEnvironmentInventory, sandboxNetworkEnabled }) },
-    { role: 'system', content: QUALITY_BAR }
+    { role: 'system', content: `${chosenPrompt}\n\n${QUALITY_BAR}` },
+    { role: 'system', content: toolAvailabilityNote(tools, { includeInventory: includeEnvironmentInventory, sandboxNetworkEnabled }) }
   ];
-  if (forceExecution || modelPlan.requirements.required) messages.push({ role: 'system', content: EXECUTION_CONTRACT_NOTE });
-  if (MACRO_REQUEST_RE.test(String(userText || ''))) messages.push({ role: 'system', content: MACRO_LIMITATION_NOTE });
   if (executionBriefing) messages.push({ role: 'user', content: untrustedContext('team-briefing', clipForBriefing(String(executionBriefing), BRIEFING_CHAR_LIMIT)) });
-  if (lowSignalTurn) messages.push({ role: 'system', content: LOW_SIGNAL_TURN_NOTE });
   if (environmentNote) messages.push({ role: 'user', content: untrustedContext('verified-environment-output', environmentNote) });
-  if (developerContext) messages.push({ role: 'system', content: developerContext.note });
   if (developerContext?.userRules) messages.push({ role: 'user', content: untrustedContext('project-rules', developerContext.userRules) });
-  if (eff.nudge) messages.push({ role: 'system', content: eff.nudge });
-  if (webSearchActive) messages.push({ role: 'system', content: `PESQUISA NA INTERNET — o usuário ativou a busca. Você tem acesso real à web, pelas ferramentas web_search (procurar) e web_fetch (abrir uma página). Nunca diga que "não tem acesso à internet".
+  const callNotes = [];
+  if (forceExecution || modelPlan.requirements.required) callNotes.push(EXECUTION_CONTRACT_NOTE);
+  if (MACRO_REQUEST_RE.test(String(userText || ''))) callNotes.push(MACRO_LIMITATION_NOTE);
+  if (lowSignalTurn) callNotes.push(LOW_SIGNAL_TURN_NOTE);
+  if (developerContext) callNotes.push(developerContext.note);
+  if (eff.nudge) callNotes.push(eff.nudge);
+  if (webSearchActive) callNotes.push(`PESQUISA NA INTERNET — o usuário ativou a busca. Você tem acesso real à web, pelas ferramentas web_search (procurar) e web_fetch (abrir uma página). Nunca diga que "não tem acesso à internet".
 
 Pense antes de buscar: eu já sei isso com confiança e é algo que não muda com o tempo? Então responda direto — não pesquise por pesquisar. Busque quando a resposta depender de algo atual, externo ou verificável (legislação, prazos, tabelas, cotações, notícias, dados de uma empresa/produto) ou quando tiver dúvida.
 
@@ -276,7 +284,8 @@ Ao trazer o que encontrou:
 - Cite a fonte no meio do texto (nome + link) para o usuário conferir; prefira fontes oficiais e recentes e avise quando algo estiver incerto ou desatualizado.
 - Varie a forma de apresentar: evite começar sempre com "De acordo com a pesquisa…".
 
-O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente a rede direta do sandbox. Para CNPJ, use a ferramenta consultar_cnpj.` });
+O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente a rede direta do sandbox. Para CNPJ, use a ferramenta consultar_cnpj.`);
+  if (callNotes.length) messages.push({ role: 'system', content: callNotes.join('\n\n') });
   // Fim do preâmbulo ESTÁVEL (prompt-base + notas de sistema): tudo daqui pra
   // frente (memória, uploads, histórico) muda a cada turno. É o ponto natural
   // para o breakpoint de prompt caching.

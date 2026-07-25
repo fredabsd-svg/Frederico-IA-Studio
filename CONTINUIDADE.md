@@ -78,6 +78,31 @@ em `docs/CHANGELOG_HISTORY.md`. Piso configurável por `MEMORY_MIN_SIM`.
 
 ---
 
+## System prompt consolidado (2026-07-25 — branch `claude/system-prompt-review-mte8v0`)
+
+Retomada dos itens 1–3 que ficaram pendentes quando o PR #43 foi fechado (a refatoração
+modular invalidou o diff), agora refeitos contra `backend/src/agent/*`:
+
+- **Preâmbulo em poucas mensagens system**, alinhado aos breakpoints do prompt caching:
+  `messages[0]` = prompt-base + `QUALITY_BAR` (estável na conversa — breakpoint 1);
+  `messages[1]` = nota de ferramentas (**índice reservado**, reescrito quando as
+  ferramentas mudam); dados não confiáveis seguem como `user` (`untrustedContext`); e
+  UMA mensagem reúne as notas de sistema da chamada, fechando o prefixo estático
+  (breakpoint 2). Mesma consolidação no Modo Equipe e no multimodelo. Motivo: vários
+  modelos servidos via OpenRouter tratam mal uma pilha de mensagens system.
+- **Deduplicação**: caminho de arquivos/downloads e aviso anti-`/mnt/user-data` só na
+  `toolAvailabilityNote`; "uma frase antes das ferramentas" só em `EXECUTION_UX_RULES`;
+  rede/pacotes/apt só em `SANDBOX_RULES` (o modo Programação perdeu os bullets
+  repetidos); checklist final do `QUALITY_BAR` comprimido.
+- **Precedência de estilo**: o sufixo dos sliders de personalidade prevalece sobre as
+  regras gerais de estilo.
+- `PROMPT_RELEASE` → `2026.07.25.1`; módulos `global`/`tools` → `3.2.0`.
+
+**ARMADILHA:** `messages[1]` continua reservado à nota de ferramentas; `QUALITY_BAR`
+agora mora DENTRO de `messages[0]` — não voltar a empilhá-lo como mensagem própria.
+
+---
+
 ## Riscos abertos
 
 | ID | Risco | Severidade |

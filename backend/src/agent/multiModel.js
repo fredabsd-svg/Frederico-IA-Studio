@@ -161,8 +161,10 @@ export function memberSystemPrompt(member, mode, { toolsEnabled = false } = {}) 
 // só o Modo Equipe (orchestrator.js) recebia essa nota; o multimodelo real
 // (compare/council/debate/pipeline) ficava sem contexto do repo.
 export function multiModelSystemBlocks(member, mode, developerTeamNote = null, repoDigest = null) {
-  const blocks = [{ role: 'system', content: protectedProfilePrompt(memberSystemPrompt(member, mode)) }];
-  if (developerTeamNote) blocks.push({ role: 'system', content: developerTeamNote });
+  // Nota do modo desenvolvedor consolidada no MESMO bloco system: vários
+  // modelos tratam mal múltiplas mensagens system (alguns só honram a primeira).
+  const sys = protectedProfilePrompt(memberSystemPrompt(member, mode));
+  const blocks = [{ role: 'system', content: developerTeamNote ? `${sys}\n\n${developerTeamNote}` : sys }];
   // Código REAL do repositório (compare/council/debate não executam ferramentas,
   // então este extrato é a única forma de eles analisarem o código de verdade).
   if (repoDigest) blocks.push({ role: 'user', content: untrustedContext('repository-digest', repoDigest) });
@@ -400,14 +402,14 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
     // Coordenador: resposta final consolidada, transmitida como texto principal.
     async function streamCoordinator(taskPrompt) {
       let text = '';
+      const coordinatorSys = protectedProfilePrompt('Você é o COORDENADOR de uma execução multimodelo: vários modelos de IA analisaram a mesma solicitação. Compare as respostas, identifique concordâncias, aponte divergências, descarte erros ou afirmações sem fundamento, aproveite os melhores argumentos e produza UMA resposta final consolidada, em português do Brasil, direta e bem organizada. Não descreva o processo — entregue a resposta.');
       const msgs = [
-        { role: 'system', content: protectedProfilePrompt('Você é o COORDENADOR de uma execução multimodelo: vários modelos de IA analisaram a mesma solicitação. Compare as respostas, identifique concordâncias, aponte divergências, descarte erros ou afirmações sem fundamento, aproveite os melhores argumentos e produza UMA resposta final consolidada, em português do Brasil, direta e bem organizada. Não descreva o processo — entregue a resposta.') },
-        ...(developerTeamNote ? [{ role: 'system', content: developerTeamNote }] : []),
+        { role: 'system', content: developerTeamNote ? `${coordinatorSys}\n\n${developerTeamNote}` : coordinatorSys },
         ...(repoDigest ? [{ role: 'user', content: untrustedContext('repository-digest', repoDigest) }] : []),
         ...(developerRules ? [{ role: 'user', content: untrustedContext('project-rules', developerRules) }] : []),
         { role: 'user', content: untrustedContext('multi-coordinator-material', taskPrompt) }
       ];
-      const prefixEnd = 1 + (developerTeamNote ? 1 : 0);
+      const prefixEnd = 1;
       applyPromptCache(msgs, config.coordinator, prefixEnd, coordinatorProvider.baseURL);
       for (let attempt = 0; ; attempt++) {
         let segment = '';
