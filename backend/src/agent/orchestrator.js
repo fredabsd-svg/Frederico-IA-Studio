@@ -235,12 +235,16 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
     }
     // Continuação: o coordenador responde direto, com histórico e memória
     onEvent({ type: 'status', content: 'Coordenador respondendo (equipe consultada no início da conversa — escreva "consulte a equipe" para nova rodada)...' });
-    const directMsgs = [
-      { role: 'system', content: protectedProfilePrompt('Você coordena um time de assistentes especializados e a conversa já está rolando. Responda direto à nova mensagem, em português do Brasil, usando o histórico e a memória. Nada de se reapresentar, descrever o time ou repetir o que já foi combinado — é só continuar de onde parou, com naturalidade.') }
+    // Mensagem system única (mesma razão do loop.js: vários modelos tratam mal
+    // uma pilha de mensagens system; consolidar preserva o breakpoint de cache).
+    const directSections = [
+      protectedProfilePrompt(lowSignalTurn
+        ? LOW_SIGNAL_TURN_NOTE
+        : 'Você coordena um time de assistentes especializados e a conversa já está rolando. Responda direto à nova mensagem, em português do Brasil, usando o histórico e a memória. Nada de se reapresentar, descrever o time ou repetir o que já foi combinado — é só continuar de onde parou, com naturalidade.'),
+      TEAM_TOOL_AWARENESS
     ];
-    if (lowSignalTurn) directMsgs[0] = { role: 'system', content: protectedProfilePrompt(LOW_SIGNAL_TURN_NOTE) };
-    directMsgs.push({ role: 'system', content: TEAM_TOOL_AWARENESS });
-    if (developerTeamNote) directMsgs.push({ role: 'system', content: developerTeamNote });
+    if (developerTeamNote) directSections.push(developerTeamNote);
+    const directMsgs = [{ role: 'system', content: directSections.join('\n\n') }];
     const directPrefixEnd = directMsgs.length; // antes de memória/histórico
     if (memory) directMsgs.push({ role: 'user', content: untrustedContext('memory', memory) });
     if (documentContext) directMsgs.push({ role: 'user', content: untrustedContext('document-content', documentContext) });
@@ -262,8 +266,7 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
       const results = await Promise.all(assistants.map(async (a) => {
         onEvent({ type: 'tool_start', name: a.name });
         const sys = protectedProfilePrompt(`${a.system_prompt || ''}\n\n${TEAM_TOOL_AWARENESS}\n\nVocê faz parte de um time que já está conversando com a pessoa. Olhe o histórico e traga só a sua visão de especialista sobre a nova mensagem, direto ao ponto — sem se apresentar e sem repetir o que o time já disse. Nesta etapa você não gera arquivos nem roda código.`);
-        const msgs = [{ role: 'system', content: sys }];
-        if (developerTeamNote) msgs.push({ role: 'system', content: developerTeamNote });
+        const msgs = [{ role: 'system', content: developerTeamNote ? `${sys}\n\n${developerTeamNote}` : sys }];
         const memberPrefixEnd = msgs.length; // antes de memória/histórico
         if (memory) msgs.push({ role: 'user', content: untrustedContext('memory', memory) });
         if (documentContext) msgs.push({ role: 'user', content: untrustedContext('document-content', documentContext) });
@@ -306,9 +309,11 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
     onEvent({ type: 'status', content: 'Compilando a resposta final da equipe...' });
     const combined = perspectives.map(p => `### ${p.emoji || ''} ${p.name}\n${p.text}`).join('\n\n');
     const synthMsgs = [
-      { role: 'system', content: protectedProfilePrompt('Você coordena um time de assistentes especializados, numa conversa em andamento. Junte as perspectivas abaixo em UMA resposta só, coesa e em português do Brasil, que responda direto à nova mensagem da pessoa. Sem se reapresentar, sem descrever o time e sem discurso — vá ao ponto. Use títulos por área quando ajudar e feche com um resumo prático.') },
-      { role: 'system', content: TEAM_TOOL_AWARENESS },
-      ...(developerTeamNote ? [{ role: 'system', content: developerTeamNote }] : []),
+      { role: 'system', content: [
+        protectedProfilePrompt('Você coordena um time de assistentes especializados, numa conversa em andamento. Junte as perspectivas abaixo em UMA resposta só, coesa e em português do Brasil, que responda direto à nova mensagem da pessoa. Sem se reapresentar, sem descrever o time e sem discurso — vá ao ponto. Use títulos por área quando ajudar e feche com um resumo prático.'),
+        TEAM_TOOL_AWARENESS,
+        ...(developerTeamNote ? [developerTeamNote] : [])
+      ].join('\n\n') },
       ...(developerRules ? [{ role: 'user', content: untrustedContext('project-rules', developerRules) }] : []),
       ...(historyText ? [{ role: 'user', content: untrustedContext('conversation-history', historyText) }] : []),
       { role: 'user', content: userText },

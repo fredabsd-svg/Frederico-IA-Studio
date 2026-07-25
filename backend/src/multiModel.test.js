@@ -94,7 +94,8 @@ test('multimodelo injeta o contexto do repositório nos prompts (Modo Desenvolve
     'u'
   );
   const blocks = multiModelSystemBlocks({ id: 'anthropic/claude-3.7-sonnet', role: 'principal' }, 'debate', note);
-  assert.equal(blocks.length, 2, 'esperava o prompt de papel + a nota do repositório');
+  assert.equal(blocks.length, 1, 'esperava um único bloco system com papel + nota do repositório consolidados');
+  assert.equal(blocks[0].role, 'system');
   const systemText = blocks.map(b => b.content).join('\n');
   assert.match(systemText, /fredabsd-svg\/Frederico-IA-Studio/);
   assert.match(systemText, /NÃO peça o link/i);
