@@ -8,6 +8,8 @@ import { runGithubTool } from './connectors/github.js';
 import { createCache } from './cache.js';
 import { captureThumbnail } from './agent/pageShot.js';
 import { getUserProvider } from './userProvider.js';
+import { guardCommand, guardPythonCode, PC_MOUNT_ROOT } from './execGuard.js';
+import { audit } from './companion/audit.js';
 
 // Cache de chamadas EXTERNAS caras/repetidas. Desligável com TOOL_CACHE=0
 // (usado nos testes para isolar cada caso). Chaves e TTLs por tipo:
@@ -521,31 +523,14 @@ async function generateImage(ws, args, options = {}) {
 // A rede é controlada pela política do container (desligada por padrão).
 // Independentemente dela, comandos destrutivos ou de escalada seguem bloqueados.
 // Isto é defesa em profundidade — a fronteira real de segurança é o container
-// (CapDrop ALL, no-new-privileges, uid 1000, mounts limitados). Mesmo assim,
-// bloquear os padrões abaixo evita que código gerado apague os arquivos REAIS
-// do usuário montados em /mnt/pc. Antes casava só substrings cruas, então
-// "rm  -rf" (espaços duplos) e "find / -delete" escapavam.
-const GUARD_PATTERNS = [
-  { re: /\brm\b[^|;&]*-[a-z]*r[a-z]*f|\brm\b[^|;&]*-[a-z]*f[a-z]*r/, extra: /(\s|^)(\/|~|\/\*|\$home)(\s|\/|\*|$)/, msg: 'rm -rf em caminho de sistema' },
-  { re: /--no-preserve-root/, msg: 'rm --no-preserve-root' },
-  { re: /\bmkfs\b|\bmke2fs\b/, msg: 'formatar sistema de arquivos' },
-  { re: /:\s*\(\s*\)\s*\{[^}]*\|[^}]*&[^}]*\}|:\(\)\{.*:\|:/, msg: 'fork bomb' },
-  { re: /(^|[\s;&|])(shutdown|reboot|halt|poweroff)\b|\binit\s+0\b/, msg: 'desligar/reiniciar o host' },
-  { re: /\bdd\b[^|;&]*\bof=\/dev\/(sd|nvme|hd|vd|mmc)/, msg: 'dd sobre dispositivo de bloco' },
-  { re: />\s*\/dev\/(sd|nvme|hd|vd|mmc)/, msg: 'escrita direta em disco' },
-  { re: /\bfind\b\s+(\/|~|\/mnt|\/home|\/etc|\/usr|\/var)[^|;&]*\s-delete\b/, msg: 'find -delete em caminho de sistema' },
-  { re: /(^|[\s;&|])(sudo|doas)\s|(^|[\s;&|])su\s+-/, msg: 'escalonamento de privilégio' },
-  { re: /(^|[\s;&|])docker(\s|$)|docker-compose/, msg: 'docker' },
-  { re: /\bchmod\s+-r[^|;&]*\s\/(\s|$)|\bchown\s+-r[^|;&]*\s\/(\s|$)/, msg: 'chmod/chown recursivo na raiz' }
-];
-function guardCommand(command) {
-  const norm = String(command || '').toLowerCase().replace(/[ \t]+/g, ' ').trim();
-  for (const p of GUARD_PATTERNS) {
-    if (!p.re.test(norm)) continue;
-    if (p.extra && !p.extra.test(norm)) continue;
-    throw new Error(`Comando bloqueado (${p.msg}). O sandbox é isolado e sem privilégios; esta operação é considerada perigosa e não será executada.`);
-  }
-}
+// (CapDrop ALL, no-new-privileges, uid 1000, mounts limitados). A exceção são as
+// Pastas do PC (/mnt/pc): ali os arquivos são REAIS e o container não protege
+// nada, então alterá-los exige autorização explícita do pedido atual.
+//
+// A tabela de padrões e a análise do Python vivem em `execGuard.js` (módulo
+// puro e testável), usados AQUI pelo `bash` E pelo `run_python` — antes só o
+// bash era validado, e o run_python (a ferramenta mais usada pelos modelos)
+// passava direto.
 
 // O modelo enxerga /workspace e /mnt/user-data dentro da sandbox, enquanto
 // estas ferramentas leves rodam no backend. Aceita os dois enderecos virtuais
@@ -602,6 +587,28 @@ async function readMountedPcFile(conversationId, mountedPath, sandboxOptions, ru
   }
 }
 
+// Registro de auditoria das execuções SENSÍVEIS — as que tocam nos arquivos
+// reais do computador do usuário (/mnt/pc). Execução comum dentro do workspace
+// não entra aqui de propósito: inundaria a tabela e não é a ação que precisa de
+// rastro. Nunca lança (auditar não pode derrubar a execução auditada).
+async function auditExecution(sandboxOptions = {}, { tool, payload, guardContext, pcMounts = [] } = {}) {
+  const userId = sandboxOptions.userId;
+  const text = String(payload || '');
+  if (!userId || !text.includes(PC_MOUNT_ROOT)) return;
+  const touched = pcMounts.filter(m => text.includes(m.target)).map(m => m.label);
+  try {
+    await audit(userId, {
+      category: 'executar',
+      actor: `ferramenta:${tool}`,
+      action: `execução tocando as Pastas do PC (${tool})`,
+      target: touched.join(', ') || PC_MOUNT_ROOT,
+      authorized: guardContext?.pcWriteAuthorized === true,
+      level: guardContext?.pcWriteAuthorized ? 'aviso' : 'info',
+      detail: text.slice(0, 2000),
+    });
+  } catch { /* auditoria é best-effort */ }
+}
+
 export async function runTool(conversationId, name, args = {}, sandboxOptions = {}, runtime = {}) {
   const signal = runtime?.signal;
   if (name === 'web_search') return JSON.stringify(await webSearch(args.query || '', { signal }));
@@ -612,7 +619,7 @@ export async function runTool(conversationId, name, args = {}, sandboxOptions = 
     // falhar, `thumb` fica ausente e o web_fetch segue igual (só o texto).
     if (res && !res.error && res.url) {
       try {
-        const ws = workspaceFor(conversationId);
+        const ws = workspaceFor(conversationId, sandboxOptions.userId);
         const rel = path.posix.join('.thumbs', `${nanoid(10)}.jpg`);
         const ok = await captureThumbnail(res.url, path.join(ws.base, '.thumbs', path.basename(rel)), { signal });
         if (ok) res.thumb = rel;
@@ -623,11 +630,16 @@ export async function runTool(conversationId, name, args = {}, sandboxOptions = 
   if (name === 'consultar_cnpj') return JSON.stringify(await consultarCnpj(args.cnpj || '', { signal }));
   // Conector GitHub: roda no BACKEND (o token do usuário nunca entra no sandbox).
   if (name.startsWith('github_')) return JSON.stringify(await runGithubTool(name, args, { userId: sandboxOptions.userId, conversationId, signal }));
-  const ws = workspaceFor(conversationId);
+  const ws = workspaceFor(conversationId, sandboxOptions.userId);
   // Pastas do PC deste usuário (isolamento multi-tenant): sem userId, nenhuma.
   const pcMounts = pcFolderMounts(sandboxOptions.userId);
   if (name === 'generate_image') return JSON.stringify(await generateImage(ws, args, { signal, userId: sandboxOptions.userId }));
+  // Autorização de escrita nas Pastas do PC vale para ESTE turno e é decidida
+  // pelo backend a partir do pedido do usuário (loop.js) — nunca pelo prompt.
+  const guardContext = { pcWriteAuthorized: sandboxOptions.pcWriteAuthorized === true };
   if (name === 'run_python') {
+    guardPythonCode(args.code || '', guardContext);
+    await auditExecution(sandboxOptions, { tool: 'run_python', payload: args.code, guardContext, pcMounts });
     const script = safeJoin(ws.base, `.tmp_${Date.now()}_${nanoid(8)}.py`);
     fs.writeFileSync(script, args.code || '', 'utf8');
     try { fs.chownSync(script, 1000, 1000); } catch {}
@@ -639,7 +651,8 @@ export async function runTool(conversationId, name, args = {}, sandboxOptions = 
     }
   }
   if (name === 'bash') {
-    guardCommand(args.command || '');
+    guardCommand(args.command || '', guardContext);
+    await auditExecution(sandboxOptions, { tool: 'bash', payload: args.command, guardContext, pcMounts });
     return JSON.stringify(await execInSandbox(conversationId, args.command, runtime.timeoutMs, { ...sandboxOptions, signal }));
   }
   if (name === 'write_file') {

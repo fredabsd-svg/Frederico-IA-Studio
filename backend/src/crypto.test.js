@@ -9,7 +9,48 @@ import test from 'node:test';
 // que valida a ENCRYPTION_KEY no momento do uso.
 process.env.ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'a'.repeat(64);
 
-const { encryptSecret, decryptSecret, maskSecret } = await import('./crypto.js');
+const { encryptSecret, decryptSecret, maskSecret, chooseKeyHex, isValidKeyHex } = await import('./crypto.js');
+
+// ---- Resolução da chave mestra (env > arquivo > gerar) ----
+
+test('isValidKeyHex aceita só 64 caracteres hex', () => {
+  assert.equal(isValidKeyHex('a'.repeat(64)), true);
+  assert.equal(isValidKeyHex('A'.repeat(64)), true);
+  assert.equal(isValidKeyHex('a'.repeat(63)), false);
+  assert.equal(isValidKeyHex('g'.repeat(64)), false); // 'g' não é hex
+  assert.equal(isValidKeyHex(''), false);
+  assert.equal(isValidKeyHex(null), false);
+});
+
+test('chooseKeyHex: env tem prioridade sobre o arquivo', () => {
+  const env = 'a'.repeat(64), file = 'b'.repeat(64);
+  const r = chooseKeyHex(env, file);
+  assert.equal(r.source, 'env');
+  assert.equal(r.hex, env);
+});
+
+test('chooseKeyHex: sem env, usa o arquivo', () => {
+  const file = 'c'.repeat(64);
+  const r = chooseKeyHex('', file);
+  assert.equal(r.source, 'file');
+  assert.equal(r.hex, file);
+});
+
+test('chooseKeyHex: sem env e sem arquivo, sinaliza gerar', () => {
+  const r = chooseKeyHex('', '');
+  assert.equal(r.source, 'generate');
+  assert.equal(r.hex, null);
+});
+
+test('chooseKeyHex: env inválida lança (erro de configuração)', () => {
+  assert.throws(() => chooseKeyHex('xyz', ''), /ENCRYPTION_KEY inválida/);
+});
+
+test('chooseKeyHex: arquivo corrompido lança (não gera silenciosamente)', () => {
+  // Sem env, arquivo presente mas inválido → erro (jamais sobrescrever/gerar,
+  // o que trocaria a chave e tornaria os segredos ilegíveis).
+  assert.throws(() => chooseKeyHex('', 'corrompido'), /encryption\.key.*corrompido|corrompido/i);
+});
 
 test('encrypt→decrypt devolve o texto original (round-trip)', () => {
   const segredo = 'sk-minha-chave-secreta-123';

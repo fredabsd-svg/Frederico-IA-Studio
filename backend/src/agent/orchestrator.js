@@ -15,6 +15,7 @@ import { guardStreamStall, PROVIDER_CONNECT_TIMEOUT_MS } from './streamGuard.js'
 import { acquireConversationControl, releaseConversationControl, beginProviderRequest, releaseProviderRequest, controlInterruptReason, gate } from './control.js';
 import { clientScopeFor, memoryNote, saveMessage } from './persistence.js';
 import { untrustedContext } from './promptRegistry.js';
+import { buildDocumentContext } from '../docling/context.js';
 
 const TEAM_TOOL_AWARENESS = `CAPACIDADES DO APP:
 O Frederico AI Studio tem sandbox com Python 3, bash, LibreOffice/soffice, ffmpeg, OCR/PDF, vetores headless, Chromium/Playwright/Xvfb, toolchains C/C++/Go/Rust/Java/.NET/Kotlin, ML leve em CPU, qualidade e diagnóstico, bancos/clients remotos, Node com toolchain frontend, geração de arquivos e ferramentas de imagem/web quando habilitadas. Docker/Compose, GPU e builds nativos Android/iOS continuam deliberadamente fora do sandbox.
@@ -51,7 +52,7 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
     userText,
     webSearch: Boolean(webSearch && !lowSignalTurn),
     developer: Boolean(developer && !lowSignalTurn),
-    hasUploads: !lowSignalTurn && Boolean(uploadsNote(conversationId))
+    hasUploads: !lowSignalTurn && Boolean(uploadsNote(userId, conversationId))
   });
   // Modo desenvolvedor no Modo Equipe: os especialistas e o coordenador precisam
   // saber QUAL projeto/repositório está selecionado e que o app já tem acesso ao
@@ -62,12 +63,23 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
   let memory = null;
   let memoryMeta = null;
   try {
-    const contextPlan = await buildContext({ userId, conversationId, assistantId: null, clientScope: await clientScopeFor(userId, conversationId), userText, model: coordModel });
+    const contextPlan = await buildContext({ userId, conversationId, assistantId: null, clientScope: await clientScopeFor(userId, conversationId), userText, model: coordModel, developerDomain: developerTeamNote ? 'software' : null });
     memory = (contextPlan.blocks || []).join('\n\n') || null;
     memoryMeta = contextPlan.meta || null;
     if (memoryMeta) onEvent({ type: 'memory_context', memory: memoryMeta });
   }
   catch { memory = await memoryNote(userId, null, await clientScopeFor(userId, conversationId)); }
+  // Conteúdo dos documentos já extraído pela camada Docling. Os especialistas
+  // desta etapa NÃO executam ferramentas — sem este bloco eles opinariam sobre
+  // um documento que nunca viram (mesma lacuna que a nota do repositório fechou
+  // para o código). O executor continua recebendo o seu por runAgent.
+  let documentContext = null;
+  if (!lowSignalTurn) {
+    try {
+      const docCtx = await buildDocumentContext(userId, conversationId, { query: userText });
+      documentContext = docCtx?.note || null;
+    } catch (e) { console.error('[docling] contexto do Modo Equipe falhou:', e.message); }
+  }
   // Histórico da conversa (a mensagem atual do usuário já foi salva — exclui ela).
   // Limites ampliados (antes 13 msgs × 600 chars): com o corte agressivo, um
   // documento longo colado no início da conversa ficava praticamente invisível
@@ -223,14 +235,19 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
     }
     // Continuação: o coordenador responde direto, com histórico e memória
     onEvent({ type: 'status', content: 'Coordenador respondendo (equipe consultada no início da conversa — escreva "consulte a equipe" para nova rodada)...' });
-    const directMsgs = [
-      { role: 'system', content: protectedProfilePrompt('Você coordena um time de assistentes especializados e a conversa já está rolando. Responda direto à nova mensagem, em português do Brasil, usando o histórico e a memória. Nada de se reapresentar, descrever o time ou repetir o que já foi combinado — é só continuar de onde parou, com naturalidade.') }
+    // Mensagem system única (mesma razão do loop.js: vários modelos tratam mal
+    // uma pilha de mensagens system; consolidar preserva o breakpoint de cache).
+    const directSections = [
+      protectedProfilePrompt(lowSignalTurn
+        ? LOW_SIGNAL_TURN_NOTE
+        : 'Você coordena um time de assistentes especializados e a conversa já está rolando. Responda direto à nova mensagem, em português do Brasil, usando o histórico e a memória. Nada de se reapresentar, descrever o time ou repetir o que já foi combinado — é só continuar de onde parou, com naturalidade.'),
+      TEAM_TOOL_AWARENESS
     ];
-    if (lowSignalTurn) directMsgs[0] = { role: 'system', content: protectedProfilePrompt(LOW_SIGNAL_TURN_NOTE) };
-    directMsgs.push({ role: 'system', content: TEAM_TOOL_AWARENESS });
-    if (developerTeamNote) directMsgs.push({ role: 'system', content: developerTeamNote });
+    if (developerTeamNote) directSections.push(developerTeamNote);
+    const directMsgs = [{ role: 'system', content: directSections.join('\n\n') }];
     const directPrefixEnd = directMsgs.length; // antes de memória/histórico
     if (memory) directMsgs.push({ role: 'user', content: untrustedContext('memory', memory) });
+    if (documentContext) directMsgs.push({ role: 'user', content: untrustedContext('document-content', documentContext) });
     if (developerRules) directMsgs.push({ role: 'user', content: untrustedContext('project-rules', developerRules) });
     for (const m of histRows) directMsgs.push({ role: m.role, content: String(m.content).slice(0, 2000) });
     directMsgs.push({ role: 'user', content: userText });
@@ -249,10 +266,10 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
       const results = await Promise.all(assistants.map(async (a) => {
         onEvent({ type: 'tool_start', name: a.name });
         const sys = protectedProfilePrompt(`${a.system_prompt || ''}\n\n${TEAM_TOOL_AWARENESS}\n\nVocê faz parte de um time que já está conversando com a pessoa. Olhe o histórico e traga só a sua visão de especialista sobre a nova mensagem, direto ao ponto — sem se apresentar e sem repetir o que o time já disse. Nesta etapa você não gera arquivos nem roda código.`);
-        const msgs = [{ role: 'system', content: sys }];
-        if (developerTeamNote) msgs.push({ role: 'system', content: developerTeamNote });
+        const msgs = [{ role: 'system', content: developerTeamNote ? `${sys}\n\n${developerTeamNote}` : sys }];
         const memberPrefixEnd = msgs.length; // antes de memória/histórico
         if (memory) msgs.push({ role: 'user', content: untrustedContext('memory', memory) });
+        if (documentContext) msgs.push({ role: 'user', content: untrustedContext('document-content', documentContext) });
         if (developerRules) msgs.push({ role: 'user', content: untrustedContext('project-rules', developerRules) });
         if (historyText) msgs.push({ role: 'user', content: untrustedContext('conversation-history', historyText) });
         msgs.push({ role: 'user', content: userText });
@@ -292,9 +309,11 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
     onEvent({ type: 'status', content: 'Compilando a resposta final da equipe...' });
     const combined = perspectives.map(p => `### ${p.emoji || ''} ${p.name}\n${p.text}`).join('\n\n');
     const synthMsgs = [
-      { role: 'system', content: protectedProfilePrompt('Você coordena um time de assistentes especializados, numa conversa em andamento. Junte as perspectivas abaixo em UMA resposta só, coesa e em português do Brasil, que responda direto à nova mensagem da pessoa. Sem se reapresentar, sem descrever o time e sem discurso — vá ao ponto. Use títulos por área quando ajudar e feche com um resumo prático.') },
-      { role: 'system', content: TEAM_TOOL_AWARENESS },
-      ...(developerTeamNote ? [{ role: 'system', content: developerTeamNote }] : []),
+      { role: 'system', content: [
+        protectedProfilePrompt('Você coordena um time de assistentes especializados, numa conversa em andamento. Junte as perspectivas abaixo em UMA resposta só, coesa e em português do Brasil, que responda direto à nova mensagem da pessoa. Sem se reapresentar, sem descrever o time e sem discurso — vá ao ponto. Use títulos por área quando ajudar e feche com um resumo prático.'),
+        TEAM_TOOL_AWARENESS,
+        ...(developerTeamNote ? [developerTeamNote] : [])
+      ].join('\n\n') },
       ...(developerRules ? [{ role: 'user', content: untrustedContext('project-rules', developerRules) }] : []),
       ...(historyText ? [{ role: 'user', content: untrustedContext('conversation-history', historyText) }] : []),
       { role: 'user', content: userText },

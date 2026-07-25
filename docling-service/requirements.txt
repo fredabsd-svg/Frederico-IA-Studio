@@ -1,0 +1,13 @@
+# Apenas as dependências da API do serviço. O Docling (e o torch CPU) são
+# instalados à parte no Dockerfile, numa única resolução, para evitar o
+# backtracking infinito do pip (ResolutionTooDeep) ao misturar tudo.
+# Pins FROUXOS de propósito: deixa o pip reusar o que o Docling já trouxe
+# (ex.: pydantic) em vez de brigar por uma versão exata.
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+python-multipart>=0.0.9
+# Detecção de PDF protegido por senha ANTES da conversão (_is_encrypted_pdf).
+# Estava sendo importado sem ser declarado: o ImportError caía no try/except e a
+# detecção nunca acontecia — todo PDF com senha virava um erro genérico no meio
+# do pipeline em vez da mensagem "documento protegido por senha".
+pypdf>=4.0.0

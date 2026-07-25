@@ -1,0 +1,551 @@
+/* Frederico Companion — camada de experiência (personagem flutuante + painel).
+   Estilos isolados para não interferir no resto do app. As animações respeitam
+   o nível escolhido (.anim-reduzido reduz, .anim-nenhum desliga). */
+
+.companionRoot {
+  position: fixed;
+  right: 22px;
+  bottom: 22px;
+  z-index: 1200;
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: flex-end;
+  gap: 12px;
+  font-family: inherit;
+  user-select: none;
+}
+
+.cmpBadge {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+}
+.cmpBadge.warn { background: #f0a340; }
+.cmpBadge.crit { background: #ef4444; animation: cmpFloat 1s ease-in-out infinite; }
+
+.cmpMinBubble {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(20, 26, 40, 0.92);
+  color: #cdd6ea;
+  font-size: 13px;
+  cursor: pointer;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.3);
+}
+.cmpMinBubble:hover { color: #fff; border-color: rgba(255, 255, 255, 0.25); }
+
+/* ---- Painel ---- */
+.companionPanel {
+  width: 320px;
+  max-width: calc(100vw - 32px);
+  max-height: min(70vh, 640px);
+  overflow-y: auto;
+  background: rgba(16, 21, 34, 0.98);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+  padding: 14px;
+  color: #dbe3f4;
+  backdrop-filter: blur(8px);
+  animation: cmpPanelIn 0.16s ease;
+}
+@keyframes cmpPanelIn { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: none; } }
+
+.cmpPanelHead { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.cmpWho { display: flex; flex-direction: column; line-height: 1.2; }
+.cmpWho strong { font-size: 15px; color: #fff; }
+.cmpCaption { font-size: 12px; color: #8b96af; }
+.cmpHeadActions { display: flex; gap: 2px; }
+.cmpHeadActions button {
+  background: none; border: none; color: #8b96af; cursor: pointer;
+  padding: 5px; border-radius: 7px; display: flex; align-items: center;
+}
+.cmpHeadActions button:hover { background: rgba(255, 255, 255, 0.08); color: #fff; }
+
+.cmpSession { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.cmpChip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 8px; border-radius: 999px; font-size: 11.5px;
+  background: rgba(255, 255, 255, 0.06); color: #b8c2d8;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+.cmpChip.mode-proativo { color: #f0a340; border-color: rgba(240, 163, 64, 0.3); }
+.cmpChip.mode-silencioso { color: #8b96af; }
+.cmpChip.mode-foco { color: #38bdf8; border-color: rgba(56, 189, 248, 0.3); }
+
+.cmpLive {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12.5px; color: #cdd6ea;
+  background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.18);
+  border-radius: 10px; padding: 8px 10px; margin-bottom: 10px;
+}
+.cmpSpin {
+  width: 13px; height: 13px; border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.2); border-top-color: #38bdf8;
+  animation: cmpSpin 0.8s linear infinite;
+}
+@keyframes cmpSpin { to { transform: rotate(360deg); } }
+
+/* Alertas */
+.cmpAlerts { margin-bottom: 10px; }
+.cmpAlertsHead { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; font-size: 12px; color: #8b96af; }
+.cmpAlertsHead span { display: inline-flex; align-items: center; gap: 5px; }
+.cmpLink { background: none; border: none; color: #6ea8ff; cursor: pointer; font-size: 12px; }
+.cmpLink:hover { text-decoration: underline; }
+.cmpAlerts ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.cmpAlert {
+  border-radius: 10px; padding: 9px 10px;
+  background: rgba(255, 255, 255, 0.04); border-left: 3px solid #8b96af;
+}
+.cmpAlert.level-aviso { border-left-color: #f0a340; }
+.cmpAlert.level-critico { border-left-color: #ef4444; }
+.cmpAlertTitle { font-size: 13px; font-weight: 600; color: #eef2fb; }
+.cmpAlertDetail { font-size: 12px; color: #a7b1c6; margin-top: 2px; }
+.cmpAlertAction { font-size: 12px; color: #9fd0ff; margin-top: 5px; display: flex; align-items: center; gap: 2px; }
+.cmpAlertAuth { font-size: 11px; color: #7f8aa1; margin-top: 4px; display: inline-flex; align-items: center; gap: 4px; }
+.cmpAlertBtns { display: flex; gap: 6px; margin-top: 7px; }
+.cmpAlertBtns button {
+  font-size: 11.5px; padding: 4px 10px; border-radius: 7px; cursor: pointer;
+  background: rgba(255, 255, 255, 0.08); border: none; color: #cdd6ea;
+}
+.cmpAlertBtns button:hover { background: rgba(255, 255, 255, 0.16); }
+.cmpAlertBtns button.mut { color: #22c55e; }
+
+/* Ações rápidas / modos */
+.cmpQuickRow { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.cmpQuickRow button {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 12px; padding: 6px 10px; border-radius: 8px; cursor: pointer;
+  background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.08); color: #cdd6ea;
+}
+.cmpQuickRow button:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
+
+.cmpModes { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 10px; }
+.cmpMode {
+  font-size: 11.5px; padding: 5px 9px; border-radius: 999px; cursor: pointer;
+  background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.08); color: #9aa5bd;
+}
+.cmpMode.on { background: rgba(79, 140, 255, 0.18); border-color: rgba(79, 140, 255, 0.5); color: #cfe0ff; }
+
+.cmpQuick { display: flex; gap: 6px; }
+.cmpQuick input {
+  flex: 1; min-width: 0; padding: 9px 11px; border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #eef2fb; font-size: 13px; outline: none;
+}
+.cmpQuick input:focus { border-color: rgba(79, 140, 255, 0.6); }
+.cmpQuick button {
+  display: flex; align-items: center; justify-content: center;
+  width: 38px; border-radius: 10px; cursor: pointer;
+  background: #4f8cff; border: none; color: #fff;
+}
+.cmpQuick button:disabled { opacity: 0.4; cursor: default; }
+
+/* ---- Modal de configuração ---- */
+.cmpForm { display: flex; flex-direction: column; gap: 16px; }
+.cmpField { display: flex; flex-direction: column; gap: 6px; }
+.cmpField > label { font-size: 13px; font-weight: 600; color: #cdd6ea; display: inline-flex; align-items: center; gap: 6px; }
+.cmpField small { font-size: 11.5px; color: #8b96af; }
+.cmpField input[type="text"],
+.cmpField input:not([type]),
+.cmpField select {
+  padding: 9px 11px; border-radius: 9px; font-size: 13px;
+  background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.12); color: #eef2fb; outline: none;
+}
+.cmpField select:focus, .cmpField input:focus { border-color: rgba(79, 140, 255, 0.6); }
+
+.switchRow { flex-direction: row; align-items: center; justify-content: space-between; }
+.switchRow span { font-size: 13px; font-weight: 600; color: #cdd6ea; }
+.switchRow span small { font-weight: 400; color: #8b96af; display: block; }
+.switchRow input[type="checkbox"] { width: 18px; height: 18px; accent-color: #4f8cff; }
+
+.cmpPresets { display: flex; flex-wrap: wrap; gap: 6px; }
+.cmpPresets button {
+  font-size: 12.5px; padding: 6px 12px; border-radius: 999px; cursor: pointer;
+  background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); color: #b8c2d8;
+}
+.cmpPresets button.on { background: rgba(79, 140, 255, 0.2); border-color: rgba(79, 140, 255, 0.55); color: #fff; }
+
+.cmpRadioGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.cmpRadio {
+  text-align: left; padding: 9px 11px; border-radius: 10px; cursor: pointer;
+  background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.1); color: #b8c2d8;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.cmpRadio strong { font-size: 12.5px; color: #eef2fb; }
+.cmpRadio span { font-size: 11px; color: #8b96af; }
+.cmpRadio.on { background: rgba(79, 140, 255, 0.16); border-color: rgba(79, 140, 255, 0.5); }
+
+.cmpFormActions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.cmpFormActions button { padding: 9px 18px; border-radius: 9px; font-size: 13px; cursor: pointer; border: none; }
+.cmpFormActions .ghost { background: rgba(255, 255, 255, 0.06); color: #cdd6ea; }
+.cmpFormActions .primary { background: #4f8cff; color: #fff; }
+
+/* ---- Tema claro ---- */
+.app.theme-light .companionPanel,
+body:not(.dark) .companionPanel {
+  background: rgba(255, 255, 255, 0.98);
+  color: #1e293b;
+  border-color: rgba(0, 0, 0, 0.08);
+}
+.app.theme-light .cmpWho strong { color: #0f172a; }
+.app.theme-light .cmpChip { background: rgba(0, 0, 0, 0.05); color: #475569; border-color: rgba(0, 0, 0, 0.06); }
+.app.theme-light .cmpQuick input,
+.app.theme-light .cmpMinBubble { background: rgba(0, 0, 0, 0.04); color: #1e293b; border-color: rgba(0, 0, 0, 0.1); }
+
+@media (max-width: 560px) {
+  .companionRoot { right: 12px; bottom: 12px; }
+  .companionPanel { width: calc(100vw - 24px); }
+}
+
+.cmpChipBtn { cursor: pointer; }
+.cmpChipBtn:hover { background: rgba(255,255,255,0.12); color: #fff; }
+
+/* =====================================================================
+   Copiloto — balão proativo de revisão de escrita (R2)
+   ===================================================================== */
+.cmpBubble {
+  position: absolute;
+  right: 0;
+  bottom: 78px;               /* acima do avatar (66px + folga) */
+  width: 300px;
+  max-width: calc(100vw - 44px);
+  background: rgba(17, 24, 39, 0.98);
+  border: 1px solid rgba(79, 140, 255, 0.35);
+  border-radius: 14px;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.45);
+  color: #eef2fb;
+  padding: 12px 13px;
+  z-index: 1210;
+  animation: cmpBubbleIn 0.18s ease-out;
+}
+.cmpBubble.noanim { animation: none; }
+.cmpBubbleArrow {
+  position: absolute;
+  right: 26px;
+  bottom: -8px;
+  width: 14px;
+  height: 14px;
+  background: rgba(17, 24, 39, 0.98);
+  border-right: 1px solid rgba(79, 140, 255, 0.35);
+  border-bottom: 1px solid rgba(79, 140, 255, 0.35);
+  transform: rotate(45deg);
+}
+.cmpBubbleBody { display: flex; flex-direction: column; gap: 9px; }
+.cmpBubbleText { font-size: 13px; line-height: 1.4; color: #eef2fb; display: flex; align-items: center; gap: 7px; }
+.cmpBubbleErr { color: #fca5a5; }
+.cmpBubbleLabel { font-size: 11px; color: #8b96af; }
+.cmpBubbleBtns { display: flex; gap: 8px; }
+.cmpBubbleBtns button, .cmpBubbleDismiss {
+  padding: 7px 12px; border-radius: 9px; font-size: 12.5px; cursor: pointer; border: none;
+  display: inline-flex; align-items: center; gap: 5px; min-height: 34px;
+}
+.cmpBubbleYes { background: #4f8cff; color: #fff; }
+.cmpBubbleYes:hover { background: #3f7cf0; }
+.cmpBubbleNo { background: rgba(255, 255, 255, 0.08); color: #cdd6ea; }
+.cmpBubbleNo:hover { background: rgba(255, 255, 255, 0.14); }
+.cmpBubbleCard {
+  text-align: left; width: 100%; cursor: pointer;
+  background: rgba(79, 140, 255, 0.12); border: 1px solid rgba(79, 140, 255, 0.4);
+  border-radius: 10px; padding: 10px; font-size: 12.5px; line-height: 1.45; color: #eef2fb;
+  max-height: 180px; overflow-y: auto; white-space: pre-wrap;
+}
+.cmpBubbleCard:hover { background: rgba(79, 140, 255, 0.2); }
+.cmpBubbleDismiss { background: transparent; color: #8b96af; align-self: flex-start; padding-left: 0; }
+.cmpBubbleDismiss:hover { color: #cdd6ea; }
+.cmpBubbleSpin {
+  width: 13px; height: 13px; border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.25); border-top-color: #4f8cff;
+  display: inline-block; animation: cmpSpin 0.7s linear infinite;
+}
+@keyframes cmpBubbleIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes cmpSpin { to { transform: rotate(360deg); } }
+.anim-nenhum .cmpBubble { animation: none; }
+.anim-nenhum .cmpBubbleSpin { animation-duration: 1.2s; }
+
+/* =====================================================================
+   Copiloto — espaço próprio (Chat + Documentos) (R3/R4)
+   ===================================================================== */
+.cwTabs { display: flex; gap: 6px; padding: 0 2px 12px; }
+.cwTabs button {
+  flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 9px 10px; border-radius: 10px; font-size: 13px; cursor: pointer;
+  background: rgba(255, 255, 255, 0.05); color: #cdd6ea; border: 1px solid transparent;
+}
+.cwTabs button.on { background: rgba(79, 140, 255, 0.16); border-color: rgba(79, 140, 255, 0.5); color: #eef2fb; }
+.cwCount { background: #4f8cff; color: #fff; border-radius: 999px; font-size: 10px; padding: 1px 6px; }
+
+.cwChat { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.cwMessages { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 4px 2px; min-height: 220px; }
+.cwMsg { display: flex; }
+.cwMsg.user { justify-content: flex-end; }
+.cwMsg.assistant { justify-content: flex-start; }
+.cwBubble {
+  max-width: 84%; padding: 9px 12px; border-radius: 13px; font-size: 13px; line-height: 1.45;
+  white-space: pre-wrap; word-break: break-word;
+}
+.cwMsg.user .cwBubble { background: #4f8cff; color: #fff; border-bottom-right-radius: 4px; }
+.cwMsg.assistant .cwBubble { background: rgba(255, 255, 255, 0.07); color: #eef2fb; border-bottom-left-radius: 4px; }
+.cwMsg.pending { opacity: 0.6; }
+.cwTyping { display: inline-flex; gap: 4px; align-items: center; }
+.cwTyping span { width: 6px; height: 6px; border-radius: 50%; background: #8b96af; animation: cwBlink 1.2s infinite ease-in-out; }
+.cwTyping span:nth-child(2) { animation-delay: 0.2s; }
+.cwTyping span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes cwBlink { 0%, 80%, 100% { opacity: 0.3; } 40% { opacity: 1; } }
+
+.cwEmpty {
+  display: flex; flex-direction: column; align-items: center; text-align: center; gap: 8px;
+  padding: 34px 16px; color: #8b96af; margin: auto;
+}
+.cwEmpty svg { color: #4f8cff; opacity: 0.8; }
+.cwEmpty b { color: #eef2fb; font-size: 14px; }
+.cwEmpty span { font-size: 12.5px; line-height: 1.5; max-width: 320px; }
+.cwLoading { padding: 24px; text-align: center; color: #8b96af; font-size: 13px; }
+.cwError { color: #fca5a5; font-size: 12.5px; padding: 6px 4px; }
+
+.cwComposer { display: flex; align-items: flex-end; gap: 7px; padding-top: 8px; border-top: 1px solid rgba(255, 255, 255, 0.07); }
+.cwComposer textarea {
+  flex: 1; resize: none; max-height: 120px; padding: 9px 11px; border-radius: 11px; font: inherit; font-size: 13px;
+  background: rgba(255, 255, 255, 0.06); color: #eef2fb; border: 1px solid rgba(255, 255, 255, 0.1);
+}
+.cwComposer textarea:focus { outline: none; border-color: rgba(79, 140, 255, 0.6); }
+.cwToolBtn, .cwSend {
+  width: 38px; height: 38px; min-width: 38px; border-radius: 11px; border: none; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.cwToolBtn { background: rgba(255, 255, 255, 0.06); color: #cdd6ea; }
+.cwToolBtn.on { background: rgba(79, 140, 255, 0.2); color: #eef2fb; }
+.cwSend { background: #4f8cff; color: #fff; }
+.cwSend:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.cwTools { padding: 8px 2px; }
+.cwToolsHint { font-size: 11px; color: #8b96af; margin-bottom: 6px; }
+.cwToolsChips { display: flex; flex-wrap: wrap; gap: 6px; }
+.cwToolsChips button {
+  font-size: 11.5px; padding: 5px 9px; border-radius: 8px; cursor: pointer;
+  background: rgba(255, 255, 255, 0.06); color: #cdd6ea; border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.cwToolsChips button:hover:not(:disabled) { background: rgba(79, 140, 255, 0.16); color: #eef2fb; }
+.cwToolsChips button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.cwClear { background: none; border: none; color: #8b96af; font-size: 11.5px; cursor: pointer; padding: 8px 2px 0; display: inline-flex; align-items: center; gap: 5px; }
+.cwClear:hover { color: #fca5a5; }
+
+.cwAlerts { background: rgba(240, 163, 64, 0.08); border: 1px solid rgba(240, 163, 64, 0.25); border-radius: 11px; padding: 9px 10px; margin-bottom: 10px; }
+.cwAlertsHead { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: #edd7bf; margin-bottom: 6px; }
+.cwAlertsHead span { display: inline-flex; align-items: center; gap: 6px; }
+.cwAlert { font-size: 12px; padding: 5px 0; border-top: 1px solid rgba(255, 255, 255, 0.06); }
+.cwAlert:first-of-type { border-top: none; }
+.cwAlertTitle { color: #eef2fb; font-weight: 600; }
+.cwAlertDetail { color: #b9c2d6; margin: 2px 0; line-height: 1.4; }
+.cwLink { background: none; border: none; color: #4f8cff; cursor: pointer; font-size: 11.5px; padding: 0; }
+.cwLink:hover { text-decoration: underline; }
+
+/* Documentos */
+.cwDocs { display: flex; flex-direction: column; gap: 8px; }
+.cwDoc { display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 11px; background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.06); }
+.cwDocIcon { color: #4f8cff; display: flex; }
+.cwDocInfo { flex: 1; min-width: 0; }
+.cwDocInfo b { display: block; font-size: 13px; color: #eef2fb; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cwDocInfo small { font-size: 11px; color: #8b96af; }
+.cwDocKind { background: rgba(79, 140, 255, 0.16); color: #9dbcff; border-radius: 6px; padding: 1px 6px; }
+.cwDocActions { display: flex; gap: 2px; }
+.cwDocActions button, .cwDocActions a {
+  width: 32px; height: 32px; border-radius: 8px; border: none; background: transparent; color: #8b96af;
+  cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+}
+.cwDocActions button:hover, .cwDocActions a:hover { background: rgba(255, 255, 255, 0.08); color: #eef2fb; }
+.cwDocContent { background: rgba(0, 0, 0, 0.25); border-radius: 10px; padding: 12px; font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; max-height: 50vh; overflow-y: auto; color: #dbe2f0; }
+.cwDocModalFoot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.cwDocModalFoot a, .cwDocModalFoot button { padding: 8px 14px; border-radius: 9px; font-size: 13px; cursor: pointer; border: none; display: inline-flex; align-items: center; gap: 6px; text-decoration: none; }
+.cwDocModalFoot .primary { background: #4f8cff; color: #fff; }
+.cwDocModalFoot .ghost { background: rgba(255, 255, 255, 0.06); color: #cdd6ea; }
+
+/* Config — títulos de seção e nota */
+.cmpSectionTitle { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #8b96af; margin: 8px 0 2px; font-weight: 600; }
+.cmpFieldNote { display: flex; align-items: flex-start; gap: 7px; font-size: 11.5px; color: #8b96af; line-height: 1.45; background: rgba(255, 255, 255, 0.03); border-radius: 9px; padding: 9px 10px; }
+.cmpFieldNote svg { color: #4f8cff; flex-shrink: 0; margin-top: 1px; }
+
+/* ---- Tema claro ---- */
+.app.theme-light .cmpBubble, body:not(.dark) .cmpBubble { background: #fff; color: #1e293b; border-color: rgba(79, 140, 255, 0.4); }
+.app.theme-light .cmpBubbleArrow, body:not(.dark) .cmpBubbleArrow { background: #fff; }
+.app.theme-light .cmpBubbleText, body:not(.dark) .cmpBubbleText { color: #1e293b; }
+.app.theme-light .cmpBubbleCard, body:not(.dark) .cmpBubbleCard { color: #1e293b; }
+.app.theme-light .cwBubble, body:not(.dark) .cwMsg.assistant .cwBubble { color: inherit; }
+.app.theme-light .cwMsg.assistant .cwBubble { background: rgba(0, 0, 0, 0.05); color: #1e293b; }
+.app.theme-light .cwEmpty b, .app.theme-light .cwDocInfo b, .app.theme-light .cwAlertTitle { color: #0f172a; }
+.app.theme-light .cwComposer textarea { background: rgba(0, 0, 0, 0.04); color: #1e293b; border-color: rgba(0, 0, 0, 0.12); }
+
+/* ============================================================================
+   Nino — ajustes no companion.css existente.
+   Cole este bloco NO FINAL do frontend/src/companion.css (ele vence por ordem
+   de carga) e apague do arquivo os blocos listados no LEIA-ME.md.
+   ============================================================================ */
+
+/* ---- Personagem no canto ---- */
+.cmpAvatarWrap {
+  position: relative;
+  width: 82px;                     /* era 66px — presença maior, ainda discreta */
+  height: 97px;                    /* proporção do viewBox 120x142 */
+  cursor: grab;
+  filter: drop-shadow(0 10px 20px rgba(0, 0, 0, .45));
+  touch-action: none;
+}
+.cmpAvatarWrap:active { cursor: grabbing; }
+.companionRoot.open .cmpAvatarWrap { filter: drop-shadow(0 6px 14px rgba(0, 0, 0, .35)); }
+
+/* Pílula do estado minimizado: a carinha espia dentro de um círculo. */
+.cmpMinBubble {
+  padding: 7px 15px 7px 8px;
+  background: rgba(20, 26, 40, .94);
+  border-color: rgba(198, 113, 57, .45);
+  color: #e8ddcd;
+  font-weight: 600;
+}
+.cmpMinBubble:hover { border-color: rgba(198, 113, 57, .8); color: #fff; }
+.cmpMinFace {
+  flex: none;
+  width: 30px; height: 30px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: #1a2338;
+  display: flex; align-items: flex-end; justify-content: center;
+}
+.cmpMinFace > div { width: 34px; height: 40px; margin-bottom: -7px; }
+
+/* ---- Balão proativo: a cor passa a ser a do Nino ---- */
+.cmpBubble {
+  bottom: 108px;                   /* acima do personagem de 97px + folga */
+  background: #f5ead8;
+  border: 1px solid rgba(198, 113, 57, .4);
+  border-radius: 22px;
+  color: #201e1d;
+  padding: 14px 15px;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, .45);
+}
+.cmpBubbleArrow { background: #f5ead8; border-right-color: rgba(198, 113, 57, .4); border-bottom-color: rgba(198, 113, 57, .4); }
+.cmpBubbleText { color: #201e1d; font-size: 14px; font-weight: 600; }
+.cmpBubbleLabel { color: #6b6154; }
+.cmpBubbleErr { color: #a33; }
+.cmpBubbleBtns button, .cmpBubbleDismiss { border-radius: 999px; font-weight: 600; }
+.cmpBubbleYes { background: #c67139; color: #fff; font-weight: 700; }
+.cmpBubbleYes:hover { background: #a85c2c; }
+.cmpBubbleNo { background: rgba(32, 30, 29, .07); color: #5c5347; }
+.cmpBubbleNo:hover { background: rgba(32, 30, 29, .14); color: #201e1d; }
+.cmpBubbleCard {
+  background: rgba(198, 113, 57, .1);
+  border: 1px solid rgba(198, 113, 57, .4);
+  border-radius: 14px;
+  color: #201e1d;
+}
+.cmpBubbleCard:hover { background: rgba(198, 113, 57, .2); }
+.cmpBubbleDismiss { color: #7a7064; }
+.cmpBubbleDismiss:hover { color: #201e1d; }
+.cmpBubbleSpin { border-top-color: #c67139; }
+.cmpBubbleYes:focus-visible, .cmpBubbleNo:focus-visible, .cmpBubbleCard:focus-visible,
+.cmpAvatarWrap:focus-visible, .cmpMinBubble:focus-visible {
+  outline: 2px solid #c67139;
+  outline-offset: 2px;
+}
+
+/* ---- Painel do copiloto: cabeçalho com o personagem ---- */
+.cwHeadFace { display: block; width: 40px; height: 47px; flex: none; }
+.cwDrawer .modalHead { gap: 12px; background: linear-gradient(180deg, rgba(198, 113, 57, .13), rgba(198, 113, 57, 0)); }
+.cwCaption {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12.5px; color: #c69a72; padding: 0 2px 10px;
+}
+.cwCaption::before {
+  content: ''; width: 6px; height: 6px; border-radius: 50%;
+  background: #c67139; box-shadow: 0 0 0 3px rgba(198, 113, 57, .2);
+}
+
+/* Abas em pílula, com a cor do personagem no estado ativo. */
+.cwTabs button { border-radius: 999px; font-weight: 600; }
+.cwTabs button.on {
+  background: rgba(198, 113, 57, .18);
+  border-color: rgba(198, 113, 57, .55);
+  color: #f0c9a8;
+  font-weight: 700;
+}
+.cwTabs button:focus-visible { outline: 2px solid #c67139; outline-offset: 2px; }
+.cwCount { background: #c67139; font-weight: 800; }
+
+/* Mensagens do Nino: carinha ao lado da bolha e recorte do texto revisado. */
+.cwMsg.assistant { align-items: flex-end; gap: 9px; }
+.cwMsgFace { width: 30px; height: 35px; flex: none; margin-bottom: 2px; }
+.cwMsg.assistant .cwBubble { border-radius: 16px 16px 16px 4px; }
+.cwMsg.user .cwBubble { border-radius: 16px 16px 4px 16px; }
+.cwRevised {
+  margin-top: 9px;
+  background: rgba(198, 113, 57, .12);
+  border: 1px solid rgba(198, 113, 57, .4);
+  border-radius: 12px;
+  padding: 10px 12px;
+  color: #f2e6d8;
+}
+.cwTyping span { background: #c67139; }
+
+/* Composer e ações do painel na cor do personagem. */
+.cwSend { background: #c67139; border-radius: 12px; }
+.cwSend:hover:not(:disabled) { background: #a85c2c; }
+.cwToolBtn { border-radius: 12px; }
+.cwToolBtn.on { background: rgba(198, 113, 57, .2); color: #e0a878; }
+.cwComposer textarea { border-radius: 14px; }
+.cwComposer textarea:focus { border-color: rgba(198, 113, 57, .6); }
+.cwToolsChips button { border-radius: 999px; }
+.cwToolsChips button:hover:not(:disabled) { background: rgba(198, 113, 57, .16); color: #f0c9a8; }
+.cwLink { color: #c67139; }
+
+/* Documentos: ícones e selos quentes. */
+.cwDoc { border-radius: 14px; }
+.cwDocIcon { color: #e0a878; }
+.cwDocKind { background: rgba(198, 113, 57, .18); color: #e0a878; font-weight: 600; }
+.cwEmpty .cwEmptyFace { width: 96px; height: 113px; margin-bottom: 2px; }
+.cwEmpty svg { color: #c67139; }
+.cwDocModalFoot .primary { background: #c67139; }
+
+/* ---- Configuração: prévia ao vivo do personagem ---- */
+.cmpPreview {
+  display: flex; align-items: center; gap: 14px;
+  padding: 13px 15px; border-radius: 14px;
+  background: rgba(122, 138, 94, .12);
+  border: 1px solid rgba(122, 138, 94, .3);
+}
+.cmpPreviewFace { width: 56px; height: 66px; flex: none; }
+.cmpPreview span { font-size: 12.5px; color: #c8d3b4; line-height: 1.5; }
+.cmpPresets button.on { background: rgba(198, 113, 57, .22); border-color: rgba(198, 113, 57, .6); color: #f0c9a8; font-weight: 700; }
+.cmpRadio.on { background: rgba(198, 113, 57, .16); border-color: rgba(198, 113, 57, .55); }
+.cmpFormActions .primary { background: #c67139; border-radius: 999px; font-weight: 700; }
+.cmpFormActions .ghost { border-radius: 999px; }
+.cmpFormActions .primary:hover { background: #a85c2c; }
+.cmpFieldNote svg { color: #c67139; }
+
+/* ---- Tema claro ---- */
+.app.theme-light .cmpMinBubble { background: #fff; color: #201e1d; border-color: rgba(198, 113, 57, .45); }
+.app.theme-light .cmpMinFace { background: #f1e6d4; }
+.app.theme-light .cwCaption { color: #8a4a22; }
+.app.theme-light .cwRevised { color: #201e1d; }
+.app.theme-light .cwTabs button.on { color: #8a4a22; }
+
+/* ---- Celular ---- */
+@media (max-width: 560px) {
+  .cmpAvatarWrap { width: 74px; height: 88px; }
+  .cmpBubble { bottom: 98px; }
+}

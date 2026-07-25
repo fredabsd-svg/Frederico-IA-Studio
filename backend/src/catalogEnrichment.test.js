@@ -84,6 +84,65 @@ test('a API que AFIRMA um recurso ainda vence (não é engessado pelo curado)', 
   assert.equal(p.tools, false, 'declaração explícita da API prevalece');
 });
 
+test('famílias novas: capacidades e classificação coerentes', () => {
+  // Sonar (Perplexity): a pesquisa web é a capacidade principal — conta como
+  // profundidade, então não fica preso em B+.
+  const sonar = bare('sonar-pro');
+  assert.equal(sonar.web, true);
+  assert.ok(['A', 'A+'].includes(sonar.tier), `Sonar Pro coerente, veio ${sonar.tier}`);
+  // Nova Pro (Amazon): multimodal (visão + vídeo).
+  const nova = bare('amazon.nova-pro-v1:0');
+  assert.equal(nova.vision, true);
+  assert.equal(nova.video, true);
+  assert.equal(nova.family, 'Nova 1');
+  // MiMo V2.5 (Xiaomi): omnimodal.
+  const mimo = bare('XiaomiMiMo/MiMo-V2.5');
+  assert.equal(mimo.vision, true);
+  assert.equal(mimo.audio, true);
+  // Kimi K3 flagship.
+  assert.equal(bare('kimi-k3').tier, 'S');
+});
+
+test('tierHint é autoritativo: amplitude de capacidades não infla o tier', () => {
+  // Um modelo pequeno multimodal (hint A) não vira S só por marcar caixas.
+  const nano = bare('nvidia/nemotron-3-nano-omni-30b-a3b');
+  assert.equal(nano.vision, true);
+  assert.equal(nano.tier, 'A', `hint A respeitado, veio ${nano.tier}`);
+});
+
+// Bug relatado: Auto Router exibia "-$1.000.000/1M" (sentinela -1 do OpenRouter
+// interpretada como preço por token) e valores em unidade errada viravam
+// absurdos. Preço fora da faixa plausível NUNCA vira número na tela.
+test('sanidade de preços: sentinela -1 vira "preço variável", nunca negativo', () => {
+  const auto = modelProfileFromProvider({ id: 'openrouter/auto', name: 'Auto Router', pricing: { prompt: '-1', completion: '-1' } });
+  assert.equal(auto.pricingKnown, false);
+  assert.equal(auto.price, 0);
+  assert.equal(auto.priceOut, 0);
+  assert.equal(auto.pricingVariable, true);
+  assert.equal(auto.free, false, 'preço desconhecido não é grátis');
+});
+
+test('sanidade de preços: unidade errada (por-1M como por-token) é descartada', () => {
+  // "5" por token = $5.000.000/1M — obviamente unidade errada.
+  const errado = modelProfileFromProvider({ id: 'x/unidade-errada', pricing: { prompt: '5', completion: '10' } });
+  assert.equal(errado.pricingKnown, false);
+  assert.equal(errado.price, 0);
+  // Valor são por token passa normalmente.
+  const ok = modelProfileFromProvider({ id: 'x/preco-sao', pricing: { prompt: '0.000005', completion: '0.000015' } });
+  assert.equal(ok.pricingKnown, true);
+  assert.ok(Math.abs(ok.price - 0.000005) < 1e-12);
+  assert.equal(ok.priceSource, 'provider_api');
+});
+
+test('sanidade de preços: API inválida cai para o preço oficial curado, com data', () => {
+  const gem = modelProfileFromProvider({ id: 'gemini-2.5-pro', pricing: { prompt: '-1' } });
+  assert.equal(gem.pricingKnown, true, 'usa o preço curado');
+  assert.ok(gem.price > 0 && gem.price <= 0.001);
+  assert.equal(gem.priceSource, 'curated');
+  assert.equal(gem.priceVerifiedAt, '2026-07-22');
+  assert.equal(gem.pricingVariable, false, 'com preço confiável, não é "variável"');
+});
+
 test('contexto e preço da API têm prioridade quando presentes; senão entra o curado', () => {
   // Sem dados da API → usa o curado (Gemini 2.5 Pro: 1.048.576 ctx).
   const curado = bare('gemini-2.5-pro');

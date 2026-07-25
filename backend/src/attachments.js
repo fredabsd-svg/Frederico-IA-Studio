@@ -2,8 +2,8 @@ import fs from 'fs';
 import path from 'path';
 import { insideBase, realInside, workspaceFor } from './sandbox.js';
 
-export function listWorkspaceUploads(conversationId) {
-  const ws = workspaceFor(conversationId);
+export function listWorkspaceUploads(userId, conversationId) {
+  const ws = workspaceFor(conversationId, userId);
   let entries = [];
   try { entries = fs.readdirSync(ws.uploads, { withFileTypes: true }); } catch { return []; }
   return entries
@@ -19,8 +19,8 @@ export function listWorkspaceUploads(conversationId) {
     .sort((a, b) => a.path.localeCompare(b.path));
 }
 
-export function validateAttachmentManifest(conversationId, manifest = []) {
-  const ws = workspaceFor(conversationId);
+export function validateAttachmentManifest(userId, conversationId, manifest = []) {
+  const ws = workspaceFor(conversationId, userId);
   const valid = [];
   const missing = [];
   for (const item of Array.isArray(manifest) ? manifest : []) {

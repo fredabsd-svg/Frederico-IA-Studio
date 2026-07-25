@@ -4,6 +4,7 @@ import { ProviderIcon } from './components/ProviderIcon.jsx';
 import { FamilySelect } from './components/FamilySelect.jsx';
 import { findRanking, tierClass, tierScore } from './modelRanking.js';
 import { capabilityOf, filterModels, modelFamily, tierOf } from './modelFilters.js';
+import { groupModelVersions, versionStamp } from './modelVersions.js';
 
 // Ids (ou prefixos) dos modelos mais confiáveis para gerar planilhas/arquivos
 const BEST_FOR_FILES = [
@@ -31,12 +32,24 @@ const ctxLabel = n => !n ? 'contexto não informado' : n >= 1000000 ? `${(n / 10
 const usdPerMillion = value => Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 6 });
 const priceLabel = m => {
   if (m.free) return 'grátis';
+  // Sentinela de preço variável (ex.: roteador automático) e valores não
+  // validados NUNCA viram números na tela.
+  if (m.pricingVariable) return 'preço variável (depende do modelo roteado)';
+  if (!m.pricingKnown) return 'preço não confirmado';
   const input = Number(m.price || 0);
   const output = Number(m.priceOut || 0);
   if (input && output) return `$${usdPerMillion(input * 1e6)} entrada · $${usdPerMillion(output * 1e6)} saída / 1M`;
   if (input) return `$${usdPerMillion(input * 1e6)} entrada / 1M`;
   if (output) return `$${usdPerMillion(output * 1e6)} saída / 1M`;
-  return m.pricingKnown ? 'sem custo informado' : 'preço não informado pelo provedor';
+  return 'sem custo informado';
+};
+// Origem do preço, mostrada no tooltip da linha de detalhes do modelo.
+const priceProvenance = m => {
+  if (m.free) return 'Modelo gratuito.';
+  if (m.pricingVariable) return 'O provedor roteia entre modelos; o custo real depende do modelo escolhido a cada chamada.';
+  if (!m.pricingKnown) return 'Sem preço confiável da API do provedor nem da base verificada — nenhum valor é exibido para não induzir a erro.';
+  if (m.priceSource === 'curated') return `Preço da documentação oficial do provedor${m.priceVerifiedAt ? `, verificado em ${m.priceVerifiedAt}` : ''}.`;
+  return 'Preço informado pela API do provedor na última sincronização do catálogo.';
 };
 const FAV_KEY = 'fred_fav_models';
 const RECENT_KEY = 'fred_recent_models';
@@ -96,9 +109,13 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
   const [tier, setTier] = useState('all');
   const [modality, setModality] = useState('all');
   const [flags, setFlags] = useState([]);
-  const [sort, setSort] = useState('none');
+  // Padrão: melhores primeiro (classificação). Sem isto o catálogo abre em ordem
+  // alfabética e enche o topo de modelos obscuros (ALLaM, Antigravity...).
+  const [sort, setSort] = useState('rank');
   const [favs, setFavs] = useState(loadFavs);
   const [recent, setRecent] = useState(loadRecent);
+  // Grupos de versões expandidos ("Ver outras versões") — por id da principal.
+  const [openVersions, setOpenVersions] = useState(() => new Set());
   const ref = useRef(null);
   const searchRef = useRef(null);
 
@@ -189,7 +206,7 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
   }
   const families = Object.keys(famCounts).sort((a, b) => famCounts[b] - famCounts[a]);
   const filteredModels = filterModels(models, { query: q, provider, family: fam, price, context, tier, modality, flags });
-  const activeFilterCount = flags.length + Number(provider !== 'all') + Number(fam !== 'all') + Number(price !== 'all') + Number(context !== 'all') + Number(tier !== 'all') + Number(modality !== 'all') + Number(sort !== 'none');
+  const activeFilterCount = flags.length + Number(provider !== 'all') + Number(fam !== 'all') + Number(price !== 'all') + Number(context !== 'all') + Number(tier !== 'all') + Number(modality !== 'all') + Number(sort !== 'rank');
   const sortFn = (a, b) => sort === 'new' ? (b.created || 0) - (a.created || 0)
     : sort === 'cheap' ? priceValue(a) - priceValue(b)
     // Classificação: maior tier primeiro (usa o tier coerente do backend).
@@ -224,11 +241,19 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
     .filter((model, index, items) => !items.slice(0, index).some(previous => recommendationFamily(previous) === recommendationFamily(model)));
   const recommendedModels = diverseRecommendedModels
     .filter(model => !recentIds.has(model.id))
-    .sort(sort === 'none' ? recommendedSort : sortFn)
+    .sort(sort === 'rank' ? recommendedSort : sortFn)
     .slice(0, 6);
   const favoriteModels = [...filteredModels].filter(model => isFav(model.id)).sort(sortFn);
-  const catalogModels = [...filteredModels].sort(sortFn);
+  // Catálogo/busca: agrupa versões datadas do mesmo modelo (a mais nova como
+  // principal; as demais em "Ver outras versões"). Favoritos/recomendados não
+  // agrupam — são escolhas explícitas.
+  const catalogModels = groupModelVersions([...filteredModels].sort(sortFn));
   const displayView = query ? 'search' : view;
+  const toggleVersions = id => setOpenVersions(previous => {
+    const next = new Set(previous);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
 
   const STATUS_BADGE = {
     deprecated: { label: 'Descontinuado', cls: 'no' },
@@ -237,7 +262,7 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
     preview: { label: 'Prévia', cls: 'neutral' },
     experimental: { label: 'Experimental', cls: 'neutral' }
   };
-  const row = model => {
+  const modelRow = (model, { nested = false } = {}) => {
     const ranking = findRanking({ ...model, id: rawId(model) });
     const status = STATUS_BADGE[model.status];
     const rankTitle = ranking
@@ -246,7 +271,7 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
           : `Classificação de referência · Tier ${ranking.tier}`)
       : '';
     return (
-    <div key={model.id} className={'mpItem ' + (model.id === value ? 'sel' : '')}>
+    <div key={model.id} className={'mpItem ' + (model.id === value ? 'sel ' : '') + (nested ? 'mpItemVersion' : '')}>
       <ProviderIcon id={rawId(model)} size={28}/>
       <button className="mpPick" onClick={() => pick(model.id)}>
         <span className="mpItemName">
@@ -256,12 +281,28 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
           {model.id === value && <Check size={13} className="mpInlineCheck" aria-label="Modelo em uso"/>}
         </span>
         <span className="mpItemId">{model.providerName ? `${model.providerName} · ` : ''}{rawId(model)}</span>
-        <span className="mpItemMeta">{[ctxLabel(model.context), model.maxOutput ? `${model.maxOutput.toLocaleString('pt-BR')} saída máx.` : '', priceLabel(model)].filter(Boolean).join(' · ')}</span>
+        <span className="mpItemMeta" title={priceProvenance(model)}>{[ctxLabel(model.context), model.maxOutput ? `${model.maxOutput.toLocaleString('pt-BR')} saída máx.` : '', priceLabel(model)].filter(Boolean).join(' · ')}</span>
         <ModelCapabilitySummary model={model}/>
       </button>
       <button className={'mpStar ' + (isFav(model.id) ? 'on' : '')} onClick={event => toggleFav(model.id, event)} title={isFav(model.id) ? 'Remover dos favoritos' : 'Adicionar aos favoritos'} aria-label={isFav(model.id) ? 'Remover dos favoritos' : 'Adicionar aos favoritos'} aria-pressed={isFav(model.id)}><Star size={14} fill={isFav(model.id) ? 'currentColor' : 'none'}/></button>
     </div>
     );
+  };
+  // Principal + versões anteriores agrupadas ("Ver outras versões"). O grupo
+  // abre sozinho quando a versão selecionada é uma das antigas.
+  const row = model => {
+    const versions = model.versions || [];
+    if (!versions.length) return modelRow(model);
+    const opened = openVersions.has(model.id) || versions.some(v => v.id === value);
+    const newestStamp = versionStamp(versions[0]);
+    return <React.Fragment key={`${model.id}::grupo`}>
+      {modelRow(model)}
+      <button className="mpVersionsToggle" onClick={() => toggleVersions(model.id)} aria-expanded={opened}>
+        {opened ? 'Ocultar versões anteriores' : `Ver outras versões (${versions.length})`}
+        {!opened && newestStamp > 0 && <span className="mpVersionsHint"> · anteriores a esta</span>}
+      </button>
+      {opened && versions.map(v => modelRow(v, { nested: true }))}
+    </React.Fragment>;
   };
   const section = (title, items, empty) => <section className="mpSection">
     <div className="mpSectionHead"><span>{title}</span><em>{items.length}</em></div>
@@ -271,7 +312,7 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
   const panel = <div className={inline ? 'mpPanel mpPanelInline' : 'mpPanel'}>
       <div className="mpSearch">
         <Search size={14}/>
-        <input ref={searchRef} value={q} onChange={event => setQ(event.target.value)} placeholder="Buscar modelo pelo nome" aria-label="Buscar modelo pelo nome"/>
+        <input ref={searchRef} value={q} onChange={event => { setQ(event.target.value); if (event.target.value.trim()) setFiltersOpen(false); }} placeholder="Buscar modelo pelo nome" aria-label="Buscar modelo pelo nome"/>
         {q && <button className="mpSearchClear" onClick={() => setQ('')} title="Limpar busca" aria-label="Limpar busca"><X size={14}/></button>}
       </div>
       <div className="mpPrimaryControls">
@@ -286,10 +327,14 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
         </button>
       </div>
       <div className="mpViewTabs" role="tablist" aria-label="Navegação de modelos">
-        {[['recommended', 'Recomendados'], ['favorites', 'Favoritos (' + favs.length + ')'], ['catalog', 'Catálogo']].map(([id, label]) => <button key={id} role="tab" aria-selected={view === id} className={view === id ? 'on' : ''} onClick={() => setView(id)}>{label}</button>)}
+        {/* Trocar de aba fecha os filtros: a pessoa quer VER o resultado. */}
+        {[['recommended', 'Recomendados'], ['favorites', 'Favoritos (' + favs.length + ')'], ['catalog', 'Catálogo']].map(([id, label]) => <button key={id} role="tab" aria-selected={view === id} className={view === id ? 'on' : ''} onClick={() => { setView(id); setFiltersOpen(false); }}>{label}</button>)}
       </div>
-      {filtersOpen && <div className="mpAdvanced" aria-label="Filtros avançados">
-        <div className="mpAdvancedHead"><span>Refinar catálogo</span>{activeFilterCount > 0 && <button onClick={() => { setProvider('all'); setFam('all'); setPrice('all'); setContext('all'); setTier('all'); setModality('all'); setFlags([]); setSort('none'); }}>Limpar filtros</button>}</div>
+      {/* Filtros são uma VISTA EXCLUSIVA: ocupam o espaço todo e rolam como um
+          bloco único (rótulo nunca separa do campo), com rodapé fixo de ação.
+          Nunca dividem altura com a lista — era isso que cortava o catálogo. */}
+      {filtersOpen && <div className="mpFiltersView" aria-label="Filtros do catálogo">
+        <div className="mpFiltersBody">
         <div className="mpAdvancedFields">
           <label>Provedor configurado
             <select value={provider} onChange={event => setProvider(event.target.value)}>
@@ -323,14 +368,15 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
               <option value="1m">1 milhão de tokens</option>
             </select>
           </label>
-          <label>Classificação mínima
+          <label>Classificação
             <select value={tier} onChange={event => setTier(event.target.value)}>
               <option value="all">Qualquer classificação</option>
-              <option value="S+">S+ (topo)</option>
-              <option value="S">S ou acima</option>
-              <option value="A+">A+ ou acima</option>
-              <option value="A">A ou acima</option>
-              <option value="B+">B+ ou acima</option>
+              <optgroup label="Exata">
+                {['S+', 'S', 'A+', 'A', 'B+', 'B'].map(t => <option key={t} value={t}>Somente {t}</option>)}
+              </optgroup>
+              <optgroup label="Mínima (ou acima)">
+                {['S', 'A+', 'A', 'B+', 'B'].map(t => <option key={`>=${t}`} value={`>=${t}`}>{t} ou acima</option>)}
+              </optgroup>
             </select>
           </label>
           <label>Modalidade
@@ -357,8 +403,15 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
         <div className="mpFilterChecks" role="group" aria-label="Capacidades">
           {advancedFilters.map(filter => <label key={filter.key}><input type="checkbox" checked={flags.includes(filter.key)} onChange={() => toggleFlag(filter.key)}/><span>{filter.label}</span></label>)}
         </div>
+        </div>
+        <div className="mpFiltersFooter">
+          <button className="mpFiltersClear" onClick={() => { setProvider('all'); setFam('all'); setPrice('all'); setContext('all'); setTier('all'); setModality('all'); setFlags([]); setSort('rank'); }} disabled={activeFilterCount === 0}>Limpar</button>
+          <button className="mpFiltersApply" onClick={() => { setFiltersOpen(false); if (!query) setView('catalog'); }}>
+            Mostrar {filteredModels.length} modelo{filteredModels.length === 1 ? '' : 's'}
+          </button>
+        </div>
       </div>}
-      <div className="mpList" role="tabpanel">
+      {!filtersOpen && <div className="mpList" role="tabpanel">
         {displayView === 'search' && section('Resultados para "' + q.trim() + '"', catalogModels, 'Nenhum modelo encontrado com esta busca.')}
         {displayView === 'recommended' && <>
           <div className="mpPurposeHint"><strong>{selectedPurpose.label}</strong><span>{selectedPurpose.description}</span></div>
@@ -368,7 +421,7 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
         </>}
         {displayView === 'favorites' && section('Favoritos', favoriteModels, 'Adicione modelos aos favoritos para acessá-los rapidamente.')}
         {displayView === 'catalog' && section('Catálogo', catalogModels, 'Nenhum modelo atende aos filtros atuais.')}
-      </div>
+      </div>}
     </div>;
 
   if (inline) return panel;

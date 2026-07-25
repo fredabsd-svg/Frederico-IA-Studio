@@ -5,12 +5,26 @@ import {
   detectToolRequirement,
   isUnsupportedToolError,
   isUnsupportedVisionError,
+  isToolChoiceReasoningConflictError,
   modelCompatibilityMessage,
   modelProfileFromProvider,
   registerModelCatalog,
   getModelProfile,
   deriveModelCapabilities
 } from './modelCapabilities.js';
+
+// Bug relatado: com a memória ativa, Qwen/GLM devolviam 400 porque o app
+// mandava tool_choice='required' com o modo thinking ligado. O detector abaixo
+// aciona a repetição da chamada com tool_choice='auto'.
+test('detecta o conflito tool_choice obrigatório × modo thinking (400 do Qwen/GLM)', () => {
+  const err = { status: 400, error: { message: 'The tool_choice parameter does not support being set to required or object in thinking mode' } };
+  assert.equal(isToolChoiceReasoningConflictError(err), true);
+  assert.equal(isToolChoiceReasoningConflictError({ message: 'tool_choice is not supported in reasoning mode' }), true);
+  // Não confunde com outros erros de ferramenta/raciocínio.
+  assert.equal(isToolChoiceReasoningConflictError({ message: 'This model does not support tool use' }), false);
+  assert.equal(isToolChoiceReasoningConflictError({ message: 'reasoning effort is not supported' }), false);
+  assert.equal(isToolChoiceReasoningConflictError({ message: 'rate limit exceeded' }), false);
+});
 
 test('catálogos de provedores diferentes não colidem quando o model id é igual', () => {
   registerModelCatalog([{ id: 'shared/model', name: 'Modelo na NVIDIA' }], {
@@ -116,6 +130,31 @@ test('reconhece verbos usuais de elaboração de Word/PDF como execução de arq
     assert.equal(requirement.required, true, userText);
     assert.equal(requirement.expectsOutput, true, userText);
   }
+});
+
+test('pedido de entrega em texto não é marcado como execução de arquivo, mesmo citando "gerar arquivos"', () => {
+  // Caso relatado: meta-instrução para ESCREVER um prompt, com conteúdo citado
+  // que fala em gerar arquivos/dashboard. A resposta em texto é legítima e não
+  // deve ser descartada para forçar ferramenta.
+  const meta = detectToolRequirement({
+    userText: 'Transforme o pedido abaixo num prompt de engenharia. Devolva apenas o prompt. --- Eu gostaria de gerar arquivos SPED e um dashboard.'
+  });
+  assert.equal(meta.required, false);
+  assert.equal(meta.expectsOutput, false);
+
+  assert.equal(detectToolRequirement({ userText: 'Escreva um prompt para analisar XMLs de NFe e gerar um relatório.' }).required, false);
+  assert.equal(detectToolRequirement({ userText: 'Reescreva isto num prompt melhor. Não crie arquivos.' }).required, false);
+  assert.equal(detectToolRequirement({ userText: 'Responda apenas em texto, sem gerar arquivos.' }).required, false);
+});
+
+test('entrega em texto NÃO desliga ações deliberadas (modo dev / anexos / web)', () => {
+  assert.equal(detectToolRequirement({ userText: 'Devolva apenas o prompt.', developer: true }).required, true);
+  assert.equal(detectToolRequirement({ userText: 'Escreva um prompt com base no PDF anexado.', hasUploads: true }).required, true);
+});
+
+test('pedido genuíno de arquivo continua exigindo execução (sem regressão)', () => {
+  assert.equal(detectToolRequirement({ userText: 'Crie um relatório DOCX profissional sobre o app.' }).expectsOutput, true);
+  assert.equal(detectToolRequirement({ userText: 'Gere uma planilha Excel com os lançamentos.' }).expectsOutput, true);
 });
 
 test('recognizes provider tool errors for the runtime fallback', () => {

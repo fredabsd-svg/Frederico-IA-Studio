@@ -14,7 +14,8 @@ import {
   buildResumeMessages,
   isResumableReason,
   leadingSystemCount,
-  RESUME_CONTINUE_NOTE
+  RESUME_CONTINUE_NOTE,
+  AUTO_CONTINUE_NOTE
 } from './checkpoint.js';
 
 // Um array de mensagens de agente realista: preâmbulo + objetivo + turnos com
@@ -119,6 +120,16 @@ test('watchdog e limite de ciclos usam o MESMO mecanismo de checkpoint (requisit
   assert.equal(isResumableReason('protocol'), false);
   assert.equal(isResumableReason(null), false);
   assert.equal(isResumableReason(''), false);
+});
+
+test('AUTO_CONTINUE_NOTE (fôlego automático do loop) orienta a continuar sem recomeçar', () => {
+  // O fôlego renova o orçamento NO MEIO do run: a nota precisa deixar claro que
+  // o histórico (possivelmente compactado) é progresso real e que o modelo não
+  // deve repetir trabalho já feito.
+  assert.match(AUTO_CONTINUE_NOTE, /não recomece/i);
+  assert.match(AUTO_CONTINUE_NOTE, /orçamento de etapas foi renovado/i);
+  assert.match(AUTO_CONTINUE_NOTE, /compactad/i);
+  assert.notEqual(AUTO_CONTINUE_NOTE, RESUME_CONTINUE_NOTE);
 });
 
 test('leadingSystemCount localiza o fim do preâmbulo de sistema', () => {

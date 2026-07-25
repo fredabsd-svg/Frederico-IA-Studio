@@ -3,10 +3,32 @@ import { getSettings, searchMemories, searchChunks, ECONOMY_CONTEXT_TOKENS } fro
 import { estimateTokens } from './indexer.js';
 import { isLowSignalTurn } from './retrievalPolicy.js';
 import { sanitizeToolProtocolText } from '../toolProtocol.js';
+import {
+  analyzePrompt,
+  detectContentDomain,
+  scoreMemory,
+  scoreConversation,
+  validateRelevance,
+  deduplicateContext,
+  extractRelevantSnippet,
+  buildDiagnosticLog,
+} from './relevanceScorer.js';
 
-// Context Builder 2.0
+// Context Builder 3.0
 // Monta um contexto seguro por modelo e tambem devolve metadados para a UI
 // mostrar ao usuario quais memorias/trechos foram usados.
+//
+// MUDANCA PRINCIPAL (v3.0): Memorias e conversas antigas agora passam por um
+// crivo de relevancia SEPARADO (relevanceScorer.js) antes de entrar no contexto.
+// Antes, perfil/preferencias/fixadas eram injetados incondicionalmente e o
+// sistema preenchia cota (sempre tentava retornar `limit` resultados). Agora:
+//   - Cada memoria e pontuada individualmente; so entra se passar no threshold.
+//   - Cada conversa antiga e pontuada individualmente; so entra se passar.
+//   - O numero de resultados e variavel (0 a N) — nao ha preenchimento de cota.
+//   - Conversas parcialmente relacionadas sao recortadas (extractRelevantSnippet).
+//   - Duplicidades entre memorias/conversas/historico sao removidas.
+//   - Recencia tem peso secundario (memorias: 0; conversas: 5%).
+//   - O botao da UI reflete o tipo de contexto recuperado.
 
 const TYPE_LABEL = {
   perfil: 'Perfil',
@@ -21,14 +43,7 @@ function unique(arr) {
 }
 
 function modelContextCap(model) {
-  // ":free"/":nitro"/":floor" são variantes de PREÇO/roteamento no OpenRouter,
-  // não indicam o tamanho da janela. Removê-los antes de classificar evita
-  // rebaixar um modelo de janela grande (ex.: um Claude ":free") para o teto
-  // "leve" de 18k só por causa do sufixo — o que estourava justamente o caso
-  // de uso de modelos gratuitos com contexto longo.
   const id = String(model || '').toLowerCase().replace(/:(free|nitro|floor|beta)\b/g, '');
-  // Janela grande vem PRIMEIRO: um sinal explícito de janela (200k/128k/1m) ou
-  // uma família comprovadamente grande vence um rótulo de tamanho pequeno.
   if (/(1m|1000k|1024k|200k|256k|128k|gemini-1\.5|gemini-2|claude|sonnet|opus)/.test(id)) return { cap: 120000, tier: 'grande' };
   if (/(mini|flash|haiku|8b|7b|3b|small)/.test(id)) return { cap: 18000, tier: 'leve' };
   if (/(gpt-4|deepseek|qwen|llama|mistral|command|nemotron)/.test(id)) return { cap: 60000, tier: 'medio' };
@@ -37,8 +52,6 @@ function modelContextCap(model) {
 
 export function contextBudgetForModel(model, settings = getSettings()) {
   let configured = Math.max(4000, Number(settings.context_target_tokens) || 60000);
-  // Economia de tokens: limita o contexto injetado por mensagem (isso também
-  // reduz memórias, trechos e histórico, que escalam com o orçamento).
   if (settings.economy_mode) configured = Math.min(configured, ECONOMY_CONTEXT_TOKENS);
   const { cap } = modelContextCap(model);
   return Math.max(4000, Math.min(configured, cap));
@@ -55,11 +68,6 @@ function trimForTokens(text, maxTokens) {
   if (estimateTokens(raw) <= maxTokens) return raw;
   const note = '\n\n[conteudo encurtado automaticamente para caber na janela de contexto]';
   const budget = Math.max(1, maxTokens - estimateTokens(note));
-  // O número de caracteres por token varia MUITO entre alfabetos (um corte
-  // por "maxTokens * 3.5" chars deixava passar 2–3× o orçamento em japonês,
-  // árabe, cirílico...). Busca binária pelo maior prefixo cujo custo ESTIMADO
-  // (já ciente de script) realmente cabe — garante que o texto aparado não
-  // estoure a janela.
   let lo = 0, hi = raw.length, best = 0;
   while (lo <= hi) {
     const mid = (lo + hi) >> 1;
@@ -125,7 +133,7 @@ function scopeLabel(scope) {
   return 'Assistente';
 }
 
-function memoryMeta(m, reason) {
+function memoryMeta(m, reason, score) {
   return {
     id: m.id,
     type: m.type,
@@ -134,17 +142,20 @@ function memoryMeta(m, reason) {
     pinned: !!m.pinned,
     source: m.source_type || 'manual',
     reason,
+    score: score ? Number(score.toFixed(3)) : undefined,
     preview: String(m.content || '').slice(0, 180)
   };
 }
 
-function chunkMeta(c) {
+function chunkMeta(c, reason, score) {
   const cleanContent = sanitizeToolProtocolText(c.content);
   return {
     title: c.source_title || 'Conversa anterior',
     scope: c.scope || 'global',
     scopeLabel: scopeLabel(c.scope || 'global'),
     date: (c.created_at || '').slice(0, 10),
+    reason,
+    score: score ? Number(score.toFixed(3)) : undefined,
     preview: cleanContent.replace(/\s+/g, ' ').slice(0, 220)
   };
 }
@@ -161,7 +172,7 @@ function addBlockMeta(meta, block) {
 }
 
 function publicMeta(meta) {
-  const { _memoryIds, ...clean } = meta;
+  const { _memoryIds, _diagnostic, ...clean } = meta;
   clean.stats = {
     memoriesUsed: clean.memories.length,
     chunksUsed: clean.chunks.length,
@@ -169,10 +180,47 @@ function publicMeta(meta) {
     contextTokens: clean.usedTokens,
     contextBudget: clean.budget
   };
+  // O diagnostico so e exposto quando explicitamente solicitado (modo dev).
+  if (_diagnostic) clean._diagnostic = _diagnostic;
   return clean;
 }
 
-export async function buildContext({ userId, conversationId, assistantId, clientScope, userText, historyLimit = 60, model = null }) {
+// Domínio que vem do CONTEXTO da conversa, não das palavras da mensagem.
+//
+// É o que resolve o caso que nenhuma palavra-chave resolve: "vamos continuar o
+// projeto" não tem um único termo de domínio, então o crivo ficava cego e
+// despejava o perfil inteiro do usuário. Duas fontes, nesta ordem:
+//
+//  1. `developerDomain` — a conversa está em modo desenvolvedor com repositório
+//     vinculado. É um fato estrutural, não um palpite: vale mais que qualquer
+//     contagem de palavra.
+//  2. As últimas mensagens do usuário NESTA conversa. Exige margem folgada
+//     (>=4 pontos e o dobro do segundo colocado) porque aqui um palpite errado
+//     contamina todo o resto.
+//
+// Não se usa o NOME do projeto de propósito: "SPED-HUB" é um projeto de
+// software cujo nome cai direto no dicionário contábil — classificá-lo por aí
+// puxaria exatamente a memória errada.
+async function conversationDomain(conversationId, developerDomain = null) {
+  if (developerDomain) return developerDomain;
+  if (!conversationId) return null;
+  try {
+    const rows = await db.prepare(
+      `SELECT content FROM messages WHERE conversation_id=? AND role='user'
+       ORDER BY created_at DESC, seq DESC LIMIT 12`).all(conversationId);
+    if (!rows.length) return null;
+    const { scores } = detectContentDomain(rows.map(r => r.content).join('\n').slice(0, 8000));
+    const ranked = Object.entries(scores).sort((a, b) => b[1] - a[1]);
+    const [top, second] = [ranked[0], ranked[1]];
+    if (!top || top[1] < 4) return null;
+    if (second && second[1] > 0 && top[1] < second[1] * 2) return null;
+    return top[0];
+  } catch {
+    return null;
+  }
+}
+
+export async function buildContext({ userId, conversationId, assistantId, clientScope, userText, historyLimit = 60, model = null, developerDomain = null }) {
   const settings = getSettings();
   const capInfo = modelContextCap(model);
   const budget = contextBudgetForModel(model, settings);
@@ -192,49 +240,78 @@ export async function buildContext({ userId, conversationId, assistantId, client
     memories: [],
     chunks: [],
     summaries: 0,
-    _memoryIds: new Set()
+    _memoryIds: new Set(),
+    _diagnostic: null
   };
 
   if (!settings.memory_enabled) return { blocks: [], meta: publicMeta(meta) };
 
   // Saudações e confirmações curtas não carregam sinal semântico suficiente.
-  // O histórico da conversa atual é anexado separadamente pelo agente.
   if (isLowSignalTurn(userText)) {
     meta.retrievalSkipped = 'low_signal';
     return { blocks: [], meta: publicMeta(meta) };
   }
+
+  // ─── Analise do prompt atual ───────────────────────────────────────
+  // Identifica intencao, dominio, projeto e entidades ANTES de buscar
+  // memorias/conversas. Esta analise guia toda a selecao abaixo. O dominio da
+  // CONVERSA entra junto, para que um pedido curto ("vamos continuar o
+  // projeto") nao fique sem assunto nenhum e desligue o crivo.
+  const contextDomain = await conversationDomain(conversationId, developerDomain);
+  const promptAnalysis = analyzePrompt(userText, { contextDomain });
+  meta.contextDomain = contextDomain;
 
   const scopes = unique(['global', 'office', assistantId, clientScope]);
   meta.scopes = scopes.map(scope => ({ scope, label: scopeLabel(scope) }));
   const ph = scopes.map(() => '?').join(',');
   const blocks = [];
 
-  // 1) Perfil, preferencias e fixadas: prioridade maxima.
-  const profile = await db.prepare(
+  // ─── Diagnostic log (candidatos) ──────────────────────────────────
+  const diagMemCandidates = [];
+  const diagChunkCandidates = [];
+  let diagDuplicatesRemoved = 0;
+
+  // ─── 1) Perfil, preferencias e fixadas — agora com crivo de relevancia ──
+  // ANTES: injetava TODAS as memorias de perfil/preferencia/pinned
+  // incondicionalmente, sem verificar se tinham relacao com o pedido.
+  // AGORA: cada memoria e pontuada pelo relevanceScorer; so entra se
+  // passar no threshold e na validacao semantica.
+  const profileRows = await db.prepare(
     `SELECT * FROM memory WHERE scope IN (${ph}) AND user_id=? AND (type IN ('perfil','preferencia') OR pinned=1)
      ORDER BY pinned DESC, importance DESC, updated_at DESC LIMIT 14`).all(...scopes, userId);
-  if (profile.length) {
-    blocks.push({
-      priority: 1,
-      text: `QUEM E O USUARIO (memoria de longo prazo; use quando relevante):\n${profile.map(fmtMem).join('\n')}`,
-      memories: profile.map(m => memoryMeta(m, 'perfil/preferencia/fixada'))
-    });
+
+  // NB: os blocos de memorias/conversas NAO sao empurrados aqui. Primeiro
+  // coletamos todos os itens incluidos e depois deduplicamos de verdade
+  // (em ordem de prioridade) antes de montar o texto — ver secao de dedup.
+  let profileIncluded = [];
+  for (const m of profileRows) {
+    const scoreResult = scoreMemory(m, promptAnalysis, 0); // sem similaridade semantica para perfil
+    const validation = validateRelevance(m.content, promptAnalysis, scoreResult);
+    diagMemCandidates.push({ id: m.id, type: m.type, content: m.content, scoreResult });
+    if (validation.valid && scoreResult.shouldInclude) {
+      profileIncluded.push({ ...m, _reason: scoreResult.reason, _score: scoreResult.score });
+    }
   }
 
-  // 2) Notas manuais dos escopos aplicaveis.
-  const profileIds = new Set(profile.map(p => p.id));
-  const manual = (await db.prepare(
+  // ─── 2) Notas manuais — tambem com crivo de relevancia ──────────────
+  const profileIds = new Set(profileRows.map(p => p.id));
+  const manualRows = (await db.prepare(
     `SELECT * FROM memory WHERE scope IN (${ph}) AND user_id=? AND type='manual' ORDER BY updated_at DESC LIMIT 15`).all(...scopes, userId))
     .filter(m => !profileIds.has(m.id));
-  if (manual.length) {
-    blocks.push({
-      priority: 2,
-      text: `NOTAS SALVAS PELO USUARIO:\n${manual.map(fmtMem).join('\n')}`,
-      memories: manual.map(m => memoryMeta(m, 'nota manual'))
-    });
+
+  let manualIncluded = [];
+  for (const m of manualRows) {
+    const scoreResult = scoreMemory(m, promptAnalysis, 0);
+    const validation = validateRelevance(m.content, promptAnalysis, scoreResult);
+    diagMemCandidates.push({ id: m.id, type: m.type, content: m.content, scoreResult });
+    if (validation.valid && scoreResult.shouldInclude) {
+      manualIncluded.push({ ...m, _reason: scoreResult.reason, _score: scoreResult.score });
+    }
   }
 
-  // 3) Resumo da conversa atual quando o inicio saiu da janela.
+  // ─── 3) Resumo da conversa atual (quando o inicio saiu da janela) ──
+  // Este e o resumo da CONVERSA ATUAL, nao de conversas antigas — sempre
+  // relevante para continuidade.
   const conv = await db.prepare('SELECT summary_long, summary_short FROM conversations WHERE id=? AND user_id=?').get(conversationId, userId);
   const msgCount = Number((await db.prepare('SELECT COUNT(*) c FROM messages WHERE conversation_id=?').get(conversationId))?.c || 0);
   if (msgCount > historyLimit && (conv?.summary_long || conv?.summary_short)) {
@@ -245,39 +322,105 @@ export async function buildContext({ userId, conversationId, assistantId, client
     });
   }
 
-  // 4) Memorias relevantes para a pergunta.
-  const seen = new Set([...profileIds, ...manual.map(m => m.id)]);
+  // ─── 4) Memorias relevantes para a pergunta (busca semantica) ──────
+  // ANTES: retornava ate `limit` memorias, preenchendo cota mesmo com
+  // resultados fracos. AGORA: cada memoria e pontuada e validada; so
+  // entram as que passam no crivo.
+  const seen = new Set([...profileIds, ...manualRows.map(m => m.id)]);
+  let relIncluded = [];
   try {
     const limit = Math.max(0, Math.min(Number(settings.max_memories) || 0, budget < 20000 ? 6 : 16));
-    const rel = limit ? (await searchMemories(userId, userText, { scopes, limit })).filter(m => !seen.has(m.id)) : [];
-    if (rel.length) {
-      blocks.push({
-        priority: 4,
-        text: `MEMORIAS RELEVANTES PARA ESTA PERGUNTA:\n${rel.map(fmtMem).join('\n')}`,
-        memories: rel.map(m => memoryMeta(m, 'busca semantica'))
-      });
+    const candidates = limit ? (await searchMemories(userId, userText, { scopes, limit: limit * 2 })).filter(m => !seen.has(m.id)) : [];
+    for (const m of candidates) {
+      // Usa a similaridade semantica retornada pela busca (_sim). O _simKind
+      // diz se veio de embedding (faixa comprimida do e5, precisa calibrar) ou
+      // da contagem de palavras do modo degradado (ja nasce em 0..1).
+      const semanticSim = m._sim || 0;
+      const scoreResult = scoreMemory(m, promptAnalysis, semanticSim, m._simKind);
+      const validation = validateRelevance(m.content, promptAnalysis, scoreResult);
+      diagMemCandidates.push({ id: m.id, type: m.type, content: m.content, scoreResult });
+      if (validation.valid && scoreResult.shouldInclude) {
+        relIncluded.push({ ...m, _reason: scoreResult.reason, _score: scoreResult.score });
+      }
     }
   } catch {}
 
-  // 5) Trechos de conversas antigas/importadas, com isolamento por cliente.
+  // ─── 5) Trechos de conversas antigas — com crivo SEPARADO ──────────
+  // ANTES: retornava ate `limit` chunks com threshold 0.3 e peso de
+  // recencia de 20%. AGORA: cada chunk e pontuado pelo scoreConversation
+  // (criterios diferentes de memorias), recortado se tiver assuntos mistos,
+  // e so entra se passar no threshold + validacao semantica.
   try {
     const chunkScopes = clientScope ? unique(['office', clientScope]) : unique(['global', 'office']);
     const limit = Math.max(0, Math.min(Number(settings.max_chunks) || 0, budget < 20000 ? 3 : 12));
-    const chunks = limit ? await searchChunks(userId, userText, { excludeConversationId: conversationId, scopes: chunkScopes, limit }) : [];
-    if (chunks.length) {
-      const txt = chunks
-        .map(c => `--- ${c.source_title || 'Conversa anterior'} (${(c.created_at || '').slice(0, 10)}) ---\n${sanitizeToolProtocolText(c.content)}`)
-        .join('\n');
-      blocks.push({
-        priority: 5,
-        text: `TRECHOS DE CONVERSAS ANTERIORES RELEVANTES (contexto recuperado automaticamente):\n${txt}`,
-        chunks: chunks.map(chunkMeta)
-      });
+    const chunkCandidates = limit ? await searchChunks(userId, userText, { excludeConversationId: conversationId, scopes: chunkScopes, limit: limit * 2 }) : [];
+    for (const c of chunkCandidates) {
+      const semanticSim = c._sim || 0;
+      const scoreResult = scoreConversation(c, promptAnalysis, semanticSim, c._simKind);
+      const validation = validateRelevance(c.content, promptAnalysis, scoreResult);
+      diagChunkCandidates.push({ id: c.id, source_title: c.source_title, content: c.content, scoreResult });
+      if (validation.valid && scoreResult.shouldInclude) {
+        // Recorta o trecho relevante se a conversa tem assuntos mistos
+        const snippet = extractRelevantSnippet(c.content, promptAnalysis, 800);
+        chunksIncluded.push({ ...c, _snippet: snippet, _reason: scoreResult.reason, _score: scoreResult.score });
+      }
     }
   } catch {}
 
-  // Orcamento: corta primeiro o menos importante. Nunca deixa o alvo configurado
-  // passar do teto automatico do modelo.
+  // ─── Deduplicacao REAL entre blocos ────────────────────────────────
+  // Em ordem de prioridade (perfil > notas > relevantes > conversas),
+  // descarta itens cujo conteudo essencial ja apareceu num bloco anterior.
+  // ANTES (bug): o resultado do dedup era descartado — so contava-se
+  // quantos seriam removidos — e as duplicatas continuavam indo ao modelo.
+  // AGORA: os proprios arrays sao filtrados antes de virar texto.
+  const dedupItems = [
+    ...profileIncluded.map((m, i) => ({ content: m.content, _b: 'p', _i: i })),
+    ...manualIncluded.map((m, i) => ({ content: m.content, _b: 'm', _i: i })),
+    ...relIncluded.map((m, i) => ({ content: m.content, _b: 'r', _i: i })),
+    ...chunksIncluded.map((c, i) => ({ content: c._snippet || c.content, _b: 'c', _i: i })),
+  ];
+  const survivors = deduplicateContext(dedupItems);
+  diagDuplicatesRemoved = dedupItems.length - survivors.length;
+  const keepSet = new Set(survivors.map(x => `${x._b}:${x._i}`));
+  profileIncluded = profileIncluded.filter((_, i) => keepSet.has(`p:${i}`));
+  manualIncluded = manualIncluded.filter((_, i) => keepSet.has(`m:${i}`));
+  relIncluded = relIncluded.filter((_, i) => keepSet.has(`r:${i}`));
+  chunksIncluded = chunksIncluded.filter((_, i) => keepSet.has(`c:${i}`));
+
+  // ─── Montagem dos blocos (apos dedup) ──────────────────────────────
+  if (profileIncluded.length) {
+    blocks.push({
+      priority: 1,
+      text: `QUEM E O USUARIO (memoria de longo prazo; use quando relevante):\n${profileIncluded.map(fmtMem).join('\n')}`,
+      memories: profileIncluded.map(m => memoryMeta(m, m._reason, m._score))
+    });
+  }
+  if (manualIncluded.length) {
+    blocks.push({
+      priority: 2,
+      text: `NOTAS SALVAS PELO USUARIO:\n${manualIncluded.map(fmtMem).join('\n')}`,
+      memories: manualIncluded.map(m => memoryMeta(m, m._reason, m._score))
+    });
+  }
+  if (relIncluded.length) {
+    blocks.push({
+      priority: 4,
+      text: `MEMORIAS RELEVANTES PARA ESTA PERGUNTA:\n${relIncluded.map(fmtMem).join('\n')}`,
+      memories: relIncluded.map(m => memoryMeta(m, m._reason, m._score))
+    });
+  }
+  if (chunksIncluded.length) {
+    const txt = chunksIncluded
+      .map(c => `--- ${c.source_title || 'Conversa anterior'} (${(c.created_at || '').slice(0, 10)}) ---\n${sanitizeToolProtocolText(c._snippet)}`)
+      .join('\n');
+    blocks.push({
+      priority: 5,
+      text: `TRECHOS DE CONVERSAS ANTERIORES RELEVANTES (contexto recuperado automaticamente):\n${txt}`,
+      chunks: chunksIncluded.map(c => chunkMeta({ ...c, content: c._snippet }, c._reason, c._score))
+    });
+  }
+
+  // ─── Orcamento: corta primeiro o menos importante ──────────────────
   const ordered = blocks.sort((a, b) => a.priority - b.priority);
   const kept = [];
   let used = 0;
@@ -287,9 +430,6 @@ export async function buildContext({ userId, conversationId, assistantId, client
     const t = estimateTokens(safeText);
     if (used + t > budget) {
       const remaining = budget - used;
-      // Bloco não cabe inteiro. Se ainda houver folga razoável, encaixa uma
-      // versão aparada dele; senão, pula ESTE bloco e segue tentando os
-      // próximos (menores) em vez de abandonar todos de uma vez.
       if (remaining > 800 && !meta.truncated) {
         kept.push(trimForTokens(safeText, remaining));
         used = budget;
@@ -306,5 +446,14 @@ export async function buildContext({ userId, conversationId, assistantId, client
   }
   meta.usedTokens = used;
   meta.blockCount = kept.length;
+
+  // ─── Log de diagnostico (modo dev) ─────────────────────────────────
+  meta._diagnostic = buildDiagnosticLog(promptAnalysis, diagMemCandidates, diagChunkCandidates, {
+    memories: meta.memories,
+    conversations: meta.chunks,
+    tokensUsed: used,
+    duplicatesRemoved: diagDuplicatesRemoved,
+  });
+
   return { blocks: kept, meta: publicMeta(meta) };
 }

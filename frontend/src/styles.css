@@ -12,7 +12,7 @@
 .mpBtn{display:flex;align-items:center;gap:8px;max-width:250px}
 .mpBtn .mpName{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mpPanel{position:absolute;right:0;top:calc(100% + 6px);width:min(380px,92vw);max-height:440px;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:0 14px 44px rgba(0,0,0,.4);z-index:60;overflow:hidden}
-.mpSearch{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line);color:var(--muted)}
+.mpSearch{flex:none;display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line);color:var(--muted)}
 .mpSearch input{flex:1;border:none;background:transparent;color:var(--text);font:inherit;outline:none}
 .mpList{overflow:auto;padding:6px}
 .mpEmpty{color:var(--muted);font-size:var(--fs-sm);text-align:center;padding:14px}
@@ -249,7 +249,11 @@
 .mpStar:hover{opacity:1;color:var(--warn)}
 .mpStar.on{opacity:1;color:var(--warn)}
 /* Família vira lista suspensa (mais fácil de usar que os chips espremidos) */
-.mpList{flex:1;min-height:300px}
+/* min-height:0 é o padrão correto de flexbox para um filho rolável: a lista
+   encolhe para caber no container e rola por DENTRO (com overflow:auto), em vez
+   de estourar e ser cortada pelo overflow:hidden do painel/ctxBody — era o bug
+   do "não consigo ver o catálogo" na aba Modelo do ContextPicker. */
+.mpList{flex:1;min-height:0}
 .mpPanel{max-height:min(560px,72vh)}
 /* Botão reenviar (mensagem que falhou) */
 .retryBtn{display:inline-flex;align-items:center;gap:7px;margin-top:8px;font-size:var(--fs-sm);font-weight:600;border:1px solid var(--accent);color:var(--accent);background:transparent;border-radius:var(--r-md);padding:7px 12px}
@@ -453,26 +457,35 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .mpSearch{min-height:48px}
 .mpSearchClear{flex:none;border:none;background:transparent;color:var(--muted);padding:4px;display:flex;border-radius:var(--r-sm)}
 .mpSearchClear:hover{color:var(--accent);background:var(--panel2)}
-.mpPrimaryControls{display:flex;align-items:end;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line)}
+.mpPrimaryControls{flex:none;display:flex;align-items:end;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line)}
 .mpPurposeField{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px;color:var(--muted);font-size:var(--fs-2xs);font-weight:800;letter-spacing:.05em;text-transform:uppercase}
 .mpPurposeField select{width:100%;min-width:0;border-radius:var(--r-sm);padding:8px 10px;font-size:var(--fs-sm);font-weight:600;letter-spacing:0;text-transform:none}
 .mpFilterToggle{height:35px;flex:none;display:inline-flex;align-items:center;justify-content:center;gap:6px;border-radius:var(--r-sm);padding:0 10px;font-size:var(--fs-xs);font-weight:700;color:var(--muted)}
 .mpFilterToggle:hover,.mpFilterToggle.on{border-color:var(--accent);color:var(--accent)}
 .mpFilterToggle b{min-width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;border-radius:var(--r-full);background:var(--accent);color:var(--on-accent);font-size:var(--fs-2xs);font-variant-numeric:tabular-nums}
-.mpViewTabs{display:flex;gap:2px;padding:7px 12px 0;border-bottom:1px solid var(--line)}
+.mpViewTabs{flex:none;display:flex;gap:2px;padding:7px 12px 0;border-bottom:1px solid var(--line)}
 .mpViewTabs button{flex:1;min-width:0;border:none;border-radius:var(--r-sm) var(--r-sm) 0 0;background:transparent;color:var(--muted);padding:8px 6px;font-size:var(--fs-xs);font-weight:700;white-space:nowrap}
 .mpViewTabs button:hover{background:var(--panel2);color:var(--text)}
 .mpViewTabs button.on{color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)}
 /* Filtros abertos rolam dentro de si (max-height) em vez de empurrar a lista
    para fora — era a principal causa do "painel espremido". */
-.mpAdvanced{padding:10px 12px 12px;border-bottom:1px solid var(--line);background:var(--panel2);max-height:42vh;overflow:auto}
-.mpAdvancedHead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;font-size:var(--fs-2xs);font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
-.mpAdvancedHead button{border:none;background:transparent;color:var(--accent);padding:0;font-size:var(--fs-xs);font-weight:700;text-transform:none;letter-spacing:0}
-.mpAdvancedFields{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+/* VISTA de filtros: substitui a lista enquanto aberta (nunca divide altura com
+   ela — era o que cortava o catálogo). Corpo rola como bloco único (rótulo e
+   campo juntos, sem rolagem interna que os separe); rodapé fixo com a ação
+   primária "Mostrar N modelos" — o filtro só fecha por ação explícita. */
+.mpFiltersView{flex:1;min-height:0;display:flex;flex-direction:column;background:var(--panel2)}
+.mpFiltersBody{flex:1;min-height:0;overflow:auto;padding:12px;display:flex;flex-direction:column;gap:12px}
+.mpFiltersFooter{flex:none;display:flex;gap:8px;padding:10px 12px;border-top:1px solid var(--line);background:var(--panel)}
+.mpFiltersApply{flex:1;height:40px;border:none;border-radius:var(--r-sm);background:var(--accent);color:var(--on-accent);font-size:var(--fs-xs);font-weight:800}
+.mpFiltersApply:hover{filter:brightness(1.08)}
+.mpFiltersClear{flex:none;height:40px;padding:0 14px;border:1px solid var(--line);border-radius:var(--r-sm);background:transparent;color:var(--muted);font-size:var(--fs-xs);font-weight:700}
+.mpFiltersClear:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+.mpFiltersClear:disabled{opacity:.45}
+.mpAdvancedFields{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px}
 .mpAdvancedFields label{display:flex;flex-direction:column;gap:4px;font-size:var(--fs-2xs);font-weight:700;color:var(--muted)}
 .mpAdvancedFields select{width:100%;min-width:0;border-radius:var(--r-sm);padding:7px 8px;font-size:var(--fs-xs);color:var(--text)}
-.mpFilterChecks{display:grid;grid-template-columns:1fr 1fr;gap:7px 10px;margin-top:10px}
-.mpFilterChecks label{display:flex;align-items:center;gap:7px;min-width:0;color:var(--text);font-size:var(--fs-xs);line-height:1.2}
+.mpFilterChecks{display:grid;grid-template-columns:1fr 1fr;gap:7px 10px}
+.mpFilterChecks label{display:flex;align-items:center;gap:7px;min-width:0;min-height:30px;color:var(--text);font-size:var(--fs-xs);line-height:1.2}
 .mpFilterChecks input{width:15px;height:15px;margin:0;accent-color:var(--accent);flex:none}
 .mpList{padding:6px 6px 10px}
 .mpPurposeHint{display:flex;flex-direction:column;gap:3px;padding:9px 10px 5px;color:var(--muted);font-size:var(--fs-xs);line-height:1.35}
@@ -531,6 +544,12 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .devActionRow .primary:disabled{cursor:not-allowed;opacity:.5}
 .devSessionBar{display:flex;align-items:center;gap:7px;margin:0 0 10px;border:1px solid var(--line);border-radius:var(--r-sm);background:rgba(79,140,255,.08);padding:7px 9px;color:var(--muted);font-size:var(--fs-xs)}
 .devSessionBar>svg{color:var(--accent);flex:none}.devSessionBar b{color:var(--accent);font-size:var(--fs-2xs)}.devSessionBar button{display:flex;align-items:center;justify-content:center;margin-left:auto;border:0;background:transparent;color:var(--muted);padding:3px;border-radius:var(--r-sm)}.devSessionBar button:hover{background:rgba(127,127,127,.12);color:var(--text)}
+.devGhActions{display:flex;align-items:center;gap:6px;margin-left:auto;flex-wrap:wrap;justify-content:flex-end}
+.devSessionBar .devGhBtn{margin-left:0;display:inline-flex;align-items:center;gap:5px;padding:5px 10px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--panel);color:var(--text);font-size:var(--fs-2xs);cursor:pointer;white-space:nowrap}
+.devSessionBar .devGhBtn:hover:not(:disabled){background:rgba(79,140,255,.12);border-color:var(--accent)}
+.devSessionBar .devGhBtn.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+.devSessionBar .devGhBtn.primary:hover:not(:disabled){filter:brightness(1.08)}
+.devSessionBar .devGhBtn:disabled{opacity:.55;cursor:default}
 @media(max-width:440px){
   .devModeTabs button{font-size:var(--fs-2xs);gap:4px}
   .devModeTabs button svg{width:14px;height:14px}
@@ -732,6 +751,8 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .devActItemText{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
 .devActItemText b{font-size:var(--fs-xs);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .devActItemText small{font-size:var(--fs-2xs);color:var(--muted);font-family:ui-monospace,Consolas,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Quem executou a etapa, quando não foi o agente principal (sub-agente). */
+.devActWho{font-size:var(--fs-2xs);color:var(--accent);opacity:.9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .devActChev{flex:none;margin-top:3px;color:var(--muted);transition:transform .15s}
 .devActChev.up{transform:rotate(180deg)}
 .devActSub{list-style:none;margin:2px 0 4px 29px;padding:0;display:flex;flex-direction:column;gap:1px;border-left:1px solid var(--line)}
@@ -837,7 +858,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .ctxBtnText{display:flex;flex-direction:column;align-items:flex-start;min-width:0;line-height:1.25}
 .ctxBtnText b{font-size:var(--fs-sm);font-weight:600;max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ctxBtnText small{font-size:var(--fs-2xs);color:var(--muted);max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ctxPanel{position:absolute;left:0;top:calc(100% + 6px);width:min(480px,calc(100vw - 24px));max-height:min(620px,78vh);display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:0 14px 44px rgba(0,0,0,.4);z-index:60;overflow:hidden}
+.ctxPanel{position:absolute;left:0;top:calc(100% + 6px);width:min(680px,calc(100vw - 24px));max-height:min(760px,86vh);display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:0 14px 44px rgba(0,0,0,.4);z-index:60;overflow:hidden}
 .ctxTabs{display:flex;gap:2px;padding:6px;border-bottom:1px solid var(--line);flex:none}
 .ctxTabs button{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;border:none;background:transparent;color:var(--muted);font-size:var(--fs-xs);font-weight:600;padding:8px 6px;border-radius:var(--r-sm);min-height:36px}
 .ctxTabs button:hover{background:var(--panel2);color:var(--text)}
@@ -891,6 +912,11 @@ input[type=checkbox]:focus-visible,input[type=radio]:focus-visible{outline-offse
    tokens sem espaço passam a quebrar; blocos de código e tabelas rolam dentro
    da própria caixa em vez de empurrar a página. */
 .msg{overflow-wrap:anywhere;word-break:break-word;min-width:0}
+/* Anti-estouro da mensagem: nunca ultrapassa a largura do container (o cap de
+   900px vira um teto, não uma largura fixa) e qualquer texto/token longo quebra.
+   min-width:0 corrige o bug clássico do flexbox (item não encolhe e vaza). */
+.msg{max-width:min(900px,100%);min-width:0;overflow-wrap:anywhere}
+.msg p,.msg li,.msg h1,.msg h2,.msg h3,.msg h4,.msg blockquote,.msg td,.msg th{overflow-wrap:anywhere;min-width:0}
 .msg pre{max-width:100%;overflow-x:auto;white-space:pre}
 .msg :not(pre)>code{overflow-wrap:anywhere;word-break:break-word;white-space:pre-wrap}
 .msg table{display:block;max-width:100%;overflow-x:auto}
@@ -989,6 +1015,13 @@ input[type=checkbox]:focus-visible,input[type=radio]:focus-visible{outline-offse
 .esStepText{display:flex;flex-direction:column;gap:2px;min-width:0}
 .esStepText b{font-size:var(--fs-xs);font-weight:600;line-height:1.3}
 .esStepText small{font-size:var(--fs-2xs);color:var(--muted);font-family:ui-monospace,Consolas,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Etapas executadas por um SUB-AGENTE: recuadas dentro da delegação que as
+   disparou, com um fio à esquerda ligando visualmente ao "dono" da ação. */
+.esStepSub{margin-left:14px;padding-left:10px;border-left:2px solid rgba(79,140,255,.28)}
+.esStepSub .esStep{padding-top:7px;padding-bottom:7px}
+.esStepWho{font-size:var(--fs-2xs);color:var(--accent);opacity:.9}
+.esDelegation{display:flex;flex-direction:column;gap:8px}
+.esDelegWho{display:flex;align-items:center;gap:6px;font-size:var(--fs-xs);color:var(--accent)}
 .esNext{display:flex;align-items:center;gap:8px;padding:9px 11px;color:var(--muted);font-size:var(--fs-xs);opacity:.8}
 .esNext svg{animation:spin 1.6s linear infinite}
 
@@ -1270,3 +1303,10 @@ input[type=checkbox]:focus-visible,input[type=radio]:focus-visible{outline-offse
 .syncRow b{min-width:120px}
 .syncRow span{color:var(--muted)}
 .syncRow.err span.err,.syncRow span.err{color:var(--danger,#e5484d);display:inline-flex;align-items:center;gap:4px}
+
+/* Versões agrupadas do mesmo modelo (deduplicação): a principal aparece na
+   lista; as anteriores ficam atrás de "Ver outras versões". */
+.mpVersionsToggle{display:block;width:100%;text-align:left;border:none;background:transparent;color:var(--accent);font-size:var(--fs-2xs);font-weight:700;padding:2px 10px 8px 46px;cursor:pointer}
+.mpVersionsToggle:hover{text-decoration:underline}
+.mpVersionsHint{color:var(--muted);font-weight:600}
+.mpItemVersion{margin-left:26px;opacity:.88;border-left:2px solid var(--line);padding-left:8px}

@@ -415,12 +415,12 @@ function chownTree(dir) {
   });
 }
 
-function repoRoot(conversationId) {
-  return path.join(workspaceFor(conversationId).base, 'repo');
+function repoRoot(userId, conversationId) {
+  return path.join(workspaceFor(conversationId, userId).base, 'repo');
 }
 
-function cloneDirFor(conversationId, fullName) {
-  return path.join(repoRoot(conversationId), repoDirName(fullName));
+function cloneDirFor(userId, conversationId, fullName) {
+  return path.join(repoRoot(userId, conversationId), repoDirName(fullName));
 }
 
 async function currentBranch(dir) {
@@ -432,17 +432,50 @@ function toolError(error, extra = {}) {
   return { error, recoverable: true, ...extra };
 }
 
+// Erro clássico de CA/TLS ausente: o git do backend não confia no certificado do
+// github.com (falta ca-certificates na imagem). É o que dispara o reflexo do
+// modelo de tentar GIT_SSL_NO_VERIFY. Não é transitório — é config do servidor.
+const TLS_CERT_RE = /SSL certificate problem|unable to get local issuer certificate|server certificate verification failed|self.signed certificate|CERTIFICATE_VERIFY_FAILED|SSL_ERROR|schannel|certificate has expired/i;
+// git ausente no servidor (ENOENT) — também config, não adianta insistir.
+const GIT_MISSING_RE = /não está instalado|not installed|ENOENT/i;
+
+// Nota anexada a TODA falha de operação de rede do GitHub: impede o modelo de
+// "contornar" com caminhos que NUNCA funcionam (o sandbox não tem rede nem o
+// token) e que só queimam ciclos/limite de pesquisa — foi o loop de 7 min com
+// git clone no bash + abrir o github.com no navegador visto em produção.
+const NO_WORKAROUND_NOTE = 'IMPORTANTE: o acesso ao GitHub é feito SÓ por estas ferramentas (github_clone/github_push/github_create_pr), que rodam no backend com a autenticação do app. NÃO tente contornar: "git clone"/"git pull"/"git push" pelo bash do sandbox NÃO funcionam (sem rede e sem credenciais), GIT_SSL_NO_VERIFY não resolve, e abrir github.com no navegador (web_fetch) para ler o código também não. Se a operação falhou, RELATE a falha ao usuário de forma objetiva e PARE — não fique tentando alternativas.';
+
+// PURA (testável): uma falha de git em rede (clone/fetch/push) é de
+// CONFIGURAÇÃO DO SERVIDOR — em que insistir (ou contornar pelo bash/navegador)
+// nunca resolve? Devolve 'tls' (git sem ca-certificates), 'git-missing' (git
+// ausente/ENOENT) ou null (falha comum: rede, auth, conflito — tratada à parte).
+export function serverConfigGitFailure(detail) {
+  const s = String(detail || '');
+  if (TLS_CERT_RE.test(s)) return 'tls';
+  if (GIT_MISSING_RE.test(s)) return 'git-missing';
+  return null;
+}
+
+// Mensagem de ferramenta (com o aviso anti-contorno) para uma falha de
+// configuração do servidor. `verb` só ajusta o texto (clone/atualização/push).
+function serverConfigGitError(kind, verb = 'clone') {
+  const cause = kind === 'tls'
+    ? `erro de certificado TLS: o git do servidor não confia no certificado do github.com — falta o pacote ca-certificates na imagem do backend. O administrador precisa reconstruir a imagem do backend (com ca-certificates) e reiniciar`
+    : `o git não está disponível no servidor. O administrador precisa reconstruir a imagem do backend`;
+  return toolError(`A ${verb === 'clone' ? 'clonagem' : verb === 'push' ? 'publicação (push)' : 'atualização'} falhou por ${cause}. É uma falha de CONFIGURAÇÃO DO SERVIDOR. ${NO_WORKAROUND_NOTE}`, { recoverable: false });
+}
+
 const NOT_CONNECTED =
   'O GitHub não está conectado. Peça ao usuário para conectar a conta em Configurações → Conectores (token do GitHub).';
 
 // ---- Implementação das ferramentas ----
 
-async function githubClone(conn, conversationId, args, signal) {
+async function githubClone(conn, userId, conversationId, args, signal) {
   const fullName = String(args.repo || '').trim();
   if (!isValidRepoFullName(fullName)) return toolError('Nome de repositório inválido — use o formato owner/repositorio (ex.: fulano/meu-app).');
   const branch = String(args.branch || '').trim();
   if (branch && !isValidBranchName(branch)) return toolError(`Nome de branch inválido: "${branch}".`);
-  const dir = cloneDirFor(conversationId, fullName);
+  const dir = cloneDirFor(userId, conversationId, fullName);
   const sandboxPath = `/workspace/repo/${repoDirName(fullName)}`;
 
   if (fs.existsSync(path.join(dir, '.git'))) {
@@ -453,7 +486,12 @@ async function githubClone(conn, conversationId, args, signal) {
       return toolError(`A pasta ${sandboxPath} já contém outro repositório (${url || 'desconhecido'}). Use o nome correto ou uma nova conversa.`);
     }
     const fetch_ = await runGit(dir, ['fetch', 'origin', '--prune'], { token: conn.token, timeoutMs: CLONE_TIMEOUT_MS, signal });
-    if (fetch_.code !== 0) return toolError(`Não consegui atualizar o repositório: ${fetch_.stderr || fetch_.stdout}`.trim());
+    if (fetch_.code !== 0) {
+      const upErr = `${fetch_.stderr || fetch_.stdout || ''}`.trim();
+      const cfg = serverConfigGitFailure(upErr);
+      if (cfg) return serverConfigGitError(cfg, 'fetch');
+      return toolError(`Não consegui atualizar o repositório: ${upErr}\n\n${NO_WORKAROUND_NOTE}`);
+    }
     if (branch) {
       const sw = await runGit(dir, ['checkout', branch], { signal });
       if (sw.code !== 0) {
@@ -470,7 +508,7 @@ async function githubClone(conn, conversationId, args, signal) {
     const pull = upstream.code === 0
       ? await runGit(dir, ['pull', '--ff-only', 'origin'], { token: conn.token, timeoutMs: CLONE_TIMEOUT_MS, signal })
       : { code: 0, stderr: '' };
-    await chownTree(repoRoot(conversationId));
+    await chownTree(repoRoot(userId, conversationId));
     const atualBranch = await currentBranch(dir);
     return {
       ok: true,
@@ -483,13 +521,13 @@ async function githubClone(conn, conversationId, args, signal) {
     };
   }
 
-  fs.mkdirSync(repoRoot(conversationId), { recursive: true });
+  fs.mkdirSync(repoRoot(userId, conversationId), { recursive: true });
   const cloneArgs = ['clone', ...(branch ? ['--branch', branch, '--single-branch'] : []), `https://github.com/${fullName}.git`, dir];
-  let clone = await runGit(repoRoot(conversationId), cloneArgs, { token: conn.token, timeoutMs: CLONE_TIMEOUT_MS, signal });
+  let clone = await runGit(repoRoot(userId, conversationId), cloneArgs, { token: conn.token, timeoutMs: CLONE_TIMEOUT_MS, signal });
   let createdBranch = false;
   if (clone.code !== 0 && branch && /Remote branch .* not found|Could not find remote branch/i.test(clone.stderr)) {
     // Branch pedida ainda não existe no GitHub: clona a padrão e cria a branch.
-    clone = await runGit(repoRoot(conversationId), ['clone', `https://github.com/${fullName}.git`, dir], { token: conn.token, timeoutMs: CLONE_TIMEOUT_MS, signal });
+    clone = await runGit(repoRoot(userId, conversationId), ['clone', `https://github.com/${fullName}.git`, dir], { token: conn.token, timeoutMs: CLONE_TIMEOUT_MS, signal });
     if (clone.code === 0) {
       const nb = await runGit(dir, ['checkout', '-b', branch], { signal });
       createdBranch = nb.code === 0;
@@ -497,19 +535,24 @@ async function githubClone(conn, conversationId, args, signal) {
   }
   if (clone.code !== 0) {
     const detail = (clone.stderr || clone.stdout || '').trim().slice(0, 400);
+    // Falhas de CONFIGURAÇÃO DO SERVIDOR ou de CREDENCIAL: insistir (ou tentar
+    // pelo bash/navegador) não resolve. Marcadas recoverable:false para o freio
+    // de falhas do loop parar rápido, em vez de o modelo flailar por minutos.
+    const cfg = serverConfigGitFailure(detail);
+    if (cfg) return serverConfigGitError(cfg, 'clone');
     if (/Authentication failed|could not read Username|403/i.test(detail)) {
-      return toolError('O GitHub recusou a autenticação para este repositório. O token conectado precisa de acesso de leitura/escrita a ele (escopo "repo").');
+      return toolError(`O GitHub recusou a autenticação para este repositório. O token conectado precisa de acesso de leitura/escrita a ele (escopo "repo"). ${NO_WORKAROUND_NOTE}`, { recoverable: false });
     }
     if (/not found|Repository not found/i.test(detail)) {
-      return toolError(`Repositório ${fullName} não encontrado — confira o nome e se o token tem acesso a ele.`);
+      return toolError(`Repositório ${fullName} não encontrado — confira o nome e se o token tem acesso a ele. ${NO_WORKAROUND_NOTE}`, { recoverable: false });
     }
-    return toolError(`O clone falhou: ${detail}`);
+    return toolError(`O clone falhou: ${detail}\n\n${NO_WORKAROUND_NOTE}`);
   }
   // Identidade local do git: os commits feitos pelo modelo (no sandbox) e pelo
   // github_push saem em nome da conta conectada, com o e-mail noreply do GitHub.
   await runGit(dir, ['config', 'user.name', conn.name || conn.login || 'Frederico AI Studio']);
   await runGit(dir, ['config', 'user.email', `${conn.login || 'frederico-ai'}@users.noreply.github.com`]);
-  await chownTree(repoRoot(conversationId));
+  await chownTree(repoRoot(userId, conversationId));
   const atual = await currentBranch(dir);
   return {
     ok: true,
@@ -521,10 +564,10 @@ async function githubClone(conn, conversationId, args, signal) {
   };
 }
 
-async function githubPush(conn, conversationId, args, signal) {
+async function githubPush(conn, userId, conversationId, args, signal) {
   const fullName = String(args.repo || '').trim();
   if (!isValidRepoFullName(fullName)) return toolError('Informe o repositório no formato owner/repositorio.');
-  const dir = cloneDirFor(conversationId, fullName);
+  const dir = cloneDirFor(userId, conversationId, fullName);
   if (!fs.existsSync(path.join(dir, '.git'))) return toolError(`O repositório ${fullName} ainda não foi clonado nesta conversa. Chame github_clone primeiro.`);
   const targetBranch = String(args.branch || '').trim();
   if (targetBranch && !isValidBranchName(targetBranch)) return toolError(`Nome de branch inválido: "${targetBranch}".`);
@@ -550,16 +593,18 @@ async function githubPush(conn, conversationId, args, signal) {
   }
 
   const push = await runGit(dir, ['push', 'origin', `HEAD:refs/heads/${branch}`], { token: conn.token, signal });
-  await chownTree(repoRoot(conversationId));
+  await chownTree(repoRoot(userId, conversationId));
   if (push.code !== 0) {
     const detail = (push.stderr || push.stdout || '').trim().slice(0, 400);
+    const cfg = serverConfigGitFailure(detail);
+    if (cfg) return serverConfigGitError(cfg, 'push');
     if (/non-fast-forward|fetch first|rejected/i.test(detail)) {
       return toolError(`O GitHub rejeitou o push (a branch "${branch}" avançou por fora). Rode github_clone de novo para atualizar (ou envie para outra branch) e tente outra vez.`);
     }
     if (/Authentication failed|403|permission/i.test(detail)) {
-      return toolError('O token conectado não tem permissão de escrita neste repositório (escopo "repo" com acesso de escrita).');
+      return toolError(`O token conectado não tem permissão de escrita neste repositório (escopo "repo" com acesso de escrita). ${NO_WORKAROUND_NOTE}`, { recoverable: false });
     }
-    return toolError(`O push falhou: ${detail}`);
+    return toolError(`O push falhou: ${detail}\n\n${NO_WORKAROUND_NOTE}`);
   }
   const sha = await runGit(dir, ['rev-parse', '--short', 'HEAD'], { signal });
   return {
@@ -571,12 +616,12 @@ async function githubPush(conn, conversationId, args, signal) {
   };
 }
 
-async function githubCreatePr(conn, conversationId, args, signal) {
+async function githubCreatePr(conn, userId, conversationId, args, signal) {
   const fullName = String(args.repo || '').trim();
   if (!isValidRepoFullName(fullName)) return toolError('Informe o repositório no formato owner/repositorio.');
   const title = String(args.title || '').trim();
   if (!title) return toolError('Informe o título do Pull Request.');
-  const dir = cloneDirFor(conversationId, fullName);
+  const dir = cloneDirFor(userId, conversationId, fullName);
   let head = String(args.head || '').trim();
   if (!head && fs.existsSync(path.join(dir, '.git'))) head = (await currentBranch(dir)) || '';
   if (!head || !isValidBranchName(head)) return toolError('Não consegui identificar a branch de origem (head). Informe o parâmetro head.');
@@ -614,9 +659,9 @@ export async function runGithubTool(name, args = {}, { userId, conversationId, s
       if (r.error) return toolError(r.error);
       return { account: conn.login, repos: r.repos.slice(0, 60) };
     }
-    if (name === 'github_clone') return await githubClone(conn, conversationId, args, signal);
-    if (name === 'github_push') return await githubPush(conn, conversationId, args, signal);
-    if (name === 'github_create_pr') return await githubCreatePr(conn, conversationId, args, signal);
+    if (name === 'github_clone') return await githubClone(conn, userId, conversationId, args, signal);
+    if (name === 'github_push') return await githubPush(conn, userId, conversationId, args, signal);
+    if (name === 'github_create_pr') return await githubCreatePr(conn, userId, conversationId, args, signal);
   } catch (e) {
     return toolError(`Falha inesperada na integração com o GitHub: ${scrubSecrets(e.message, conn.token).slice(0, 300)}`);
   }

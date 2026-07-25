@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { uploadErrorFor, scanWarningFor } from '../uploadFeedback.js';
 import { API } from '../constants.js';
 
 // Upload de anexos (botão, arrastar-e-soltar, colar e câmera) + exclusão.
@@ -38,13 +39,22 @@ export function useFileUploads({ current, ensureConversation, loadFiles, showToa
       filesToUpload.forEach(f => fd.append('files', f));
       const res = await fetch(`${API}/api/conversations/${conv.id}/upload`, { method: 'POST', body: fd });
       const d = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(d.error || '');
+      // O backend agora recusa envios grandes/simultâneos demais com um `code`
+      // próprio. Sem isto, o usuário recebia a mensagem genérica de "máx. 50 MB"
+      // mesmo quando o problema era outro (total do lote, cota ou concorrência).
+      if (!res.ok) throw new Error(d.error || uploadErrorFor(res.status));
       await loadFiles(conv.id);
       if (d.rejected?.length) {
         showToast(`🛡️ Antivírus: ${d.rejected.length} arquivo(s) recusado(s) por conter ameaça: ${d.rejected.map(r => r.name).join(', ')}`);
+      } else if (scanWarningFor(d.scanStatus, filesToUpload.length)) {
+        // Honestidade sobre a verificação: o antivírus estava fora do ar e o
+        // arquivo passou SEM análise. Antes isso era silencioso — o usuário só
+        // não via o selo e supunha que estava tudo certo.
+        showToast(scanWarningFor(d.scanStatus, filesToUpload.length), 'warn');
       } else if (source !== 'input') {
         showToast(`${filesToUpload.length} arquivo(s) anexado(s)${d.scanned ? ' e verificado(s) pelo antivírus ✓' : ''}.`, 'ok');
       }
+      // O selo "✓ verificado" só aparece quando o antivírus REALMENTE analisou.
       if (d.scanned && !d.rejected?.length) {
         setScanOk(true);
         setTimeout(() => setScanOk(false), 5000);
@@ -56,7 +66,7 @@ export function useFileUploads({ current, ensureConversation, loadFiles, showToa
     try {
       return await task;
     } catch (err) {
-      showToast(err?.message || 'Falha no envio do arquivo. Verifique o tamanho (máx. 50 MB) e tente de novo.');
+      showToast(err?.message || uploadErrorFor(0));
       return [];
     } finally {
       pendingUploads.current.delete(task);

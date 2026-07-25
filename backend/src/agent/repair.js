@@ -62,10 +62,26 @@ export function endsAwaitingUserReply(text) {
   return tail.endsWith('?');
 }
 
+// Uma resposta CONCLUSIVA: tem corpo substancial e não está adiando o trabalho
+// ("vou gerar...", "próximo passo..."). Usada para não descartar uma resposta
+// legítima só porque nenhuma ferramenta foi chamada numa tarefa que a heurística
+// de palavras marcou como "de execução".
+export function answerLooksConclusive(text) {
+  const s = withoutSystemNotices(String(text || '')).trim();
+  if (s.length < 600) return false;                 // curta demais p/ ser entrega final
+  if (DEFERRED_EXECUTION_RE.test(s)) return false;  // está prometendo/adiando trabalho
+  return true;
+}
+
 export function shouldRepairExecution({ requiresExecution, requiresOutput, toolsAvailable, executedToolCalls, outputsBefore, outputsAfter, responseText }) {
   if (!requiresExecution || !toolsAvailable) return false;
   const createdOutput = outputsAfter.some(file => outputsBefore.get(file.path) !== fileSignature(file));
+  // Arquivo genuinamente esperado e não criado → repara (garantia de entrega).
   if (requiresOutput && !createdOutput) return true;
+  // Sem arquivo esperado: se o modelo entregou uma resposta conclusiva e
+  // substancial (sem prometer fazer depois), respeita — não descarta o texto só
+  // porque nenhuma ferramenta foi chamada. Evita o "a resposta some e reaparece".
+  if (answerLooksConclusive(responseText)) return false;
   if (!executedToolCalls) return true;
   return DEFERRED_EXECUTION_RE.test(String(responseText || ''));
 }
@@ -100,11 +116,11 @@ export function textOutputPathFromClaim(text) {
   return relative.startsWith('outputs/') ? relative : null;
 }
 
-export function materializeTextOutput(conversationId, text) {
+export function materializeTextOutput(userId, conversationId, text) {
   const relative = textOutputPathFromClaim(text);
   if (!relative) return null;
   if (path.posix.dirname(relative) !== 'outputs') return null;
-  const ws = workspaceFor(conversationId);
+  const ws = workspaceFor(conversationId, userId);
   const outputRoot = path.resolve(ws.outputs);
   const target = path.resolve(ws.base, ...relative.split('/'));
   if (!target.startsWith(outputRoot + path.sep) || fs.existsSync(target)) return null;

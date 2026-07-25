@@ -91,3 +91,80 @@ test('clamd fora do ar + CLAMAV_REQUIRED=true recusa o envio com 503', async () 
     delete process.env.CLAMAV_TIMEOUT_MS;
   }
 });
+
+// ---- Política explícita e honestidade do selo "verificado" (auditoria 2026-07)
+
+test('scanPolicy descreve o modo vigente (desligado / obrigatório / degradável)', async () => {
+  const { scanPolicy } = await import('./clamav.js');
+  delete process.env.CLAMAV_HOST;
+  assert.equal(scanPolicy().mode, 'desligado');
+  assert.equal(scanPolicy().enabled, false);
+
+  process.env.CLAMAV_HOST = '127.0.0.1';
+  delete process.env.CLAMAV_REQUIRED;
+  assert.equal(scanPolicy().mode, 'degradavel');
+  assert.match(scanPolicy().descricao, /NÃO VERIFICADO/);
+
+  process.env.CLAMAV_REQUIRED = 'true';
+  assert.equal(scanPolicy().mode, 'obrigatorio');
+  assert.match(scanPolicy().descricao, /fail-closed/);
+
+  delete process.env.CLAMAV_HOST;
+  delete process.env.CLAMAV_REQUIRED;
+});
+
+test('o lote NUNCA se declara "verificado" quando o antivírus não analisou', async () => {
+  // Desligado: status 'sem-antivirus' — não é "verificado".
+  delete process.env.CLAMAV_HOST;
+  const desligado = await scanUploadBatch([{ originalname: 'a.txt', buffer: Buffer.from('x') }]);
+  assert.equal(desligado.status, 'sem-antivirus');
+  assert.equal(desligado.scanned, false);
+
+  // Fora do ar em modo degradável: status 'degradado' — o arquivo passa, mas a
+  // interface tem de dizer que ele NÃO foi verificado.
+  process.env.CLAMAV_HOST = '127.0.0.1';
+  process.env.CLAMAV_PORT = '1';
+  process.env.CLAMAV_TIMEOUT_MS = '1000';
+  try {
+    const degradado = await scanUploadBatch([{ originalname: 'a.txt', buffer: Buffer.from('x') }]);
+    assert.equal(degradado.status, 'degradado');
+    assert.equal(degradado.scanned, false);
+    assert.equal(degradado.clean.length, 1);
+  } finally {
+    delete process.env.CLAMAV_HOST;
+    delete process.env.CLAMAV_PORT;
+    delete process.env.CLAMAV_TIMEOUT_MS;
+  }
+
+  // Analisado de verdade: aí sim, 'verificado'.
+  process.env.CLAMAV_HOST = '127.0.0.1';
+  process.env.CLAMAV_PORT = String(port);
+  try {
+    const ok = await scanUploadBatch([{ originalname: 'a.txt', buffer: Buffer.from('inofensivo') }]);
+    assert.equal(ok.status, 'verificado');
+    assert.equal(ok.scanned, true);
+  } finally {
+    delete process.env.CLAMAV_HOST;
+    delete process.env.CLAMAV_PORT;
+  }
+});
+
+test('arquivo em DISCO é escaneado por streaming (sem carregar na RAM)', async () => {
+  const { scanFilePath } = await import('./clamav.js');
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fred-clamav-'));
+  const limpo = path.join(dir, 'limpo.bin');
+  const sujo = path.join(dir, 'sujo.bin');
+  fs.writeFileSync(limpo, Buffer.alloc(300 * 1024, 'a')); // > 1 bloco de 64 KB
+  fs.writeFileSync(sujo, Buffer.concat([Buffer.alloc(100 * 1024, 'b'), Buffer.from('EICAR')]));
+  try {
+    assert.equal((await scanFilePath(limpo, opts)).clean, true);
+    const infectado = await scanFilePath(sujo, opts);
+    assert.equal(infectado.clean, false);
+    assert.equal(infectado.virus, 'Eicar-Test-Signature');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

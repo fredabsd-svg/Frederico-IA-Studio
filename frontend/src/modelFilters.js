@@ -49,9 +49,13 @@ export function filterModels(models, filters = {}) {
     if (filters.context === '32k' && Number(model.context || 0) < 32_000) return false;
     if (filters.context === '100k' && Number(model.context || 0) < 100_000) return false;
     if (filters.context === '1m' && Number(model.context || 0) < 1_000_000) return false;
-    // Classificação mínima (ex.: 'A+' mostra A+, S e S+). Sem selo → fica de fora.
+    // Classificação: EXATA por padrão ('A' mostra só A). O prefixo '>=' pede a
+    // variante "ou acima" ('>=A' mostra A, A+, S e S+). Sem selo → fica de fora.
     if (filters.tier && filters.tier !== 'all') {
-      if (tierScore(tierOf(model)) < tierScore(filters.tier)) return false;
+      const modelTier = tierOf(model);
+      if (filters.tier.startsWith('>=')) {
+        if (tierScore(modelTier) < tierScore(filters.tier.slice(2))) return false;
+      } else if (modelTier !== filters.tier) return false;
     }
     // Modalidade (multimodal / texto / gera imagem·áudio·vídeo / lê imagens).
     if (filters.modality && filters.modality !== 'all' && !matchesModality(model, filters.modality)) return false;

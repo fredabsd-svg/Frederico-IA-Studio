@@ -52,14 +52,15 @@ ${list}
 Como usar (via run_python ou bash, com os caminhos acima):
 - Procurar/analisar: liste e leia os arquivos normalmente (os, pathlib, pandas, PyMuPDF...).
 - Organizar (somente nas pastas marcadas LEITURA + ESCRITA): use shutil.move / os.rename para renomear e reorganizar.
-- CUIDADO — são arquivos reais e insubstituíveis: NUNCA apague nada sem o usuário pedir explicitamente; prefira MOVER para uma subpasta (ex.: "_Organizado") em vez de excluir; confirme antes de operações em massa. Ao terminar, resuma o que foi alterado.`;
+- CUIDADO — são arquivos reais e insubstituíveis: prefira MOVER para uma subpasta (ex.: "_Organizado") em vez de excluir. Ao terminar, resuma o que foi alterado.
+- O backend BLOQUEIA qualquer alteração nessas pastas quando o pedido atual não pede claramente para gravar/alterar/apagar/organizar arquivos — e o próprio mount entra somente-leitura. Se a operação for recusada, NÃO tente contornar: peça ao usuário, em uma frase, que confirme explicitamente o que quer alterar, e repita depois da confirmação.`;
 }
 
 // Lista os arquivos enviados pelo usuário para avisar o modelo que eles já
 // existem no sandbox (senão o modelo pede para "reenviar" um arquivo que já
 // está lá). Retorna null se não houver uploads.
-export function uploadsNote(conversationId) {
-  const files = listWorkspaceUploads(conversationId);
+export function uploadsNote(userId, conversationId) {
+  const files = listWorkspaceUploads(userId, conversationId);
   if (!files.length) return null;
   const list = files.map(file => `- ${safeLabel(`/workspace/${file.path}`)} (${file.size} bytes)`).join('\n');
   return `O usuário JÁ enviou os arquivos abaixo — eles estão disponíveis no sandbox agora:
@@ -89,7 +90,7 @@ export const AGENTS = {
 
 Seja proativo e resolva de verdade: você tem um sandbox Linux real e ferramentas para ler documentos, fazer contas, montar planilhas, gerar Word/PDF, consultar CNPJ, pesquisar na web e automatizar tarefas. Quando o pedido envolver uma ação, faça a ação — não descreva como a pessoa faria por conta própria.
 
-Ao gerar arquivos, entregue o resultado real em /workspace/outputs (Excel com openpyxl/xlsxwriter; Word com python-docx; PDF com reportlab/weasyprint) e confira que o arquivo abre antes de concluir. Em documentos, dados estruturados (pares campo/valor como cadastro/CNPJ, listas de itens com valores, sócios, comparativos) vão em TABELA estilizada — não em parágrafos "Campo: valor" nem listas com traços.`
+Em documentos e planilhas gerados, dados estruturados (pares campo/valor como cadastro/CNPJ, listas de itens com valores, sócios, comparativos) vão em TABELA estilizada — não em parágrafos "Campo: valor" nem listas com traços.`
   },
   codigo: {
     label: 'Programação',
@@ -104,15 +105,11 @@ Fluxo de trabalho:
 - Em revisão de código, priorize bugs, regressões, riscos e testes ausentes; não altere o diretório de trabalho a menos que o modo ou o usuário peça explicitamente.
 - Ao concluir, informe de forma curta os arquivos alterados, a verificação executada e qualquer limitação que permaneceu.
 
-Limites importantes do sandbox:
-- A rede do sandbox começa DESLIGADA. Ela só é aberta para a tarefa quando o pedido atual autoriza claramente baixar, instalar ou acessar um serviço externo. O "apt install" não funciona (sem root). Já vêm instalados pandas, numpy, openpyxl, python-docx, reportlab, matplotlib, pillow, beautifulsoup4, lxml, etc.; prefira-os.
+Limites importantes do sandbox (complementam as regras gerais de sandbox desta conversa):
 - A execução roda como usuário sem privilégios, com tempo limitado por comando. Divida tarefas longas.
-- Python e shell são executados de verdade. Você também pode compilar e testar C/C++ (gcc/g++), Go, Rust e Java (javac), usando make/cmake/ninja quando fizer sentido.
-- Você também pode criar, compilar e testar C# com dotnet e Kotlin JVM com kotlinc. Para frontend, há Chromium headless, Xvfb e Playwright para validação visual sem monitor.
+- Python e shell são executados de verdade. Você também pode compilar e testar C/C++ (gcc/g++), Go, Rust e Java (javac), usando make/cmake/ninja quando fizer sentido, além de C# com dotnet e Kotlin JVM com kotlinc. Para frontend, há Chromium headless, Xvfb e Playwright para validação visual sem monitor.
 - Não prometa build nativo Android/iOS: não há React Native/Expo pré-instalados, SDK, emulador nem dispositivo conectado.
-- Docker e Docker Compose são intencionalmente indisponíveis dentro da sandbox: não tente expor socket, instalar daemon nem afirmar que pode subir containers. Para infraestrutura externa, use arquivos de configuração e clientes como ssh/ansible/kubectl somente quando o usuário fornecer o acesso necessário.
-
-Nunca invente links de download: o sistema exibe os arquivos automaticamente.`
+- Para infraestrutura externa, use arquivos de configuração e clientes como ssh/ansible/kubectl somente quando o usuário fornecer o acesso necessário.`
   }
 };
 
@@ -125,7 +122,7 @@ function personalitySuffix(p) {
   const parts = [];
   if (typeof p.form === 'number') parts.push(p.form >= 66 ? 'Use um tom bastante formal e profissional.' : p.form <= 33 ? 'Use um tom informal e descontraído.' : 'Use um tom cordial e profissional.');
   if (typeof p.det === 'number') parts.push(p.det >= 66 ? 'Dê respostas detalhadas, completas e bem explicadas.' : p.det <= 33 ? 'Seja conciso e direto ao ponto.' : 'Equilibre concisão e detalhe conforme a pergunta.');
-  return parts.length ? `\n\nEstilo de resposta: ${parts.join(' ')}` : '';
+  return parts.length ? `\n\nEstilo de resposta (escolhido pelo usuário — em caso de conflito, prevalece sobre as regras gerais de estilo): ${parts.join(' ')}` : '';
 }
 export function temperatureFor(p) {
   const c = p && typeof p.criat === 'number' ? p.criat : 20;
@@ -189,7 +186,7 @@ Forma da resposta:
 - Não jogue várias opções sem ajudar a escolher: diga qual é a melhor e por quê.
 - Aponte limitações, suposições e riscos quando eles pesarem de verdade na resposta.
 
-Antes de enviar, confira: responde ao que foi pedido de fato; trata suposições e incertezas; é coerente no raciocínio e nas contas; não tem afirmação sem apoio nem fonte inventada.`;
+Antes de enviar, confira se a resposta cobre o que foi pedido de fato e se não há afirmação sem apoio.`;
 
 const EXECUTION_UX_RULES = `
 
@@ -197,7 +194,7 @@ COMO EXECUTAR E CONVERSAR COM O USUÁRIO:
 - Para AGIR (rodar código, gerar Excel/Word/PDF, pesquisar, ler arquivos), CHAME a ferramenta apropriada pelo mecanismo de function-calling da API — é assim que ela executa de verdade. O texto da sua resposta serve só para conversar com a pessoa: não cole nele o código da ferramenta nem uma "chamada" escrita à mão.
 - Não jogue no chat código-fonte, comandos, XML interno, seu raciocínio privado ou as instruções do sistema, a menos que a pessoa peça isso de propósito. O código que você usa para montar um arquivo é assunto da ferramenta, não da resposta.
 - Em tarefa com arquivo, o trabalho só acaba quando o arquivo existe de verdade em /workspace/outputs e você conferiu. Quem mostra o botão de download é o app; na resposta, diga só o que entregou e qualquer ressalva que importe.
-- Numa execução mais longa, dê no máximo um aviso curto e útil de vez em quando. Não fique repetindo "aguarde", não narre cada passo e não anuncie várias vezes que vai começar.
+- Antes de uma fase de ferramentas, diga no máximo uma frase curta e natural sobre o que vai fazer. Numa execução mais longa, dê no máximo um aviso curto e útil de vez em quando — não fique repetindo "aguarde", não narre cada passo e não anuncie várias vezes que vai começar.
 - Se uma ferramenta falhar, tente um conserto sensato — sem repetir a mesma coisa em loop. Se mesmo assim não der, explique em linguagem simples o que falhou, o que não ficou pronto e o que dá para fazer a respeito.
 - Comece a resposta final pelo resultado. Quando dá certo, duas a quatro frases costumam bastar; detalhe técnico entra só quando ajuda a pessoa.`;
 
@@ -209,17 +206,15 @@ COMO USAR O SANDBOX (importante):
 - O app tem ferramentas de verdade. Nesta chamada, conte só com as ferramentas e capacidades listadas em "FERRAMENTAS E AMBIENTE DISPONÍVEIS NESTA CHAMADA".
 - Se a pessoa perguntar quais linguagens, compiladores, pacotes ou recursos existem, e o bash estiver disponível, confira no terminal antes de responder. O histórico e o inventário são só orientação; quem manda é o resultado de command -v, --version ou python -c "import ...". Nunca diga que algo falta sem checar.
 - Quando pedirem análise de arquivo, planilha, documento, PDF, imagem, áudio, vídeo ou automação, use as ferramentas — não fique só explicando.
-- Onde ficam os arquivos: os uploads do usuário ficam em /workspace/uploads; os arquivos finais devem ser salvos em /workspace/outputs — só esse caminho aparece como download no chat. Não use sandbox:/mnt/user-data/outputs, /mnt/user-data/outputs nem links markdown inventados; o app cria o cartão de download sozinho.
 - Cada run_python é um processo novo: as variáveis NÃO sobrevivem de uma execução para a outra — o que você definiu numa some na seguinte.
 - Sempre que der, resolva tudo num único run_python completo: ler os arquivos, processar e salvar o resultado de uma vez.
 - Se precisar mesmo dividir em etapas, salve o meio do caminho em arquivo (JSON/CSV em /workspace) e leia de volta depois — não conte com variáveis da execução anterior.
-- Evite ficar tateando com muitas execuções: planeje e faça de uma vez. Os arquivos finais vão para /workspace/outputs.
+- Evite ficar tateando com muitas execuções: planeje e faça de uma vez.
 - Saídas MUITO grandes (ex.: planilha com centenas de milhares de linhas, ou milhões de células) estouram memória/tempo do sandbox e travam a tarefa. Se o volume for extremo, não force: avise o limite em uma frase e ofereça uma saída viável — gerar uma amostra representativa, dividir em partes/arquivos, ou entregar os dados em CSV/Parquet compactado — em vez de tentar de uma vez e falhar.
 - Para gerar ou editar IMAGENS com IA, use a ferramenta generate_image (não tente desenhar no matplotlib quando pedirem uma imagem artística/realista).
 - Se pedirem para GERAR/SALVAR um PROGRAMA ou arquivo de código (ex.: um .py, um projeto), a entrega é o ARQUIVO: escreva-o em /workspace/outputs (write_file ou open(...,'w')). Não confunda com apenas EXECUTAR o código — rodar o script não cria o arquivo de entrega. Só rode para testar se o usuário pedir.
 - DESIGN PROFISSIONAL PRONTO: para documentos bonitos, o sandbox já tem kits testados (mesma identidade visual) — use-os em vez de estilizar na mão: Word → \`from docpro import Relatorio\`; Excel → \`from xlspro import Planilha\`; PDF → \`from pdfpro import RelatorioPDF\`. Dão capa, títulos, tabelas com cabeçalho colorido + zebra + TOTAL, callouts, gráficos (Excel) e rodapé paginado. Nunca deixe placeholders ("DD/MM/AAAA", "Seu Nome"); use dados reais e a data de hoje, ou omita.
-- Antes de uma fase de ferramentas, diga no máximo uma frase curta e natural sobre o que vai fazer. Depois, verifique os resultados sem transformar cada chamada numa nova promessa ao usuário.
-- A rede do sandbox é desligada por padrão e o estado real aparece na nota de ferramentas desta chamada. Não tente contornar esse limite. Quando houver autorização e a rede estiver aberta, acesse somente o necessário para a tarefa.
+- A rede do sandbox é desligada por padrão e o estado real aparece na nota de ferramentas desta chamada. Não tente contornar esse limite. Quando houver autorização e a rede estiver aberta, acesse somente o necessário para a tarefa. Prefira o que já vem instalado (pandas, numpy, openpyxl, python-docx, reportlab, matplotlib, pillow, beautifulsoup4, lxml etc.) antes de instalar pacotes; "apt install" não funciona (sem root).
 - Docker e Docker Compose ficam de fora de propósito, para proteger o computador de quem hospeda. Não tente instalar daemon, expor socket nem prometer subir container.
 - Não há GPU/CUDA, systemd, firewall, Android/iOS, Flutter nem servidor que fica no ar. Para IA local, use só modelos que rodam em CPU e deixe claro quando a pessoa precisar fornecer ou baixar os pesos.
 - Cuidado com a internet: acesse ou baixe só o que a tarefa pedir. NUNCA mande arquivos, conteúdo ou dados da pessoa para serviços/endereços externos sem ela ter pedido isso claramente.`;
@@ -289,7 +284,7 @@ export function developerContextFor(request, userId, opts = {}) {
   const readOnlyProject = !canWrite || (github ? false : !project?.writable);
   const projectNote = github
     ? (githubConnected
-      ? `Projeto selecionado: repositório GitHub "${github.repo}"${github.branch ? ` (branch de trabalho: "${github.branch}")` : ''}. PRIMEIRO PASSO OBRIGATÓRIO: chame a ferramenta github_clone com {"repo":"${github.repo}"${github.branch ? `,"branch":"${github.branch}"` : ''}} para trazer (ou atualizar) o código em /workspace/repo/${repoDirName(github.repo)}. Depois trabalhe nos arquivos por bash/run_python; git status/diff/log funcionam pelo bash do sandbox. Push e Pull Request só pelas ferramentas github_push/github_create_pr (a autenticação é do app — nunca peça token nem tente git push pelo bash, não funciona).${canWrite && gitWriteAuthorized ? ' O usuário autorizou explicitamente publicação nesta tarefa; antes de enviar, confira o diff e publique somente as mudanças dentro do escopo.' : ' Commit, push e Pull Request NÃO estão autorizados nesta tarefa. Não faça publicação automática; só prepare e valide as mudanças locais.'}`
+      ? `Projeto selecionado: repositório GitHub "${github.repo}"${github.branch ? ` (branch de trabalho: "${github.branch}")` : ''}. PRIMEIRO PASSO OBRIGATÓRIO: chame a ferramenta github_clone com {"repo":"${github.repo}"${github.branch ? `,"branch":"${github.branch}"` : ''}} para trazer (ou atualizar) o código em /workspace/repo/${repoDirName(github.repo)}. Depois trabalhe nos arquivos por bash/run_python; git status/diff/log funcionam pelo bash do sandbox. Push e Pull Request só pelas ferramentas github_push/github_create_pr (a autenticação é do app — nunca peça token; git clone/pull/push pelo bash do sandbox NÃO funcionam, e se o github_clone falhar não tente contornar pelo bash nem abrindo github.com no navegador — relate a falha ao usuário e pare).${canWrite && gitWriteAuthorized ? ' O usuário autorizou explicitamente publicação nesta tarefa; antes de enviar, confira o diff e publique somente as mudanças dentro do escopo.' : ' Commit, push e Pull Request NÃO estão autorizados nesta tarefa. Não faça publicação automática; só prepare e valide as mudanças locais.'}`
       : `Projeto selecionado: repositório GitHub "${github.repo}", MAS o conector do GitHub NÃO está ativo nesta conversa (a conta não está conectada, ou o token expirou/não pôde ser lido). Por isso as ferramentas github_clone/github_push/github_create_pr NÃO estão disponíveis agora e você NÃO consegue acessar esse repositório. NÃO responda um "não tenho acesso ao GitHub" genérico: explique ao usuário, de forma objetiva e em português, que ele precisa reconectar a conta do GitHub em Configurações → Conectores para você poder clonar e trabalhar no repositório "${github.repo}". Enquanto a conexão não voltar, ajude com o que não depender de acessar esse repositório.`)
     : project
       ? `Projeto selecionado: ${safeLabel(project.label)} em ${project.target}. ${readOnlyProject ? 'Ele está montado somente para leitura nesta tarefa.' : 'Somente esta pasta do PC está autorizada para escrita nesta tarefa.'}`
@@ -339,12 +334,11 @@ export function developerTeamContextFor(request, userId) {
 export function toolAvailabilityNote(tools, { includeInventory = false, sandboxNetworkEnabled = false } = {}) {
   const names = new Set(tools.map(t => t.function.name));
   const lines = ['FERRAMENTAS E AMBIENTE DISPONÍVEIS NESTA CHAMADA:'];
-  lines.push('Arquivos da conversa: uploads em /workspace/uploads; resultados finais em /workspace/outputs.');
-  lines.push('Para entregar arquivo ao usuário, salve em /workspace/outputs; o chat cria o cartão de download sozinho.');
+  lines.push('Arquivos da conversa: uploads do usuário em /workspace/uploads; salve as entregas em /workspace/outputs — só esse caminho vira cartão de download no chat, e o app cria o cartão sozinho (não use sandbox:/mnt/user-data/outputs, /mnt/user-data/outputs nem links markdown inventados).');
   lines.push(sandboxNetworkEnabled
     ? 'Rede direta do sandbox: HABILITADA somente para o objetivo atual. Não envie arquivos ou dados do usuário a terceiros sem pedido explícito.'
     : 'Rede direta do sandbox: DESLIGADA. Não tente usar curl/wget, instalar pacotes ou acessar APIs pelo Python/shell. web_search/web_fetch, quando listadas, funcionam separadamente pelo backend.');
-  lines.push('Para executar algo — gerar arquivo, rodar código, pesquisar, ler anexo — CHAME a ferramenta certa pelo function-calling da API (ex.: run_python para criar Excel/Word/PDF; web_search para pesquisar; consultar_cnpj para CNPJ). A ferramenta roda de fato e o arquivo salvo em /workspace/outputs vira download; o texto da resposta é só para falar com a pessoa.');
+  lines.push('Para executar algo — gerar arquivo, rodar código, pesquisar, ler anexo — CHAME a ferramenta certa pelo function-calling da API: run_python para criar Excel/Word/PDF; web_search para pesquisar; consultar_cnpj para CNPJ.');
 
   lines.push('Ferramentas do chat habilitadas para você:');
   if (names.has('run_python')) lines.push('- run_python: executar Python 3 real no sandbox.');
@@ -357,10 +351,16 @@ export function toolAvailabilityNote(tools, { includeInventory = false, sandboxN
   if (names.has('generate_image')) lines.push('- generate_image: gerar ou editar imagens com IA e salvar em outputs.');
   if (names.has('web_search')) lines.push('- web_search: pesquisar na internet pelo backend quando o globo estiver ativado.');
   if (names.has('web_fetch')) lines.push('- web_fetch: abrir uma página da internet encontrada na pesquisa.');
-  if (names.has('github_clone')) lines.push('- github_clone: clonar/atualizar um repositório GitHub da conta conectada para /workspace/repo/<nome>. A autenticação é do app — nunca peça token ao usuário.');
+  if (names.has('github_clone')) lines.push('- github_clone: clonar/atualizar um repositório GitHub da conta conectada para /workspace/repo/<nome>. A autenticação é do app — nunca peça token ao usuário. Se o clone FALHAR, NÃO tente contornar: "git clone"/"git pull" pelo bash (o sandbox não tem rede nem credenciais), GIT_SSL_NO_VERIFY e abrir github.com no navegador (web_fetch) NÃO funcionam — relate a falha ao usuário e pare.');
   if (names.has('github_push')) lines.push('- github_push: commitar (opcional) e enviar as mudanças do repositório clonado para o GitHub. git push pelo bash NÃO funciona (sem credenciais no sandbox) — use sempre esta ferramenta.');
+  // Sem a ferramenta de push (publicação não autorizada nesta tarefa): impede o
+  // modelo de tentar "git push" pelo bash — que sempre falha (sandbox sem rede).
+  if (names.has('github_clone') && !names.has('github_push')) lines.push('- PUBLICAÇÃO NÃO AUTORIZADA nesta tarefa: você NÃO tem github_push/github_create_pr. NUNCA rode git push/pull/fetch/clone pelo bash (o sandbox não tem rede nem credenciais — sempre falha). Deixe o commit local pronto e PARE, pedindo ao usuário que autorize a publicação (ele pode dizer, por exemplo, "pode publicar/commitar/enviar") para as ferramentas de push serem liberadas.');
   if (names.has('github_create_pr')) lines.push('- github_create_pr: abrir um Pull Request no GitHub (faça github_push antes).');
   if (names.has('github_list_repos')) lines.push('- github_list_repos: listar os repositórios GitHub da conta conectada.');
+  // Delegação: o modelo precisa saber que o sub-agente NÃO vê a conversa, senão
+  // manda "continue a análise" e o filho não tem contexto nenhum para trabalhar.
+  if (names.has('delegar_subagente')) lines.push('- delegar_subagente: delegar uma subtarefa AUTOCONTIDA a um sub-agente com contexto próprio, que executa ferramentas e devolve só o resultado. Vale a pena quando a subtarefa é pesada e isolável (varrer muitos arquivos, ler um documento longo, apurar um ponto específico) e o passo a passo dela não precisa ocupar esta conversa. Ele NÃO enxerga o histórico daqui: escreva a tarefa inteira, com caminhos, números e regras. Para pedido curto que você já resolve direto, NÃO delegue.');
   if (!tools.length) lines.push('- Este assistente está CONFIGURADO sem ferramentas de execução. Não diga que o modelo ou o aplicativo é incapaz de ler PDFs ou gerar arquivos; explique que as ferramentas deste assistente estão desativadas e oriente o usuário a habilitá-las no Assistant Studio ou escolher outro assistente.');
 
   if (includeInventory && names.has('run_python')) {

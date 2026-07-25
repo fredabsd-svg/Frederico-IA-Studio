@@ -10,7 +10,8 @@ process.env.WORKSPACE_ROOT = root;
 const { listWorkspaceUploads, validateAttachmentManifest } = await import('./attachments.js');
 const { uploadsNote } = await import('./agent/prompts.js');
 const conversationId = 'attachment-test-conversation';
-const uploads = path.join(root, conversationId, 'uploads');
+const userId = 'user-anexos-1';
+const uploads = path.join(root, 'users', userId, conversationId, 'uploads');
 
 test.after(() => fs.rmSync(root, { recursive: true, force: true }));
 
@@ -19,17 +20,17 @@ test('manifesto confirma vários PDFs reais no workspace da conversa', () => {
   fs.writeFileSync(path.join(uploads, 'a.pdf'), '%PDF-a');
   fs.writeFileSync(path.join(uploads, 'b.pdf'), '%PDF-b');
 
-  const files = listWorkspaceUploads(conversationId);
+  const files = listWorkspaceUploads(userId, conversationId);
   assert.deepEqual(files.map(file => file.path), ['uploads/a.pdf', 'uploads/b.pdf']);
-  const checked = validateAttachmentManifest(conversationId, files);
+  const checked = validateAttachmentManifest(userId, conversationId, files);
   assert.equal(checked.valid.length, 2);
   assert.equal(checked.missing.length, 0);
-  assert.match(uploadsNote(conversationId), /\/workspace\/uploads\/a\.pdf/);
-  assert.match(uploadsNote(conversationId), /\/workspace\/uploads\/b\.pdf/);
+  assert.match(uploadsNote(userId, conversationId), /\/workspace\/uploads\/a\.pdf/);
+  assert.match(uploadsNote(userId, conversationId), /\/workspace\/uploads\/b\.pdf/);
 });
 
 test('manifesto rejeita arquivo ausente e travessia sem esconder o problema', () => {
-  const checked = validateAttachmentManifest(conversationId, [
+  const checked = validateAttachmentManifest(userId, conversationId, [
     { path: 'uploads/nao-existe.pdf', name: 'não existe.pdf' },
     { path: '../segredo.pdf', name: 'segredo.pdf' }
   ]);

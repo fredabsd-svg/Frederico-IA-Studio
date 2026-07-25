@@ -22,16 +22,22 @@ test('distinguishes free, paid and unknown pricing', () => {
   assert.deepEqual(filterModels(models, { price: 'known' }).map(m => m.id), ['p1::vision', 'p1::free']);
 });
 
-test('filtro por classificação usa o tier do backend', () => {
+test('filtro por classificação: EXATO por padrão, ">=" para "ou acima"', () => {
   const ranked = [
     { id: 'a', name: 'A', tier: 'S+', tierRank: 6, capabilities: { tools: true, vision: true } },
     { id: 'b', name: 'B', tier: 'A', tierRank: 3, capabilities: { tools: true } },
     { id: 'c', name: 'C', capabilities: { tools: true } } // sem selo
   ];
   assert.equal(tierOf(ranked[0]), 'S+');
-  assert.deepEqual(filterModels(ranked, { tier: 'S' }).map(m => m.id), ['a'], 'S ou acima → só o S+');
-  assert.deepEqual(filterModels(ranked, { tier: 'A' }).map(m => m.id), ['a', 'b']);
-  assert.deepEqual(filterModels(ranked, { tier: 'B+' }).map(m => m.id), ['a', 'b'], 'sem selo fica de fora');
+  // Exato: 'A' mostra SÓ os A (o bug relatado era 'A' virar "A ou acima").
+  assert.deepEqual(filterModels(ranked, { tier: 'A' }).map(m => m.id), ['b']);
+  assert.deepEqual(filterModels(ranked, { tier: 'S+' }).map(m => m.id), ['a']);
+  assert.deepEqual(filterModels(ranked, { tier: 'S' }).map(m => m.id), [], 'nenhum modelo é exatamente S');
+  // Mínima explícita com o prefixo '>='.
+  assert.deepEqual(filterModels(ranked, { tier: '>=A' }).map(m => m.id), ['a', 'b']);
+  assert.deepEqual(filterModels(ranked, { tier: '>=S' }).map(m => m.id), ['a']);
+  // Sem selo nunca passa por um filtro de classificação.
+  assert.deepEqual(filterModels(ranked, { tier: '>=B' }).map(m => m.id), ['a', 'b']);
 });
 
 test('filtro por modalidade separa multimodal, texto e geração', () => {

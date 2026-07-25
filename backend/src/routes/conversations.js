@@ -15,8 +15,12 @@ import { validate, schemas } from '../validation.js';
 import { getUserProvider } from '../userProvider.js';
 import { enforceFreeTierLimits, bumpFreeTierUsage, logFreeTierEvent, freeTierStatusFor } from '../freeTier.js';
 import { acquireFreeSlot, cancelFreeJob, freeQueueSnapshot } from '../freeQueue.js';
-import { makeRouter, upload, scanOrReject, decodeUploadName, loadAssistant, ensureConversation, enforceDailyLimit, looksLikeFailedAssistantReply } from './helpers.js';
+import { makeRouter, upload, scanOrReject, decodeUploadName, loadAssistant, ensureConversation, enforceDailyLimit, looksLikeFailedAssistantReply, beginUpload, enforceUploadLimits, cleanupRequestUploads } from './helpers.js';
+import { commitUploadedFile, hashFileStreamSync } from '../uploads.js';
+import { runGithubTool } from '../connectors/github.js';
 import { validateAttachmentManifest } from '../attachments.js';
+import { kickProcessing, mimeForName } from '../docling/service.js';
+import { purgeIfOrphan } from '../docling/retention.js';
 
 const router = makeRouter();
 
@@ -39,7 +43,7 @@ router.post('/conversations', validate(schemas.conversationCreate), async (req, 
   const model = req.body?.model || process.env.DEEPSEEK_MODEL || 'deepseek-chat';
   const clientId = req.body?.clientId || null;
   await db.prepare('INSERT INTO conversations (id,user_id,title,model,client_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?)').run(id, req.userId, title, model, clientId, t, t);
-  workspaceFor(id);
+  workspaceFor(id, req.userId);
   res.json({ id, title, model, client_id: clientId, created_at: t, updated_at: t });
 });
 
@@ -107,30 +111,55 @@ router.delete('/conversations/:id', async (req, res) => {
   res.json({ ok: true });
 });
 
-router.post('/conversations/:id/upload', upload.array('files'), async (req, res) => {
-  if (!await ensureConversation(req.userId, req.params.id)) return res.status(404).json({ error: 'Não encontrado' });
-  const scan = await scanOrReject(res, req.files || []);
-  if (!scan) return;
-  const ws = workspaceFor(req.params.id);
-  const saved = [];
-  for (const file of scan.clean) {
-    const original = decodeUploadName(file.originalname);
-    const safe = original.replace(/[^a-zA-Z0-9._ -]/g, '_');
-    const name = `${Date.now()}_${nanoid(8)}_${safe}`;
-    const target = path.join(ws.uploads, name);
-    fs.writeFileSync(target, file.buffer);
-    try { fs.chownSync(target, 1000, 1000); } catch {}
-    const id = nanoid();
-    await db.prepare('INSERT INTO files (id,conversation_id,kind,name,path,size,created_at) VALUES (?,?,?,?,?,?,?)')
-      .run(id, req.params.id, 'upload', original, `uploads/${name}`, file.size, now());
-    saved.push({ id, name: original, path: `uploads/${name}`, size: file.size });
+router.post('/conversations/:id/upload', (req, res, next) => {
+  // Portão ANTES do multer: recusa pelo Content-Length e limita a concorrência
+  // por usuário (ver routes/helpers.js → beginUpload).
+  const gate = beginUpload(req, res);
+  if (!gate) return;
+  res.on('close', gate.release);
+  res.on('finish', gate.release);
+  next();
+}, upload.array('files'), async (req, res) => {
+  try {
+    if (!await ensureConversation(req.userId, req.params.id)) {
+      cleanupRequestUploads(req);
+      return res.status(404).json({ error: 'Não encontrado' });
+    }
+    const ws = workspaceFor(req.params.id, req.userId);
+    // Cota de disco: mede a árvore INTEIRA do usuário, não só desta conversa.
+    if (!enforceUploadLimits(req, res, { quotaDir: path.dirname(ws.base) })) return;
+    const scan = await scanOrReject(res, req.files || [], req);
+    if (!scan) return;
+    const saved = [];
+    for (const file of scan.clean) {
+      const original = decodeUploadName(file.originalname);
+      const safe = original.replace(/[^a-zA-Z0-9._ -]/g, '_');
+      const name = `${Date.now()}_${nanoid(8)}_${safe}`;
+      const target = path.join(ws.uploads, name);
+      // Hash por streaming ANTES de mover (o arquivo nunca é lido inteiro na RAM).
+      const hash = hashFileStreamSync(file.path);
+      const size = commitUploadedFile(file.path, target);
+      const id = nanoid();
+      const mime = file.mimetype && file.mimetype !== 'application/octet-stream' ? file.mimetype : mimeForName(original);
+      await db.prepare('INSERT INTO files (id,conversation_id,kind,name,path,size,hash,mime,created_at) VALUES (?,?,?,?,?,?,?,?,?)')
+        .run(id, req.params.id, 'upload', original, `uploads/${name}`, size, hash, mime, now());
+      // Pré-processa com o Docling em segundo plano (se ligado e tipo suportado);
+      // não bloqueia a resposta do upload.
+      kickProcessing({ userId: req.userId, conversationId: req.params.id, fileId: id, filePath: target, filename: original, mime, hash });
+      saved.push({ id, name: original, path: `uploads/${name}`, size });
+    }
+    // `scanned` e `scanStatus` dizem a VERDADE sobre a verificação: com o
+    // antivírus fora do ar (modo degradado) a interface não pode exibir selo de
+    // "arquivo verificado".
+    res.json({ files: saved, scanned: scan.scanned, scanStatus: scan.status, rejected: scan.rejected });
+  } finally {
+    cleanupRequestUploads(req); // temporários somem mesmo em erro/abortos
   }
-  res.json({ files: saved, scanned: scan.scanned, rejected: scan.rejected });
 });
 
 router.get('/conversations/:id/files', async (req, res) => {
   if (!await ensureConversation(req.userId, req.params.id)) return res.status(404).json({ error: 'Não encontrado' });
-  const ws = workspaceFor(req.params.id);
+  const ws = workspaceFor(req.params.id, req.userId);
   const outputFiles = walk(ws.outputs).map(p => {
     if (!realInside(ws.base, p)) return null;
     const rel = path.relative(ws.base, p).replaceAll('\\', '/');
@@ -139,7 +168,7 @@ router.get('/conversations/:id/files', async (req, res) => {
     return { id: Buffer.from(rel).toString('base64url'), kind: 'output', name: path.basename(p), path: rel, size };
   }).filter(Boolean);
   const uploaded = await db.prepare('SELECT id,kind,name,path,size,created_at FROM files WHERE conversation_id=?').all(req.params.id);
-  const availablePaths = new Set(validateAttachmentManifest(req.params.id, uploaded).valid.map(file => file.path));
+  const availablePaths = new Set(validateAttachmentManifest(req.userId, req.params.id, uploaded).valid.map(file => file.path));
   res.json([
     ...uploaded.map(file => ({ ...file, available: availablePaths.has(String(file.path || '').replaceAll('\\', '/')) })),
     ...outputFiles
@@ -149,19 +178,24 @@ router.get('/conversations/:id/files', async (req, res) => {
 router.delete('/conversations/:id/files/*', async (req, res) => {
   const conv = await db.prepare('SELECT id FROM conversations WHERE id=? AND user_id=?').get(req.params.id, req.userId);
   if (!conv) return res.status(404).json({ error: 'Não encontrado' });
-  const ws = workspaceFor(req.params.id);
+  const ws = workspaceFor(req.params.id, req.userId);
   const rel = req.params[0];
   const target = path.resolve(ws.base, rel);
   if (!insideBase(ws.base, target) || !realInside(ws.base, target)) return res.status(400).json({ error: 'Caminho inválido' });
+  // Guarda o hash ANTES de apagar, para limpar os derivados do Docling depois.
+  const gone = await db.prepare('SELECT hash FROM files WHERE conversation_id=? AND path=?').get(req.params.id, rel.replaceAll('\\', '/'));
   try { fs.rmSync(target, { force: true }); } catch {}
   await db.prepare('DELETE FROM files WHERE conversation_id=? AND path=?').run(req.params.id, rel.replaceAll('\\', '/'));
+  // LGPD: se o usuário não tem mais nenhum arquivo com esse conteúdo, apaga os
+  // artefatos derivados (JSON/Markdown/chunks/embeddings/figuras).
+  if (gone?.hash) { try { await purgeIfOrphan(req.userId, gone.hash); } catch {} }
   res.json({ ok: true });
 });
 
 router.get('/conversations/:id/download/*', async (req, res) => {
   const conv = await db.prepare('SELECT id FROM conversations WHERE id=? AND user_id=?').get(req.params.id, req.userId);
   if (!conv) return res.status(404).send('Arquivo não encontrado');
-  const ws = workspaceFor(req.params.id);
+  const ws = workspaceFor(req.params.id, req.userId);
   const rel = req.params[0];
   const target = path.resolve(ws.base, rel);
   if (!insideBase(ws.base, target) || !realInside(ws.base, target) || !fs.existsSync(target)) return res.status(404).send('Arquivo não encontrado');
@@ -215,13 +249,13 @@ router.post('/conversations/:id/export', async (req, res) => {
           : message.content
       }));
     if (!messages.length) return res.status(400).json({ error: 'A conversa ainda não tem mensagens.' });
-    const ws = workspaceFor(req.params.id);
+    const ws = workspaceFor(req.params.id, req.userId);
     const jsonPath = path.join(ws.base, '.export.json');
     fs.writeFileSync(jsonPath, JSON.stringify({ title: conv.title, messages }), 'utf8');
     try { fs.chownSync(jsonPath, 1000, 1000); } catch {}
     const slug = (conv.title || 'conversa').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'conversa';
     const name = `conversa-${slug}.${format}`;
-    const result = JSON.parse(await runTool(req.params.id, 'run_python', { code: PY_EXPORT.replace('__FMT__', format).replace('__OUT__', name) }));
+    const result = JSON.parse(await runTool(req.params.id, 'run_python', { code: PY_EXPORT.replace('__FMT__', format).replace('__OUT__', name) }, { userId: req.userId }));
     try { fs.rmSync(jsonPath, { force: true }); } catch {}
     if (result.exitCode !== 0) return res.status(500).json({ error: 'Falha ao exportar: ' + String(result.output).slice(-200) });
     res.json({ ok: true, path: `outputs/${name}`, name });
@@ -244,7 +278,7 @@ router.post('/conversations/:id/truncate', async (req, res) => {
   const doomed = (await db.prepare(`SELECT id FROM messages WHERE conversation_id=? AND ${fromMessage}`)
     .all(req.params.id, msg.seq)).map(r => r.id);
   if (doomed.length) {
-    const ws = workspaceFor(req.params.id);
+    const ws = workspaceFor(req.params.id, req.userId);
     const ph = doomed.map(() => '?').join(',');
     const orphanFiles = await db.prepare(`SELECT path FROM files WHERE conversation_id=? AND message_id IN (${ph})`).all(req.params.id, ...doomed);
     for (const f of orphanFiles) {
@@ -278,6 +312,32 @@ router.post('/conversations/:id/control', validate(schemas.control), async (req,
   }
   res.json({ ok: true, action, paused: control.paused, stopped: control.stopped });
 });
+
+// ---- Ações do GitHub por BOTÃO (modo desenvolvedor) -------------------------
+// Disparam github_clone/github_push DIRETO no backend, com o token do usuário,
+// SEM passar pela IA nem depender do modo/frase — determinístico e sem gastar
+// tokens. Reaproveitam runGithubTool (o mesmo motor das ferramentas github_*),
+// escopado à conversa do usuário (posse checada). Resolve o caso em que o commit
+// já está pronto no workspace e só falta o push: 1 clique e sobe.
+async function conversationGithubAction(req, res, tool) {
+  const conv = await db.prepare('SELECT id FROM conversations WHERE id=? AND user_id=?').get(req.params.id, req.userId);
+  if (!conv) return res.status(404).json({ error: 'Não encontrado' });
+  const repo = String(req.body?.repo || '').trim();
+  if (!repo) return res.status(400).json({ error: 'Nenhum repositório vinculado a esta conversa.' });
+  const args = { repo };
+  if (req.body?.branch) args.branch = String(req.body.branch);
+  if (tool === 'github_push' && req.body?.commit_message) args.commit_message = String(req.body.commit_message);
+  const result = await runGithubTool(tool, args, { userId: req.userId, conversationId: req.params.id });
+  if (result?.error) {
+    // Sinaliza ao front quando o push só precisa de uma mensagem de commit (há
+    // mudanças não commitadas) — aí ele pede o texto e repete.
+    const needsCommitMessage = /commit_message|não commitadas/i.test(result.error);
+    return res.status(result.recoverable === false ? 422 : 400).json({ ...result, needsCommitMessage });
+  }
+  res.json(result);
+}
+router.post('/conversations/:id/github/clone', async (req, res) => conversationGithubAction(req, res, 'github_clone'));
+router.post('/conversations/:id/github/push', async (req, res) => conversationGithubAction(req, res, 'github_push'));
 
 // Multimodelo: interrompe UM modelo da execução em andamento, sem derrubar os
 // demais (o botão "parar tudo" continua sendo o /control com action=stop).
@@ -340,7 +400,7 @@ router.post('/conversations/:id/chat', validate(schemas.chat), async (req, res) 
   // os mesmos caminhos ANTES de abrir o stream/modelo: se o upload ainda está
   // terminando ou o arquivo sumiu do disco, não deixamos a IA concluir
   // falsamente que "não recebeu anexo".
-  const attachmentCheck = validateAttachmentManifest(req.params.id, req.body?.attachments || []);
+  const attachmentCheck = validateAttachmentManifest(req.userId, req.params.id, req.body?.attachments || []);
   if (attachmentCheck.missing.length) {
     return res.status(409).json({
       error: 'Um ou mais anexos ainda não estão disponíveis nesta conversa. Aguarde o envio terminar ou remova o anexo indisponível e envie-o novamente.',

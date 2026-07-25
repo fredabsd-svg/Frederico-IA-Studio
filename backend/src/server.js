@@ -10,7 +10,7 @@ import { db } from './db.js';
 import { maybeReindexOnModelChange, loadSettings } from './memory/memoryService.js';
 import { initVectorStore } from './memory/vectorStore.js';
 import { ensureUserSeeded } from './seed.js';
-import { isConversationId, loadPcFolders } from './sandbox.js';
+import { isConversationId, loadPcFolders, migrateLegacyWorkspaces, startSandboxReconciliation } from './sandbox.js';
 import { auth, requireAuth } from './auth.js';
 import { toNodeHandler } from 'better-auth/node';
 import { runMigrations } from './migrate.js';
@@ -34,6 +34,15 @@ import schedulesRouter, { startSchedulers } from './routes/schedules.js';
 import backupRouter from './routes/backup.js';
 import cacheRouter from './routes/cache.js';
 import modelTeamsRouter from './routes/modelTeams.js';
+import companionRouter from './routes/companion.js';
+import copilotRouter from './routes/copilot.js';
+import doclingRouter from './routes/docling.js';
+import { healthMetrics } from './healthMetrics.js';
+import { sweepStaleUploadTemps } from './uploads.js';
+import { sweepExpiredArtifacts, RETENTION_DAYS as DOCLING_RETENTION_DAYS } from './docling/retention.js';
+import { isDoclingEnabled } from './docling/config.js';
+import { doclingHealth } from './docling/runner.js';
+import { startHealthSampling } from './companion/health.js';
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -52,7 +61,10 @@ for (const method of ['get', 'post', 'put', 'delete', 'patch', 'all']) {
 }
 // Rede de segurança final: se ainda escapar uma rejeição não tratada, registra
 // e segue — nunca derruba o servidor por causa de uma requisição.
-process.on('unhandledRejection', (err) => console.error('[unhandledRejection]', err));
+process.on('unhandledRejection', (err) => {
+  healthMetrics.unhandledRejections++;
+  console.error('[unhandledRejection]', err);
+});
 
 // ---- Cabeçalhos de segurança, CORS e rate limiting HTTP ----
 // Atrás de um proxy (Caddy em produção, Vite em dev): confia no PRIMEIRO salto
@@ -140,6 +152,9 @@ app.use('/api', schedulesRouter);
 app.use('/api', backupRouter);
 app.use('/api', cacheRouter);
 app.use('/api', modelTeamsRouter);
+app.use('/api', companionRouter);
+app.use('/api', copilotRouter);
+app.use('/api', doclingRouter);
 
 // LGPD — retenção automática: com CONVERSATION_RETENTION_DAYS > 0, apaga
 // conversas paradas há mais de N dias (varredura a cada 6 h; desligada por padrão).
@@ -153,6 +168,13 @@ if (USAGE_RETENTION_DAYS > 0) {
   setInterval(() => sweepOldUsage().catch(e => console.error('[retenção-uso]', e.message)), 24 * 60 * 60 * 1000).unref();
   setTimeout(() => sweepOldUsage().catch(e => console.error('[retenção-uso]', e.message)), 90 * 1000).unref();
 }
+// Retenção dos artefatos DERIVADOS do Docling (JSON/Markdown/chunks/figuras).
+// Só os derivados (reprocessáveis) — nunca os arquivos originais do usuário.
+// DOCLING_RETENTION_DAYS=0 (padrão) desliga.
+if (DOCLING_RETENTION_DAYS > 0) {
+  setInterval(() => sweepExpiredArtifacts().catch(e => console.error('[docling-retenção]', e.message)), 24 * 60 * 60 * 1000).unref();
+  setTimeout(() => sweepExpiredArtifacts().catch(e => console.error('[docling-retenção]', e.message)), 120 * 1000).unref();
+}
 
 // Catálogo de modelos: sincronização automática pelo menos 1x/dia (checa modelos
 // novos/removidos, preço, contexto, capacidades, status; registra o histórico).
@@ -160,6 +182,23 @@ if (USAGE_RETENTION_DAYS > 0) {
 if (process.env.MODEL_CATALOG_SYNC !== '0') {
   setInterval(() => runDailyCatalogSync().catch(e => console.error('[catálogo]', e.message)), 24 * 60 * 60 * 1000).unref();
   setTimeout(() => runDailyCatalogSync().catch(e => console.error('[catálogo]', e.message)), 5 * 60 * 1000).unref();
+}
+
+// Diagnóstico de boot da camada documental. A flag do backend
+// (DOCLING_ENABLED) e o serviço (perfil `docling` do compose) são ligados
+// separadamente — quando divergem, o sintoma aparecia só documento a documento.
+async function warnIfDoclingUnavailable() {
+  if (!isDoclingEnabled()) return;
+  if (!process.env.DOCLING_INTERNAL_TOKEN) {
+    console.warn('[docling] AVISO: DOCLING_INTERNAL_TOKEN vazio — o serviço aceita requisições sem autenticação de qualquer container da mesma rede Docker. Defina um valor no .env.');
+  }
+  const health = await doclingHealth();
+  if (health.ok) {
+    console.log(`[docling] serviço disponível (modelos carregados: ${health.models_loaded ? 'sim' : 'ainda não'}).`);
+    return;
+  }
+  console.error(`[docling] ERRO: DOCLING_ENABLED=true, mas o serviço em ${process.env.DOCLING_SERVICE_URL || 'http://docling-service:8000'} não respondeu (${health.error || `HTTP ${health.status}`}).`);
+  console.error('[docling] Sem ele, TODO documento enviado vai falhar. Suba o serviço com: docker compose --profile docling up -d --build');
 }
 
 // 404 padrão para rotas de API desconhecidas
@@ -183,13 +222,32 @@ app.use((err, req, res, _next) => {
   // 2) Aquece os caches em memória (settings e pastas do PC).
   await loadSettings();
   await loadPcFolders();
+  // 2b) Layout do workspace por USUÁRIO (workspaces/users/<usuário>/<conversa>):
+  //     move as pastas legadas (workspaces/<conversa>) para o dono correto.
+  //     Idempotente — nada acontece depois da primeira execução.
+  try { await migrateLegacyWorkspaces(); } catch (e) { console.error('[workspace]', e.message); }
   try { await maybeReindexOnModelChange(); } catch {}
   // 3) Os seeds agora são POR USUÁRIO (ensureUserSeeded), disparados sob demanda
   //    pelo middleware após a autenticação — não há mais seed global no boot.
   // 4) Tarefas que estavam "rodando" quando o servidor caiu voltam para a fila.
   try { await db.prepare("UPDATE tasks SET status='queued', progress_text='Reenfileirada após reinício' WHERE status='running'").run(); } catch {}
+  // 4b) Docling ligado: confere no boot se o serviço realmente responde.
+  //     Sem esta checagem, DOCLING_ENABLED=true sem o serviço no ar (é preciso
+  //     subir com `--profile docling`) fazia CADA documento falhar sozinho, em
+  //     silêncio, sem nada indicar a causa nos logs do backend.
+  await warnIfDoclingUnavailable();
   // 5) Sobe o servidor, arma as rotinas agendadas e dispara o worker de tarefas.
   app.listen(port, () => console.log(`Frederico AI Studio backend em http://localhost:${port}`));
+  // 5b) Containers órfãos: tudo que sobrou de um processo anterior (queda do
+  //     backend/host) é removido agora, e uma varredura periódica recolhe o que
+  //     escapar do mapa em memória. Só toca em containers com a label do app.
+  startSandboxReconciliation();
+  // Temporários de upload abandonados (queda do processo no meio de um envio):
+  // varredura no boot e a cada hora. O staging normal já é removido no finally
+  // de cada rota — isto é a rede de segurança.
+  sweepStaleUploadTemps();
+  setInterval(() => { try { sweepStaleUploadTemps(); } catch {} }, 60 * 60 * 1000).unref();
   startSchedulers();
+  startHealthSampling(); // amostragem de saúde (memória/CPU) para o copiloto
   setTimeout(() => processTasks().catch(() => {}), 2000);
 })().catch((e) => { console.error('Falha no boot do backend:', e); process.exit(1); });

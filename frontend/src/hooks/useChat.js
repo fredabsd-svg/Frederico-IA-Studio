@@ -2,12 +2,14 @@ import { useEffect, useRef, useState } from 'react';
 import { API } from '../constants.js';
 import { takeSseEvents } from '../sse.js';
 
-// Watchdog do SSE: o servidor manda um heartbeat (": ping") a cada 15s mesmo
-// quando o modelo está pensando. Se NADA chegar por este tempo, a conexão
-// morreu em silêncio (proxy/rede móvel) — cancelamos o reader e lançamos, e o
-// chamador cai na reconexão automática em vez de exibir "Raciocinando..."
-// para sempre sem entregar a resposta.
-const SSE_STALL_MS = 60000;
+// Watchdog do SSE DO FRONTEND: timeout de ÚLTIMA INSTÂNCIA (5 min).
+// O backend (streamGuard.js) é a fonte de verdade com 3 min (STREAM_STALL_TIMEOUT_MS).
+// Este timeout só age quando a conexão TCP morre sem FIN/RST — cenário raro de
+// proxy/rede que some sem fechar socket. NÃO compete com o backend: se o backend
+// detectar stall primeiro, ele fecha a stream, o reader vê "done" e o timeout
+// nunca dispara. Se o backend NÃO detectar (conexão realmente perdida), este
+// fallback garante que o frontend não fique congelado para sempre.
+const SSE_STALL_MS = 300000;
 async function readWithTimeout(reader, ms = SSE_STALL_MS) {
   let timer;
   try {
@@ -248,11 +250,18 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
           content: '',
           blocks: (m.blocks || []).filter(block => block.type !== 'text')
         }));
-        if (ev.type === 'tool_start') { patchRun(convId, { status: `Executando ${ev.name}...` }); update(m => ({ ...m, blocks: [...(m.blocks || []), { type: 'tool', name: ev.name, preview: ev.preview, detail: ev.detail || '', status: 'running', started: Date.now() }] })); }
+        if (ev.type === 'tool_start') { patchRun(convId, { status: `Executando ${ev.name}...` }); update(m => ({ ...m, blocks: [...(m.blocks || []), { type: 'tool', id: ev.id, name: ev.name, preview: ev.preview, detail: ev.detail || '', subagent: ev.subagent || null, parentId: ev.parentId || null, status: 'running', started: Date.now() }] })); }
+        // O resultado é casado pelo `id` da chamada. O "último em execução" só
+        // vale como reserva (stream antigo, sem id): com delegações a
+        // sub-agentes rodando EM PARALELO, várias ferramentas ficam em execução
+        // ao mesmo tempo e a última nem sempre é a que acabou de terminar.
         if (ev.type === 'tool_result') update(m => {
           const blocks = [...(m.blocks || [])];
           const status = toolResultFailed(ev.content) ? 'error' : 'done';
-          for (let i = blocks.length - 1; i >= 0; i--) { if (blocks[i].type === 'tool' && blocks[i].status === 'running') { blocks[i] = { ...blocks[i], status, ended: Date.now(), result: ev.content, ...(ev.thumb ? { thumb: ev.thumb } : {}) }; break; } }
+          const done = block => ({ ...block, status, ended: Date.now(), result: ev.content, ...(ev.thumb ? { thumb: ev.thumb } : {}) });
+          const byId = ev.id ? blocks.findIndex(b => b.type === 'tool' && b.id === ev.id && b.status === 'running') : -1;
+          if (byId > -1) { blocks[byId] = done(blocks[byId]); return { ...m, blocks }; }
+          for (let i = blocks.length - 1; i >= 0; i--) { if (blocks[i].type === 'tool' && blocks[i].status === 'running') { blocks[i] = done(blocks[i]); break; } }
           return { ...m, blocks };
         });
         // ---- Execução multimodelo: estado ao vivo de cada modelo ----

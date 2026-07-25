@@ -74,6 +74,30 @@ export function projectContextText(project) {
   return parts.join('\n\n');
 }
 
+// Reconstrói a sessão de desenvolvedor de uma conversa a partir do projeto dono
+// (aquele cujo `conversationIds` inclui a conversa). Devolve o mesmo formato que
+// o backend espera em `developer` (modo, vínculo pasta/GitHub, regras) ou null se
+// a conversa não pertence a nenhum projeto. PURA (testável) — usada ao REABRIR
+// uma conversa para que o vínculo com o repositório não se perca ao sair/voltar.
+export function developerSessionForConversation(projects, conversationId) {
+  if (!conversationId || !Array.isArray(projects)) return null;
+  const project = projects.find(p => (p.conversationIds || []).includes(conversationId));
+  if (!project) return null;
+  const binding = project.binding || { type: 'none' };
+  const github = binding.type === 'github' && binding.repo
+    ? { repo: binding.repo, branch: binding.branch || '' }
+    : null;
+  const projectId = binding.type === 'folder' ? (binding.folderId || null) : null;
+  return {
+    mode: project.mode || 'plan',
+    projectId,
+    github,
+    rules: projectContextText(project),
+    devProjectId: project.id,
+    conversationId,
+  };
+}
+
 export function useDevProjects() {
   const [projects, setProjects] = useState(load);
   const [activeId, setActiveIdState] = useState(() => localStorage.getItem(ACTIVE_KEY) || '');

@@ -8,6 +8,10 @@ node_modules/
 data/
 workspaces/
 
+# Build do frontend (gerado por `npm run build`; estava versionado por engano —
+# aparecia em toda busca no repositório e divergia da fonte a cada alteração)
+frontend/dist/
+
 # Logs e temporários
 *.log
 npm-debug.log*
@@ -17,3 +21,8 @@ __pycache__/
 # Artefatos gerados ao rodar os testes (workspaces temporários)
 .test-workspaces/
 backend/.test-workspaces/
+
+# Launcher compilado (gerado por build)
+launcher/*.exe
+frederico-launcher
+Frederico AI Studio.exe

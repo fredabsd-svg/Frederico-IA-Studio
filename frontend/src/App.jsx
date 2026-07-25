@@ -5,7 +5,7 @@ import rehypeHighlight from 'rehype-highlight';
 import { Download, FileText, FileSpreadsheet, FilePenLine, Plus, ArrowUp, Upload, Trash2, Bot, Brain, X, BarChart3, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench, CalendarClock, Inbox, Palette, Gauge, SlidersHorizontal, Paperclip, MoreHorizontal, FolderOpen, Code2, ChevronRight, ShieldCheck, LogOut, KeyRound, Camera, Cable, MessageCircleQuestion, Bug, PanelRight, Lock, Unlock } from 'lucide-react';
 import { API, TOOL_INFO, TEMPLATES, QUICK_ACTIONS, THEMES, WORKSPACES, EFFORTS, EFFORT_DESC, ASSISTANT_ICONS, ASSISTANT_COLORS, isAssistantIcon, DEV_WORK_MODES, MAX_ASSISTANT_PROFILE_CHARS } from './constants.js';
 import { signOut } from './authClient.js';
-import { Slider, Modal, Drawer, Collapsible, useAppDialog } from './components.jsx';
+import { Slider, Modal, Drawer, Collapsible, useAppDialog, ModelPicker } from './components.jsx';
 import { ExecutionSession } from './components/ExecutionSession.jsx';
 import { DevProjectRail } from './components/DevProjectRail.jsx';
 import { DevActivityRail } from './components/DevActivityRail.jsx';
@@ -13,6 +13,7 @@ import { MemoryPanel } from './MemoryPanel.jsx';
 import { PcFoldersPanel } from './PcFoldersPanel.jsx';
 import { ToolsPanel } from './ToolsPanel.jsx';
 import { DeveloperPanel } from './DeveloperPanel.jsx';
+import { SandboxPanel } from './SandboxPanel.jsx';
 import { RoutinesPanel } from './RoutinesPanel.jsx';
 import { InboxPanel } from './InboxPanel.jsx';
 import { ProviderPanel } from './ProviderPanel.jsx';
@@ -22,6 +23,14 @@ import { FreeAdminPanel } from './FreeAdminPanel.jsx';
 import { ConnectorsPanel } from './ConnectorsPanel.jsx';
 import { PrivacyPanel, ConsentGate } from './PrivacyPanel.jsx';
 import { CameraCapture } from './CameraCapture.jsx';
+import { Companion } from './Companion.jsx';
+import { useCompanion } from './hooks/useCompanion.js';
+import { useDocling } from './hooks/useDocling.js';
+import { DoclingPanel } from './components/DoclingPanel.jsx';
+import { CopilotPanel } from './components/CopilotPanel.jsx';
+import { useCopilot } from './hooks/useCopilot.js';
+import { CompanionConfig } from './components/CompanionConfig.jsx';
+import { SettingsHub } from './components/SettingsHub.jsx';
 import { ContextPicker, AssistantGlyph, AssistantTile, ASSISTANT_ICON, modelHasTools } from './components/ContextPicker.jsx';
 import { MultiModelPicker } from './components/MultiModelPicker.jsx';
 import { MultiModelBoard } from './components/MultiModelBoard.jsx';
@@ -33,7 +42,7 @@ import { useSpeech } from './hooks/useSpeech.js';
 import { useFileUploads } from './hooks/useFileUploads.js';
 import { useChat } from './hooks/useChat.js';
 import { useTasks } from './hooks/useTasks.js';
-import { useDevProjects, projectContextText } from './hooks/useDevProjects.js';
+import { useDevProjects, projectContextText, developerSessionForConversation } from './hooks/useDevProjects.js';
 
 const QUICK_ACTION_ICON = {
   document: FileText,
@@ -103,6 +112,7 @@ export default function App({ user } = {}) {
   const [pcOpen, setPcOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [developerOpen, setDeveloperOpen] = useState(false);
+  const [sandboxOpen, setSandboxOpen] = useState(false);
   const [developerSession, setDeveloperSession] = useState(null);
   const [developerStartMode, setDeveloperStartMode] = useState('plan');
   const devProjects = useDevProjects();
@@ -186,11 +196,16 @@ export default function App({ user } = {}) {
   // reconexão ao stream ao vivo, que vive no useChat — criado DEPOIS. O ref quebra
   // essa ordem sem acoplar os hooks.
   const followActiveRef = useRef(null);
+  // Reconstrói a sessão de desenvolvedor ao reabrir uma conversa (ver efeito
+  // abaixo). Ref para quebrar a ordem de criação dos hooks (devProjects já existe,
+  // mas mantemos o mesmo padrão do followActiveRef e evitamos closures obsoletas).
+  const resolveDeveloperSessionRef = useRef(null);
   const {
     conversations, allConvs, current, setCurrent, currentRef, files, setFiles, loadingConv,
     fetchConversations, loadAllConvs, ensureConversation, openConversation, deleteConversation, loadFiles
   } = useConversations({ clientId, model, setModel, showToast, blockConversationChange, askConfirm,
-    startNewChat, setMessages, setDeveloperSession, setMenuOpen, followActiveRef, setNeedLogin });
+    startNewChat, setMessages, setDeveloperSession, setMenuOpen, followActiveRef, setNeedLogin,
+    resolveDeveloperSessionRef });
   const { listening, recognitionRef, toggleMic } = useSpeech({ input, setInput, showToast });
   const {
     dragActive, uploadingFiles, scanOk, deleteFile, uploadSelectedFiles, uploadFiles, waitForUploads,
@@ -218,6 +233,20 @@ export default function App({ user } = {}) {
     input, setInput, listening, recognitionRef,
     model, assistantId, webSearch, showToast, waitForUploads
   });
+  // Frederico Companion — camada de experiência (personagem flutuante). Recebe
+  // as tarefas para a detecção proativa (tarefas que falham viram alertas).
+  // Conversa de desenvolvimento ativa (para o monitoramento de Git do Companion):
+  // a sessão do modo dev, ou a conversa aberta quando o workspace é o "developer".
+  const devConversationId = developerSession?.conversationId || (workspace === 'developer' ? current?.id : null) || null;
+  const companion = useCompanion({ tasks, devConversationId, showToast });
+  // Docling — andamento e resultados do processamento documental da conversa.
+  const docling = useDocling(current?.id);
+  // Copiloto — central de diagnósticos, saúde e permissões.
+  const copilot = useCopilot();
+  const [copilotOpen, setCopilotOpen] = useState(false);
+  const [companionConfigOpen, setCompanionConfigOpen] = useState(false);
+  const [devGitBusy, setDevGitBusy] = useState(null); // null | 'clone' | 'push'
+  const [settingsHubOpen, setSettingsHubOpen] = useState(false);
 
   function changeMultiModel(next) {
     setMultiModel(next);
@@ -540,6 +569,79 @@ export default function App({ user } = {}) {
     }
   }, [developerSession?.conversationId, developerSession?.devProjectId]);
 
+  // Resolver usado por openConversation (via ref) para RECONSTRUIR a sessão de
+  // desenvolvedor ao reabrir uma conversa de projeto. Encontra o projeto dono da
+  // conversa (persistido no navegador com seus conversationIds) e remonta o mesmo
+  // par (repositório GitHub / pasta) + modo + regras que o backend espera. É o que
+  // faz o vínculo com o repositório sobreviver a "sair e voltar" ou recarregar.
+  useEffect(() => {
+    resolveDeveloperSessionRef.current = (conversationId) =>
+      developerSessionForConversation(devProjects.projects, conversationId);
+  }, [devProjects.projects]);
+
+  // Ao restaurar (ou iniciar) uma sessão de desenvolvedor vinculada a um projeto,
+  // revela o ambiente de desenvolvimento (colunas do IDE + barra do repositório),
+  // para o usuário voltar exatamente ao contexto em que estava.
+  useEffect(() => {
+    if (developerSession && (developerSession.github || developerSession.projectId || developerSession.devProjectId) && workspace !== 'developer') {
+      setWorkspace('developer');
+    }
+  }, [developerSession]); // eslint-disable-line
+
+  // Botões de GitHub do modo desenvolvedor: disparam clone/push DIRETO no backend
+  // (endpoint dedicado), sem depender do modo/frase nem gastar tokens da IA. É o
+  // caminho confiável para enviar o trabalho que já está no workspace da conversa.
+  async function devGithubClone() {
+    const gh = developerSession?.github;
+    if (!gh?.repo) return showToast('Nenhum repositório vinculado a esta conversa.');
+    const conv = await ensureConversation();
+    if (!conv?.id) return;
+    setDevGitBusy('clone');
+    try {
+      const r = await fetch(`${API}/api/conversations/${conv.id}/github/clone`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repo: gh.repo, branch: gh.branch || undefined }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { showToast(d.error || 'Não consegui preparar o repositório.'); return; }
+      showToast(d.note || `Repositório ${gh.repo} pronto${d.branch ? ` na branch ${d.branch}` : ''}.`, 'ok');
+    } catch { showToast('Falha de conexão ao preparar o repositório.'); }
+    finally { setDevGitBusy(null); }
+  }
+  async function devGithubPush(commitMessage) {
+    const gh = developerSession?.github;
+    if (!gh?.repo) return showToast('Nenhum repositório vinculado a esta conversa.');
+    const conv = await ensureConversation();
+    if (!conv?.id) return;
+    setDevGitBusy('push');
+    try {
+      const body = { repo: gh.repo, branch: gh.branch || undefined };
+      if (commitMessage) body.commit_message = commitMessage;
+      const r = await fetch(`${API}/api/conversations/${conv.id}/github/push`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        // Sem commit_message e há mudanças pendentes: pede a mensagem e repete.
+        if (d.needsCommitMessage && !commitMessage) {
+          setDevGitBusy(null);
+          const msg = await askPrompt({
+            title: 'Enviar para o GitHub',
+            label: 'Há alterações não salvas. Descreva o que mudou (mensagem do commit):',
+            confirmLabel: 'Commitar e enviar',
+          });
+          if (msg?.trim()) return devGithubPush(msg.trim());
+          return;
+        }
+        showToast(d.error || 'Não consegui enviar para o GitHub.');
+        return;
+      }
+      if (d.pushed === false) showToast(d.note || 'Nada novo para enviar — já está igual ao GitHub.', 'ok');
+      else showToast(`Enviado para ${gh.repo}${d.branch ? ` (${d.branch})` : ''}${d.commit ? ` · ${d.commit}` : ''}.`, 'ok');
+    } catch { showToast('Falha de conexão ao enviar para o GitHub.'); }
+    finally { setDevGitBusy(null); }
+  }
+
   // Colapso das colunas do ambiente de desenvolvimento (guardado entre sessões).
   function toggleDevLeft() { setDevLeftCollapsed(v => { localStorage.setItem('fred_dev_left', v ? '0' : '1'); return !v; }); }
   function toggleDevRight() { setDevRightCollapsed(v => { localStorage.setItem('fred_dev_right', v ? '0' : '1'); return !v; }); }
@@ -751,21 +853,10 @@ export default function App({ user } = {}) {
           <button className="studio" onClick={() => { setTasksOpen(true); pollTasks(); }}><ListTodo size={16}/> Tarefas{tasksActive && <span className="badge">{tasks.filter(t => t.status === 'queued' || t.status === 'running').length}</span>}</button>
           <button className="studio" onClick={() => setRoutinesOpen(true)} title="Programe tarefas para rodarem sozinhas"><CalendarClock size={16}/> Rotinas</button>
         </div>
-        <div className="navGroup navGroupKnowledge">
-          <div className="navGroupTitle">Conhecimento</div>
-          <button className="studio" onClick={() => setMemoryOpen(true)}><Brain size={16}/> Memória</button>
-          {me?.pcFoldersEnabled && <button className="studio" onClick={() => setPcOpen(true)} title="Libere pastas do seu PC para o assistente procurar, ler e organizar arquivos"><FolderCog size={16}/> Pastas do PC</button>}
-        </div>
         <div className="navGroup navGroupAdmin">
-          <div className="navGroupTitle">Administração</div>
+          <div className="navGroupTitle">Ajustes</div>
           <button className="studio" onClick={openStudioNew}><Bot size={16}/> Assistentes</button>
-          <button className="studio" onClick={openAnalytics}><BarChart3 size={16}/> Análises</button>
-          {me?.isAdmin && <button className="studio" onClick={() => window.open(`${API}/api/backup`, '_blank')} title="Baixa um arquivo com o banco e todos os workspaces (somente administrador)"><HardDriveDownload size={16}/> Backup</button>}
-          {me?.isAdmin && freeStatus?.configured && <button className="studio" onClick={() => setFreeAdminOpen(true)} title="Usuários, consumo, bloqueios e limites do modo gratuito (somente administrador)"><Gauge size={16}/> Modo gratuito</button>}
-          <button className="studio" onClick={() => setProviderOpen(true)} title="Cadastre a sua própria chave de API"><KeyRound size={16}/> Provedor de IA</button>
-          <button className="studio" onClick={() => setConnectorsOpen(true)} title="Conecte serviços externos, como o GitHub"><Cable size={16}/> Conectores</button>
-          <button className="studio" onClick={() => setPrivacyOpen(true)} title="Exportar dados, apagar histórico ou excluir a conta (LGPD)"><ShieldCheck size={16}/> Privacidade e dados</button>
-          <button className="studio" onClick={() => setThemeOpen(true)} title="Trocar a paleta e o espaço de trabalho"><Palette size={16}/> Aparência</button>
+          <button className="studio" onClick={() => setSettingsHubOpen(true)} title="Todas as configurações num só lugar"><SlidersHorizontal size={16}/> Configurações</button>
         </div>
       </nav>
       </div>
@@ -990,6 +1081,16 @@ export default function App({ user } = {}) {
         {developerSession && (!developerSession.conversationId || developerSession.conversationId === current?.id) && <div className="devSessionBar">
           <Code2 size={15}/><span>Modo desenvolvedor</span><b>{DEV_WORK_MODES.find(m => m.id === developerSession.mode)?.label || 'Ativo'}</b>
           {developerSession.github?.repo && <span className="muted" title={`Repositório GitHub${developerSession.github.branch ? ` · branch ${developerSession.github.branch}` : ''}`}>· {developerSession.github.repo}{developerSession.github.branch ? ` (${developerSession.github.branch})` : ''}</span>}
+          {developerSession.github?.repo && <div className="devGhActions">
+            <button className="devGhBtn" onClick={devGithubClone} disabled={devGitBusy !== null}
+              title="Clonar ou atualizar o repositório nesta conversa">
+              {devGitBusy === 'clone' ? <span className="spin sm"/> : <RefreshCw size={13}/>} Continuar no repositório
+            </button>
+            <button className="devGhBtn primary" onClick={() => devGithubPush()} disabled={devGitBusy !== null}
+              title="Commitar (se preciso) e enviar as mudanças para o GitHub">
+              {devGitBusy === 'push' ? <span className="spin sm"/> : <Upload size={13}/>} Enviar para o GitHub
+            </button>
+          </div>}
           <button onClick={() => setDeveloperSession(null)} title="Sair do modo desenvolvedor" aria-label="Sair do modo desenvolvedor"><X size={14}/></button>
         </div>}
         {uploads.length > 0 && <div className="attachChips">
@@ -1000,6 +1101,7 @@ export default function App({ user } = {}) {
         </div>}
         {uploadingFiles && <div className="attachStatus"><span className="spin sm"/><span>Anexando arquivo...</span></div>}
         {!uploadingFiles && scanOk && <div className="attachStatus scanOk"><ShieldCheck size={13}/><span>Arquivos verificados pelo antivírus</span></div>}
+        {docling.enabled && docling.processing && <div className="attachStatus"><span className="spin sm"/><span>Analisando documento (layout, tabelas, OCR)…</span></div>}
         <div className="composerChips" ref={cmpChipsRef}>
           <button type="button" className={`cmpChip ${webSearch ? 'on' : ''}`} aria-pressed={webSearch}
             onClick={() => setWebSearch(w => !w)}
@@ -1091,6 +1193,7 @@ export default function App({ user } = {}) {
           </div>;
         })}
       </div>
+      {docling.enabled && <DoclingPanel docs={docling.docs} onReprocess={docling.reprocess} onCancel={docling.cancel} onPurge={docling.purge} isAdmin={docling.isAdmin} config={docling.config} health={docling.health} onSaveConfig={docling.saveConfig} />}
     </Drawer>}
 
     {toast && <div className={`toast ${toast.kind || 'err'}`} role="alert">{toast.text}<button onClick={() => setToast(null)} aria-label="Fechar aviso"><X size={14}/></button></div>}
@@ -1132,11 +1235,12 @@ export default function App({ user } = {}) {
         </div>
       </div>
 
-      <label>Modelo de IA padrão
-        <select value={form.model || model} onChange={e => setForm(f => ({ ...f, model: e.target.value }))}>
-          {allModels.filter(modelHasTools).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-        </select>
-      </label>
+      <div className="field">
+        <span className="fieldLabel">Modelo de IA padrão</span>
+        {/* Seletor completo (busca, filtros, capacidades, classificação, preço)
+            — o mesmo da área de modelos, em vez de um <select> só com nomes. */}
+        <ModelPicker models={allModels.filter(modelHasTools)} value={form.model || model} onChange={id => setForm(f => ({ ...f, model: id }))}/>
+      </div>
 
       <label>Começar de um template
         <select value={form.template || ''} onChange={e => applyTemplate(e.target.value)}>
@@ -1182,6 +1286,7 @@ export default function App({ user } = {}) {
     {pcOpen && <PcFoldersPanel showToast={showToast} askConfirm={askConfirm} onClose={() => setPcOpen(false)}/>}
     {toolsOpen && <ToolsPanel onPick={pickTool} onClose={() => setToolsOpen(false)}/>}
     {developerOpen && <DeveloperPanel devProjects={devProjects} team={team} initialMode={developerStartMode} onStart={startDeveloperTask} onManageFolders={() => { setDeveloperOpen(false); setPcOpen(true); }} onOpenConnectors={() => { setDeveloperOpen(false); setConnectorsOpen(true); }} onClose={() => setDeveloperOpen(false)}/>}
+    {sandboxOpen && <SandboxPanel onClose={() => setSandboxOpen(false)}/>}
     {routinesOpen && <RoutinesPanel assistants={assistants} clients={clients} showToast={showToast} askConfirm={askConfirm} onClose={() => setRoutinesOpen(false)}/>}
     {inboxOpen && <InboxPanel clients={clients} clientId={clientId} showToast={showToast} askConfirm={askConfirm} onOpenConversation={(id) => { fetchConversations(); openConversation(id); }} onClose={() => setInboxOpen(false)}/>}
     {providerOpen && <ProviderPanel showToast={showToast} freeStatus={freeStatus}
@@ -1344,5 +1449,49 @@ export default function App({ user } = {}) {
       </div>
     </Drawer>}
     {appDialog}
+    <Companion
+      companion={companion}
+      busy={busy}
+      statusText={statusText}
+      listening={listening}
+      model={model}
+      allModels={allModels}
+      assistants={assistants}
+      draft={input}
+      onApplyDraft={setInput}
+      showToast={showToast}
+    />
+    {copilotOpen && <CopilotPanel copilot={copilot} onClose={() => setCopilotOpen(false)} />}
+    {companionConfigOpen && <CompanionConfig
+      companion={companion}
+      allModels={allModels}
+      assistants={assistants}
+      model={model}
+      onClose={() => setCompanionConfigOpen(false)}
+    />}
+    {settingsHubOpen && <SettingsHub
+      onClose={() => setSettingsHubOpen(false)}
+      isAdmin={me?.isAdmin}
+      pcFoldersEnabled={me?.pcFoldersEnabled}
+      freeConfigured={freeStatus?.configured}
+      actions={{
+        aparencia: () => setThemeOpen(true),
+        copilotoAjustes: () => setCompanionConfigOpen(true),
+        copiloto: () => setCopilotOpen(true),
+        provedor: () => setProviderOpen(true),
+        assistentes: openStudioNew,
+        dev: () => setDeveloperOpen(true),
+        sandbox: () => setSandboxOpen(true),
+        conectores: () => setConnectorsOpen(true),
+        pastas: () => setPcOpen(true),
+        rotinas: () => setRoutinesOpen(true),
+        memoria: () => setMemoryOpen(true),
+        privacidade: () => setPrivacyOpen(true),
+        analises: openAnalytics,
+        inbox: () => setInboxOpen(true),
+        backup: () => window.open(`${API}/api/backup`, '_blank'),
+        gratuito: () => setFreeAdminOpen(true),
+      }}
+    />}
   </div>;
 }

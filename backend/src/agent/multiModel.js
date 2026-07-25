@@ -24,9 +24,11 @@ import { indexAfterReply } from '../memory/indexer.js';
 import { runAgent } from './loop.js';
 import { clipForBriefing, developerTeamContextFor, protectedProfilePrompt, uploadsNote } from './prompts.js';
 import { buildRepoDigest } from '../connectors/github.js';
+import { buildDocumentContext } from '../docling/context.js';
 import { STREAM_RECOVERY_LIMIT, STREAM_RESUME_NOTE, STREAM_PAUSE_RESUME_NOTE, isRetryableStreamError, openRouterRouting, retryDelay, addUsage, friendlyApiError, applyPromptCache } from './provider.js';
 import { guardStreamStall, PROVIDER_CONNECT_TIMEOUT_MS } from './streamGuard.js';
 import { acquireConversationControl, releaseConversationControl, beginProviderRequest, releaseProviderRequest, controlInterruptReason, gate } from './control.js';
+import { loadCheckpoint } from './checkpoint.js';
 import { persistAssistantReply, saveMessage } from './persistence.js';
 import { MULTI_ARTIFACT_PROTOCOL, untrustedContext } from './promptRegistry.js';
 import { snapshotArtifactVersion } from './artifacts.js';
@@ -159,12 +161,20 @@ export function memberSystemPrompt(member, mode, { toolsEnabled = false } = {}) 
 // "me mande o link do repositório" / "não tenho acesso ao GitHub". Antes disso,
 // só o Modo Equipe (orchestrator.js) recebia essa nota; o multimodelo real
 // (compare/council/debate/pipeline) ficava sem contexto do repo.
-export function multiModelSystemBlocks(member, mode, developerTeamNote = null, repoDigest = null) {
-  const blocks = [{ role: 'system', content: protectedProfilePrompt(memberSystemPrompt(member, mode)) }];
-  if (developerTeamNote) blocks.push({ role: 'system', content: developerTeamNote });
+export function multiModelSystemBlocks(member, mode, developerTeamNote = null, repoDigest = null, documentContext = null) {
+  // Nota do modo desenvolvedor consolidada no MESMO bloco system: vários
+  // modelos tratam mal múltiplas mensagens system (alguns só honram a primeira).
+  const sys = protectedProfilePrompt(memberSystemPrompt(member, mode));
+  const blocks = [{ role: 'system', content: developerTeamNote ? `${sys}\n\n${developerTeamNote}` : sys }];
   // Código REAL do repositório (compare/council/debate não executam ferramentas,
   // então este extrato é a única forma de eles analisarem o código de verdade).
   if (repoDigest) blocks.push({ role: 'user', content: untrustedContext('repository-digest', repoDigest) });
+  // CONTEÚDO REAL dos documentos anexados, já extraído pela camada Docling. Vale
+  // exatamente o mesmo argumento do extrato de repositório: sem ferramentas,
+  // este bloco é a ÚNICA forma de um participante ler o PDF/planilha do usuário.
+  // Antes, o conteúdo só chegava ao executor (runAgent) — nos modos de parecer os
+  // modelos respondiam sobre um documento que nunca tinham visto.
+  if (documentContext) blocks.push({ role: 'user', content: untrustedContext('document-content', documentContext) });
   return blocks;
 }
 
@@ -202,7 +212,7 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
       return { text: finalText, usage, model: config.coordinator };
     }
 
-    const hasUploads = Boolean(uploadsNote(conversationId));
+    const hasUploads = Boolean(uploadsNote(userId, conversationId));
     const multiRequirement = detectToolRequirement({
       userText,
       webSearch: Boolean(webSearch),
@@ -298,6 +308,18 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
         }
       } catch { /* segue só com a nota textual (nome do repo) */ }
     }
+    // Conteúdo dos documentos já processados pela camada Docling (quando ligada).
+    // Uma leitura para todos os participantes E para o coordenador — a mesma
+    // extração que o chat comum usa, sem re-extrair por modelo.
+    let documentContext = null;
+    try {
+      const docCtx = await buildDocumentContext(userId, conversationId, { query: userText });
+      if (docCtx?.note) {
+        documentContext = docCtx.note;
+        onEvent({ type: 'status', content: 'Conteúdo dos documentos anexados carregado para os modelos.' });
+      }
+    } catch (e) { console.error('[docling] contexto do multimodelo falhou:', e.message); }
+
     const historyText = await buildHistoryText(conversationId, config.context);
     const baseUserContent = historyText
       ? `Contexto da conversa até aqui:\n${historyText}\n\nNOVA mensagem do usuário:\n${userText}`
@@ -385,7 +407,7 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
     }
 
     function slotMessages(state, extraUserContent = null) {
-      const msgs = multiModelSystemBlocks(state.member, config.mode, developerTeamNote, repoDigest);
+      const msgs = multiModelSystemBlocks(state.member, config.mode, developerTeamNote, repoDigest, documentContext);
       const prefixEnd = msgs.findIndex(message => message.role !== 'system');
       const staticPrefixEnd = prefixEnd < 0 ? msgs.length : prefixEnd;
       if (developerRules) msgs.push({ role: 'user', content: untrustedContext('project-rules', developerRules) });
@@ -399,14 +421,15 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
     // Coordenador: resposta final consolidada, transmitida como texto principal.
     async function streamCoordinator(taskPrompt) {
       let text = '';
+      const coordinatorSys = protectedProfilePrompt('Você é o COORDENADOR de uma execução multimodelo: vários modelos de IA analisaram a mesma solicitação. Compare as respostas, identifique concordâncias, aponte divergências, descarte erros ou afirmações sem fundamento, aproveite os melhores argumentos e produza UMA resposta final consolidada, em português do Brasil, direta e bem organizada. Não descreva o processo — entregue a resposta.');
       const msgs = [
-        { role: 'system', content: protectedProfilePrompt('Você é o COORDENADOR de uma execução multimodelo: vários modelos de IA analisaram a mesma solicitação. Compare as respostas, identifique concordâncias, aponte divergências, descarte erros ou afirmações sem fundamento, aproveite os melhores argumentos e produza UMA resposta final consolidada, em português do Brasil, direta e bem organizada. Não descreva o processo — entregue a resposta.') },
-        ...(developerTeamNote ? [{ role: 'system', content: developerTeamNote }] : []),
+        { role: 'system', content: developerTeamNote ? `${coordinatorSys}\n\n${developerTeamNote}` : coordinatorSys },
         ...(repoDigest ? [{ role: 'user', content: untrustedContext('repository-digest', repoDigest) }] : []),
+        ...(documentContext ? [{ role: 'user', content: untrustedContext('document-content', documentContext) }] : []),
         ...(developerRules ? [{ role: 'user', content: untrustedContext('project-rules', developerRules) }] : []),
         { role: 'user', content: untrustedContext('multi-coordinator-material', taskPrompt) }
       ];
-      const prefixEnd = 1 + (developerTeamNote ? 1 : 0);
+      const prefixEnd = 1;
       applyPromptCache(msgs, config.coordinator, prefixEnd, coordinatorProvider.baseURL);
       for (let attempt = 0; ; attempt++) {
         let segment = '';
@@ -567,7 +590,7 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
             else if (event?.type === 'response_reset') onEvent({ type: 'mm_reset', slot: state.slot });
             else onEvent(event);
           };
-          executorResult = await runAgent({
+          const stageParams = {
             userId, conversationId, userText,
             model: state.member.id,
             assistant: {
@@ -587,14 +610,38 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
             gitWriteAuthorization: executableIndex === executableStates.length - 1 ? null : false,
             persistReply: executableIndex === executableStates.length - 1,
             continuationOutputPaths: [...artifactOutputPaths]
-          });
+          };
+          executorResult = await runAgent(stageParams);
+          // RETOMADA AUTOMÁTICA DA ETAPA: se, mesmo com o fôlego do loop, a
+          // etapa parou por limite de etapas, o checkpoint salvo permite
+          // CONTINUAR do ponto exato (orçamento novo, sem refazer nada). Antes
+          // o estágio virava "Erro" e a sequência inteira morria — o botão
+          // "Continuar" do chat não existe dentro do quadro multimodelo. Só o
+          // step_limit é retomado aqui: falha de provedor já esgotou a cadeia
+          // de reserva e repetir na hora tende a falhar de novo.
+          const stageResumeLimit = Math.max(0, Number(process.env.PIPELINE_STAGE_RESUME_LIMIT ?? 2));
+          for (let attempt = 1; attempt <= stageResumeLimit && executorResult.resumable && !executorResult.stopped; attempt++) {
+            const checkpoint = await loadCheckpoint(userId, conversationId);
+            if (checkpoint?.reason !== 'step_limit') break;
+            onEvent({ type: 'status', content: `A etapa ${state.slot + 1} (${state.name}) ficou longa; retomando do ponto salvo (${attempt}/${stageResumeLimit})...` });
+            executorResult = await runAgent({
+              ...stageParams,
+              userText: checkpoint.objective || userText,
+              model: checkpoint.model,
+              executionBriefing: null, // o briefing já está no array do checkpoint
+              resume: checkpoint
+            });
+          }
+          // O usage do resume já acumula o consumo dos runs anteriores da
+          // etapa (o checkpoint carrega o total) — somar só o resultado final
+          // evita contar duas vezes.
           addUsage(usage, executorResult.usage);
           addUsage(state.usage, executorResult.usage);
           state.text = clipForBriefing(String(executorResult.text || ''), META_TEXT_LIMIT);
           for (const file of executorResult.files || []) artifactOutputPaths.add(file.path);
           state.elapsedMs = Date.now() - t0;
           addSlotCost(state);
-          state.artifactVersion = snapshotArtifactVersion(conversationId, {
+          state.artifactVersion = snapshotArtifactVersion(userId, conversationId, {
             runId: artifactRunId,
             stage: state.slot,
             model: state.member.id,

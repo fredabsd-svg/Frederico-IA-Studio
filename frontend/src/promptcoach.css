@@ -1,0 +1,60 @@
+/* Assistente de prompt PROATIVO — faixa discreta acima do compositor + painel
+   limpo (largura contida, chips que quebram, com rolagem). */
+.coachBar { position: relative; margin-bottom: 8px; }
+
+/* Faixa discreta */
+.coachHint {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px; border-radius: 10px; font-size: 12.5px;
+  background: rgba(79, 140, 255, 0.1); border: 1px solid rgba(79, 140, 255, 0.28); color: #cfe0ff;
+  animation: coachIn 0.16s ease;
+}
+.coachHint > svg { flex: none; color: #6ea8ff; }
+.coachHint > span { flex: 1; min-width: 0; }
+.coachHintSee {
+  display: inline-flex; align-items: center; gap: 2px; flex: none;
+  background: rgba(79, 140, 255, 0.25); border: none; color: #eaf1ff;
+  font-size: 12px; padding: 4px 10px; border-radius: 7px; cursor: pointer;
+}
+.coachHintSee:hover { background: rgba(79, 140, 255, 0.4); }
+.coachHintX { flex: none; background: none; border: none; color: #9fb6dc; cursor: pointer; padding: 4px; border-radius: 6px; display: flex; }
+.coachHintX:hover { background: rgba(255, 255, 255, 0.1); color: #fff; }
+
+@keyframes coachIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+/* Painel completo (contido, rolável) */
+.coachPanel {
+  width: 100%; max-height: 340px; overflow-y: auto;
+  background: rgba(16, 21, 34, 0.98); border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4); padding: 12px; color: #dbe3f4;
+  animation: coachIn 0.16s ease;
+}
+.coachHead { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.coachHead strong { display: inline-flex; align-items: center; gap: 6px; font-size: 13.5px; color: #fff; }
+.coachHead button { background: none; border: none; color: #8b96af; cursor: pointer; padding: 3px; border-radius: 6px; display: flex; }
+.coachHead button:hover { background: rgba(255, 255, 255, 0.08); color: #fff; }
+.coachMeta { display: flex; gap: 12px; font-size: 12px; color: #9aa5bd; margin-bottom: 8px; }
+.coachScore { font-weight: 600; }
+.coachScore.s0 { color: #ef4444; } .coachScore.s1 { color: #f0a340; } .coachScore.s2 { color: #22c55e; }
+.coachOk { font-size: 12.5px; color: #22c55e; padding: 2px 0 8px; }
+.coachIssues { list-style: none; margin: 0 0 10px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.coachIssues li { font-size: 12px; color: #b8c2d8; line-height: 1.4; }
+.coachIssues b { color: #eef2fb; }
+.coachScaffold {
+  width: 100%; font-size: 12.5px; padding: 9px 10px; border-radius: 9px; cursor: pointer;
+  background: rgba(79, 140, 255, 0.16); border: 1px solid rgba(79, 140, 255, 0.5); color: #cfe0ff;
+}
+.coachScaffold:hover { background: rgba(79, 140, 255, 0.26); }
+.coachChipsLabel { font-size: 11.5px; color: #8b96af; margin: 10px 0 6px; }
+.coachChips { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.coachChips button {
+  font-size: 11.5px; padding: 7px 9px; border-radius: 8px; cursor: pointer; text-align: center;
+  background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); color: #b8c2d8;
+  white-space: normal; line-height: 1.2;
+}
+.coachChips button:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
+
+@media (prefers-color-scheme: light) {
+  .app.theme-light .coachPanel { background: rgba(255, 255, 255, 0.99); color: #1e293b; border-color: rgba(0, 0, 0, 0.1); }
+  .app.theme-light .coachHead strong { color: #0f172a; }
+}
