@@ -8,8 +8,8 @@ import { runTool } from '../tools.js';
 import { execInSandbox, realInside, workspaceFor } from '../sandbox.js';
 
 // Lista os arquivos da pasta outputs (para detectar os que foram gerados)
-export function listOutputs(conversationId) {
-  const ws = workspaceFor(conversationId);
+export function listOutputs(userId, conversationId) {
+  const ws = workspaceFor(conversationId, userId);
   const acc = [];
   const walk = (dir) => { try { for (const d of fs.readdirSync(dir, { withFileTypes: true })) { const full = path.join(dir, d.name); d.isDirectory() ? walk(full) : acc.push(full); } } catch {} };
   walk(ws.outputs);

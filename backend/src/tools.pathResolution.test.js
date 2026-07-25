@@ -25,16 +25,17 @@ test('accepts only files inside an explicitly mounted PC folder', () => {
 
 test('reads and writes virtual workspace paths without creating a fake workspace folder', async () => {
   const conversationId = `tool-path-${Date.now()}`;
+  const sandboxOptions = { userId: 'user-tool-path' };
   const write = JSON.parse(await runTool(conversationId, 'write_file', {
     path: '/workspace/outputs/relatorio.txt',
     content: 'conteudo do relatorio'
-  }));
+  }, sandboxOptions));
   const read = JSON.parse(await runTool(conversationId, 'read_file', {
     path: '/workspace/outputs/relatorio.txt'
-  }));
+  }, sandboxOptions));
   const missing = JSON.parse(await runTool(conversationId, 'read_file', {
     path: '/workspace/nao-existe.txt'
-  }));
+  }, sandboxOptions));
 
   assert.equal(write.ok, true);
   assert.equal(read.content, 'conteudo do relatorio');

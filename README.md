@@ -326,14 +326,15 @@ Como funciona por dentro:
 
 ## 🔒 Segurança e limites atuais
 
-- ✅ **Isolamento por usuário concluído:** cada conta só acessa os próprios dados (posse verificada em cada consulta). As chaves de IA por usuário são guardadas **criptografadas**.
+- ✅ **Isolamento por usuário em três camadas:** posse verificada em cada consulta ao banco; **workspace físico escopado pelo dono** (`WORKSPACE_ROOT/users/<usuário>/<conversa>`); mapa de sandboxes indexado por (usuário, conversa) — mexer nas próprias pastas do PC não derruba o sandbox de terceiros. As chaves de IA são guardadas **criptografadas** (AES-256-GCM). Provas em `backend/src/sandbox.isolation.test.js`.
 - 🧱 **Camada HTTP endurecida:** headers de segurança via `helmet` (X-Frame-Options, nosniff, HSTS), CORS restrito à própria origem (sem `FRONTEND_URL` nenhuma origem externa é aceita — o antigo fallback `*` foi removido), rate limiting geral por IP (`RATE_API_PER_MIN`) e janela apertada para login/cadastro (`RATE_AUTH_PER_15MIN`), além de validação estruturada de entrada com `zod` nas rotas de escrita.
-- 🩺 **Healthcheck com métricas:** `GET /api/health` agora expõe `bootAt` (uptime do processo) e `unhandledRejections` (contador de promessas rejeitadas sem handler). Monitores externos como Uptime Kuma, Healthchecks.io ou Grafana podem alertar quando o contador sobe — sinal precoce de regressão após deploy.
-- 🛡️ **Antivírus nos uploads (ClamAV):** todo arquivo enviado (anexos, caixa de entrada, importação de memória) é escaneado antes de ser salvo; infectado é recusado com aviso e o usuário vê "✓ verificado" quando passa. Ligado por padrão em produção (`docker-compose.prod.yml`); opcional no dev (`--profile antivirus`). Veja o Passo 8 do [VPS-DEPLOY.md](VPS-DEPLOY.md).
+- 🩺 **Healthcheck com métricas:** `GET /api/health` expõe `bootAt`, `unhandledRejections`, a **política do antivírus** (e se ele está degradado), **sandboxes ativos e órfãos recolhidos** e os limites de upload vigentes. Monitores externos (Uptime Kuma, Healthchecks.io, Grafana) alertam a partir daí — ver [docs/OPERATIONS.md](docs/OPERATIONS.md) §2.
+- 🛡️ **Antivírus nos uploads (ClamAV):** todo arquivo enviado (anexos, caixa de entrada, importação de memória) é escaneado antes de ser salvo; infectado é recusado e apagado na hora. A resposta da API traz `scanStatus`: `verificado`, `degradado` (clamd fora do ar, arquivo aceito **sem** análise) ou `sem-antivirus`. **Nada é apresentado como verificado sem ter sido analisado.** Em ambiente público, use `CLAMAV_REQUIRED=true` (recusa o envio em vez de aceitar sem verificar) — ver [docs/SECURITY.md](docs/SECURITY.md) §7 e o Passo 8 do [VPS-DEPLOY.md](VPS-DEPLOY.md).
 - 🪧 **Segurança visível ao usuário:** a tela de login exibe selos (arquivos verificados por antivírus, conexão criptografada, compromisso com a LGPD — com link para `/privacidade`) e a página de apresentação tem um bloco de confiança com 6 cartões (dados isolados, chave própria/BYOK, credenciais protegidas, arquivos verificados, HTTPS, LGPD). Regra: só anunciar o que está de fato ativo — se desativar o ClamAV, remova os selos correspondentes.
-- ⚠️ O backend recebe o **socket Docker** — permissão privilegiada; use uma máquina **dedicada** a este app.
-- 🔐 A sandbox roda **sem privilégios** e com limites de CPU/memória, mas a rede fica habilitada para pesquisas e automações — código executado por um usuário tem acesso à internet.
+- ⚠️ O backend recebe o **socket Docker** — equivale a root no host. **Use uma máquina dedicada a este app.** É o risco crítico aberto **F-04**: análise de ameaça e plano de substituição (proxy com allowlist, rootless, serviço dedicado) em [docs/SECURITY.md](docs/SECURITY.md) §4.2.
+- 🔐 A sandbox roda **sem privilégios** (`CapDrop: ALL`, `no-new-privileges`, uid 1000), com limites de CPU/memória/processos e **rede desligada por padrão** — abrir a rede exige autorização do próprio pedido e recria o container, para a permissão não vazar entre turnos. Com a rede aberta ainda não há allowlist de destino (risco F-05b em [docs/AUDITORIA_2026-07.md](docs/AUDITORIA_2026-07.md)).
 - 🛰️ **Proteção contra SSRF no `web_fetch`:** o backend bloqueia hostnames/IPs internos (loopback, faixas privadas IPv4, metadados de nuvem `169.254.169.254`, IPv6 loopback/ULA/link-local, incluindo a forma IPv4-mapeada) **e resolve o DNS validando cada IP antes de conectar** (defesa contra DNS rebinding), revalidando a cada redirect. Cobertura verificada em `backend/src/tools.ssrf.test.js`.
+- 👑 **Administração persistida:** o papel de administrador vive em `user_roles`, preso ao **ID** do usuário. `ADMIN_EMAIL` serve só de bootstrap do primeiro admin — depois disso, cadastrar-se com aquele e-mail não concede nada. Toda ação administrativa (e cada recusa) fica em `admin_audit`.
 - 🌍 **Site público:** qualquer pessoa pode se cadastrar. Para uso amplo/indexado, considere adicionar confirmação de e-mail e/ou aprovação de conta; enquanto isso, prefira divulgar "por link" e mantenha os limites (`RATE_MSGS_PER_DAY`, `MAX_SANDBOXES_PER_USER`).
 - 📋 Conteúdo enviado ao modelo pode ser transmitido ao provedor configurado — avalie **LGPD** e sigilo antes de enviar dados sensíveis.
 
@@ -349,13 +350,21 @@ Como funciona por dentro:
 
 ## ✅ Validação local
 
-```powershell
-docker compose exec -T backend node --test "src/**/*.test.js"
-docker compose exec -T frontend node --test src/authUrls.test.js src/sse.test.js
-docker compose exec -T frontend npm run build
+```bash
+cd backend  && npm run check            # lint + suíte completa
+cd frontend && npm run check            # lint + todos os testes + build
+cd backend  && npm run test:integration # exige Postgres: migrações do zero + suíte
+cd backend  && npm run test:count       # contagem REAL de todas as suítes
 ```
 
-O mesmo conjunto roda automaticamente no **GitHub Actions** (`.github/workflows/ci.yml`) a cada push/PR: testes do backend, testes do frontend e build de produção.
+> A contagem de testes **não** é escrita à mão nesta documentação: use `npm run test:count`.
+> O CI publica o mesmo número no resumo de cada execução.
+
+O **GitHub Actions** (`.github/workflows/ci.yml`) roda a cada push/PR: sintaxe, testes do
+backend em Node 20 e 22, **integração com PostgreSQL real** (migrações do zero,
+idempotência, suíte sem `skip`, boot do backend, portão de autenticação), **todos** os
+testes do frontend + build + catraca de bundle, testes Python e validação do docker compose.
+Detalhes em [docs/TESTING.md](docs/TESTING.md).
 
 ---
 
@@ -363,14 +372,25 @@ O mesmo conjunto roda automaticamente no **GitHub Actions** (`.github/workflows/
 
 | Documento | Conteúdo |
 |---|---|
-| [CONTINUIDADE.md](CONTINUIDADE.md) | Estado atual, decisões e handoff |
+| [CONTINUIDADE.md](CONTINUIDADE.md) | **Estado atual, riscos abertos e como retomar** (curto) |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Arquitetura real: serviços, fluxos, persistência, lacunas |
+| [docs/SECURITY.md](docs/SECURITY.md) | Modelo de ameaça, isolamento, sandbox, segredos, LGPD |
+| [docs/OPERATIONS.md](docs/OPERATIONS.md) | Runbook: monitoramento, limites, procedimentos, rollback |
+| [docs/BACKUP_RESTORE.md](docs/BACKUP_RESTORE.md) | Backup completo e restauração passo a passo |
+| [docs/TESTING.md](docs/TESTING.md) | Como rodar os testes, convenções e lacunas conhecidas |
+| [docs/AUDITORIA_2026-07.md](docs/AUDITORIA_2026-07.md) | Auditoria de produção: achados, correções e prontidão |
+| [docs/MULTIMODEL.md](docs/MULTIMODEL.md) | Modos multimodelo e o que ainda falta |
+| [docs/MEMORY.md](docs/MEMORY.md) | Memória semântica e recuperação de contexto |
+| [docs/DOCLING.md](docs/DOCLING.md) | Camada de compreensão documental |
+| [docs/CHANGELOG_HISTORY.md](docs/CHANGELOG_HISTORY.md) | Histórico completo do projeto (antigo CONTINUIDADE) |
 | [NOTEBOOK-SERVIDOR.md](NOTEBOOK-SERVIDOR.md) | Acesso remoto com notebook e Tailscale |
 | [VPS-DEPLOY.md](VPS-DEPLOY.md) | Publicação em VPS com HTTPS |
 
 ## 🤝 Processo de contribuição
 
-Toda mudança relevante precisa atualizar o `CONTINUIDADE.md`, passar por validação,
-receber um commit descritivo em português e ser enviada ao GitHub na mesma sessão.
+Toda mudança relevante precisa: atualizar o `CONTINUIDADE.md` (que é **curto** — o
+histórico vai para `docs/CHANGELOG_HISTORY.md`), passar por `npm run check` nos dois
+lados, receber um commit descritivo em português e ser enviada ao GitHub na mesma sessão.
 
 <div align="center">
 

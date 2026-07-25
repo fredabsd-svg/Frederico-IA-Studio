@@ -3,9 +3,17 @@
   "version": "2.0.0",
   "type": "module",
   "scripts": {
-    "audit:models": "node scripts/audit-model-catalog.mjs",
     "start": "node src/server.js",
-    "dev": "node --watch src/server.js"
+    "dev": "node --watch src/server.js",
+    "migrate": "node -e \"import('./src/migrate.js').then(m=>m.runMigrations()).then(()=>process.exit(0)).catch(e=>{console.error(e);process.exit(1)})\"",
+    "lint": "node scripts/lint.mjs",
+    "test": "node scripts/run-tests.mjs",
+    "test:unit": "node scripts/run-tests.mjs",
+    "test:integration": "node scripts/check-migrations.mjs && node --test 'src/**/*.test.js'",
+    "test:all": "npm run lint && npm run test:integration",
+    "test:count": "node scripts/count-tests.mjs",
+    "check": "npm run lint && npm test",
+    "audit:models": "node scripts/audit-model-catalog.mjs"
   },
   "dependencies": {
     "@xenova/transformers": "^2.17.2",

@@ -51,10 +51,10 @@ export function parseGitStatus(output) {
 // recursos na VPS, além de poder derrubar um sandbox ativo de política
 // diferente (ver execInActiveSandbox). Nunca lança: em caso de erro/sandbox
 // indisponível, devolve isRepo:false.
-export async function inspectGit(conversationId) {
+export async function inspectGit(userId, conversationId) {
   try {
     const cmd = 'git status --porcelain=v1 -b 2>&1 | head -400';
-    const res = await execInActiveSandbox(conversationId, cmd, 20000);
+    const res = await execInActiveSandbox(userId, conversationId, cmd, 20000);
     if (!res) return { isRepo: false, branch: null, changed: [], ahead: 0, behind: 0, dirty: false, noSandbox: true };
     return parseGitStatus(res.output || '');
   } catch {
@@ -65,7 +65,7 @@ export async function inspectGit(conversationId) {
 // Verifica o git e, quando fizer sentido, cria (uma única vez) o alerta de
 // "trabalho sem commit / sem push". Devolve { status, event }.
 export async function checkGit(userId, conversationId, { settings, project } = {}) {
-  const status = await inspectGit(conversationId);
+  const status = await inspectGit(userId, conversationId);
   if (!status.isRepo) return { status, event: null };
   const projectKey = project || conversationId;
   let event = null;
