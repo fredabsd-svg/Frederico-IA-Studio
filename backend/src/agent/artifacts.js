@@ -19,13 +19,13 @@ function sha256File(filePath) {
   return hash.digest('hex');
 }
 
-export function snapshotArtifactVersion(conversationId, { runId, stage, model, role, valid = true, checks = {} } = {}) {
-  const ws = workspaceFor(conversationId);
+export function snapshotArtifactVersion(userId, conversationId, { runId, stage, model, role, valid = true, checks = {} } = {}) {
+  const ws = workspaceFor(conversationId, userId);
   const versionId = `v${String(Number(stage) + 1).padStart(2, '0')}`;
   const root = path.join(ws.base, '.multimodel', safePart(runId), versionId);
   fs.mkdirSync(root, { recursive: true });
   const files = [];
-  for (const file of listOutputs(conversationId)) {
+  for (const file of listOutputs(userId, conversationId)) {
     const source = path.resolve(ws.base, file.path);
     if (!realInside(ws.base, source)) continue;
     const relativeOutput = path.relative(ws.outputs, source);

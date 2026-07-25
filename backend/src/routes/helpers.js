@@ -82,7 +82,7 @@ export async function ensureConversation(userId, id, model) {
   const t = now();
   await db.prepare('INSERT INTO conversations (id,user_id,title,model,created_at,updated_at) VALUES (?,?,?,?,?,?)')
     .run(id, userId, 'Nova conversa', model || process.env.DEEPSEEK_MODEL || 'deepseek-chat', t, t);
-  workspaceFor(id);
+  workspaceFor(id, userId);
   return db.prepare('SELECT * FROM conversations WHERE id=? AND user_id=?').get(id, userId);
 }
 

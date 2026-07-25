@@ -118,7 +118,7 @@ router.post('/docling/documents/:id/reprocess', async (req, res) => {
   const f = await db.prepare('SELECT * FROM files WHERE id=(SELECT file_id FROM document_processings WHERE id=? AND user_id=?)').get(req.params.id, req.userId);
   const conv = await db.prepare('SELECT conversation_id FROM document_processings WHERE id=? AND user_id=?').get(req.params.id, req.userId);
   if (!f || !conv?.conversation_id) return res.status(409).json({ error: 'Arquivo original indisponível para reprocessar.' });
-  const ws = workspaceFor(conv.conversation_id);
+  const ws = workspaceFor(conv.conversation_id, req.userId);
   const filePath = path.join(ws.base, f.path);
   if (!fs.existsSync(filePath)) return res.status(409).json({ error: 'Arquivo original não está mais no disco.' });
   // force: ignora o cache — reprocessar com a mesma config deve reprocessar de

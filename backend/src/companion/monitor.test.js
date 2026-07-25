@@ -50,7 +50,7 @@ test('proactiveAllowed respeita enabled, modo e flag de alertas', () => {
 test('inspectGit sem sandbox ativo OBSERVA sem criar container (noSandbox)', async () => {
   // A conversa não tem sessão de sandbox — o monitor deve devolver o resumo
   // vazio com noSandbox:true, sem materializar um container (nem tocar Docker).
-  const s = await inspectGit('conversa-inexistente-monitor');
+  const s = await inspectGit('user-monitor-1', 'conversa-inexistente-monitor');
   assert.equal(s.isRepo, false);
   assert.equal(s.noSandbox, true);
   assert.equal(s.dirty, false);

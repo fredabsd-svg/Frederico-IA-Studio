@@ -59,7 +59,7 @@ router.post('/inbox/:client/to-conversation', async (req, res) => {
   const clientId = req.params.client === 'geral' ? null : req.params.client;
   await db.prepare('INSERT INTO conversations (id,user_id,title,model,client_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?)')
     .run(convId, req.userId, `Documentos recebidos — ${t.slice(0, 10)}`, process.env.DEEPSEEK_MODEL || 'deepseek-chat', clientId, t, t);
-  const ws = workspaceFor(convId);
+  const ws = workspaceFor(convId, req.userId);
   for (const n of files) {
     // Prefixo de comprimento fixo (nanoid(6)) — a versão antiga com `+_` guloso
     // comia até o último "_" e mutilava nomes como "Nota_Fiscal_123.pdf".

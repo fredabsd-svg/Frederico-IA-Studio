@@ -43,7 +43,7 @@ router.post('/conversations', validate(schemas.conversationCreate), async (req, 
   const model = req.body?.model || process.env.DEEPSEEK_MODEL || 'deepseek-chat';
   const clientId = req.body?.clientId || null;
   await db.prepare('INSERT INTO conversations (id,user_id,title,model,client_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?)').run(id, req.userId, title, model, clientId, t, t);
-  workspaceFor(id);
+  workspaceFor(id, req.userId);
   res.json({ id, title, model, client_id: clientId, created_at: t, updated_at: t });
 });
 
@@ -115,7 +115,7 @@ router.post('/conversations/:id/upload', upload.array('files'), async (req, res)
   if (!await ensureConversation(req.userId, req.params.id)) return res.status(404).json({ error: 'Não encontrado' });
   const scan = await scanOrReject(res, req.files || []);
   if (!scan) return;
-  const ws = workspaceFor(req.params.id);
+  const ws = workspaceFor(req.params.id, req.userId);
   const saved = [];
   for (const file of scan.clean) {
     const original = decodeUploadName(file.originalname);
@@ -140,7 +140,7 @@ router.post('/conversations/:id/upload', upload.array('files'), async (req, res)
 
 router.get('/conversations/:id/files', async (req, res) => {
   if (!await ensureConversation(req.userId, req.params.id)) return res.status(404).json({ error: 'Não encontrado' });
-  const ws = workspaceFor(req.params.id);
+  const ws = workspaceFor(req.params.id, req.userId);
   const outputFiles = walk(ws.outputs).map(p => {
     if (!realInside(ws.base, p)) return null;
     const rel = path.relative(ws.base, p).replaceAll('\\', '/');
@@ -149,7 +149,7 @@ router.get('/conversations/:id/files', async (req, res) => {
     return { id: Buffer.from(rel).toString('base64url'), kind: 'output', name: path.basename(p), path: rel, size };
   }).filter(Boolean);
   const uploaded = await db.prepare('SELECT id,kind,name,path,size,created_at FROM files WHERE conversation_id=?').all(req.params.id);
-  const availablePaths = new Set(validateAttachmentManifest(req.params.id, uploaded).valid.map(file => file.path));
+  const availablePaths = new Set(validateAttachmentManifest(req.userId, req.params.id, uploaded).valid.map(file => file.path));
   res.json([
     ...uploaded.map(file => ({ ...file, available: availablePaths.has(String(file.path || '').replaceAll('\\', '/')) })),
     ...outputFiles
@@ -159,7 +159,7 @@ router.get('/conversations/:id/files', async (req, res) => {
 router.delete('/conversations/:id/files/*', async (req, res) => {
   const conv = await db.prepare('SELECT id FROM conversations WHERE id=? AND user_id=?').get(req.params.id, req.userId);
   if (!conv) return res.status(404).json({ error: 'Não encontrado' });
-  const ws = workspaceFor(req.params.id);
+  const ws = workspaceFor(req.params.id, req.userId);
   const rel = req.params[0];
   const target = path.resolve(ws.base, rel);
   if (!insideBase(ws.base, target) || !realInside(ws.base, target)) return res.status(400).json({ error: 'Caminho inválido' });
@@ -176,7 +176,7 @@ router.delete('/conversations/:id/files/*', async (req, res) => {
 router.get('/conversations/:id/download/*', async (req, res) => {
   const conv = await db.prepare('SELECT id FROM conversations WHERE id=? AND user_id=?').get(req.params.id, req.userId);
   if (!conv) return res.status(404).send('Arquivo não encontrado');
-  const ws = workspaceFor(req.params.id);
+  const ws = workspaceFor(req.params.id, req.userId);
   const rel = req.params[0];
   const target = path.resolve(ws.base, rel);
   if (!insideBase(ws.base, target) || !realInside(ws.base, target) || !fs.existsSync(target)) return res.status(404).send('Arquivo não encontrado');
@@ -230,13 +230,13 @@ router.post('/conversations/:id/export', async (req, res) => {
           : message.content
       }));
     if (!messages.length) return res.status(400).json({ error: 'A conversa ainda não tem mensagens.' });
-    const ws = workspaceFor(req.params.id);
+    const ws = workspaceFor(req.params.id, req.userId);
     const jsonPath = path.join(ws.base, '.export.json');
     fs.writeFileSync(jsonPath, JSON.stringify({ title: conv.title, messages }), 'utf8');
     try { fs.chownSync(jsonPath, 1000, 1000); } catch {}
     const slug = (conv.title || 'conversa').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'conversa';
     const name = `conversa-${slug}.${format}`;
-    const result = JSON.parse(await runTool(req.params.id, 'run_python', { code: PY_EXPORT.replace('__FMT__', format).replace('__OUT__', name) }));
+    const result = JSON.parse(await runTool(req.params.id, 'run_python', { code: PY_EXPORT.replace('__FMT__', format).replace('__OUT__', name) }, { userId: req.userId }));
     try { fs.rmSync(jsonPath, { force: true }); } catch {}
     if (result.exitCode !== 0) return res.status(500).json({ error: 'Falha ao exportar: ' + String(result.output).slice(-200) });
     res.json({ ok: true, path: `outputs/${name}`, name });
@@ -259,7 +259,7 @@ router.post('/conversations/:id/truncate', async (req, res) => {
   const doomed = (await db.prepare(`SELECT id FROM messages WHERE conversation_id=? AND ${fromMessage}`)
     .all(req.params.id, msg.seq)).map(r => r.id);
   if (doomed.length) {
-    const ws = workspaceFor(req.params.id);
+    const ws = workspaceFor(req.params.id, req.userId);
     const ph = doomed.map(() => '?').join(',');
     const orphanFiles = await db.prepare(`SELECT path FROM files WHERE conversation_id=? AND message_id IN (${ph})`).all(req.params.id, ...doomed);
     for (const f of orphanFiles) {
@@ -381,7 +381,7 @@ router.post('/conversations/:id/chat', validate(schemas.chat), async (req, res) 
   // os mesmos caminhos ANTES de abrir o stream/modelo: se o upload ainda está
   // terminando ou o arquivo sumiu do disco, não deixamos a IA concluir
   // falsamente que "não recebeu anexo".
-  const attachmentCheck = validateAttachmentManifest(req.params.id, req.body?.attachments || []);
+  const attachmentCheck = validateAttachmentManifest(req.userId, req.params.id, req.body?.attachments || []);
   if (attachmentCheck.missing.length) {
     return res.status(409).json({
       error: 'Um ou mais anexos ainda não estão disponíveis nesta conversa. Aguarde o envio terminar ou remova o anexo indisponível e envie-o novamente.',

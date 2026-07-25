@@ -10,7 +10,7 @@ import { db } from './db.js';
 import { maybeReindexOnModelChange, loadSettings } from './memory/memoryService.js';
 import { initVectorStore } from './memory/vectorStore.js';
 import { ensureUserSeeded } from './seed.js';
-import { isConversationId, loadPcFolders } from './sandbox.js';
+import { isConversationId, loadPcFolders, migrateLegacyWorkspaces, startSandboxReconciliation } from './sandbox.js';
 import { auth, requireAuth } from './auth.js';
 import { toNodeHandler } from 'better-auth/node';
 import { runMigrations } from './migrate.js';
@@ -202,6 +202,10 @@ app.use((err, req, res, _next) => {
   // 2) Aquece os caches em memória (settings e pastas do PC).
   await loadSettings();
   await loadPcFolders();
+  // 2b) Layout do workspace por USUÁRIO (workspaces/users/<usuário>/<conversa>):
+  //     move as pastas legadas (workspaces/<conversa>) para o dono correto.
+  //     Idempotente — nada acontece depois da primeira execução.
+  try { await migrateLegacyWorkspaces(); } catch (e) { console.error('[workspace]', e.message); }
   try { await maybeReindexOnModelChange(); } catch {}
   // 3) Os seeds agora são POR USUÁRIO (ensureUserSeeded), disparados sob demanda
   //    pelo middleware após a autenticação — não há mais seed global no boot.
@@ -209,6 +213,10 @@ app.use((err, req, res, _next) => {
   try { await db.prepare("UPDATE tasks SET status='queued', progress_text='Reenfileirada após reinício' WHERE status='running'").run(); } catch {}
   // 5) Sobe o servidor, arma as rotinas agendadas e dispara o worker de tarefas.
   app.listen(port, () => console.log(`Frederico AI Studio backend em http://localhost:${port}`));
+  // 5b) Containers órfãos: tudo que sobrou de um processo anterior (queda do
+  //     backend/host) é removido agora, e uma varredura periódica recolhe o que
+  //     escapar do mapa em memória. Só toca em containers com a label do app.
+  startSandboxReconciliation();
   startSchedulers();
   startHealthSampling(); // amostragem de saúde (memória/CPU) para o copiloto
   setTimeout(() => processTasks().catch(() => {}), 2000);
