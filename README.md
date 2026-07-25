@@ -121,6 +121,14 @@ O personagem que acompanha o Studio — e explica o que está acontecendo.
 
 - **Memória de longo prazo** com recuperação semântica (pgvector) e painel de
   revisão — o assistente lembra do que importa, com isolamento por cliente.
+- **Continuidade por projeto** — a recuperação é **em camadas, por prioridade**:
+  primeiro o projeto ativo e as suas últimas conversas, depois as decisões e
+  correções já registradas, depois o que se liga ao assunto e, por último, o
+  perfil geral. Um **chat novo dentro de um projeto continua de onde parou** em
+  vez de começar do zero: `dev_projects` guarda o projeto no servidor e
+  `project_id` carimba conversas, trechos e memórias, então o vínculo é real e
+  não um palpite por semelhança de texto. O rastro abaixo de cada resposta
+  mostra o projeto reconhecido e o motivo de cada item recuperado.
 - **Assistentes personalizados** — instruções, modelos, ferramentas e
   personalidade próprios.
 - **Compreensão documental (Docling)** — PDFs processados **uma vez** (layout,

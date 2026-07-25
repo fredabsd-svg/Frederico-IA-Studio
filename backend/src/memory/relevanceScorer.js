@@ -57,6 +57,7 @@ const DOMAINS = {
       'layout', 'tela', 'login', 'botao', 'clicar', 'clique', 'pagina',
       'interface', 'menu', 'formulario', 'aba', 'painel', 'design',
       'responsivo', 'mobile', 'desktop', 'aplicacao', 'funcionalidade',
+      'dashboard', 'upload', 'download', 'grafico', 'kpi',
       'companion', 'monitor', 'health', 'incident', 'audit', 'auditoria',
       'repair', 'stream guard', 'checkpoint', 'persistence', 'persistencia',
       'orchestrator', 'multi model', 'model capabilities', 'model knowledge',
@@ -356,23 +357,37 @@ const PROJECT_PATTERNS = [
 // salva pedidos sem sinal nenhum: "vamos continuar o projeto" não tem uma única
 // palavra-chave de domínio, então sem esse sinal o crivo se desligava por
 // completo e injetava todo o perfil do usuário.
-export function analyzePrompt(text, { contextDomain = null } = {}) {
+export function analyzePrompt(text, { contextDomain = null, project = null } = {}) {
   const normalized = normalize(text);
   const lower = String(text || '').toLowerCase();
 
-  // Intenção
+  // Intenção — lida só do pedido: o projeto não deve inventar uma intenção que
+  // o usuário não teve.
   let intent = 'general';
   for (const { intent: i, re } of INTENT_PATTERNS) {
     if (re.test(normalized) || re.test(lower)) { intent = i; break; }
   }
 
   // Domínio: pontua palavras-chave de cada domínio (índice pré-computado).
-  const { domain, scores: domainScores, softDomain } = scoreDomains(normalized);
+  // Quando há projeto ativo, as TECNOLOGIAS dele entram na contagem — resolve o
+  // pedido curto pela raiz: "continue de onde paramos" num projeto
+  // Python/FastAPI é software, não um pedido sem assunto.
+  //
+  // Só as tecnologias, de propósito: o NOME e a DESCRIÇÃO carregam o vocabulário
+  // do negócio, e "SPED-HUB — leitura de arquivos SPED" cai direto no dicionário
+  // contábil. Classificar por aí puxaria exatamente a memória errada — a mesma
+  // razão pela qual `conversationDomain` também evita o nome do projeto.
+  const projectText = project ? normalize(String(project.techs || '')) : '';
+  const { domain, scores: domainScores, softDomain } = scoreDomains(
+    projectText ? `${normalized} ${projectText}` : normalized
+  );
 
-  // Projeto
-  let project = null;
+  // Rótulo lexical de projeto (reserva para conversas fora do Modo
+  // Desenvolvedor). Renomeado para não colidir com o projeto ATIVO recebido por
+  // parâmetro, que é o vínculo real e tem precedência.
+  let projectLabel = null;
   for (const { project: p, re } of PROJECT_PATTERNS) {
-    if (re.test(text || '')) { project = p; break; }
+    if (re.test(text || '')) { projectLabel = p; break; }
   }
 
   // Entidades: termos importantes extraídos (substantivos longos, nomes próprios)
@@ -391,7 +406,11 @@ export function analyzePrompt(text, { contextDomain = null } = {}) {
     softDomain,
     contextDomain: contextDomain || null,
     domainScores,
-    project,
+    project: projectLabel,
+    // Id REAL do projeto ativo (não o rótulo lexical de PROJECT_PATTERNS): é a
+    // chave do vínculo memória↔projeto↔conversa usado na recuperação.
+    projectId: project?.id || null,
+    projectName: project?.name || null,
     entities,
     normalized,
     raw: String(text || ''),
@@ -488,18 +507,28 @@ export function scoreMemory(memory, promptAnalysis, semanticSim = 0, simKind = '
   const conteudoEspecifico = contentDomain.domain !== 'general';
   const bonusEstruturalOk = !promptSemSinal || !conteudoEspecifico;
 
-  if (effMismatch) {
+  // Memória gravada DENTRO do projeto ativo: pertence à tarefa por construção,
+  // não por parecer com o texto do pedido. O vínculo real vale mais que
+  // qualquer palpite lexical, então ela é imune ao desvio de domínio.
+  const projectLinked = Boolean(analysis.projectId && memory.project_id && memory.project_id === analysis.projectId);
+  const mismatch = effMismatch && !projectLinked;
+
+  if (mismatch) {
     // Domínio diferente do que a conversa e a mensagem admitem — penalidade forte
     intentScore = -0.20;
-  } else if (intentMatchesDomain && bonusEstruturalOk) {
+  } else if ((intentMatchesDomain || projectLinked) && (bonusEstruturalOk || projectLinked)) {
     intentScore = 0.25;
   } else if (bonusEstruturalOk) {
     intentScore = 0.10;
   }
 
-  // 2. Relação com o projeto atual (0-0.15)
+  // 2. Relação com o projeto atual (0-0.30)
+  // O id real do projeto manda; os rótulos lexicais seguem como reserva para
+  // conversas fora do Modo Desenvolvedor.
   let projectScore = 0;
-  if (analysis.project && contentDomain.domain === 'software' && analysis.project === 'frederico-ia-studio') {
+  if (projectLinked) {
+    projectScore = 0.30;
+  } else if (analysis.project && contentDomain.domain === 'software' && analysis.project === 'frederico-ia-studio') {
     projectScore = 0.15;
   } else if (analysis.project === 'contabilidade' && contentDomain.domain === 'accounting') {
     projectScore = 0.15;
@@ -541,11 +570,11 @@ export function scoreMemory(memory, promptAnalysis, semanticSim = 0, simKind = '
 
   // 7. Risco de desvio de contexto (0-0.20 penalidade)
   let diversionRisk = 0;
-  if (effMismatch) {
+  if (mismatch) {
     diversionRisk = 0.20;
   }
   // Memória genérica (sem domínio claro) em prompt específico: leve risco
-  if (eff !== 'general' && contentDomain.domain === 'general' && content.length < 50) {
+  if (!projectLinked && eff !== 'general' && contentDomain.domain === 'general' && content.length < 50) {
     diversionRisk = Math.max(diversionRisk, 0.05);
   }
 
@@ -554,9 +583,10 @@ export function scoreMemory(memory, promptAnalysis, semanticSim = 0, simKind = '
   // Motivo — a similaridade exibida é a CALIBRADA, senão a interface mostra
   // "85%" para conteúdo sem relação nenhuma (é o piso do modelo, não afinidade).
   const reasons = [];
+  if (projectLinked) reasons.push('memória do projeto ativo');
   if (sim >= 0.4) reasons.push(`similaridade semântica ${(sim * 100).toFixed(0)}%`);
   if (contentDomain.domain === eff && eff !== 'general') reasons.push(`mesmo domínio (${contentDomain.domain})`);
-  if (projectScore > 0) reasons.push(`relacionado ao projeto ${analysis.project}`);
+  if (!projectLinked && projectScore > 0) reasons.push(`relacionado ao projeto ${analysis.project}`);
   if (memory.pinned) reasons.push('memória fixada');
   if (memory.type === 'perfil' || memory.type === 'preferencia') reasons.push(`${memory.type} permanente`);
   if (entityScore > 0) reasons.push('entidades correspondentes');
@@ -573,6 +603,7 @@ export function scoreMemory(memory, promptAnalysis, semanticSim = 0, simKind = '
     semanticSim: sim,
     semanticSimRaw: semanticSim,
     domain: contentDomain.domain,
+    projectLinked,
     shouldInclude: total >= MEMORY_THRESHOLD && diversionRisk < 0.20,
     reason: reasons.join('; ') || 'sem motivo suficiente',
   };
@@ -613,9 +644,15 @@ export function scoreConversation(chunk, promptAnalysis, semanticSim = 0, simKin
     continuityScore = 0.15;
   }
 
-  // 3. Correspondência do projeto (0-0.10)
+  // 3. Correspondência do projeto (0-0.35)
+  // Conversa do MESMO projeto: continuidade não se mede por similaridade de
+  // texto. "Continue de onde paramos" não se parece com nada — e era por isso
+  // que a conversa certa ficava de fora enquanto ruído genérico passava.
+  const projectLinked = Boolean(analysis.projectId && chunk.project_id && chunk.project_id === analysis.projectId);
   let projectScore = 0;
-  if (analysis.project && contentDomain.domain === 'software' && analysis.project === 'frederico-ia-studio') {
+  if (projectLinked) {
+    projectScore = 0.35;
+  } else if (analysis.project && contentDomain.domain === 'software' && analysis.project === 'frederico-ia-studio') {
     projectScore = 0.10;
   } else if (analysis.project === 'contabilidade' && contentDomain.domain === 'accounting') {
     projectScore = 0.10;
@@ -623,27 +660,31 @@ export function scoreConversation(chunk, promptAnalysis, semanticSim = 0, simKin
 
   // 4. Correspondência de funcionalidades (0-0.10)
   let featureScore = 0;
-  if (contentDomain.domain === eff && eff !== 'general') {
+  if (projectLinked || (contentDomain.domain === eff && eff !== 'general')) {
     featureScore = 0.10;
   }
 
-  // 5. Decisões anteriores relacionadas (0-0.10)
-  // Detecta marcadores de decisão no conteúdo
-  const decisionMarkers = /\b(decid|corrig|arrum|consert|implement|mudanc|alterac|ajust|remov|adicion|refator)\b/i;
-  if (decisionMarkers.test(content) && contentDomain.domain === eff) {
-    featureScore += 0.10;
+  // 5. Decisões anteriores relacionadas (0-0.12)
+  // É o que o usuário mais precisa ao retomar: o que já foi decidido, corrigido
+  // e o que ficou pendente.
+  const decisionMarkers = /\b(decid|corrig|arrum|consert|implement|mudanc|alterac|ajust|remov|adicion|refator|pendenc|proxima etapa|proximos passos|fase \d)\b/i;
+  const hasDecisions = decisionMarkers.test(content);
+  if (hasDecisions && (projectLinked || contentDomain.domain === eff)) {
+    featureScore += 0.12;
   }
 
-  // 6. Recência com peso secundário (0-0.05) — peso MUITO menor que antes
+  // 6. Recência. DENTRO do projeto ela decide a ordem — "as últimas conversas"
+  // é literalmente o primeiro critério de continuidade. Fora do projeto segue
+  // como desempate fraco, para não ressuscitar assunto alheio só por ser novo.
   let recencyScore = 0;
   const created = chunk.created_at || chunk.updated_at;
   if (created) {
     const days = Math.max(0, (Date.now() - new Date(created).getTime()) / 86400000);
-    recencyScore = 0.05 * Math.exp(-days / 180); // decai em 6 meses
+    recencyScore = (projectLinked ? 0.15 : 0.05) * Math.exp(-days / (projectLinked ? 30 : 180));
   }
 
-  // 7. Diferença de assunto (penalidade 0-0.30)
-  const subjectMismatch = isDomainMismatch(contentDomain.domain, analysis);
+  // 7. Diferença de assunto (penalidade 0-0.30) — nunca aplicada ao projeto ativo
+  const subjectMismatch = isDomainMismatch(contentDomain.domain, analysis) && !projectLinked;
   let subjectPenalty = 0;
   if (subjectMismatch) {
     subjectPenalty = 0.30;
@@ -658,11 +699,12 @@ export function scoreConversation(chunk, promptAnalysis, semanticSim = 0, simKin
 
   // Motivo — similaridade exibida é a calibrada (ver calibrateSimilarity).
   const reasons = [];
+  if (projectLinked) reasons.push('conversa do projeto ativo');
   if (sim >= 0.35) reasons.push(`similaridade semântica ${(sim * 100).toFixed(0)}%`);
   if (continuityScore > 0) reasons.push('continuidade de tarefa');
-  if (projectScore > 0) reasons.push(`projeto ${analysis.project}`);
+  if (!projectLinked && projectScore > 0) reasons.push(`projeto ${analysis.project}`);
   if (contentDomain.domain === eff && eff !== 'general') reasons.push(`mesmo domínio (${contentDomain.domain})`);
-  if (decisionMarkers.test(content) && contentDomain.domain === eff) reasons.push('contém decisões anteriores');
+  if (hasDecisions && (projectLinked || contentDomain.domain === eff)) reasons.push('contém decisões anteriores');
   if (subjectPenalty >= 0.30) reasons.push(`descartada: assunto ${contentDomain.domain} ≠ ${eff}`);
   if (total < CONVERSATION_THRESHOLD && !reasons.some(r => r.startsWith('descartada'))) {
     reasons.push(`pontuação ${total.toFixed(2)} abaixo do threshold ${CONVERSATION_THRESHOLD}`);
@@ -673,6 +715,8 @@ export function scoreConversation(chunk, promptAnalysis, semanticSim = 0, simKin
     semanticSim: sim,
     semanticSimRaw: semanticSim,
     domain: contentDomain.domain,
+    projectLinked,
+    hasDecisions,
     shouldInclude: total >= CONVERSATION_THRESHOLD && subjectPenalty < 0.30,
     reason: reasons.join('; ') || 'sem motivo suficiente',
   };
@@ -702,6 +746,10 @@ export function validateRelevance(content, promptAnalysis, scoreResult) {
   if (!scoreResult.shouldInclude) {
     return { valid: false, reason: scoreResult.reason };
   }
+  // Conteúdo do projeto ativo já provou pertencer à tarefa pelo vínculo real —
+  // não passa de novo pelo palpite lexical de domínio, que é justamente o que
+  // descartava a conversa certa num projeto de software com assunto contábil.
+  if (scoreResult.projectLinked) return { valid: true, reason: scoreResult.reason };
   // Verificação final: se o domínio é claramente diferente e o prompt é
   // específico, descarta mesmo que a pontuação passou (pode ter passado
   // por importância/pinned sem relevância real).

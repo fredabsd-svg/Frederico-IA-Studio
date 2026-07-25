@@ -13,6 +13,14 @@ test('ignora requisições inválidas ou sem modo', () => {
   assert.equal(developerContextFor({}, 'u'), null);
 });
 
+// O projeto ativo acompanha TODA mensagem (é o vínculo que a memória usa para
+// recuperar as conversas certas). Isso não pode, sozinho, ligar o modo
+// desenvolvedor: uma conversa comum dentro de um projeto continua comum.
+test('projeto ativo sem modo NÃO ativa o modo desenvolvedor', () => {
+  const soProjeto = { devProjectId: 'p_1', project: { id: 'p_1', name: 'SPED-HUB', techs: 'Python' } };
+  assert.equal(developerContextFor(soProjeto, 'u'), null);
+});
+
 test('aceita os seis modos de trabalho', () => {
   assert.deepEqual(DEV_MODES, ['ask', 'plan', 'build', 'fix', 'review', 'auto']);
   for (const mode of DEV_MODES) {

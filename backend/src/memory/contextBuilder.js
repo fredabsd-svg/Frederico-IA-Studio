@@ -4,6 +4,13 @@ import { estimateTokens } from './indexer.js';
 import { isLowSignalTurn } from './retrievalPolicy.js';
 import { sanitizeToolProtocolText } from '../toolProtocol.js';
 import {
+  getProject,
+  recentProjectConversations,
+  recentProjectChunks,
+  projectMemoryText,
+  projectHeaderText,
+} from './projectStore.js';
+import {
   analyzePrompt,
   detectContentDomain,
   scoreMemory,
@@ -220,7 +227,7 @@ async function conversationDomain(conversationId, developerDomain = null) {
   }
 }
 
-export async function buildContext({ userId, conversationId, assistantId, clientScope, userText, historyLimit = 60, model = null, developerDomain = null }) {
+export async function buildContext({ userId, conversationId, assistantId, clientScope, userText, historyLimit = 60, model = null, developerDomain = null, projectId = null }) {
   const settings = getSettings();
   const capInfo = modelContextCap(model);
   const budget = contextBudgetForModel(model, settings);
@@ -237,6 +244,7 @@ export async function buildContext({ userId, conversationId, assistantId, client
     omittedBlocks: 0,
     retrievalSkipped: null,
     scopes: [],
+    project: null,
     memories: [],
     chunks: [],
     summaries: 0,
@@ -257,9 +265,23 @@ export async function buildContext({ userId, conversationId, assistantId, client
   // memorias/conversas. Esta analise guia toda a selecao abaixo. O dominio da
   // CONVERSA entra junto, para que um pedido curto ("vamos continuar o
   // projeto") nao fique sem assunto nenhum e desligue o crivo.
+  // O projeto ativo entra na analise: ele informa o dominio (um pedido curto so
+  // faz sentido a luz dele) e e a chave das camadas de continuidade abaixo.
+  const project = projectId ? await getProject(userId, projectId) : null;
+  if (project) meta.project = { id: project.id, name: project.name };
+
   const contextDomain = await conversationDomain(conversationId, developerDomain);
-  const promptAnalysis = analyzePrompt(userText, { contextDomain });
+  const promptAnalysis = analyzePrompt(userText, { contextDomain, project });
   meta.contextDomain = contextDomain;
+
+  // ══ CONTINUIDADE DO PROJETO ═══════════════════════════════════════
+  // Estas camadas NAO passam por crivo de similaridade: se ha um projeto
+  // ativo, sua identidade e suas ultimas conversas SAO o contexto da tarefa.
+  // Era o que faltava — abrir um chat novo dentro de um projeto era
+  // indistinguivel de comecar do zero, porque a recuperacao so sabia procurar
+  // por semelhanca de texto num acervo global.
+  let projectRecents = [];
+  let projectChunks = [];
 
   const scopes = unique(['global', 'office', assistantId, clientScope]);
   meta.scopes = scopes.map(scope => ({ scope, label: scopeLabel(scope) }));
@@ -270,6 +292,27 @@ export async function buildContext({ userId, conversationId, assistantId, client
   const diagMemCandidates = [];
   const diagChunkCandidates = [];
   let diagDuplicatesRemoved = 0;
+
+  // Coleta as camadas do projeto (depende dos arrays de diagnostico acima).
+  if (project) {
+    try {
+      projectRecents = (await recentProjectConversations(userId, project.id, { limit: 6, excludeConversationId: conversationId }))
+        .map(c => ({ ...c, _summary: String(c.summary_long || c.summary_short || '').trim() }))
+        .filter(c => c._summary);
+    } catch {}
+    try {
+      const raw = await recentProjectChunks(userId, project.id, { limit: 14, excludeConversationId: conversationId });
+      const scored = [];
+      for (const c of raw) {
+        const r = scoreConversation({ ...c, project_id: project.id }, promptAnalysis, c._sim || 0, c._simKind || 'keyword');
+        diagChunkCandidates.push({ id: c.id, source_title: c.source_title, content: c.content, scoreResult: r });
+        if (r.shouldInclude) scored.push({ ...c, _reason: r.reason, _score: r.score, _decisions: r.hasDecisions });
+      }
+      // Decisoes primeiro, depois pontuacao (que ja embute a recencia do projeto).
+      scored.sort((a, b) => (Number(b._decisions) - Number(a._decisions)) || (b._score - a._score));
+      projectChunks = scored.slice(0, 6).map(c => ({ ...c, _snippet: extractRelevantSnippet(c.content, promptAnalysis, 700) }));
+    } catch {}
+  }
 
   // ─── 1) Perfil, preferencias e fixadas — agora com crivo de relevancia ──
   // ANTES: injetava TODAS as memorias de perfil/preferencia/pinned
@@ -345,6 +388,11 @@ export async function buildContext({ userId, conversationId, assistantId, client
     }
   } catch {}
 
+  // Declaracao que faltava: sem ela o push abaixo lanca ReferenceError, o
+  // `catch {}` engole o erro e a montagem seguinte (fora do try) derruba o
+  // buildContext INTEIRO — a memoria caia no fallback simples a cada resposta.
+  let chunksIncluded = [];
+
   // ─── 5) Trechos de conversas antigas — com crivo SEPARADO ──────────
   // ANTES: retornava ate `limit` chunks com threshold 0.3 e peso de
   // recencia de 20%. AGORA: cada chunk e pontuado pelo scoreConversation
@@ -374,6 +422,8 @@ export async function buildContext({ userId, conversationId, assistantId, client
   // quantos seriam removidos — e as duplicatas continuavam indo ao modelo.
   // AGORA: os proprios arrays sao filtrados antes de virar texto.
   const dedupItems = [
+    ...projectRecents.map((c, i) => ({ content: c._summary, _b: 'pc', _i: i })),
+    ...projectChunks.map((c, i) => ({ content: c._snippet || c.content, _b: 'pk', _i: i })),
     ...profileIncluded.map((m, i) => ({ content: m.content, _b: 'p', _i: i })),
     ...manualIncluded.map((m, i) => ({ content: m.content, _b: 'm', _i: i })),
     ...relIncluded.map((m, i) => ({ content: m.content, _b: 'r', _i: i })),
@@ -382,12 +432,43 @@ export async function buildContext({ userId, conversationId, assistantId, client
   const survivors = deduplicateContext(dedupItems);
   diagDuplicatesRemoved = dedupItems.length - survivors.length;
   const keepSet = new Set(survivors.map(x => `${x._b}:${x._i}`));
+  projectRecents = projectRecents.filter((_, i) => keepSet.has(`pc:${i}`));
+  projectChunks = projectChunks.filter((_, i) => keepSet.has(`pk:${i}`));
   profileIncluded = profileIncluded.filter((_, i) => keepSet.has(`p:${i}`));
   manualIncluded = manualIncluded.filter((_, i) => keepSet.has(`m:${i}`));
   relIncluded = relIncluded.filter((_, i) => keepSet.has(`r:${i}`));
   chunksIncluded = chunksIncluded.filter((_, i) => keepSet.has(`c:${i}`));
 
   // ─── Montagem dos blocos (apos dedup) ──────────────────────────────
+  // Prioridades negativas: o projeto vem antes de tudo e e o ultimo a ser
+  // cortado pelo orcamento — e o contexto da tarefa, nao pano de fundo.
+  if (project) {
+    const header = projectHeaderText(project);
+    const memText = projectMemoryText(project);
+    const rules = String(project.rules || '').trim();
+    const parts = [header];
+    if (memText) parts.push(`MEMORIA PERMANENTE DO PROJETO:\n${memText}`);
+    if (rules) parts.push(`REGRAS DO PROJETO:\n${rules}`);
+    blocks.push({ priority: -3, text: parts.filter(Boolean).join('\n\n') });
+  }
+  if (projectRecents.length) {
+    blocks.push({
+      priority: -2,
+      text: `ULTIMAS CONVERSAS DESTE PROJETO (continuidade — mais recentes primeiro):\n${
+        projectRecents.map(c => `--- ${c.title || 'Conversa do projeto'} (${(c.updated_at || c.created_at || '').slice(0, 10)}) ---\n${c._summary}`).join('\n')}`,
+      chunks: projectRecents.map(c => chunkMeta({
+        source_title: c.title, scope: 'projeto', created_at: c.updated_at || c.created_at, content: c._summary
+      }, 'ultima conversa do projeto', 1))
+    });
+  }
+  if (projectChunks.length) {
+    blocks.push({
+      priority: -1,
+      text: `DECISOES, CORRECOES E TAREFAS JA FEITAS NESTE PROJETO:\n${
+        projectChunks.map(c => `--- ${c.source_title || 'Conversa do projeto'} (${(c.created_at || '').slice(0, 10)}) ---\n${sanitizeToolProtocolText(c._snippet)}`).join('\n')}`,
+      chunks: projectChunks.map(c => chunkMeta({ ...c, content: c._snippet }, c._reason, c._score))
+    });
+  }
   if (profileIncluded.length) {
     blocks.push({
       priority: 1,

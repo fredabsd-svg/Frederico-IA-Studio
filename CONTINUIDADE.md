@@ -18,11 +18,10 @@ socket do Docker — ver `docs/SECURITY.md` §4.3). O que ainda impede o verde �
 de testes: SSE integrado, retomada após interrupção real, pipeline retomável e injeção
 adversarial não foram executados. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Branch:** `claude/github-homepage-update-wx2dev` → **PR [#132](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/132)**
-- **Última validação:** 2026-07-25 — **578 testes, todos passando** (backend 497,
-  frontend 37, guarda do Docker 40, Python 4), com PostgreSQL real e **zero pulados**;
-  20 migrações aplicadas em banco vazio, reexecução idempotente; boot do backend e
-  `/api/health` verificados.
+- **Branch:** `claude/mobile-site-responsiveness-8z0eb9` → **PR [#131](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/131)**
+- **Última validação:** 2026-07-25 — **592 testes, todos passando** (backend 515,
+  frontend 37, guarda do Docker 40), com PostgreSQL real e **zero pulados**;
+  21 migrações aplicadas em banco vazio, reexecução idempotente; boot do backend e  `/api/health` verificados.
   A contagem vem de `cd backend && npm run test:count` — não a escreva à mão.
 
 ---
@@ -186,6 +185,58 @@ modular invalidou o diff), agora refeitos contra `backend/src/agent/*`:
 
 **ARMADILHA:** `messages[1]` continua reservado à nota de ferramentas; `QUALITY_BAR`
 agora mora DENTRO de `messages[0]` — não voltar a empilhá-lo como mensagem própria.
+
+---
+
+## Continuidade por projeto (Context Builder 4.0, 2026-07-25 — branch `claude/mobile-site-responsiveness-8z0eb9`)
+
+Abrir um chat **novo dentro de um projeto** começava do zero: o agente ignorava as
+últimas conversas e decisões e trazia memória antiga sem relação. O 3.1 melhorou o
+crivo, mas não podia resolver isto — **não existia vínculo entre projeto, conversa e
+memória**. Os projetos do Modo Desenvolvedor viviam só no `localStorage`; o backend
+nunca soube a que projeto uma conversa pertencia, então "as últimas conversas deste
+projeto" era impossível de consultar. Pesos e limiares não criam um dado que não está
+no banco — daí a reincidência ao longo de 3.0, 3.0.1 e 3.1.
+
+- **Migração `018`** — `dev_projects` e `project_id` em `conversations`,
+  `conversation_chunks`, `memory` e `memory_suggestions`.
+- **Camadas de continuidade** com prioridade acima de tudo (últimas a serem cortadas
+  pelo orçamento): identidade e memória permanente do projeto → últimas conversas dele
+  → decisões, correções e pendências.
+- **`projectLinked`** no scorer: conteúdo do projeto ativo ganha bônus forte e fica
+  imune à penalidade de domínio. Recência vale 0,15 (decai em 30 dias) dentro do
+  projeto e segue fraca fora.
+- Projetos antigos são **adotados** na primeira mensagem — o histórico do navegador
+  entra de uma vez, sem reabrir conversa a conversa.
+- Só as **tecnologias** do projeto entram na detecção de domínio; nome e descrição
+  ficam de fora pelo mesmo motivo já documentado no 3.1 ("SPED-HUB" é software mas cai
+  no dicionário contábil).
+
+Todo o 3.1 foi preservado (calibração de similaridade, `softDomain`, `domainsAllowed`,
+`DOMAIN_INDEX`, dedup real). O PR #125 foi fechado como superado, com a otimização de
+performance dele já incorporada pelo #134.
+
+### 🔴 Corrigido de carona: o Context Builder não rodava
+
+O 3.1 usava `chunksIncluded` sem declarar. O `push` ficava dentro de um `try {} catch {}`
+que engolia o `ReferenceError`, e a montagem seguinte — fora do try — derrubava o
+`buildContext` inteiro. Como `loop.js` também tem `try/catch` com fallback, a falha era
+silenciosa e total: **toda resposta caía no `memoryNote` simples**. Confirmado rodando a
+versão do `main`: `ReferenceError: chunksIncluded is not defined`. Corrigido com a
+declaração faltante e teste de regressão.
+
+---
+
+## Modo Desenvolvedor no celular (2026-07-25 — mesma branch)
+
+O Modo Desenvolvedor abria quebrado no celular: texto quebrando letra a letra e botões
+sobrepostos. O grid de 4 colunas (`barra lateral · explorador · conversa · atividade`)
+assumia a conversa sempre na 3ª coluna; no celular a barra lateral vira gaveta
+(`position:fixed`) e os trilhos somem, então a conversa caía na 1ª faixa — de **0px** —
+deixando a faixa útil vazia. Os pontos de quebra do arquivo (900/1180px) também não
+batiam com os 980px do resto do app. Corrigido em `frontend/src/dev-handoff.css`:
+até 1180px vira barra lateral + conversa; até 980px, coluna única. Verificado com
+renderização real (Playwright) em 360, 393, 600, 900, 1000 e 1300px.
 
 ---
 
