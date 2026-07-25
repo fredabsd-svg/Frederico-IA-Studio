@@ -37,7 +37,13 @@ export function MemoryTrace({ memory, onOpenMemory }) {
   }
 
   return <details className="memoryTrace">
-    <summary><Brain size={13}/><span>Usei {memories} memória(s), {chunks} conversa(s) antiga(s){summaries ? ` e ${summaries} resumo(s)` : ''}.</span></summary>
+    {/* O projeto aparece no resumo para o usuário conseguir CONFERIR, de
+        relance, que a continuidade foi reconhecida — era justamente o que
+        faltava para saber se um chat novo tinha herdado o contexto certo. */}
+    <summary><Brain size={13}/><span>
+      {memory.project?.name ? `Projeto ${memory.project.name} · ` : ''}
+      Usei {memories} memória(s), {chunks} conversa(s) antiga(s){summaries ? ` e ${summaries} resumo(s)` : ''}.
+    </span></summary>
     <div className="memoryTraceBody">
       <div className="memoryTraceMeta">Contexto: {used.toLocaleString('pt-BR')} / {budget.toLocaleString('pt-BR')} tokens{memory.truncated ? ' (encurtado)' : ''}. Histórico: {memory.history?.included || 0} mensagens.</div>
       {memory.memories?.length > 0 && <div className="memoryTraceList">

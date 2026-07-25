@@ -7,6 +7,7 @@ import { freeTierConfigured } from '../freeTier.js';
 import { nanoid } from 'nanoid';
 import { webToolDefinitions, runTool } from '../tools.js';
 import { buildContext, historyBudgetForModel, selectHistoryForContext } from '../memory/contextBuilder.js';
+import { upsertProject, linkConversationToProject, projectIdForConversation, adoptConversations } from '../memory/projectStore.js';
 import { indexAfterReply } from '../memory/indexer.js';
 import { getSettings } from '../memory/memoryService.js';
 import { isLowSignalTurn, LOW_SIGNAL_TURN_NOTE } from '../memory/retrievalPolicy.js';
@@ -117,6 +118,27 @@ export async function runAgent({ userId, conversationId, userText, model, assist
     ? explicitlyAuthorizesGitWrite(userText)
     : Boolean(gitWriteAuthorization);
   const developerContext = developerContextFor(developer, userId, { githubConnected, gitWriteAuthorized });
+  // Projeto do Modo Desenvolvedor: espelha o projeto do navegador no servidor e
+  // carimba a conversa. Sem este vínculo, o Context Builder não consegue
+  // priorizar "as últimas conversas deste projeto" num chat novo — que é o que
+  // quebrava a continuidade.
+  let activeProjectId = await projectIdForConversation(userId, conversationId);
+  try {
+    if (developer?.project?.id) {
+      const saved = await upsertProject(userId, developer.project);
+      if (saved) {
+        // Histórico que o navegador já associava ao projeto entra de uma vez.
+        if (Array.isArray(developer.project.conversationIds)) {
+          await adoptConversations(userId, saved.id, developer.project.conversationIds);
+        }
+        if (await linkConversationToProject(userId, conversationId, saved.id)) activeProjectId = saved.id;
+      }
+    } else if (developer?.devProjectId) {
+      if (await linkConversationToProject(userId, conversationId, developer.devProjectId)) activeProjectId = developer.devProjectId;
+    }
+  } catch (err) {
+    console.error('[memória] vínculo do projeto falhou (segue sem):', err.message);
+  }
   const lowSignalTurn = isLowSignalTurn(userText);
   // A política persistente (Configurações → Sandbox e rede) decide o padrão:
   // automático (só quando o pedido pede), sempre ligada ou sempre desligada.
@@ -314,7 +336,7 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
     // como "vamos continuar o projeto" não tem domínio nenhum e o crivo de
     // memória se desliga, trazendo o perfil contábil inteiro para dentro de uma
     // conversa de software.
-    const contextPlan = await buildContext({ userId, conversationId, assistantId: assistant?.id, clientScope: await clientScopeFor(userId, conversationId), userText, historyLimit, model: chosenModel, developerDomain: developerContext ? 'software' : null });
+    const contextPlan = await buildContext({ userId, conversationId, assistantId: assistant?.id, clientScope: await clientScopeFor(userId, conversationId), userText, historyLimit, model: chosenModel, developerDomain: developerContext ? 'software' : null, projectId: activeProjectId });
     const ctxBlocks = contextPlan.blocks || [];
     memoryMeta = contextPlan.meta || null;
     for (const b of ctxBlocks) {

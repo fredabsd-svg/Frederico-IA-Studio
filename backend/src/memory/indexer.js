@@ -95,8 +95,10 @@ export async function indexAfterReply(userId, conversationId) {
     const [vec] = await embed([content], 'passage');
     const chunkScope = conv.client_id ? `client:${conv.client_id}` : 'global';
     const chunkId = nanoid();
-    await db.prepare('INSERT INTO conversation_chunks (id, user_id, conversation_id, source_title, scope, content, embedding, token_count, created_at) VALUES (?,?,?,?,?,?,?,?,?)')
-      .run(chunkId, userId, conversationId, conv.title, chunkScope, content, vec, estimateTokens(content), now());
+    // O chunk herda o projeto da conversa: e isso que permite recuperar depois
+    // por "conversas deste projeto", e nao so por semelhanca de texto.
+    await db.prepare('INSERT INTO conversation_chunks (id, user_id, conversation_id, project_id, source_title, scope, content, embedding, token_count, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
+      .run(chunkId, userId, conversationId, conv.project_id || null, conv.title, chunkScope, content, vec, estimateTokens(content), now());
     await saveEmbeddingVec('conversation_chunks', chunkId, vec);
   }
 
@@ -149,8 +151,11 @@ export async function indexAfterReply(userId, conversationId) {
         await db.prepare('UPDATE memory SET importance=GREATEST(importance,?), updated_at=? WHERE id=? AND user_id=?').run(importance, now(), dup.id, userId);
         continue;
       }
-      if (s.review_auto_memory) await addMemorySuggestion(userId, { content, type, scope, importance, confidence, source_type: 'auto', source_id: conversationId });
-      else await addMemory(userId, { content, type, scope, importance, confidence, source_type: 'auto', source_id: conversationId });
+      // project_id: um fato aprendido dentro de um projeto pertence a ele — na
+      // recuperacao isso vale mais que qualquer similaridade de texto.
+      const payload = { content, type, scope, importance, confidence, source_type: 'auto', source_id: conversationId, project_id: conv.project_id || null };
+      if (s.review_auto_memory) await addMemorySuggestion(userId, payload);
+      else await addMemory(userId, payload);
     }
   } catch (err) {
     console.error('[memória] extração falhou (segue sem):', err.message);

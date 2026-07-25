@@ -102,16 +102,16 @@ const SENSITIVE = /(sk-[a-z0-9-]{8,}|api[_-]?key|senha|password|token\s*[:=]|bea
 export function looksSensitive(text) { return SENSITIVE.test(String(text || '')); }
 
 // ---- CRUD de memórias ----
-export async function addMemory(userId, { content, type = 'manual', scope = 'global', importance = 3, confidence = 1, tags = null, source_type = 'manual', source_id = null, pinned = 0 }) {
+export async function addMemory(userId, { content, type = 'manual', scope = 'global', importance = 3, confidence = 1, tags = null, source_type = 'manual', source_id = null, pinned = 0, project_id = null }) {
   content = String(content || '').trim();
   if (!content) throw new Error('Conteúdo vazio.');
   if (looksSensitive(content)) throw new Error('Este conteúdo parece conter senha/chave — por segurança, não é salvo na memória.');
   const [vec] = await embed([content], 'passage');
   const id = nanoid();
   const t = now();
-  await db.prepare(`INSERT INTO memory (id, user_id, scope, content, type, source_type, source_id, importance, confidence, pinned, tags, created_at, updated_at, embedding)
-              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-    .run(id, userId, scope, content, type, source_type, source_id, importance, confidence, pinned ? 1 : 0, tags, t, t, vec);
+  await db.prepare(`INSERT INTO memory (id, user_id, scope, content, type, source_type, source_id, importance, confidence, pinned, tags, created_at, updated_at, embedding, project_id)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(id, userId, scope, content, type, source_type, source_id, importance, confidence, pinned ? 1 : 0, tags, t, t, vec, project_id);
   await saveEmbeddingVec('memory', id, vec);
   return getMemory(userId, id);
 }
@@ -166,7 +166,8 @@ function cleanSuggestionFields(fields = {}) {
     confidence,
     tags: fields.tags || null,
     source_type: fields.source_type || 'auto',
-    source_id: fields.source_id || null
+    source_id: fields.source_id || null,
+    project_id: fields.project_id || null
   };
 }
 
@@ -187,9 +188,9 @@ export async function addMemorySuggestion(userId, fields = {}) {
   const id = nanoid();
   const t = now();
   await db.prepare(`INSERT INTO memory_suggestions
-    (id, user_id, scope, content, type, source_type, source_id, importance, confidence, tags, status, created_at, updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?)`)
-    .run(id, userId, s.scope, s.content, s.type, s.source_type, s.source_id, s.importance, s.confidence, s.tags, t, t);
+    (id, user_id, scope, content, type, source_type, source_id, importance, confidence, tags, status, created_at, updated_at, project_id)
+    VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?,?)`)
+    .run(id, userId, s.scope, s.content, s.type, s.source_type, s.source_id, s.importance, s.confidence, s.tags, t, t, s.project_id);
   return db.prepare('SELECT * FROM memory_suggestions WHERE id=? AND user_id=?').get(id, userId);
 }
 
@@ -216,6 +217,7 @@ export async function approveMemorySuggestion(userId, id, fields = {}) {
     tags: cur.tags,
     source_type: cur.source_type || 'auto',
     source_id: cur.source_id,
+    project_id: cur.project_id || null,
     pinned: 0
   });
   await db.prepare("UPDATE memory_suggestions SET status='approved', approved_memory_id=?, decided_at=?, updated_at=? WHERE id=? AND user_id=?")

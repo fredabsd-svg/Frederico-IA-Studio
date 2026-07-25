@@ -41,6 +41,7 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
                           listening, recognitionRef, current, currentRef, setCurrent,
                           ensureConversation, fetchConversations, loadFiles, waitForUploads,
                           developerSession, setDeveloperSession, followActiveRef,
+                          activeDevProject = null,
                           model, assistantId, webSearch, effort, multiModel, setNeedLogin, showToast,
                           onFreeEvent, onFreeLimit }) {
   // ---- MULTICONVERSA: estado de execução POR CONVERSA ----
@@ -453,7 +454,40 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
       // Manifesto otimista-concorrente: o backend confirma que estes mesmos
       // arquivos ainda existem antes de iniciar qualquer modelo.
       attachments: availableUploads.map(file => ({ id: file.id, path: file.path, name: file.name, size: file.size })),
-      ...(activeDeveloper ? { developer: { mode: activeDeveloper.mode, projectId: activeDeveloper.projectId, github: activeDeveloper.github || null, rules: activeDeveloper.rules } } : {})
+      // `developer` carrega duas coisas independentes:
+      //   * a TAREFA (modo, pasta/repo, regras) — só existe quando a sessão do
+      //     modo dev foi aberta pelos atalhos;
+      //   * o PROJETO ativo — vai sempre que houver um, inclusive numa conversa
+      //     nova comum. É o vínculo que permite ao servidor recuperar "as
+      //     últimas conversas deste projeto" em vez de começar do zero.
+      //     Sem `mode`, isso NÃO liga o modo desenvolvedor (developerContextFor
+      //     devolve null) — há teste cobrindo.
+      ...(activeDeveloper || activeDevProject ? {
+        developer: {
+          ...(activeDeveloper ? {
+            mode: activeDeveloper.mode,
+            projectId: activeDeveloper.projectId,
+            github: activeDeveloper.github || null,
+            rules: activeDeveloper.rules
+          } : {}),
+          ...(activeDevProject ? {
+            devProjectId: activeDevProject.id,
+            project: {
+              id: activeDevProject.id,
+              name: activeDevProject.name,
+              description: activeDevProject.description,
+              techs: activeDevProject.techs,
+              rules: activeDevProject.rules,
+              memory: activeDevProject.memory,
+              binding: activeDevProject.binding,
+              // Histórico que o navegador já associa ao projeto: o servidor
+              // adota essas conversas de uma vez, então projetos antigos
+              // recuperam continuidade sem reabrir uma por uma.
+              conversationIds: (activeDevProject.conversationIds || []).slice(0, 50)
+            }
+          } : {})
+        }
+      } : {})
     };
     let outcome = null;
     try {

@@ -223,6 +223,11 @@ export default function App({ user } = {}) {
     listening, recognitionRef, current, currentRef, setCurrent,
     ensureConversation, fetchConversations, loadFiles, waitForUploads,
     developerSession, setDeveloperSession, followActiveRef,
+    // O projeto ativo viaja em TODA mensagem, não só quando a tarefa foi aberta
+    // pelos atalhos do modo dev. Sem isto, abrir uma conversa nova dentro de um
+    // projeto chegava ao servidor sem vínculo nenhum — e a recuperação de
+    // contexto não tinha como priorizar as conversas desse projeto.
+    activeDevProject: devProjects.active,
     model, assistantId, webSearch, effort, multiModel: effectiveMulti, setNeedLogin, showToast,
     // Modo gratuito: status ao vivo (restante/renovação) e tela de limite
     onFreeEvent: ({ type, _seq, ...status }) => setFreeStatus(prev => ({ ...(prev || {}), ...status })),
