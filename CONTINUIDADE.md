@@ -19,17 +19,75 @@ de testes: **o SSE integrado saiu do zero** (ver a frente abaixo), mas a retomad
 interrupção real do processo e o pipeline multimodelo retomável continuam sem teste.
 Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** **PR [#147](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/147)** —
-  o personagem do copiloto cobria o **botão de enviar**; corrigido (frente abaixo). Foi o
-  primeiro defeito que a suíte E2E encontrou sozinha. Antes dele, o **PR
+- **Último trabalho:** a **arquitetura de formatação dos documentos** (frente abaixo) — os
+  kits Word/Excel/PDF passaram a ter uma grade única e o `pdfpro` audita o arquivo que
+  gera. Antes dele, o **PR [#147](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/147)**
+  (o copiloto cobria o botão de enviar), o **PR
   [#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)** (Playwright +
-  suíte ponta a ponta), o **PR [#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)**
-  (as sete falhas P0 dos sub-agentes) e o **PR #144** (GraphQL no sandbox).
-- **Última validação:** 2026-07-26 — **806 testes** (backend 677, frontend 57, guarda do
-  Docker 49, sandbox Python 10, ponta a ponta 13). Backend e frontend rodaram com
-  PostgreSQL real neste contêiner: **677 passaram, 0 pulados**. Os 13 E2E rodaram de
-  verdade. Os 10 do Python não coletam aqui por falta do `openpyxl` — na CI rodam. A
-  contagem vem de `cd backend && npm run test:count` — não a escreva à mão.
+  suíte ponta a ponta) e o **PR [#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)**
+  (as sete falhas P0 dos sub-agentes).
+- **Última validação:** 2026-07-26 — **839 testes** (backend 678, frontend 57, guarda do
+  Docker 49, sandbox Python 42, ponta a ponta 13). Backend, frontend, guarda e Python
+  rodaram neste contêiner com PostgreSQL real: **826 passaram, 0 falharam, 0 pulados**.
+  Os 13 E2E entram como listados (quem os executa é o job do CI). A contagem vem de
+  `cd backend && npm run test:count` — não a escreva à mão.
+
+---
+
+## Formatação dos documentos: uma grade só, e o PDF se audita (2026-07-26)
+
+Um relatório entregue em PDF veio com o conteúdo certo e a construção errada. Medindo o
+arquivo (não olhando: medindo), o diagnóstico foi objetivo:
+
+| Defeito | Medida no arquivo entregue |
+| --- | --- |
+| Arestas esquerdas de texto na mesma página | **seis** (54,7 / 56,7 / 62,7 / 67,7 / 70,7 / 72,7 pt) |
+| Marcadores de lista sem glifo (`\x7f` = DEL) | **320** |
+| Trechos redesenhados com a fonte Symbol | 22 |
+| Tamanhos de fonte diferentes, sem escala | 10 |
+| Borda direita da numeração de página | anda ao passar de 9 para 10 (507,89 → 503,45 pt) |
+| Fonte embutida / `/ToUnicode` / `/Lang` | nenhum — texto não copiável e dependente do leitor |
+| Título nos metadados | `Frederico IA Studio \204 Relatório…` (travessão corrompido) |
+
+**Causa raiz.** O arquivo não saiu do kit: a paleta dele era `#5B21B6`, e a do `pdfpro` é
+`#1A3C6E`. O modelo montou reportlab na mão. E fez isso por um motivo legítimo — o kit não
+tinha lista, KPI, sumário, imagem nem quebra de página, então, para um relatório de
+verdade, sair do kit era a única saída. O prompt pedia "use o kit"; a arquitetura obrigava
+a abandoná-lo.
+
+**O que mudou.**
+
+1. `sandbox/pdfpro.py` reescrito como motor de layout com **duas arestas e só duas**:
+   `X_CAIXA` (fundo de callout, faixa de cabeçalho, régua do rodapé) e
+   `X_TEXTO = X_CAIXA + RECUO`, onde começa *todo* texto — corpo, título, primeira coluna
+   da tabela, marcador de lista, rodapé, capa. A barra de destaque virou uma **coluna** da
+   tabela em vez de um `LINEBEFORE`, então ela não empurra o texto nem invade a margem.
+2. Fonte **TrueType embutida** (Carlito → DejaVu → Liberation, base-14 só se não houver
+   nenhuma): resolve acentuação, `/ToUnicode` (texto copiável e pesquisável) e
+   renderização igual em qualquer leitor.
+3. Saneamento de glifo que pergunta ao **próprio reportlab** (`unicode2T1`) se a fonte
+   desenha o caractere. A pergunta intuitiva mente: `"•".encode("cp1252")` funciona, e
+   mesmo assim o reportlab codifica o bullet em Helvetica como `\x7f`. Era exatamente a
+   origem dos 320 marcadores quebrados.
+4. Os blocos que faltavam: `lista`, `kpis`, `sumario` (com numeração de página real),
+   `chave_valor`, `citacao`, `codigo`, `imagem`, `divisor`, `assinaturas`, `quebra` e o
+   estilo `sobrio` para documento registrável. Agora sair do kit não é mais necessário.
+5. **`salvar()` audita o arquivo pronto** e falha se sobrar achado grave (texto fora da
+   grade, glifo trocado, fonte sem mapa Unicode, página irregular). O modelo também tem
+   `verificar_pdf(caminho)`. Rodado no PDF que originou tudo isto, o auditor acusa 203
+   trechos fora da grade e 342 glifos trocados.
+6. Word e Excel receberam o mesmo tratamento: `docpro` ganhou a grade (`RECUO_PT`) — antes
+   o título nascia 10 pt à direita do corpo e a célula 6 pt à esquerda dele — mais
+   `r.lista()`; e os três kits limpam caractere de controle, que é ilegal em XML 1.0 e
+   fazia o Word recusar o `.docx` e o openpyxl derrubar a planilha.
+7. O prompt do assistente (`backend/prompts/docpro/atual.txt`, `docpro@11.0.0`) abre com
+   uma **regra zero**: o kit é a única forma de diagramar, e diagramar por fora
+   (`reportlab.pdfgen.canvas`, `SimpleDocTemplate`, `fpdf`, `weasyprint`, célula
+   estilizada na mão) está proibido.
+
+Detalhes em `docs/ARCHITECTURE.md` §19. Os testes do `pdfpro` verificam o contrato bloco a
+bloco, a aresta direita da numeração, os dois caminhos de fonte e a própria auditoria — que
+precisa **reprovar** um PDF ruim, senão não serve para nada.
 
 ---
 

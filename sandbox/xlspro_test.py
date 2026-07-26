@@ -120,5 +120,29 @@ class XlsProArtifactTests(unittest.TestCase):
         self.assertGreaterEqual(wb["V"].column_dimensions["A"].width, len("Mesa de escritório grande"))
 
 
+    def test_caractere_de_controle_nao_derruba_a_planilha(self):
+        """O openpyxl levanta IllegalCharacterError ao gravar caractere de
+        controle. Uma célula suja vinda de PDF ou CSV derrubava a geração
+        inteira — agora ela é limpa antes de ser escrita."""
+        p = Planilha()
+        ws = p.aba("Da\x07dos")
+        p.titulo(ws, "T\x00ítulo")
+        p.tabela(ws, ["Produto", "Qtd"], [["A\x1fB", 3], ["C", 4]])
+        p.salvar(self.path)
+        from openpyxl import load_workbook
+        wb = load_workbook(self.path)
+        aba = wb[wb.sheetnames[0]]
+        self.assertNotIn("\x07", wb.sheetnames[0])
+        textos = [c.value for row in aba.iter_rows() for c in row if isinstance(c.value, str)]
+        self.assertTrue(any("AB" == t for t in textos), textos)
+
+    def test_nome_de_aba_invalido_e_corrigido(self):
+        p = Planilha()
+        ws = p.aba("Vendas/2025: resumo [final]")
+        self.assertNotIn("/", ws.title)
+        self.assertNotIn(":", ws.title)
+        self.assertLessEqual(len(ws.title), 31)
+
+
 if __name__ == "__main__":
     unittest.main()

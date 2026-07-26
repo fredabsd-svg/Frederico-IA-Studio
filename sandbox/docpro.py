@@ -15,6 +15,8 @@ Uso mínimo:
     r.callout("RESUMO", "Empresa ativa, porte médio ...")
     r.salvar("/workspace/outputs/relatorio.docx")   # já gera o PDF ao lado
 """
+import re
+import unicodedata
 from datetime import date
 from docx import Document
 from docx.shared import Pt, Cm, RGBColor
@@ -29,6 +31,33 @@ PALETA = {
     "cinza": "595959", "suave": "F2F6FA", "borda": "D9E2EC", "branco": "FFFFFF",
     "alerta_bg": "FEF6E7", "alerta_bd": "D97706", "critico_bg": "FDECEC", "critico_bd": "C0392B",
 }
+
+# ---------------------------------------------------------------------------
+# Grade: a MESMA ideia do pdfpro. Existe uma única distância entre a margem do
+# papel e o começo do texto, e todo bloco a respeita — parágrafo, título com
+# barra, primeira coluna da tabela e conteúdo do callout. Sem isso o título
+# nasce 10 pt à direita do corpo e a tabela 4 pt à esquerda dele: três arestas
+# na mesma página, que é exatamente o que faz o documento parecer mal feito.
+# ---------------------------------------------------------------------------
+
+#: Recuo do texto em pontos. Em Word a margem interna de célula é medida em
+#: dxa (1/20 de ponto), daí a conversão.
+RECUO_PT = 10
+RECUO_DXA = RECUO_PT * 20
+#: Respiro interno das demais colunas da tabela (não afeta a aresta esquerda).
+RESPIRO_DXA = 120
+
+# Caractere de controle é ILEGAL em XML 1.0: escrevê-lo no .docx produz um
+# arquivo que o Word recusa a abrir ("conteúdo ilegível"). O texto do modelo
+# passa por aqui antes de virar run.
+_CONTROLES = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
+
+
+def limpa_texto(valor):
+    """Normaliza e remove o que quebraria o XML do documento."""
+    if valor is None:
+        return ""
+    return _CONTROLES.sub("", unicodedata.normalize("NFC", str(valor))).replace("\t", " ")
 
 
 def _el(tag, **attrs):
@@ -74,7 +103,7 @@ def sombrear_celula(cell, cor):
     _shade(cell._tc.get_or_add_tcPr(), cor)
 
 
-def _cell_pad(cell, t=80, b=80, l=120, r=120):
+def _cell_pad(cell, t=80, b=80, l=RESPIRO_DXA, r=RESPIRO_DXA):
     tcPr = cell._tc.get_or_add_tcPr()
     m = _el("w:tcMar")
     for k, v in (("top", t), ("bottom", b), ("start", l), ("end", r)):
@@ -92,7 +121,7 @@ def _num(v):
 
 
 def _run(p, texto, bold=False, size=11, cor=None, branco=False, caps=False, spacing=None):
-    r = p.add_run("" if texto is None else str(texto))
+    r = p.add_run(limpa_texto(texto))
     r.font.name = "Calibri"
     r.bold = bold
     r.font.size = Pt(size)
@@ -186,7 +215,7 @@ class Relatorio:
         p = self.doc.add_paragraph()
         p.paragraph_format.space_before = Pt(14 if nivel == 1 else 8)
         p.paragraph_format.space_after = Pt(6)
-        p.paragraph_format.left_indent = Pt(10)
+        p.paragraph_format.left_indent = Pt(RECUO_PT)
         p.paragraph_format.keep_with_next = True
         _run(p, texto, bold=True, size=16 if nivel == 1 else 13, cor=self.pal["primaria"])
         pbdr = _el("w:pBdr")
@@ -198,10 +227,32 @@ class Relatorio:
         p = self.doc.add_paragraph()
         p.paragraph_format.space_after = Pt(8)
         p.paragraph_format.line_spacing = 1.15
+        # O corpo usa o MESMO recuo do título e da primeira coluna da tabela:
+        # é o que mantém uma única aresta esquerda na página inteira.
+        p.paragraph_format.left_indent = Pt(RECUO_PT)
         if justificado:
             p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
         _run(p, texto)
         return p
+
+    def lista(self, itens, ordenada=False):
+        """Lista com marcador e recuo pendurado, alinhada à mesma aresta.
+
+        Existe para o modelo não montar lista "na mão" com hífen no meio do
+        parágrafo (que não recua a 2ª linha) nem com um caractere de marcador
+        que a fonte do leitor pode não ter."""
+        saida = []
+        for i, item in enumerate(itens, start=1):
+            p = self.doc.add_paragraph()
+            pf = p.paragraph_format
+            pf.space_after = Pt(3)
+            pf.line_spacing = 1.15
+            pf.left_indent = Pt(RECUO_PT + 14)
+            pf.first_line_indent = Pt(-14)   # marcador pendurado em RECUO_PT
+            _run(p, ("%d. " % i) if ordenada else "• ")
+            _run(p, item)
+            saida.append(p)
+        return saida
 
     def _bordas_tabela(self, t):
         b = _el("w:tblBorders")
@@ -236,7 +287,8 @@ class Relatorio:
             sombrear_celula(cell, self.pal["primaria"])
             cell.paragraphs[0].text = ""
             _run(cell.paragraphs[0], c, bold=True, branco=True)
-            _cell_pad(cell)
+            # A 1ª coluna recebe o recuo da grade; as demais, só o respiro.
+            _cell_pad(cell, l=RECUO_DXA if i == 0 else RESPIRO_DXA)
         # linhas
         n = len(linhas)
         for ri, linha in enumerate(linhas):
@@ -252,7 +304,7 @@ class Relatorio:
                 cell.paragraphs[0].text = ""
                 _run(cell.paragraphs[0], v, bold=eh_total)
                 cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT if _num(v) else WD_ALIGN_PARAGRAPH.LEFT
-                _cell_pad(cell)
+                _cell_pad(cell, l=RECUO_DXA if i == 0 else RESPIRO_DXA)
             if eh_total:
                 for cell in row.cells:
                     tcPr = cell._tc.get_or_add_tcPr()
@@ -269,7 +321,7 @@ class Relatorio:
         t = self.doc.add_table(rows=1, cols=1)
         cell = t.rows[0].cells[0]
         sombrear_celula(cell, bg)
-        _cell_pad(cell, 120, 120, 160, 160)
+        _cell_pad(cell, 120, 120, RECUO_DXA, RECUO_DXA)
         tcPr = cell._tc.get_or_add_tcPr()
         b = _el("w:tcBorders")
         b.append(_el("w:left", val="single", sz=24, color=bd))
@@ -391,19 +443,20 @@ class Sobrio:
     def titulo(self, texto):
         p = self.doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        r = p.add_run(str(texto).upper()); r.bold = True; r.font.size = Pt(self.tam + 1)
+        r = p.add_run(limpa_texto(texto).upper()); r.bold = True; r.font.size = Pt(self.tam + 1)
         p.paragraph_format.space_after = Pt(12)
         return p
 
     def secao(self, texto, caps=True):
         p = self.doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-        r = p.add_run(str(texto).upper() if caps else str(texto)); r.bold = True
+        texto = limpa_texto(texto)
+        r = p.add_run(texto.upper() if caps else texto); r.bold = True
         p.paragraph_format.space_before = Pt(10); p.paragraph_format.space_after = Pt(4)
         return p
 
     def paragrafo(self, texto, recuo=True):
-        p = self.doc.add_paragraph(str(texto))
+        p = self.doc.add_paragraph(limpa_texto(texto))
         p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
         if recuo:
             p.paragraph_format.first_line_indent = Cm(1.25)
@@ -414,7 +467,7 @@ class Sobrio:
         return self.paragrafo(texto, recuo=recuo)
 
     def fecho(self, local_data):
-        p = self.doc.add_paragraph(str(local_data))
+        p = self.doc.add_paragraph(limpa_texto(local_data))
         p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
         p.paragraph_format.space_before = Pt(14)
         return p
@@ -427,11 +480,11 @@ class Sobrio:
             l = self.doc.add_paragraph("_" * 40); l.alignment = WD_ALIGN_PARAGRAPH.CENTER
             l.paragraph_format.space_after = Pt(0)
             n = self.doc.add_paragraph(); n.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            n.add_run(str(nome)).bold = True
+            n.add_run(limpa_texto(nome)).bold = True
             n.paragraph_format.space_after = Pt(0)
             if i < len(subtitulos) and subtitulos[i]:
                 s = self.doc.add_paragraph(); s.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                s.add_run(str(subtitulos[i])).font.size = Pt(self.tam - 2)
+                s.add_run(limpa_texto(subtitulos[i])).font.size = Pt(self.tam - 2)
 
     def _rodape(self):
         f = self.doc.sections[-1].footer
