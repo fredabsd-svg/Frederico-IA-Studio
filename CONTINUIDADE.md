@@ -18,8 +18,9 @@ socket do Docker — ver `docs/SECURITY.md` §4.3). O que ainda impede o verde �
 de testes: SSE integrado, retomada após interrupção real e pipeline retomável não foram
 executados. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** bateria adversarial de injeção de prompt (**F-17 fechado**) e as
-  duas falhas reais que ela expôs. Detalhe abaixo.
+- **Último trabalho:** **PR [#143](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/143)** —
+  bateria adversarial de injeção de prompt (**F-17 fechado**) e as duas falhas reais que
+  ela expôs. Detalhe abaixo.
 - **Última validação:** 2026-07-26 — **754 testes** (backend 638, frontend 57, guarda do
   Docker 49, sandbox Python 10). Localmente sem PostgreSQL no contêiner (19 do backend se
   autopulam — esperado) e sem `pytest` instalado (os 10 do sandbox Python não coletam
@@ -28,7 +29,7 @@ executados. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
 ---
 
-## Bateria adversarial de injeção de prompt (2026-07-26 — F-17)
+## Bateria adversarial de injeção de prompt (2026-07-26 — PR #143, F-17)
 
 `backend/src/agent/promptInjection.adversarial.test.js` — 33 casos escritos do ponto de
 vista de quem controla o conteúdo externo, cobrindo os quatro vetores previstos no F-17:
