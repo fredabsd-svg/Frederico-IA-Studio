@@ -22,6 +22,12 @@ __pycache__/
 .test-workspaces/
 backend/.test-workspaces/
 
+# Testes ponta a ponta (e2e/): relatórios, rastros, vídeos e os diretórios
+# descartáveis que o backend de E2E usa como workspace/DATA_DIR.
+test-results/
+playwright-report/
+e2e/.tmp/
+
 # Launcher compilado (gerado por build)
 launcher/*.exe
 frederico-launcher
