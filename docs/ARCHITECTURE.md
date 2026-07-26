@@ -177,7 +177,28 @@ execInSandbox(conversationId, cmd, timeout, { userId, ...política })
 - **Invalidação direcionada** (novo): mudar pastas do PC descarta só os sandboxes **daquele** usuário.
 - **Observação sem efeito colateral:** `execInActiveSandbox(userId, conversationId, ...)` —
   não cria, não troca, não mata; usado pelo monitor do copiloto.
-- **Testes:** `src/sandbox.isolation.test.js` (11 casos), `src/sandbox.id.test.js`.
+- **Timeout NÃO derruba mais o container** (novo): o comando leva
+  `FREDERICO_EXEC_ID` no ambiente, e o encerramento varre `/proc/*/environ` para
+  matar a árvore inteira (filhos, netos). O sandbox só cai se a árvore
+  sobreviver à carência — antes, um `pytest` travado custava as dependências da
+  sessão.
+- **Saída ao vivo** (novo): `execInSandbox` aceita `onProgress`; o loop repassa
+  como evento SSE `tool_progress` e a interface mostra um terminal ao vivo, com
+  aviso de silêncio ("sem saída há Xs"). A saída INTEGRAL vai para
+  `/workspace/.agent-env/ultima-execucao.log` — o resultado é aparado nos últimos
+  12 mil caracteres e o erro de uma suíte longa costuma estar no começo.
+- **Serviços e transação de workspace** (novo): `ambiente` → `servicos` cruza o
+  que o agente subiu (uvicorn, vite, http.server…) com o que está realmente
+  escutando (`ss`/`netstat`), marcando o que morreu no reinício;
+  `transacao_iniciar/confirmar/desfazer` dá ponto de retorno a uma edição em
+  vários arquivos, e a transação ABERTA reaparece no preâmbulo do turno seguinte.
+- **Estado estruturado + aviso de reinício** (novo): toda execução devolve
+  `status`, `diagnostico` (ambiente × projeto), `arquivos_alterados` e, quando o
+  container foi trocado, `ambiente_reiniciado` com o que sobreviveu e o que se
+  perdeu. Camadas: `/workspace` e `/cache` persistentes, `/runtime/tmp`
+  descartável. Ver **`docs/AMBIENTE_EXECUCAO.md`**.
+- **Testes:** `src/sandbox.isolation.test.js` (11 casos), `src/sandbox.id.test.js`,
+  `src/sandbox.stability.test.js`, `src/agentEnv.test.js`.
 
 ---
 

@@ -153,7 +153,19 @@ O personagem que acompanha o Studio — e explica o que está acontecendo.
   Playwright, e APIs **REST e GraphQL** (Flask, FastAPI e strawberry-graphql).
 - **Ambiente de Trabalho da IA** — terminal, código, arquivos, pesquisa e
   navegador agrupados em **uma sessão ao vivo**, com passo a passo e miniatura
-  real das páginas abertas.
+  real das páginas abertas. Comando longo mostra a **saída em tempo real** e
+  avisa quando fica em silêncio ("sem saída há 25s"), em vez de deixar você
+  olhando uma barra parada.
+- **Ambiente que não perde o seu trabalho** — o sandbox pode ser reciclado no meio
+  de uma tarefa longa. Quando isso acontece, o assistente é avisado **do que
+  sobreviveu e do que se perdeu**, em vez de continuar achando que está tudo lá.
+  Um comando que estoura o tempo encerra só a árvore de processos dele — os
+  pacotes que ele já instalou continuam valendo. E o assistente **não diz que
+  terminou** quando a execução foi cortada: cada resultado carrega o estado real,
+  além de um diagnóstico que separa **falha do ambiente** (dependência ausente,
+  rede desligada, memória) de **erro do seu código**. Antes de mexer em vários
+  arquivos ele guarda um ponto de retorno, e sabe listar as portas e os servidores
+  que subiu. Detalhes em [`docs/AMBIENTE_EXECUCAO.md`](docs/AMBIENTE_EXECUCAO.md).
 - **Modo Desenvolvedor** — projetos com memória permanente, explorador de
   arquivos e seis modos de trabalho (Perguntar, Planejar, Implementar, Corrigir
   erro, Revisar e Agente autônomo).
@@ -268,6 +280,7 @@ chave única do servidor para uso pessoal/de equipe.
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Arquitetura real: serviços, fluxos, persistência, lacunas |
 | [docs/SECURITY.md](docs/SECURITY.md) | Modelo de ameaça, isolamento, sandbox, segredos, LGPD |
 | [docs/OPERATIONS.md](docs/OPERATIONS.md) | Runbook: monitoramento, limites, procedimentos, rollback |
+| [docs/AMBIENTE_EXECUCAO.md](docs/AMBIENTE_EXECUCAO.md) | Ambiente do agente: o que é persistente, o que é temporário, como recuperar uma tarefa e como diferenciar falha do ambiente de bug do projeto |
 | [docs/CONFIGURACAO.md](docs/CONFIGURACAO.md) | Primeira configuração, modo gratuito, Docling e acesso pelo celular |
 | [docs/BACKUP_RESTORE.md](docs/BACKUP_RESTORE.md) | Backup completo e restauração passo a passo |
 | [docs/TESTING.md](docs/TESTING.md) | Como rodar os testes, convenções e lacunas conhecidas |

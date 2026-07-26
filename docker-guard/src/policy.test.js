@@ -208,7 +208,8 @@ test('só as rotas que o sandbox usa passam', () => {
     ['DELETE', '/containers/abc123?force=true'],
     ['POST', '/containers/abc123/exec'],
     ['POST', '/exec/def456/start'],
-    ['GET', '/exec/def456/json']
+    ['GET', '/exec/def456/json'],
+    ['GET', '/containers/abc123/stats?stream=false']
   ];
   for (const [method, path] of ok) {
     const v = evaluateRequest({ method, path, body: method === 'POST' && path.endsWith('/exec') ? {} : null }, limits);
@@ -243,6 +244,10 @@ test('operações sobre recurso específico pedem checagem de posse', () => {
   assert.equal(evaluateRequest({ method: 'DELETE', path: '/containers/abc' }, limits).targetId, 'abc');
   assert.equal(evaluateRequest({ method: 'POST', path: '/exec/xyz/start' }, limits).ownership, 'exec');
   assert.equal(evaluateRequest({ method: 'GET', path: '/containers/json' }, limits).ownership, null);
+  // /stats é leitura de métricas, mas de um container ESPECÍFICO: sem a posse,
+  // o backend leria o consumo do Postgres ou de qualquer outro vizinho.
+  assert.equal(evaluateRequest({ method: 'GET', path: '/containers/abc/stats' }, limits).ownership, 'container');
+  assert.equal(evaluateRequest({ method: 'GET', path: '/containers/abc/stats' }, limits).targetId, 'abc');
 });
 
 test('exec privilegiado ou como root é recusado', () => {

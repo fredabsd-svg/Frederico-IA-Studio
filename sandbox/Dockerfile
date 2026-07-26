@@ -141,6 +141,21 @@ COPY docpro.py xlspro.py pdfpro.py /usr/local/lib/python3.12/site-packages/
 # outros sandboxes. Aqui ele aponta para o workspace real da conversa.
 RUN mkdir -p /mnt && ln -sfnT /workspace /mnt/user-data
 
+# CAMADAS DE PERSISTÊNCIA (plano de estabilização do ambiente).
+# O container é efêmero; o que separa o trabalho preservado do descartável é
+# ONDE o arquivo está:
+#   /cache      → bind do host, por usuário. Cache de pip/npm/uv/poetry. É o que
+#                 faz uma reinstalação depois de um reinício ser local e barata.
+#   /artifacts  → aponta para /workspace/.artifacts (bind da conversa): relatórios,
+#                 patches e resultados intermediários que sobrevivem ao container
+#                 sem virar cartão de download (isso é papel de /workspace/outputs).
+#   /runtime/tmp→ TEMPORÁRIO por design, é o TMPDIR de toda execução. Some junto
+#                 com o container — nada essencial pode morar só aqui.
+RUN mkdir -p /cache /runtime/tmp && \
+    chown -R 1000:1000 /cache /runtime && \
+    chmod 1777 /runtime/tmp && \
+    ln -sfnT /workspace/.artifacts /artifacts
+
 RUN useradd -m -u 1000 sandbox
 USER sandbox
 WORKDIR /workspace
