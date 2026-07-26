@@ -19,10 +19,11 @@ de testes: **o SSE integrado saiu do zero** (ver a frente abaixo), mas a retomad
 interrupção real do processo e o pipeline multimodelo retomável continuam sem teste.
 Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** o personagem do copiloto cobria o **botão de enviar** — corrigido
-  (frente abaixo). Foi o primeiro defeito que a suíte E2E encontrou sozinha. Antes dele,
-  o **PR [#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)** (Playwright
-  + suíte ponta a ponta), o **PR [#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)**
+- **Último trabalho:** **PR [#147](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/147)** —
+  o personagem do copiloto cobria o **botão de enviar**; corrigido (frente abaixo). Foi o
+  primeiro defeito que a suíte E2E encontrou sozinha. Antes dele, o **PR
+  [#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)** (Playwright +
+  suíte ponta a ponta), o **PR [#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)**
   (as sete falhas P0 dos sub-agentes) e o **PR #144** (GraphQL no sandbox).
 - **Última validação:** 2026-07-26 — **806 testes** (backend 677, frontend 57, guarda do
   Docker 49, sandbox Python 10, ponta a ponta 13). Backend e frontend rodaram com
@@ -32,7 +33,7 @@ Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
 ---
 
-## O Nino cobria o botão de enviar (2026-07-26)
+## O Nino cobria o botão de enviar (2026-07-26 — PR #147)
 
 Primeiro defeito que a suíte E2E encontrou sozinha — e ele era pior do que pareceu na
 primeira leitura. Medindo com navegador real em oito larguras:
