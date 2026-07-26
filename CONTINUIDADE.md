@@ -9,9 +9,10 @@
 ## Estado atual
 
 Aplicação multiusuário com agentes de IA, memória semântica, multimodelo, execução de
-ferramentas em sandbox Docker, geração de documentos, Docling, conector GitHub e copiloto
-(Nino). Backend Node 20 + Express + PostgreSQL (pgvector); frontend React 19 + Vite;
-autenticação Better Auth (e-mail/senha, GitHub, Google).
+ferramentas em sandbox Docker, geração de documentos, Docling, conector GitHub, copiloto
+(Nino) e **Modo Design** (site, apresentação ou documento visual gerado, refinado e
+exportado num espaço próprio). Backend Node 20 + Express + PostgreSQL (pgvector);
+frontend React 19 + Vite; autenticação Better Auth (e-mail/senha, GitHub, Google).
 
 **Prontidão para produção: 🟡 amarelo — apto com restrições.**
 **Nenhum risco crítico aberto** desde o fechamento do F-04 (o backend não detém mais o
@@ -20,9 +21,10 @@ de testes: **o SSE integrado saiu do zero** (ver a frente abaixo), mas a retomad
 interrupção real do processo e o pipeline multimodelo retomável continuam sem teste.
 Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** o **Modo Design** (frente abaixo) — espaço próprio onde o
-  usuário descreve um site, uma apresentação ou um documento visual e recebe um
-  rascunho renderizado ao vivo, refinado por conversa, versionado e exportável.
+- **Último trabalho:** o **Modo Design**, v1 e v2 (frente abaixo) — espaço próprio
+  onde o usuário descreve um site, uma apresentação ou um documento visual e recebe
+  um rascunho renderizado ao vivo, refinado **por conversa, por clique no elemento
+  ou por sliders que não chamam a IA**, versionado e exportável (.html/.pdf/.pptx).
   Antes dele, a estabilização do **ambiente de execução do agente** (frente mais
   abaixo):
   um timeout deixou de derrubar o sandbox, toda execução devolve estado estruturado
@@ -33,17 +35,18 @@ Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
   (o Nino cobrindo o botão de enviar), o **PR [#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)**
   (Playwright + suíte ponta a ponta) e o **PR [#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)**
   (as sete falhas P0 dos sub-agentes).
-- **Última validação:** 2026-07-26 — **951 testes** (backend 809, frontend 65, guarda do
-  Docker 49, sandbox Python 10, ponta a ponta 18). Desta vez o PostgreSQL **subiu neste
-  contêiner** (binários do `postgresql-16` locais, sem Docker), então nada foi pulado:
-  **backend 809/809 e frontend 65/65**, mais os **18 E2E em navegador real**
-  (`E2E_CHROMIUM_PATH` apontando o Chromium do contêiner). Sem banco, o backend passa
-  753 e pula 56 — o esperado. Os 10 do Python não coletam aqui por falta do `openpyxl`.
-  A contagem vem de `cd backend && npm run test:count` — não a escreva à mão.
+- **Última validação:** 2026-07-26 — **1010 testes** (backend 859, frontend 70, guarda
+  do Docker 49, sandbox Python 10, ponta a ponta 22). Desta vez o PostgreSQL **subiu
+  neste contêiner** (binários do `postgresql-16` locais, sem Docker), então nada foi
+  pulado: **backend 859/859 e frontend 70/70**, mais os **22 E2E em navegador real**
+  (`E2E_CHROMIUM_PATH` apontando o Chromium já instalado no contêiner). Sem banco, o
+  backend passa 789 e pula 70 — o esperado. Os 10 do Python não coletam aqui por falta
+  do `openpyxl`. A contagem vem de `cd backend && npm run test:count` — não a escreva
+  à mão.
 
 ---
 
-## Modo Design (2026-07-26)
+## Modo Design — v1 e v2 (2026-07-26)
 
 Um espaço próprio, ao lado do chat: o usuário descreve o que precisa e a IA
 devolve um rascunho **visual e renderizado**, não um bloco de código para montar.
