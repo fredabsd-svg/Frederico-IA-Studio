@@ -356,3 +356,7 @@ estourar.
   85%, mas nada BLOQUEIA a escrita quando o limite é passado. Impor exigiria
   quota do sistema de arquivos (ou `--storage-opt`), decisão de infraestrutura do
   operador — o app não tem como fazer isso por dentro do container.
+- **Cota agregada dos checkpoints**: a poda é POR CONVERSA (`CHECKPOINT_KEEP`), não
+  global. No pior caso, `CHECKPOINT_KEEP` × `CHECKPOINT_MAX_MB` = 1,5 GB por
+  conversa. Numa instalação pública, ajuste os dois valores — ver risco F-26 no
+  `CONTINUIDADE.md`.
