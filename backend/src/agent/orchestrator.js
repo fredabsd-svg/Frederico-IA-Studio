@@ -10,7 +10,7 @@ import { isLowSignalTurn, LOW_SIGNAL_TURN_NOTE } from '../memory/retrievalPolicy
 import { detectToolRequirement, getModelProfile, supportsModelParameter } from '../modelCapabilities.js';
 import { runAgent } from './loop.js';
 import { AGENTS, clipForBriefing, PERSPECTIVE_CHAR_LIMIT, BRIEFING_CHAR_LIMIT, uploadsNote, developerTeamContextFor, protectedProfilePrompt } from './prompts.js';
-import { STREAM_RECOVERY_LIMIT, STREAM_RESUME_NOTE, STREAM_PAUSE_RESUME_NOTE, isRetryableStreamError, openRouterRouting, retryDelay, addUsage, friendlyApiError, applyPromptCache } from './provider.js';
+import { STREAM_RECOVERY_LIMIT, STREAM_RESUME_NOTE, STREAM_PAUSE_RESUME_NOTE, isRetryableStreamError, openRouterRouting, retryDelay, addUsage, friendlyApiError, tagProviderError, applyPromptCache } from './provider.js';
 import { guardStreamStall, PROVIDER_CONNECT_TIMEOUT_MS } from './streamGuard.js';
 import { acquireConversationControl, releaseConversationControl, beginProviderRequest, releaseProviderRequest, controlInterruptReason, gate } from './control.js';
 import { clientScopeFor, memoryNote, saveMessage } from './persistence.js';
@@ -253,7 +253,7 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
     directMsgs.push({ role: 'user', content: userText });
     applyPromptCache(directMsgs, coordModel, directPrefixEnd, provider.baseURL);
     try { finalText = await streamCoordinator(directMsgs); }
-    catch (err) { finalText = `Não foi possível responder: ${friendlyApiError(err)}`; onEvent({ type: 'delta', content: finalText }); }
+    catch (err) { finalText = `Não foi possível responder: ${friendlyApiError(tagProviderError(err, { providerName: provider.providerName, model: rawModelId(coordModel) }))}`; onEvent({ type: 'delta', content: finalText }); }
   } else {
     // Os especialistas são consultados EM PARALELO (antes era em série: a
     // latência somava e, sob carga, cada membro extra aumentava a janela para

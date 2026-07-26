@@ -9,8 +9,12 @@
 // comando funciona igual em qualquer versão suportada.
 //
 // Uso:
-//   node scripts/run-tests.mjs                 # tudo em src/
+//   node scripts/run-tests.mjs                 # tudo em src/ e scripts/
 //   node scripts/run-tests.mjs src/hooks       # só um subdiretório
+//
+// `scripts/` entra na varredura porque as conferências do `npm run lint` viraram
+// código com lógica própria (ver `reexportBindings.mjs`): um guarda que erra é
+// pior que guarda nenhum, então ele também precisa de teste.
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -33,7 +37,7 @@ function findTests(dir) {
 
 const roots = process.argv.slice(2).length
   ? process.argv.slice(2).map(p => path.resolve(packageRoot, p))
-  : [path.join(packageRoot, 'src')];
+  : [path.join(packageRoot, 'src'), path.join(packageRoot, 'scripts')];
 
 const files = roots.flatMap(findTests).sort();
 

@@ -18,11 +18,102 @@ socket do Docker — ver `docs/SECURITY.md` §4.3). O que ainda impede o verde �
 de testes: SSE integrado, retomada após interrupção real, pipeline retomável e injeção
 adversarial não foram executados. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Branch:** `claude/mobile-site-responsiveness-8z0eb9` → **PR [#131](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/131)**
-- **Última validação:** 2026-07-25 — **684 testes, todos passando** (backend 598,
-  frontend 45, guarda do Docker 40, Python 1), com PostgreSQL real e **zero pulados**;
-  21 migrações aplicadas em banco vazio, reexecução idempotente; boot do backend e  `/api/health` verificados.
-  A contagem vem de `cd backend && npm run test:count` — não a escreva à mão.
+- **Último trabalho:** **PR [#140](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/140)** — mesclado na `main`. Três regressões que deixavam o app
+  inutilizável: a tela "Algo deu errado", o sandbox recusado pelo guarda (Windows **e**
+  VPS) e o erro de chave apontando o provedor errado. Detalhe de cada uma abaixo.
+- **Última validação:** 2026-07-26 — **721 testes** (backend 605, frontend 57, guarda do
+  Docker 49, sandbox Python 10). Localmente sem PostgreSQL no contêiner (19 do backend e
+  9 do Python se autopulam — esperado); **na CI os 10 jobs passaram**, inclusive o
+  "Backend — integração (PostgreSQL real + migrações)", então os que se autopulam aqui
+  rodaram de verdade lá. A contagem vem de `cd backend && npm run test:count` — não a
+  escreva à mão.
+
+---
+
+## "Chave da API inválida" apontando o provedor errado (2026-07-26 — PR #140)
+
+Conta com DeepSeek **e** OpenRouter: o OpenRouter sincronizou 345 modelos às
+21:42:55 (chave válida) e o chat falhou às 21:42 com "Chave da API inválida ou
+expirada". Mesma chave, mesmo minuto — ou seja, **a chamada que falhou não era a
+do OpenRouter**.
+
+Cadeia da causa:
+
+1. `seed.js` grava nos assistentes padrão o modelo `deepseek/deepseek-chat` — um
+   id **sem prefixo `<provedor>::`**. (O repositório ainda tem dois defaults
+   incoerentes: `deepseek/deepseek-chat`, nome do OpenRouter, em `seed.js` e
+   `routes/assistants.js`; e `deepseek-chat`, nome nativo, em `routes/schedules.js`,
+   `inbox.js`, `conversations.js` e `helpers.js`.)
+2. `getUserProvider` não acha esse id em catálogo nenhum e cai em `rows[0]` —
+   **o provedor mais antigo**, que nesta conta é a DeepSeek.
+3. A chave da DeepSeek é recusada → 401 → mensagem genérica mandando "confira sua
+   chave", sem dizer de quem.
+
+Corrigido **o diagnóstico**: `tagProviderError` marca no erro qual provedor e qual
+modelo falharam (em `loop.js` nos dois catches do stream, no `multiModel.js` por
+cartão e no `orchestrator.js`), e `friendlyApiError` nomeia os dois no 401/402.
+7 testes novos, incluindo os casos sem contexto (a mensagem antiga não regride).
+
+**Ainda em aberto (causa raiz):** `rows[0]` continua sendo um chute silencioso, e
+os defaults sem prefixo continuam sendo gravados. O certo é o assistente guardar um
+`modelRef` completo — frente própria, ainda não feita.
+
+---
+
+## 🔴 O sandbox não subia em NENHUM ambiente (2026-07-26 — PR #140)
+
+`POST /containers/create` era recusado pelo guarda em toda tentativa, então
+nenhuma ferramenta rodava. Mesmo sintoma no PC e na VPS, causas diferentes:
+
+| Ambiente | Log | Causa |
+| --- | --- | --- |
+| Windows (Docker Desktop) | `bind por volume nomeado não é permitido: C:\Users\...\workspaces\...:/workspace` | `bindSource` cortava no primeiro `:` — o da **letra de unidade**. A origem virava `"C"`, que não começa com `/`, e caía na regra de volume nomeado. |
+| VPS | `caminho proibido no host: /root/...` | `git clone` logado como root (o que o `VPS-DEPLOY.md` manda fazer) põe o projeto em `/root/<projeto>`, então `GUARD_WORKSPACE_ROOT` vira `/root/<projeto>/workspaces` — e a blocklist tem `/^\/root/`. |
+
+Correções em `docker-guard/src/policy.js`:
+
+- `normalizeHostPath` aceita caminho do Windows (`C:\a\b` / `C:/a/b`), devolve a
+  forma canônica e continua recusando UNC e volume nomeado; `isInsideRoot`
+  compara sem caixa quando os dois lados têm letra de unidade.
+- `bindSource` ignora o `:` da unidade.
+- **A raiz do workspace tem precedência sobre a blocklist de diretórios de
+  sistema** — ela vem da configuração do operador, não do backend, então confiar
+  nela não amplia a superfície que o F-04 fecha.
+- O **socket do Docker saiu da blocklist comum** (`isDockerSocket`) e é barrado
+  antes de tudo: nem uma raiz mal configurada o libera.
+- Blocklist equivalente para Windows (`C:\Windows`, `Program Files`,
+  `ProgramData`, `AppData`) — sem ela, ligar "Pastas do PC" num host Windows
+  ficaria sem blocklist nenhuma, já que as regras POSIX nunca casam com `C:/...`.
+
+9 testes novos (40 → 49), incluindo os invariantes: socket sempre barrado, `/root`
+**fora** da raiz segue barrado e os diretórios de sistema do Windows também.
+
+---
+
+## 🔴 A tela "Algo deu errado por aqui" (2026-07-26 — PR #140)
+
+Abrir **qualquer conversa em que a IA tivesse usado uma ferramenta** derrubava a
+aplicação inteira na tela do `ErrorBoundary`. Causa:
+
+```js
+export { SUBAGENT_TOOL } from '../executionSteps.js';   // ExecutionSession.jsx
+```
+
+Um re-export cria a **entrada de exportação** do módulo, mas **não** uma variável
+local. `SUBAGENT_TOOL` era usado logo abaixo em `summarize()` e em `ResultView()` —
+ou seja, referência a um global inexistente. `summarize()` roda num `useMemo` do
+`ExecutionSessionInner`, que o `App.jsx` monta para todo bloco `type: 'tool'`:
+`ReferenceError` na primeira renderização e a árvore inteira caindo. Corrigido
+importando o nome (binding de verdade) e reexportando a partir dele — a superfície
+pública do módulo continua igual. Reproduzido no Chromium antes e depois.
+
+**É a segunda ocorrência da mesma classe de bug** (a primeira foi `chunksIncluded`,
+no Context Builder). Nada pegava: `node --check` não pega — a sintaxe é válida; o
+build não pega — o bundler resolve exportações, não escopo; e o `lint` do frontend
+**ignorava os `.jsx` por inteiro**. Daí a rede nova: `frontend/scripts/reexportBindings.mjs`
+acusa nome re-exportado que é usado no próprio arquivo, roda também nos `.jsx` e tem
+12 testes próprios (`scripts/` entrou na varredura do `run-tests.mjs` — um guarda que
+erra é pior que guarda nenhum).
 
 ---
 
@@ -257,15 +348,22 @@ renderização real (Playwright) em 360, 393, 600, 900, 1000 e 1300px.
 
 ## Próximos passos (em ordem)
 
-1. **F-12/F-13** — provedor HTTP simulado + teste integrado de SSE. Destrava boa parte
+1. **Modelo do assistente sem provedor** (causa raiz do 401 do PR #140, ainda aberta).
+   `getUserProvider` cai em `rows[0]` — o provedor mais ANTIGO — quando o id do modelo
+   não tem prefixo `<provedor>::` e não aparece em catálogo nenhum. O assistente deve
+   guardar um `modelRef` completo. Envolve: unificar os dois defaults incoerentes
+   (`deepseek/deepseek-chat` em `seed.js` e `routes/assistants.js`; `deepseek-chat` em
+   `schedules`, `inbox`, `conversations` e `helpers`), migrar os assistentes já gravados
+   e decidir o que fazer quando o modelo não for atribuível — hoje o chute é silencioso.
+2. **F-12/F-13** — provedor HTTP simulado + teste integrado de SSE. Destrava boa parte
    das outras lacunas de teste.
-2. **F-14** — retomada após `kill -9` no meio de um run, com checkpoint real.
-3. **F-15** — tabela `pipeline_runs` (`pipeline_run_id`, `current_stage`,
+3. **F-14** — retomada após `kill -9` no meio de um run, com checkpoint real.
+4. **F-15** — tabela `pipeline_runs` (`pipeline_run_id`, `current_stage`,
    `completed_stages`, `pending_stages`, `artifact_versions`, `status`, `checkpoint`,
    `updated_at`) e retomada no boot.
-4. **F-17** — casos adversariais: README malicioso no repositório, memória envenenada,
+5. **F-17** — casos adversariais: README malicioso no repositório, memória envenenada,
    delimitador fechado à força, resposta maliciosa de outro modelo.
-5. **F-20** — extrair de `App.jsx`, por etapas: shell → estado da conversa → estado da
+6. **F-20** — extrair de `App.jsx`, por etapas: shell → estado da conversa → estado da
    execução → drawers/configurações. `React.lazy` nos painéis pesados.
 
 ---

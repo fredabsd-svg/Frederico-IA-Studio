@@ -59,23 +59,37 @@ function deny(reason) { return { allow: false, reason }; }
 
 // ---- Caminhos de bind ------------------------------------------------------
 // Normaliza sem tocar no disco (o guarda não vê o sistema de arquivos do host).
+// Aceita caminho POSIX (`/a/b`) e caminho do WINDOWS (`C:\a\b` ou `C:/a/b`):
+// com o Docker Desktop o daemon roda no Windows e os binds chegam com letra de
+// unidade. Devolve a forma canônica (`/a/b` ou `C:/a/b`) ou `null` quando não é
+// um caminho absoluto — aí é bind por NOME (volume), tratado à parte.
 export function normalizeHostPath(p) {
-  const raw = String(p || '').trim();
-  if (!raw.startsWith('/')) return null; // bind por NOME (volume), tratado à parte
+  const raw = String(p || '').trim().replace(/\\/g, '/');
+  if (raw.startsWith('//')) return null;          // UNC (\\servidor\share): fora do escopo
+  const windows = /^[A-Za-z]:\//.test(raw);
+  if (!windows && !raw.startsWith('/')) return null;
+  const drive = windows ? `${raw[0].toUpperCase()}:` : '';
   const parts = [];
-  for (const seg of raw.split('/')) {
+  for (const seg of (windows ? raw.slice(2) : raw).split('/')) {
     if (!seg || seg === '.') continue;
     if (seg === '..') { parts.pop(); continue; }
     parts.push(seg);
   }
-  return `/${parts.join('/')}`;
+  return `${drive}/${parts.join('/')}`;
 }
+
+const isWindowsPath = (p) => /^[A-Za-z]:\//.test(String(p || ''));
 
 export function isInsideRoot(target, root) {
   const t = normalizeHostPath(target);
   const r = normalizeHostPath(root);
   if (!t || !r) return false;
-  return t === r || t.startsWith(r.endsWith('/') ? r : `${r}/`);
+  // O Windows não diferencia maiúsculas de minúsculas: comparar sensível faria o
+  // guarda recusar o PRÓPRIO workspace só porque a unidade veio como "c:".
+  const ci = isWindowsPath(t) && isWindowsPath(r);
+  const a = ci ? t.toLowerCase() : t;
+  const b = ci ? r.toLowerCase() : r;
+  return a === b || a.startsWith(b.endsWith('/') ? b : `${b}/`);
 }
 
 // Caminhos que NUNCA podem ser montados, mesmo com pastas do PC liberadas.
@@ -90,17 +104,41 @@ const FORBIDDEN_SOURCES = [
   /^\/var\/lib\/docker(\/|$)/
 ];
 
+// Equivalentes do Windows, para o Docker Desktop. Sem eles, ligar "Pastas do PC"
+// num host Windows ficaria SEM blocklist nenhuma (as regras acima são POSIX e
+// nunca casariam com `C:/...`).
+const FORBIDDEN_WINDOWS_SOURCES = [
+  /^[a-z]:\/$/,
+  /^[a-z]:\/windows(\/|$)/,
+  /^[a-z]:\/program files( \(x86\))?(\/|$)/,
+  /^[a-z]:\/programdata(\/|$)/,
+  /^[a-z]:\/users\/[^/]+\/appdata(\/|$)/
+];
+
+// O socket do Docker nunca, em hipótese alguma: montá-lo no sandbox reabriria o
+// F-04 por dentro. Fica separado da blocklist porque é o único item que NEM a
+// precedência do workspace pode liberar.
+export function isDockerSocket(source) {
+  const norm = normalizeHostPath(source);
+  return !norm || /docker\.sock$/.test(norm) || /docker_engine$/i.test(norm);
+}
+
 export function isForbiddenSource(source) {
   const norm = normalizeHostPath(source);
   if (!norm) return true;
-  if (/docker\.sock$/.test(norm)) return true;
+  if (isDockerSocket(norm)) return true;
+  if (isWindowsPath(norm)) return FORBIDDEN_WINDOWS_SOURCES.some(re => re.test(norm.toLowerCase()));
   return FORBIDDEN_SOURCES.some(re => re.test(norm));
 }
 
-// "src:dst:mode" → src. Só faz sentido em host Linux (onde o daemon roda).
+// "src:dst:mode" → src.
 export function bindSource(bind) {
   const s = String(bind || '');
-  const idx = s.indexOf(':');
+  // O dois-pontos da LETRA DE UNIDADE ("C:\dir:/workspace") NÃO separa origem de
+  // destino. Sem esta ressalva a origem virava "C", que não começa com "/", e o
+  // guarda recusava TODO container como "volume nomeado" no Docker Desktop.
+  const from = /^[A-Za-z]:[\\/]/.test(s) ? 2 : 0;
+  const idx = s.indexOf(':', from);
   return idx === -1 ? s : s.slice(0, idx);
 }
 
@@ -160,7 +198,7 @@ export function validateCreate(body, limits) {
   const sources = [];
   for (const bind of host.Binds || []) {
     const src = bindSource(bind);
-    if (!src.startsWith('/')) return deny(`bind por volume nomeado não é permitido: ${bind}`);
+    if (!normalizeHostPath(src)) return deny(`bind por volume nomeado não é permitido: ${bind}`);
     sources.push({ source: src, origem: 'Binds' });
   }
   for (const mount of host.Mounts || []) {
@@ -168,9 +206,18 @@ export function validateCreate(body, limits) {
     sources.push({ source: String(mount.Source || ''), origem: 'Mounts' });
   }
   for (const { source, origem } of sources) {
-    if (isForbiddenSource(source)) return deny(`${origem}: caminho proibido no host: ${source}`);
+    // O socket do Docker é barrado ANTES de tudo e não tem exceção.
+    if (isDockerSocket(source)) return deny(`${origem}: caminho proibido no host: ${source}`);
+    // O PRÓPRIO workspace do app tem precedência sobre a blocklist de diretórios
+    // de sistema. Numa VPS o deploy quase sempre fica em /root/<projeto> (é o
+    // que o VPS-DEPLOY.md manda fazer: `git clone` logado como root), então
+    // GUARD_WORKSPACE_ROOT vira /root/<projeto>/workspaces e a regra /^\/root/
+    // recusava TODO container do app — o sandbox ficava inutilizável.
+    // A raiz vem da configuração do operador, não do backend: confiar nela aqui
+    // não amplia a superfície que o F-04 fecha.
     const dentroDoWorkspace = limits.workspaceRoot && isInsideRoot(source, limits.workspaceRoot);
     if (dentroDoWorkspace) continue;
+    if (isForbiddenSource(source)) return deny(`${origem}: caminho proibido no host: ${source}`);
     // Fora do workspace só quando o operador liga "Pastas do PC" no guarda —
     // e mesmo assim a blocklist acima continua valendo.
     if (!limits.allowPcFolders) {

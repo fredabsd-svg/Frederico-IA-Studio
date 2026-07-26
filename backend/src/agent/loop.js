@@ -19,7 +19,7 @@ import { listOutputs, mentionsOutputPath, recoverAlternateOutputs, referencedOut
 import { OUTPUT_DELIVERY_REPAIR_NOTE, MISSING_OUTPUT_NOTICE, EXECUTION_COMPLETION_REPAIR_NOTE, EXECUTION_INCOMPLETE_NOTICE, TOOL_PROTOCOL_REPAIR_NOTE, TOOL_PROTOCOL_FAILURE_NOTICE, RESPONSE_TRUNCATED_REPAIR_NOTE, RESPONSE_TRUNCATED_NOTICE, EXECUTION_CONTRACT_NOTE, MACRO_REQUEST_RE, MACRO_LIMITATION_NOTE, DEGEN_CHECK_STEP, looksDegenerate, shouldRepairOutputDelivery, shouldRepairExecution, shouldContinueAfterTruncation, materializeTextOutput, endsAwaitingUserReply } from './repair.js';
 import { normalizeWebFetchUrl, classifyToolOutcome, webResearchStopReason, planToolCallBatch, WEB_TOOL_NAMES, webResearchFinalizationNote, WEB_RESEARCH_FETCH_LIMIT, TOOL_CALLS_PER_STEP_LIMIT } from './webResearch.js';
 import { imageUploadParts, attachImagesToLastUserMessage, stripImagePartsFromMessages } from './vision.js';
-import { STREAM_RECOVERY_LIMIT, STREAM_RESUME_NOTE, STREAM_PAUSE_RESUME_NOTE, PROVIDER_TIMEOUT_NOTICE, isRetryableStreamError, openRouterRouting, retryDelay, addUsage, applyPromptCache, clearPromptCache } from './provider.js';
+import { STREAM_RECOVERY_LIMIT, STREAM_RESUME_NOTE, STREAM_PAUSE_RESUME_NOTE, PROVIDER_TIMEOUT_NOTICE, isRetryableStreamError, openRouterRouting, retryDelay, addUsage, applyPromptCache, clearPromptCache, tagProviderError } from './provider.js';
 import { guardStreamStall, PROVIDER_CONNECT_TIMEOUT_MS } from './streamGuard.js';
 import { acquireConversationControl, releaseConversationControl, beginProviderRequest, releaseProviderRequest, beginToolRequest, releaseToolRequest, controlInterruptReason, gate } from './control.js';
 import { clientScopeFor, memoryNote, saveMessage, persistAssistantReply } from './persistence.js';
@@ -588,6 +588,10 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
         baseURL: provider.baseURL
       }), { signal: activeRequest.signal, timeout: PROVIDER_CONNECT_TIMEOUT_MS });
     } catch (err) {
+      // Marca de QUEM é a falha antes de qualquer coisa: o erro sobe por vários
+      // caminhos (retomada, reserva, throw final) e a mensagem que chega ao
+      // usuário precisa dizer qual chave foi recusada.
+      tagProviderError(err, { providerName: provider.providerName, model: rawModelId(chosenModel) });
       const interrupted = controlInterruptReason(control, activeRequest);
       releaseProviderRequest(control, activeRequest);
       if (interrupted === 'stop') {
@@ -732,6 +736,7 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
       if (control.stopped) { stopped = true; break; }
     }
     } catch (err) {
+      tagProviderError(err, { providerName: provider.providerName, model: rawModelId(chosenModel) });
       const interrupted = controlInterruptReason(control, activeRequest);
       if (interrupted === 'stop') {
         stopped = true;

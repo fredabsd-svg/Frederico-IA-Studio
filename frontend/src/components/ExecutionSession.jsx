@@ -4,7 +4,7 @@ import {
   X, Maximize2, CheckCircle2, AlertCircle, Circle, Cpu, Loader, ExternalLink, Users
 } from 'lucide-react';
 import { API } from '../constants.js';
-import { groupExecutionSteps, delegationSummary } from '../executionSteps.js';
+import { groupExecutionSteps, delegationSummary, SUBAGENT_TOOL } from '../executionSteps.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Ambiente de Trabalho da IA
@@ -34,7 +34,13 @@ export const TOOL_META = {
   delegar_subagente: { cat: 'agent', running: 'Sub-agente trabalhando',           done: 'Sub-agente concluiu' }
 };
 
-export { SUBAGENT_TOOL } from '../executionSteps.js';
+// ARMADILHA: aqui havia `export { SUBAGENT_TOOL } from '../executionSteps.js'`.
+// Um re-export cria a entrada de exportação do módulo, mas NÃO cria a variável
+// local — então todo uso de SUBAGENT_TOOL dentro deste arquivo (em `summarize` e
+// em `ResultView`) estourava `ReferenceError` e derrubava o app inteiro. O nome
+// agora é IMPORTADO acima (virando um binding de verdade) e reexportado a partir
+// dele, mantendo a mesma superfície pública do módulo.
+export { SUBAGENT_TOOL };
 
 export const CAT_META = {
   terminal: { Icon: Terminal,   label: 'Terminal',  inputLabel: 'Comando' },

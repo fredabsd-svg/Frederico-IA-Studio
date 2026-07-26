@@ -158,13 +158,32 @@ export function clearPromptCache(messages) {
   return messages;
 }
 
+// Anexa ao erro QUAL provedor e QUAL modelo falharam.
+//
+// Sem isto, uma conta com mais de um provedor recebia "Chave da API inválida ou
+// expirada" sem dizer de quem: o usuário abria Configurações, via o provedor que
+// acabara de validar com a chave OK e concluía que o app estava errado. A
+// chamada que falhou era de OUTRO provedor — o modelo do assistente não tem
+// prefixo `<provedor>::`, então `getUserProvider` cai no primeiro provedor
+// cadastrado quando o id não é achado em catálogo nenhum.
+export function tagProviderError(err, { providerName, model } = {}) {
+  if (!err || typeof err !== 'object') return err;
+  if (!err.providerName && providerName) err.providerName = providerName;
+  if (!err.providerModel && model) err.providerModel = model;
+  return err;
+}
+
 // Traduz erros comuns da API do provedor em mensagens claras em português
 export function friendlyApiError(err) {
   const status = err?.status || err?.response?.status;
   const raw = String(err?.message || '');
+  // "do provedor X" / "(modelo Y)" só entram quando são conhecidos — nunca
+  // inventamos um nome, porque um nome errado é pior que nenhum.
+  const quem = err?.providerName ? ` do provedor "${err.providerName}"` : '';
+  const qual = err?.providerModel ? ` (modelo ${err.providerModel})` : '';
   if (err?.code === 'CONVERSATION_BUSY') return 'Esta conversa já está processando uma resposta. Aguarde terminar ou pare o processamento antes de enviar outra mensagem.';
-  if (status === 401) return 'Chave da API inválida ou expirada. Confira sua chave em Configurações → Provedor de IA.';
-  if (status === 402) return 'Sem créditos no provedor (OpenRouter/DeepSeek). Adicione créditos na sua conta e tente de novo.';
+  if (status === 401) return `Chave da API${quem} recusada${qual}: inválida, expirada ou sem acesso a este modelo. Se você tem mais de um provedor cadastrado, confira a chave DESSE provedor em Configurações → Provedor de IA.`;
+  if (status === 402) return `Sem créditos no provedor${quem ? ` "${err.providerName}"` : ' (OpenRouter/DeepSeek)'}${qual}. Adicione créditos na sua conta e tente de novo.`;
   if (status === 429) return 'Limite de uso atingido (erro 429). Modelos GRATUITOS têm cota pequena e fila compartilhada — aguarde alguns minutos ou, melhor, escolha um modelo pago (ex.: DeepSeek Chat, que custa centavos).';
   // O provedor também responde 404 quando o modelo EXISTE mas não aceita
   // ferramentas ("No endpoints found that support tool use"). Sem ferramentas o
