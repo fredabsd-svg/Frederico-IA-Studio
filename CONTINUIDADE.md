@@ -19,10 +19,40 @@ de testes: SSE integrado, retomada após interrupção real, pipeline retomável
 adversarial não foram executados. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
 - **Branch:** `claude/new-session-dm3140` → **PR [#140](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/140)** (app inutilizável: tela de erro + sandbox recusado).
-- **Última validação:** 2026-07-26 — **714 testes** (backend 598, frontend 57, guarda do
+- **Última validação:** 2026-07-26 — **721 testes** (backend 605, frontend 57, guarda do
   Docker 49, sandbox Python 10), sem PostgreSQL no contêiner (19 do backend e 9 do Python
   se autopulam — esperado; o CI roda com Postgres real). `npm run check` verde nos dois
   lados. A contagem vem de `cd backend && npm run test:count` — não a escreva à mão.
+
+---
+
+## "Chave da API inválida" apontando o provedor errado (2026-07-26 — mesma branch)
+
+Conta com DeepSeek **e** OpenRouter: o OpenRouter sincronizou 345 modelos às
+21:42:55 (chave válida) e o chat falhou às 21:42 com "Chave da API inválida ou
+expirada". Mesma chave, mesmo minuto — ou seja, **a chamada que falhou não era a
+do OpenRouter**.
+
+Cadeia da causa:
+
+1. `seed.js` grava nos assistentes padrão o modelo `deepseek/deepseek-chat` — um
+   id **sem prefixo `<provedor>::`**. (O repositório ainda tem dois defaults
+   incoerentes: `deepseek/deepseek-chat`, nome do OpenRouter, em `seed.js` e
+   `routes/assistants.js`; e `deepseek-chat`, nome nativo, em `routes/schedules.js`,
+   `inbox.js`, `conversations.js` e `helpers.js`.)
+2. `getUserProvider` não acha esse id em catálogo nenhum e cai em `rows[0]` —
+   **o provedor mais antigo**, que nesta conta é a DeepSeek.
+3. A chave da DeepSeek é recusada → 401 → mensagem genérica mandando "confira sua
+   chave", sem dizer de quem.
+
+Corrigido **o diagnóstico**: `tagProviderError` marca no erro qual provedor e qual
+modelo falharam (em `loop.js` nos dois catches do stream, no `multiModel.js` por
+cartão e no `orchestrator.js`), e `friendlyApiError` nomeia os dois no 401/402.
+7 testes novos, incluindo os casos sem contexto (a mensagem antiga não regride).
+
+**Ainda em aberto (causa raiz):** `rows[0]` continua sendo um chute silencioso, e
+os defaults sem prefixo continuam sendo gravados. O certo é o assistente guardar um
+`modelRef` completo — frente própria, ainda não feita.
 
 ---
 

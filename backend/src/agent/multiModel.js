@@ -25,7 +25,7 @@ import { runAgent } from './loop.js';
 import { clipForBriefing, developerTeamContextFor, protectedProfilePrompt, uploadsNote } from './prompts.js';
 import { buildRepoDigest } from '../connectors/github.js';
 import { buildDocumentContext } from '../docling/context.js';
-import { STREAM_RECOVERY_LIMIT, STREAM_RESUME_NOTE, STREAM_PAUSE_RESUME_NOTE, isRetryableStreamError, openRouterRouting, retryDelay, addUsage, friendlyApiError, applyPromptCache } from './provider.js';
+import { STREAM_RECOVERY_LIMIT, STREAM_RESUME_NOTE, STREAM_PAUSE_RESUME_NOTE, isRetryableStreamError, openRouterRouting, retryDelay, addUsage, friendlyApiError, tagProviderError, applyPromptCache } from './provider.js';
 import { guardStreamStall, PROVIDER_CONNECT_TIMEOUT_MS } from './streamGuard.js';
 import { acquireConversationControl, releaseConversationControl, beginProviderRequest, releaseProviderRequest, controlInterruptReason, gate } from './control.js';
 import { loadCheckpoint } from './checkpoint.js';
@@ -389,7 +389,12 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
           if (!isRetryableStreamError(err) || attempt >= STREAM_RECOVERY_LIMIT) {
             state.elapsedMs += Date.now() - t0;
             state.text = text;
-            state.error = friendlyApiError(err);
+            // Num quadro com vários modelos, "chave recusada" sem dizer de quem
+            // é ainda pior: cada cartão pode vir de um provedor diferente.
+            state.error = friendlyApiError(tagProviderError(err, {
+              providerName: state.runtime?.providerName,
+              model: rawModelId(state.member?.id)
+            }));
             addSlotCost(state);
             setStatus(state, STATUS.error);
             return { error: err, text };
