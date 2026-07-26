@@ -18,8 +18,9 @@ socket do Docker — ver `docs/SECURITY.md` §4.3). O que ainda impede o verde �
 de testes: SSE integrado, retomada após interrupção real e pipeline retomável não foram
 executados. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** GraphQL no sandbox (`strawberry-graphql`) e o inventário de
-  ferramentas que o modelo lê. Detalhe abaixo.
+- **Último trabalho:** **PR [#144](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/144)** —
+  GraphQL no sandbox (`strawberry-graphql`) e o inventário de ferramentas que o modelo lê.
+  Detalhe abaixo.
 - **Última validação:** 2026-07-26 — **763 testes** (backend 647, frontend 57, guarda do
   Docker 49, sandbox Python 10). Localmente sem PostgreSQL no contêiner (19 do backend se
   autopulam — esperado) e sem `pytest` instalado (os 10 do sandbox Python não coletam
@@ -28,7 +29,7 @@ executados. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
 ---
 
-## GraphQL no sandbox e o inventário do modelo (2026-07-26)
+## GraphQL no sandbox e o inventário do modelo (2026-07-26 — PR #144)
 
 `strawberry-graphql[fastapi,cli]` entrou na imagem do sandbox — schema por type hints,
 `Schema.execute_sync` para consultar sem subir servidor, `strawberry.fastapi.GraphQLRouter`
