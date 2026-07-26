@@ -43,6 +43,7 @@ import { useFileUploads } from './hooks/useFileUploads.js';
 import { useChat } from './hooks/useChat.js';
 import { useTasks } from './hooks/useTasks.js';
 import { useDevProjects, projectContextText, developerSessionForConversation } from './hooks/useDevProjects.js';
+import { useComposerHeight } from './hooks/useComposerHeight.js';
 
 const QUICK_ACTION_ICON = {
   document: FileText,
@@ -177,6 +178,9 @@ export default function App({ user } = {}) {
   const messagesRef = useRef(null);
   const lastScrollConv = useRef(null);
   const inputRef = useRef(null);
+  // Mede o compositor e publica a altura em --composer-h, para o personagem do
+  // copiloto (position: fixed) não pousar em cima do botão de enviar.
+  const composerWrapRef = useComposerHeight();
   const topActionsRef = useRef(null);
   const sideScrollRef = useRef(null);
   const toastTimer = useRef(null);
@@ -1082,7 +1086,7 @@ export default function App({ user } = {}) {
         </div>}
         <div ref={endRef}/>
       </section>
-      <footer className="composerWrap">
+      <footer className="composerWrap" ref={composerWrapRef}>
         {developerSession && (!developerSession.conversationId || developerSession.conversationId === current?.id) && <div className="devSessionBar">
           <Code2 size={15}/><span>Modo desenvolvedor</span><b>{DEV_WORK_MODES.find(m => m.id === developerSession.mode)?.label || 'Ativo'}</b>
           {developerSession.github?.repo && <span className="muted" title={`Repositório GitHub${developerSession.github.branch ? ` · branch ${developerSession.github.branch}` : ''}`}>· {developerSession.github.repo}{developerSession.github.branch ? ` (${developerSession.github.branch})` : ''}</span>}

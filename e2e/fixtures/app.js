@@ -113,12 +113,10 @@ export async function abrirLogado(page, request, conta) {
 
 // Manda uma mensagem no compositor.
 //
-// Envia com Enter, e não com clique no botão, por dois motivos: é o caminho
-// principal de quem usa ("Enter envia · Shift+Enter quebra linha", escrito
-// embaixo do campo) e, a 1280px de largura, o avatar do Nino fica POR CIMA do
-// botão de enviar — o Playwright recusa o clique porque o mascote intercepta o
-// ponteiro. A sobreposição é um defeito de layout de verdade, anotado em
-// CONTINUIDADE.md; usar Enter aqui não o esconde, só evita amarrar o teste a ele.
+// Envia com Enter porque é o caminho principal de quem usa ("Enter envia ·
+// Shift+Enter quebra linha", escrito embaixo do campo) e é o mais rápido.
+// O CLIQUE no botão tem teste próprio em `tests/layout.spec.js`: era ele que
+// ficava coberto pelo avatar do Nino, e é lá que essa regressão é guardada.
 export async function enviar(page, texto) {
   const campo = page.getByPlaceholder(ui.campoMensagem);
   await campo.click();

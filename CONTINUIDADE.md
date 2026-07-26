@@ -19,17 +19,58 @@ de testes: **o SSE integrado saiu do zero** (ver a frente abaixo), mas a retomad
 interrupção real do processo e o pipeline multimodelo retomável continuam sem teste.
 Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** **PR [#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)** —
-  troca do navegador headless para **Playwright** e criação da suíte **ponta a ponta**
-  (`e2e/`). **F-20 fechado**, F-12 e F-13 cobertos em parte. A troca expôs um buraco de
-  SSRF que uma porta ingênua teria aberto. Detalhe abaixo. Antes dele, o **PR
-  [#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)** (as sete falhas
-  P0 dos sub-agentes) e o **PR #144** (GraphQL no sandbox e o inventário de ferramentas).
-- **Última validação:** 2026-07-26 — **802 testes** (backend 677, frontend 57, guarda do
-  Docker 49, sandbox Python 10, ponta a ponta 9), já com a `main` mesclada. Backend e
-  frontend rodaram com PostgreSQL real neste contêiner: **677 passaram, 0 pulados**. Os 9
-  E2E rodaram de verdade. Os 10 do Python não coletam aqui por falta do `openpyxl` — na
-  CI rodam. A contagem vem de `cd backend && npm run test:count` — não a escreva à mão.
+- **Último trabalho:** o personagem do copiloto cobria o **botão de enviar** — corrigido
+  (frente abaixo). Foi o primeiro defeito que a suíte E2E encontrou sozinha. Antes dele,
+  o **PR [#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)** (Playwright
+  + suíte ponta a ponta), o **PR [#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)**
+  (as sete falhas P0 dos sub-agentes) e o **PR #144** (GraphQL no sandbox).
+- **Última validação:** 2026-07-26 — **806 testes** (backend 677, frontend 57, guarda do
+  Docker 49, sandbox Python 10, ponta a ponta 13). Backend e frontend rodaram com
+  PostgreSQL real neste contêiner: **677 passaram, 0 pulados**. Os 13 E2E rodaram de
+  verdade. Os 10 do Python não coletam aqui por falta do `openpyxl` — na CI rodam. A
+  contagem vem de `cd backend && npm run test:count` — não a escreva à mão.
+
+---
+
+## O Nino cobria o botão de enviar (2026-07-26)
+
+Primeiro defeito que a suíte E2E encontrou sozinha — e ele era pior do que pareceu na
+primeira leitura. Medindo com navegador real em oito larguras:
+
+| Largura | Sobreposição sobre o botão | O que o clique no centro do botão atingia |
+| --- | --- | --- |
+| 1920px | nenhuma | o botão |
+| 1440px | nenhuma | o botão |
+| 1280px | 23px | **o mascote** |
+| 1100px | 40px (**botão inteiro**) | **o mascote** |
+| 980px | 33px | **o mascote** |
+| 820px | 33px | **o mascote** |
+| 560px | 40px (**botão inteiro**) | **o mascote** |
+| 390px | 40px (**botão inteiro**) | **o mascote** |
+
+Ou seja: em notebook de 1280px e em **qualquer largura de celular**, tocar em "enviar"
+acertava o Nino. Só funcionava em tela larga — provavelmente por isso passou tanto tempo
+sem ser notado, e por isso nenhum teste o pegava: nenhum abria o app num navegador.
+
+**Causa.** `.companionRoot` é `position: fixed; bottom: 22px`, e o compositor ocupa
+justamente a base da tela. Em telas largas o compositor (máx. 840px, centralizado) para
+antes da faixa do mascote; em telas médias e no celular ele usa a largura toda, e as duas
+coisas disputam o mesmo canto.
+
+**Correção.** O personagem passa a pousar **acima** do compositor:
+`bottom: calc(var(--composer-h, 6px) + 16px)`. A altura vem medida — não escrita à mão —
+por `frontend/src/hooks/useComposerHeight.js`, um *callback ref* com `ResizeObserver` no
+`<footer className="composerWrap">`. Medir era necessário porque o compositor **cresce
+com o texto** (a textarea vai até 160px) e muda entre modos de trabalho: qualquer número
+fixo acertaria um caso e erraria os outros, em silêncio. Quem arrasta o mascote (o
+componente salva a posição) continua no comando — o arraste usa `left/top` inline e
+ignora o `bottom`.
+
+**Guarda:** `e2e/tests/layout.spec.js`, 4 testes — sobreposição zero nas oito larguras,
+compositor alto não empurra o mascote de volta, **clique real no botão** no desktop e no
+celular, e um teste contra o exagero (o mascote tem de continuar visível dentro da
+janela). Conferi que servem de guarda revertendo a correção: 3 dos 4 falham, com a
+mensagem certa; o quarto passa nos dois casos, de propósito.
 
 ---
 
@@ -81,13 +122,11 @@ que até aqui só tinha teste de unidade.
 
 Novo job `e2e` no CI, com Postgres real e Chromium. Ver `e2e/README.md`.
 
-### Duas coisas que os testes encontraram e **não** foram corrigidas aqui
+### Duas coisas que os testes encontraram
 
-1. **O avatar do Nino fica por cima do botão de enviar** a 1280px de largura — o
-   Playwright recusa o clique porque o mascote intercepta o ponteiro. É defeito de layout
-   de verdade, não artefato de teste: quem clicar ali acerta o mascote. Os testes enviam
-   com Enter (o caminho principal, anunciado embaixo do campo), então o defeito não fica
-   escondido — fica anotado aqui.
+1. **O avatar do Nino ficava por cima do botão de enviar** — não corrigido naquele PR,
+   **corrigido na frente seguinte** (seção acima), onde a medição mostrou que o problema
+   valia para 1280px e todas as larguras abaixo, não só para 1280px.
 2. **O modelo padrão do assistente continua sem prefixo de provedor.** Ao montar os
    testes foi preciso fixar o `modelRef` completo nos assistentes: sem isso o app manda
    `deepseek/deepseek-chat`, o `getUserProvider` cai no `rows[0]` e o teste da chave
@@ -522,7 +561,6 @@ renderização real (Playwright) em 360, 393, 600, 900, 1000 e 1300px.
 | F-24 | Sub-agentes: sem orçamento próprio de tempo/tokens por delegação e sem catálogo de modelos com tool calling **verificado** (hoje qualquer modelo do seletor pode receber uma subtarefa). | 🟡 Média |
 | F-25 | Sub-agentes paralelos compartilham `outputs/`: a atribuição de arquivo por filho pode se cruzar e dois filhos podem gravar o mesmo nome. O conjunto que o usuário recebe está certo (o pai também faz o diff); o rótulo por sub-agente é que não é confiável. | 🟡 Média |
 | F-21 | `App.jsx` com 62 `useState`; bundle num único chunk (teto de 1.000 KB no CI); CSS em camadas sem inventário. | 🟡 Média |
-| — | O avatar do Nino cobre o botão de enviar a 1280px de largura (achado dos testes E2E). | 🟡 Média |
 | F-11 | Sem quarentena/reprocesso do que passou com o antivírus degradado. | 🟡 Média |
 
 ---
@@ -536,18 +574,16 @@ renderização real (Playwright) em 360, 393, 600, 900, 1000 e 1300px.
    (`deepseek/deepseek-chat` em `seed.js` e `routes/assistants.js`; `deepseek-chat` em
    `schedules`, `inbox`, `conversations` e `helpers`), migrar os assistentes já gravados
    e decidir o que fazer quando o modelo não for atribuível — hoje o chute é silencioso.
-2. **Sobreposição do Nino sobre o botão de enviar** (achado dos E2E). Barato de corrigir
-   e visível para quem usa: a 1280px o mascote intercepta o clique.
-3. **F-12/F-13, o que sobrou** — reconexão do `/stream` com `fromSeq` sem duplicar
+2. **F-12/F-13, o que sobrou** — reconexão do `/stream` com `fromSeq` sem duplicar
    eventos, e tool calls/timeout no provedor falso (`e2e/fixtures/provedorFalso.mjs`,
    onde o resto já está pronto).
-4. **F-14** — retomada após `kill -9` no meio de um run, com checkpoint real.
-5. **F-15** — tabela `pipeline_runs` (`pipeline_run_id`, `current_stage`,
+3. **F-14** — retomada após `kill -9` no meio de um run, com checkpoint real.
+4. **F-15** — tabela `pipeline_runs` (`pipeline_run_id`, `current_stage`,
    `completed_stages`, `pending_stages`, `artifact_versions`, `status`, `checkpoint`,
    `updated_at`) e retomada no boot.
-6. **F-21** — extrair de `App.jsx`, por etapas: shell → estado da conversa → estado da
+5. **F-21** — extrair de `App.jsx`, por etapas: shell → estado da conversa → estado da
    execução → drawers/configurações. `React.lazy` nos painéis pesados.
-7. **F-24/F-25 (sub-agentes, o que sobrou dos P1/P2)** — orçamento por delegação
+6. **F-24/F-25 (sub-agentes, o que sobrou dos P1/P2)** — orçamento por delegação
    (`SUBAGENT_TIMEOUT_MS`, `MAX_STEPS`, `MAX_TOKENS`, deadline compartilhado); diretório
    `outputs/<delegationId>/` com manifesto por filho; catálogo persistido de capacidade de
    tool calling por `provedor+modelo+endpoint` (hoje `markModelCapabilityUnsupported` só
