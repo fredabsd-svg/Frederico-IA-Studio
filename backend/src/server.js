@@ -37,6 +37,7 @@ import modelTeamsRouter from './routes/modelTeams.js';
 import companionRouter from './routes/companion.js';
 import copilotRouter from './routes/copilot.js';
 import doclingRouter from './routes/docling.js';
+import designRouter from './routes/design.js';
 import { healthMetrics } from './healthMetrics.js';
 import { sweepStaleUploadTemps } from './uploads.js';
 import { sweepExpiredArtifacts, RETENTION_DAYS as DOCLING_RETENTION_DAYS } from './docling/retention.js';
@@ -114,8 +115,17 @@ app.use(express.json({ limit: '10mb' }));
 // Todas as rotas /api exigem login, exceto a checagem de saúde e o próprio fluxo
 // de autenticação. requireAuth coloca o id do usuário logado em req.userId
 // (base do isolamento por usuário da Fase 3).
+// A prévia do Modo Design (`/design/preview/:token`) é a única rota de API que
+// NÃO exige sessão. Ela serve HTML gerado por IA — código não confiável — a
+// partir de um token aleatório de 32 caracteres, e existe justamente para poder
+// ser servida de outra origem (DESIGN_PREVIEW_ORIGIN) sem que o navegador tenha
+// motivo para mandar o cookie do app junto. Ver docs/DESIGN_STUDIO.md.
+const isPublicApiPath = (path) => path === '/health'
+  || path.startsWith('/auth')
+  || path.startsWith('/design/preview/');
+
 app.use('/api', (req, res, next) => {
-  if (req.path === '/health' || req.path.startsWith('/auth')) return next();
+  if (isPublicApiPath(req.path)) return next();
   return requireAuth(req, res, next);
 });
 
@@ -123,7 +133,7 @@ app.use('/api', (req, res, next) => {
 // templates, docpro) existam PARA este usuário antes de qualquer handler. É
 // idempotente e barato (Set em memória) após a primeira vez.
 app.use('/api', async (req, res, next) => {
-  if (req.path === '/health' || req.path.startsWith('/auth')) return next();
+  if (isPublicApiPath(req.path)) return next();
   if (req.userId) { try { await ensureUserSeeded(req.userId); } catch {} }
   next();
 });
@@ -155,6 +165,7 @@ app.use('/api', modelTeamsRouter);
 app.use('/api', companionRouter);
 app.use('/api', copilotRouter);
 app.use('/api', doclingRouter);
+app.use('/api', designRouter);
 
 // LGPD — retenção automática: com CONVERSATION_RETENTION_DAYS > 0, apaga
 // conversas paradas há mais de N dias (varredura a cada 6 h; desligada por padrão).

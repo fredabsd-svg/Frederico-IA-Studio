@@ -20,7 +20,11 @@ de testes: **o SSE integrado saiu do zero** (ver a frente abaixo), mas a retomad
 interrupção real do processo e o pipeline multimodelo retomável continuam sem teste.
 Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** estabilização do **ambiente de execução do agente** (frente abaixo):
+- **Último trabalho:** o **Modo Design** (frente abaixo) — espaço próprio onde o
+  usuário descreve um site, uma apresentação ou um documento visual e recebe um
+  rascunho renderizado ao vivo, refinado por conversa, versionado e exportável.
+  Antes dele, a estabilização do **ambiente de execução do agente** (frente mais
+  abaixo):
   um timeout deixou de derrubar o sandbox, toda execução devolve estado estruturado
   (ambiente × projeto), o reinício é anunciado com o que sobreviveu e o que se perdeu,
   comandos longos transmitem a saída ao vivo, e o agente ganhou a ferramenta `ambiente`
@@ -29,12 +33,78 @@ Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
   (o Nino cobrindo o botão de enviar), o **PR [#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)**
   (Playwright + suíte ponta a ponta) e o **PR [#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)**
   (as sete falhas P0 dos sub-agentes).
-- **Última validação:** 2026-07-26 — **844 testes** (backend 728, frontend 57, guarda do
-  Docker 49, sandbox Python 10). Backend e frontend passaram neste contêiner: **709
-  passaram, 0 falharam, 19 pulados** (os 19 exigem PostgreSQL, que não está de pé aqui —
-  na CI rodam). Os 10 do Python não coletam aqui por falta do `openpyxl`. Os 13 E2E não
-  entram nesta contagem porque o `e2e/` não está instalado neste contêiner. A contagem
-  vem de `cd backend && npm run test:count` — não a escreva à mão.
+- **Última validação:** 2026-07-26 — **951 testes** (backend 809, frontend 65, guarda do
+  Docker 49, sandbox Python 10, ponta a ponta 18). Desta vez o PostgreSQL **subiu neste
+  contêiner** (binários do `postgresql-16` locais, sem Docker), então nada foi pulado:
+  **backend 809/809 e frontend 65/65**, mais os **18 E2E em navegador real**
+  (`E2E_CHROMIUM_PATH` apontando o Chromium do contêiner). Sem banco, o backend passa
+  753 e pula 56 — o esperado. Os 10 do Python não coletam aqui por falta do `openpyxl`.
+  A contagem vem de `cd backend && npm run test:count` — não a escreva à mão.
+
+---
+
+## Modo Design (2026-07-26)
+
+Um espaço próprio, ao lado do chat: o usuário descreve o que precisa e a IA
+devolve um rascunho **visual e renderizado**, não um bloco de código para montar.
+Três tipos de saída — página/protótipo `web`, apresentação `slides` e documento
+paginado `document` —, refinamento por conversa, histórico de versões navegável e
+exportação (`.html`, `.pdf`, `.pptx`).
+
+**A decisão que organiza o resto:** nada é gravado sem passar por
+`extractArtifact`. O modelo responde o que quiser; o app só aceita um documento
+HTML completo ou um JSON de slides no formato esperado. Uma geração ruim vira
+mensagem no chat do projeto — a versão boa que estava na tela continua valendo.
+Isso cobre os três modos de falhar que apareceram na prática: resposta com
+conversa em volta, resposta embrulhada em cerca de código e resposta **cortada
+por limite de tokens** (a mais traiçoeira: o HTML pela metade "parece" válido).
+
+**Slides guardam JSON, não HTML.** O mesmo JSON vira prévia, PDF e `.pptx`. Se o
+modelo devolvesse HTML de slides, montar o `.pptx` exigiria adivinhar as caixas
+de texto de volta a partir de marcação arbitrária.
+
+**Segurança — o ponto que não pode ser afrouxado.** O HTML de um design é código
+gerado por IA. Ele roda em origem OPACA, garantida em dois lugares de propósito:
+`Content-Security-Policy: sandbox allow-scripts` na resposta e
+`sandbox="allow-scripts"` no `<iframe>` — **sem `allow-same-origin` em nenhum dos
+dois**. Juntos, os dois atributos anulariam o sandbox e dariam ao código gerado a
+origem do app (cookie de sessão e DOM inclusos). A prévia é servida por uma rota
+sem sessão, com token de 32 caracteres, justamente para poder morar em outra
+origem (`DESIGN_PREVIEW_ORIGIN`) sem o cookie acompanhar o artefato. E a
+impressão em PDF **reaproveita** `guardRoute` do `agent/pageShot.js` em vez de
+abrir o próprio navegador: sem isso, uma página com
+`<img src="http://169.254.169.254/…">` usaria o navegador do backend para
+alcançar a rede interna.
+
+**Um defeito real encontrado pelo teste de navegador:** a resposta de `/generate`
+serializava a linha do projeto carregada ANTES da geração, então
+`currentVersionId` vinha velho. Na tela o efeito era duplo — o histórico marcava
+a versão errada como "em exibição" e o iframe, que recarrega quando esse id muda,
+seguia mostrando o design anterior. Parecia que o pedido não tinha feito nada.
+`projectPayload` passou a receber o id e reler a linha; a regressão está guardada
+também no nível HTTP.
+
+**Mudança visível para o usuário:** um item "Modo Design" na barra lateral
+(grupo Produção) abre uma tela cheia com prévia, chat do projeto, histórico e
+exportação. O mascote (Nino) fica escondido enquanto o modo está aberto — ele é
+`position: fixed` e pousaria sobre o compositor, a mesma sobreposição que o
+PR #147 corrigiu no chat principal.
+
+**Ficou de fora, e está escrito em `docs/DESIGN_STUDIO.md` §Limites:** sem
+imagens (o layout `image-full` entrega um painel na cor da marca, não uma foto);
+edição inline, sliders de ajuste e tela de compartilhamento público são a v2; e
+`document` **não** reaproveita o pipeline de Word/PDF do agente — aquele caminho
+roda Python numa sandbox Docker presa a uma CONVERSA, e um projeto de design não
+é uma conversa nem tem workspace. Em vez de esticar aquele pipeline, o
+`document` gera HTML paginado e imprime com o Chromium que a imagem já traz;
+quem precisa de `.docx` editável continua no chat principal.
+
+Onde está: migration `022_design_studio.sql`; backend em `src/design/`
+(`core.js` puro, `render.js` puro, `store.js`, `generate.js`, `pdf.js`,
+`pptx.js`) e `src/routes/design.js`; frontend em `src/components/Design*.jsx`,
+`src/design/designCore.js`, `src/hooks/useDesign.js` e `src/design.css`.
+Documentação em `docs/DESIGN_STUDIO.md` (e `docs/SECURITY.md` §6.1).
+Testes: 28 + 10 + 5 puros, 13 de banco, 24 de rota e 5 em navegador real.
 
 ---
 
@@ -255,7 +325,12 @@ Novo job `e2e` no CI, com Postgres real e Chromium. Ver `e2e/README.md`.
    `updated_at`) e retomada no boot.
 5. **F-21** — extrair de `App.jsx`, por etapas: shell → estado da conversa → estado da
    execução → drawers/configurações. `React.lazy` nos painéis pesados.
-6. **F-24/F-25 (sub-agentes, o que sobrou dos P1/P2)** — orçamento por delegação
+6. **Modo Design v2 (opcional, sem risco aberto)** — edição inline (clicar num
+   elemento da prévia e pedir a mudança só dele, via `data-editable-id` +
+   `postMessage`), controles de ajuste que reescrevem variáveis CSS sem chamar a
+   IA, imagens no artefato (a geração de imagens já existe no app) e tela de
+   compartilhamento público sobre o token de prévia que já existe.
+7. **F-24/F-25 (sub-agentes, o que sobrou dos P1/P2)** — orçamento por delegação
    (`SUBAGENT_TIMEOUT_MS`, `MAX_STEPS`, `MAX_TOKENS`, deadline compartilhado); diretório
    `outputs/<delegationId>/` com manifesto por filho; catálogo persistido de capacidade de
    tool calling por `provedor+modelo+endpoint` (hoje `markModelCapabilityUnsupported` só

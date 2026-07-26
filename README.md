@@ -104,6 +104,24 @@ veja **[docs/CONFIGURACAO.md](docs/CONFIGURACAO.md)**.
 - **Retomada real** — tarefa interrompida salva o estado no banco; **Continuar de
   onde parei** retoma do ponto exato, mesmo após reiniciar o servidor.
 
+### 🎨 Modo Design
+
+Um espaço próprio para quando o resultado precisa **parecer bom**: descreva um
+site, uma apresentação ou um documento visual e veja o rascunho renderizado ao
+vivo.
+
+- **Três saídas**: página/protótipo HTML responsivo, apresentação 16:9 e
+  documento paginado em A4.
+- **Refinamento por conversa** — "deixe o cabeçalho mais escuro", "adicione uma
+  seção de perguntas frequentes". Cada pedido vira uma **versão**, e dá para
+  voltar para qualquer uma sem perder as seguintes.
+- **Prévia isolada** — o HTML gerado roda num iframe de origem opaca, sem
+  acesso à sua sessão nem ao resto da interface.
+- **Exportação**: `.html` para site, `.pdf` e `.pptx` para apresentação, `.pdf`
+  para documento.
+- **Sua marca** — cores e fontes definidas uma vez, aplicadas em todo projeto
+  que a escolher.
+
 ### 🌱 Nino, o copiloto
 
 O personagem que acompanha o Studio — e explica o que está acontecendo.
@@ -288,6 +306,7 @@ chave única do servidor para uso pessoal/de equipe.
 | [docs/MULTIMODEL.md](docs/MULTIMODEL.md) | Modos multimodelo e o que ainda falta |
 | [docs/MEMORY.md](docs/MEMORY.md) | Memória semântica e recuperação de contexto |
 | [docs/DOCLING.md](docs/DOCLING.md) | Camada de compreensão documental |
+| [docs/DESIGN_STUDIO.md](docs/DESIGN_STUDIO.md) | Modo Design: tipos de saída, versionamento, isolamento da prévia e exportação |
 | [e2e/README.md](e2e/README.md) | Testes de navegador: como rodar, o provedor simulado e as armadilhas já pagas |
 | [docs/FREDERICO_COMPANION.md](docs/FREDERICO_COMPANION.md) | O copiloto Nino em detalhe |
 | [VPS-DEPLOY.md](VPS-DEPLOY.md) | Publicação em VPS com HTTPS |

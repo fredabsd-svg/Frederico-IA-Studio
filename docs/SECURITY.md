@@ -205,6 +205,32 @@ ou inserir a linha do novo administrador diretamente.
 Resta a janela TOCTOU entre resolver e conectar — mitigação padrão do ecossistema.
 Testes: `backend/src/tools.ssrf.test.js`.
 
+O **navegador headless** do backend (miniatura de página do `web_fetch` e
+impressão em PDF do Modo Design) passa pela mesma guarda: `guardRoute` em
+`agent/pageShot.js`, reaproveitada por `design/pdf.js` em vez de duplicada. Ali
+os redirecionamentos são seguidos À MÃO (`route.fetch({maxRedirects:0})`), porque
+o `page.route()` do Playwright **não** é chamado no destino de um
+redirecionamento — uma porta ingênua reabriria SSRF por 302 para
+`169.254.169.254`. Testes: `backend/src/agent/pageShot.test.js`.
+
+---
+
+## 6.1 Modo Design — HTML gerado por IA no navegador
+
+O artefato de um projeto de design é código não confiável, e roda em dois
+navegadores. As defesas, em resumo (detalhe em `docs/DESIGN_STUDIO.md`):
+
+| Onde | Controle |
+| --- | --- |
+| Prévia no navegador do usuário | `Content-Security-Policy: sandbox allow-scripts` na resposta **e** `sandbox="allow-scripts"` no `<iframe>` — sem `allow-same-origin` em nenhum dos dois, o que põe o documento em ORIGEM OPACA (sem cookie de sessão, sem `localStorage`, sem o DOM do app) |
+| URL da prévia | capacidade de 32 caracteres aleatórios, na única rota de API sem sessão; regenerável por `POST /api/design/projects/:id/preview-token` |
+| Impressão em PDF | Chromium do backend com a guarda de rede do §6; o conteúdo entra por `setContent` (about:blank, origem opaca), sem navegação de topo |
+| Antes de renderizar | `contentMatchesType` confere que o conteúdo salvo bate com o `output_type` |
+| Marca do usuário | cor só em hex, nome de fonte sem aspas/`;` — os dois são interpolados dentro de CSS |
+
+Regressões guardadas em `backend/src/routes/design.http.test.js` (cabeçalhos) e
+`e2e/tests/design.spec.js` (atributo do iframe, no navegador de verdade).
+
 ---
 
 ## 7. Uploads e antivírus

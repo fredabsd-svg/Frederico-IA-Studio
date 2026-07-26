@@ -1,0 +1,314 @@
+/* Modo Design — espaço de trabalho visual (lista, novo projeto, editor, marca).
+ *
+ * Sem cor nova: tudo sai dos tokens já definidos em styles.css (--panel,
+ * --panel2, --line, --text, --muted, --accent, --on-accent, --danger, --ok,
+ * --r-*, --fs-*). É o que faz o modo funcionar nos dois temas e nas paletas do
+ * app sem manutenção paralela — o copiloto, por exemplo, fixou cores escuras e
+ * fica errado no tema claro. */
+
+.dsOverlay {
+  position: fixed; inset: 0; z-index: 80;
+  background: var(--bg);
+  display: flex;
+}
+
+.dsShell { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+.dsShellBar {
+  flex: none; display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; padding: 12px 20px; border-bottom: 1px solid var(--line); background: var(--panel);
+}
+.dsShellBrand { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; color: var(--accent); }
+.dsClose { border: none; background: transparent; color: var(--muted); padding: 6px; display: flex; border-radius: var(--r-sm); }
+.dsClose:hover { color: var(--text); background: var(--panel2); }
+
+.dsShellBody { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
+
+/* ---- Botões e campos compartilhados -------------------------------------- */
+
+.dsPrimary, .dsGhost {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  font: inherit; font-weight: 600; font-size: var(--fs-sm);
+  border-radius: var(--r-md); padding: 10px 16px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--panel2); color: var(--text);
+  text-decoration: none; white-space: nowrap;
+  /* 44px de área de toque no celular (a barra do editor é usada no telefone). */
+  min-height: 42px;
+}
+.dsPrimary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.dsPrimary:hover:not(:disabled) { filter: brightness(1.08); }
+.dsPrimary:disabled { opacity: .5; cursor: not-allowed; }
+.dsGhost:hover { border-color: var(--accent); color: var(--accent); }
+.dsGhost.disabled { opacity: .45; cursor: not-allowed; pointer-events: none; }
+
+.dsBack {
+  align-self: flex-start; display: inline-flex; align-items: center; gap: 6px;
+  border: none; background: transparent; color: var(--muted); font-size: var(--fs-sm);
+  padding: 6px 4px; cursor: pointer;
+}
+.dsBack:hover { color: var(--accent); }
+
+.dsField { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.dsFieldLabel { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-sm); font-weight: 600; color: var(--muted); }
+.dsFieldLabel em { font-style: normal; font-weight: 400; opacity: .8; }
+.dsField input, .dsField select, .dsField textarea {
+  border: 1px solid var(--line); background: var(--panel2); color: var(--text);
+  border-radius: var(--r-md); padding: 11px 13px; font: inherit; outline: none;
+}
+.dsField textarea { resize: vertical; line-height: 1.55; }
+.dsField input:focus, .dsField select:focus, .dsField textarea:focus { border-color: var(--accent); }
+.dsHint { font-size: var(--fs-xs); color: var(--muted); line-height: 1.5; }
+
+.dsError {
+  border: 1px solid var(--danger); border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--text); font-size: var(--fs-sm); line-height: 1.5; padding: 10px 12px;
+}
+.dsSaved { display: inline-flex; align-items: center; gap: 6px; color: var(--ok); font-size: var(--fs-sm); font-weight: 600; }
+.dsBadge {
+  flex: none; font-size: var(--fs-2xs); font-weight: 700; text-transform: uppercase; letter-spacing: .03em;
+  color: var(--accent); background: color-mix(in srgb, var(--accent) 15%, transparent);
+  border-radius: var(--r-full); padding: 3px 9px;
+}
+
+/* ---- Lista de projetos ---------------------------------------------------- */
+
+.dsHome, .dsNew, .dsSystems {
+  width: 100%; max-width: 1080px; margin: 0 auto; padding: 26px 22px 48px;
+  display: flex; flex-direction: column; gap: 20px;
+}
+
+.dsHomeHead { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; flex-wrap: wrap; }
+.dsHomeHead h2 { margin: 0 0 4px; font-size: var(--fs-2xl); letter-spacing: -.01em; }
+.dsHomeHead p { margin: 0; color: var(--muted); font-size: var(--fs-md); line-height: 1.5; max-width: 60ch; }
+.dsHomeActions { display: flex; gap: 10px; flex-wrap: wrap; }
+
+.dsEmpty {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  color: var(--muted); font-size: var(--fs-md); padding: 40px 20px;
+}
+.dsEmptyRich {
+  flex-direction: column; text-align: center; gap: 12px;
+  border: 1px dashed var(--line); border-radius: var(--r-xl); background: var(--panel2); padding: 46px 26px;
+}
+.dsEmptyIcon {
+  width: 56px; height: 56px; border-radius: var(--r-lg); display: grid; place-items: center;
+  color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.dsEmptyRich b { font-size: var(--fs-xl); color: var(--text); }
+.dsEmptyRich p { margin: 0; max-width: 56ch; line-height: 1.6; }
+
+.dsGrid { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); }
+.dsGrid li { position: relative; }
+.dsCard {
+  width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; text-align: left;
+  border: 1px solid var(--line); background: var(--panel2); border-radius: var(--r-lg);
+  padding: 15px 46px 15px 16px; cursor: pointer;
+  transition: border-color .15s, transform .15s, box-shadow .15s;
+}
+.dsCard:hover { border-color: var(--accent); transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0, 0, 0, .12); }
+.dsCardTop { display: flex; align-items: center; gap: 8px; }
+.dsCardIcon {
+  width: 30px; height: 30px; border-radius: var(--r-sm); display: grid; place-items: center;
+  color: var(--accent); background: color-mix(in srgb, var(--accent) 13%, transparent);
+}
+.dsCardType { font-size: var(--fs-2xs); font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.dsCardTitle { font-size: var(--fs-md); font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+.dsCardMeta { font-size: var(--fs-xs); color: var(--muted); }
+.dsCardDel {
+  position: absolute; top: 10px; right: 10px;
+  border: none; background: transparent; color: var(--muted); padding: 6px; display: flex; border-radius: var(--r-sm);
+}
+.dsCardDel:hover { color: var(--danger); background: var(--panel); }
+
+/* ---- Novo projeto --------------------------------------------------------- */
+
+.dsNewHead h2 { margin: 0 0 6px; font-size: var(--fs-2xl); letter-spacing: -.01em; }
+.dsNewHead p { margin: 0; color: var(--muted); font-size: var(--fs-md); line-height: 1.55; max-width: 62ch; }
+
+.dsTypes { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+.dsTypeCard {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 7px; text-align: left;
+  border: 1px solid var(--line); background: var(--panel2); border-radius: var(--r-lg);
+  padding: 16px; cursor: pointer; color: var(--text);
+}
+.dsTypeCard:hover { border-color: var(--accent); }
+.dsTypeCard.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--panel2)); }
+.dsTypeCard b { font-size: var(--fs-md); }
+.dsTypeCard > span:last-child { font-size: var(--fs-xs); color: var(--muted); line-height: 1.5; }
+.dsTypeIcon {
+  width: 38px; height: 38px; border-radius: var(--r-md); display: grid; place-items: center;
+  color: var(--accent); background: color-mix(in srgb, var(--accent) 13%, transparent);
+}
+
+.dsNewRow { display: grid; gap: 12px; grid-template-columns: 1fr 1fr; }
+.dsNewActions { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+
+/* ---- Editor --------------------------------------------------------------- */
+
+.dsEditor { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+.dsEditorBar {
+  flex: none; display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 10px 20px; border-bottom: 1px solid var(--line); background: var(--panel);
+}
+.dsEditorTitle { flex: 1; min-width: 0; display: flex; align-items: center; gap: 9px; }
+.dsEditorTitle > button {
+  display: inline-flex; align-items: center; gap: 7px; min-width: 0;
+  border: none; background: transparent; color: var(--text); padding: 4px 6px; border-radius: var(--r-sm); cursor: pointer;
+}
+.dsEditorTitle > button:hover { background: var(--panel2); }
+.dsEditorTitle > button svg { flex: none; color: var(--muted); }
+.dsEditorTitle b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-lg); }
+.dsEditorTitle input {
+  flex: 1; min-width: 0; border: 1px solid var(--accent); background: var(--panel2); color: var(--text);
+  border-radius: var(--r-sm); padding: 7px 10px; font: inherit; font-size: var(--fs-lg); outline: none;
+}
+.dsExports { display: flex; gap: 8px; flex-wrap: wrap; }
+.dsExports .dsGhost { padding: 8px 12px; min-height: 38px; }
+
+.dsMobileTabs { display: none; }
+
+.dsEditorBody { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 380px; }
+.dsEditorStage { min-width: 0; min-height: 0; display: flex; background: var(--panel2); }
+
+/* ---- Prévia --------------------------------------------------------------- */
+
+.dsPreview { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.dsPreviewBar {
+  flex: none; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--panel);
+}
+.dsPreviewHint { font-size: var(--fs-xs); color: var(--muted); }
+.dsWidths, .dsPreviewActions { display: flex; gap: 6px; }
+.dsWidths button, .dsPreviewActions button, .dsPreviewActions a {
+  display: inline-flex; align-items: center; gap: 6px; text-decoration: none;
+  font: inherit; font-size: var(--fs-xs); color: var(--muted); cursor: pointer;
+  border: 1px solid transparent; background: transparent; border-radius: var(--r-sm); padding: 6px 10px;
+}
+.dsWidths button:hover, .dsPreviewActions button:hover, .dsPreviewActions a:hover { color: var(--accent); background: var(--panel2); }
+.dsWidths button.on { color: var(--accent); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+
+.dsPreviewStage { position: relative; flex: 1; min-height: 0; overflow: auto; display: flex; justify-content: center; padding: 16px; }
+.dsPreviewFrame { position: relative; height: 100%; max-width: 100%; background: #fff; border-radius: var(--r-md); overflow: hidden; box-shadow: 0 6px 26px rgba(0, 0, 0, .18); }
+.dsPreviewFrame iframe { width: 100%; height: 100%; border: none; display: block; opacity: 0; transition: opacity .2s; }
+.dsPreviewFrame iframe.ready { opacity: 1; }
+.dsPreviewLoading {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 10px;
+  background: var(--panel2); color: var(--muted); font-size: var(--fs-sm);
+}
+.dsPreviewBusy {
+  position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%);
+  display: inline-flex; align-items: center; gap: 9px;
+  background: var(--panel); border: 1px solid var(--accent); color: var(--text);
+  border-radius: var(--r-full); padding: 9px 16px; font-size: var(--fs-sm); font-weight: 600;
+  box-shadow: 0 8px 26px rgba(0, 0, 0, .25);
+}
+
+/* ---- Coluna de refinamento ------------------------------------------------ */
+
+.dsSide { min-width: 0; min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--line); background: var(--panel); }
+
+.dsTabs { flex: none; display: flex; gap: 6px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.dsTabs button {
+  flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  font-size: var(--fs-sm); padding: 9px 8px; border-radius: var(--r-md);
+  border: 1px solid var(--line); background: var(--panel2); color: var(--muted); cursor: pointer;
+}
+.dsTabs button.on { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.dsCount { font-size: var(--fs-2xs); background: var(--panel); border-radius: var(--r-full); padding: 1px 7px; }
+
+.dsChat { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; padding: 12px; }
+.dsChatList { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 10px; padding-right: 2px; }
+.dsChatEmpty { margin: 0; color: var(--muted); font-size: var(--fs-sm); line-height: 1.6; }
+
+.dsBubble {
+  max-width: 100%; font-size: var(--fs-sm); line-height: 1.55; padding: 10px 13px;
+  border-radius: var(--r-lg); overflow-wrap: anywhere; white-space: pre-wrap;
+  display: flex; flex-direction: column; gap: 5px;
+}
+.dsBubble.user { align-self: flex-end; background: var(--bubble-user); color: #eef3ff; border-bottom-right-radius: 3px; }
+.dsBubble.assistant { align-self: flex-start; background: var(--bubble); border: 1px solid var(--line); border-bottom-left-radius: 3px; }
+.dsBubble.working { flex-direction: row; align-items: center; gap: 9px; color: var(--muted); }
+.dsBubbleMeta { font-size: var(--fs-2xs); opacity: .7; }
+
+.dsComposer { flex: none; display: flex; gap: 8px; align-items: flex-end; }
+.dsComposer textarea {
+  flex: 1; min-width: 0; resize: none; max-height: 140px;
+  border: 1px solid var(--line); background: var(--panel2); color: var(--text);
+  border-radius: var(--r-md); padding: 11px 13px; font: inherit; line-height: 1.5; outline: none;
+}
+.dsComposer textarea:focus { border-color: var(--accent); }
+.dsSend {
+  flex: none; width: 44px; height: 44px; display: grid; place-items: center;
+  border-radius: var(--r-md); border: 1px solid var(--accent); background: var(--accent); color: var(--on-accent); cursor: pointer;
+}
+.dsSend:disabled { opacity: .45; cursor: not-allowed; }
+
+/* ---- Histórico de versões ------------------------------------------------- */
+
+.dsVersions { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 9px; padding: 12px; }
+.dsVersion { border: 1px solid var(--line); background: var(--panel2); border-radius: var(--r-md); padding: 11px 12px; display: flex; flex-direction: column; gap: 7px; }
+.dsVersion.on { border-color: var(--accent); }
+.dsVersionTop { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: var(--fs-xs); color: var(--muted); }
+.dsVersionTop b { color: var(--text); font-size: var(--fs-sm); }
+.dsVersionPrompt { margin: 0; font-size: var(--fs-xs); color: var(--muted); line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.dsVersionActions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dsVersionActions button, .dsVersionActions a {
+  display: inline-flex; align-items: center; gap: 6px; text-decoration: none;
+  font: inherit; font-size: var(--fs-xs); color: var(--muted); cursor: pointer;
+  border: 1px solid var(--line); background: var(--panel); border-radius: var(--r-sm); padding: 6px 10px;
+}
+.dsVersionActions button:hover, .dsVersionActions a:hover { border-color: var(--accent); color: var(--accent); }
+.dsVersionActions button:disabled { opacity: .45; cursor: not-allowed; }
+.dsVersionCurrent { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-xs); font-weight: 600; color: var(--ok); }
+
+/* ---- Marca (design system) ------------------------------------------------ */
+
+.dsSystemList { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.dsSystemList li { position: relative; }
+.dsSystemList li.on .dsSystemItem { border-color: var(--accent); }
+.dsSystemItem {
+  width: 100%; display: flex; align-items: center; gap: 12px; text-align: left; cursor: pointer;
+  border: 1px solid var(--line); background: var(--panel2); border-radius: var(--r-md); padding: 12px 44px 12px 14px;
+}
+.dsSystemItem:hover { border-color: var(--accent); }
+.dsSystemItem b { font-size: var(--fs-md); }
+.dsSystemItem > span:last-child { font-size: var(--fs-xs); color: var(--muted); }
+.dsSwatches { display: flex; gap: 4px; }
+.dsSwatches i { width: 18px; height: 18px; border-radius: var(--r-sm); border: 1px solid var(--line); }
+
+.dsSystemForm { display: flex; flex-direction: column; gap: 14px; border: 1px solid var(--line); background: var(--panel2); border-radius: var(--r-lg); padding: 18px; }
+.dsSystemForm h3 { margin: 0; font-size: var(--fs-lg); }
+.dsColorRow { display: flex; gap: 8px; align-items: center; }
+.dsColorRow input[type="color"] { flex: none; width: 46px; height: 42px; padding: 3px; cursor: pointer; }
+.dsColorRow input:not([type="color"]) { flex: 1; min-width: 0; font-family: ui-monospace, Consolas, monospace; }
+
+/* ---- Telas estreitas ------------------------------------------------------ */
+
+@media (max-width: 980px) {
+  .dsEditorBody { grid-template-columns: 1fr; }
+  /* No celular a prévia e a conversa não cabem lado a lado sem espremer as
+     duas; o par de abas troca entre elas, e enviar um pedido volta para a
+     prévia sozinho (é onde está o resultado). */
+  .dsMobileTabs { display: flex; gap: 6px; padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  .dsMobileTabs button {
+    flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    min-height: 44px; font-size: var(--fs-sm); border-radius: var(--r-md);
+    border: 1px solid var(--line); background: var(--panel2); color: var(--muted); cursor: pointer;
+  }
+  .dsMobileTabs button.on { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .dsEditorBody.view-preview .dsSide { display: none; }
+  .dsEditorBody.view-chat .dsEditorStage { display: none; }
+  .dsSide { border-left: none; }
+  .dsNewRow { grid-template-columns: 1fr; }
+  .dsHome, .dsNew, .dsSystems { padding: 20px 16px 40px; }
+  .dsEditorBar { padding: 10px 14px; }
+  .dsExports { width: 100%; }
+  .dsExports .dsGhost { flex: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dsCard, .dsPreviewFrame iframe { transition: none; }
+  .dsCard:hover { transform: none; }
+}

@@ -23,10 +23,32 @@
 // mostre o seu.
 import http from 'node:http';
 
-const MODELOS = ['eco', 'eco-lento', 'chave-ruim'];
+const MODELOS = ['eco', 'eco-lento', 'chave-ruim', 'design-web', 'design-slides'];
 const PAUSA_LENTA_MS = Number(process.env.E2E_PAUSA_TOKEN_MS || 250);
 
 const dorme = (ms) => new Promise(r => setTimeout(r, ms));
+
+// Respostas do Modo Design. Ele chama o provedor SEM streaming e espera um
+// artefato pronto: documento HTML completo (web/document) ou JSON de slides.
+// A resposta vem propositalmente "suja" — com conversa em volta e cerca de
+// código —, que é como os modelos reais respondem: é justamente a limpeza que
+// o teste precisa exercitar.
+const HTML_DESIGN = [
+  '<!DOCTYPE html>',
+  '<html lang="pt-BR"><head><meta charset="utf-8"><title>Landing E2E</title>',
+  '<style>body{font-family:Arial,sans-serif;margin:0}h1{color:#1f3b8a;padding:40px}</style>',
+  '</head><body><h1 id="titulo-e2e">Contabilidade sem sustos</h1></body></html>'
+].join('\n');
+
+const RESPOSTAS_DESIGN = {
+  'design-web': `Claro! Segue a página:\n\n\`\`\`html\n${HTML_DESIGN}\n\`\`\`\n\nQualquer ajuste é só pedir.`,
+  'design-slides': JSON.stringify({
+    slides: [
+      { layout: 'title', title: 'Proposta E2E', body: 'Frederico IA Studio', notes: '' },
+      { layout: 'content', title: 'Escopo', body: '- Escrituração\n- Folha', notes: 'falar devagar' }
+    ]
+  })
+};
 
 function json(res, status, corpo) {
   const texto = JSON.stringify(corpo);
@@ -145,10 +167,11 @@ export function criarProvedorFalso() {
         return json(res, 401, { error: { message: 'Incorrect API key provided.', type: 'invalid_request_error', code: 'invalid_api_key' } });
       }
       if (corpo.stream) return responderStream(req, res, corpo);
-      // Sem streaming: usado na validação da chave ao cadastrar o provedor.
+      // Sem streaming: validação da chave ao cadastrar o provedor E o Modo
+      // Design, que não usa streaming e espera o artefato pronto.
       return json(res, 200, {
         id: 'chatcmpl-e2e', object: 'chat.completion', created: 1700000000, model: String(corpo.model || 'eco'),
-        choices: [{ index: 0, message: { role: 'assistant', content: 'OK' }, finish_reason: 'stop' }],
+        choices: [{ index: 0, message: { role: 'assistant', content: RESPOSTAS_DESIGN[pedido] || 'OK' }, finish_reason: 'stop' }],
         usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 }
       });
     }
