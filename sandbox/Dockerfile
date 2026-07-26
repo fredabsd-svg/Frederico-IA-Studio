@@ -120,6 +120,16 @@ RUN mkdir -p "$DOTNET_ROOT" && \
     ln -s /opt/dotnet/dotnet /usr/local/bin/dotnet && \
     rm -f /tmp/dotnet-install.sh
 
+# GraphQL: strawberry-graphql define o schema por type hints do Python (o módulo
+# importável é `strawberry`, não `strawberry_graphql`). O extra [fastapi] traz o
+# GraphQLRouter, que pluga no FastAPI já instalado acima, e o [cli] traz o comando
+# `strawberry server`, que sobe um GraphiQL local para testar o schema sem escrever
+# aplicação nenhuma. Fica NESTA camada final, e não junto de flask/fastapi, pelo
+# mesmo motivo do bloco acima: acrescentar pacote no meio do arquivo invalidaria as
+# camadas seguintes — dotnet, Kotlin, Chromium e Playwright seriam rebaixados a cada
+# atualização, o que pesa demais numa VPS pequena.
+RUN pip install --no-cache-dir "strawberry-graphql[fastapi,cli]"
+
 # Kits de DESIGN profissional prontos (mesma paleta): Word (docpro), Excel
 # (xlspro) e PDF (pdfpro). Importáveis como `from docpro import Relatorio`,
 # `from xlspro import Planilha`, `from pdfpro import RelatorioPDF`. Dão capa,

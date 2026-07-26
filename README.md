@@ -147,7 +147,10 @@ O personagem que acompanha o Studio — e explica o que está acontecendo.
 ### 💻 Desenvolvimento e automação
 
 - **Sandbox Docker** — um container por conversa para Python, Bash e geração de
-  arquivos.
+  arquivos, com a caixa de ferramentas já montada: planilhas e dados (pandas,
+  polars, duckdb), documentos e PDF (python-docx, reportlab, PyMuPDF, OCR),
+  compiladores (C/C++, Go, Rust, Java, C#, Kotlin), Node e Chromium headless com
+  Playwright, e APIs **REST e GraphQL** (Flask, FastAPI e strawberry-graphql).
 - **Ambiente de Trabalho da IA** — terminal, código, arquivos, pesquisa e
   navegador agrupados em **uma sessão ao vivo**, com passo a passo e miniatura
   real das páginas abertas.

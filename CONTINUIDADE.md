@@ -20,8 +20,9 @@ executados. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
 - **Último trabalho:** **PR [#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)** —
   correções **P0 dos sub-agentes** (herança de permissões, sandbox, isolamento de contexto,
-  semáforo, ordem e cancelamento). Detalhe abaixo.
-- **Última validação:** 2026-07-26 — **769 testes** (backend 653, frontend 57, guarda do
+  semáforo, ordem e cancelamento). Detalhe abaixo. Antes dele, o **PR #144** (GraphQL no
+  sandbox e o inventário de ferramentas que o modelo lê).
+- **Última validação:** 2026-07-26 — **778 testes** (backend 662, frontend 57, guarda do
   Docker 49, sandbox Python 10). Localmente sem PostgreSQL no contêiner (19 do backend se
   autopulam — esperado) e sem `pytest` instalado (os 10 do sandbox Python não coletam
   aqui; na CI rodam). A contagem vem de `cd backend && npm run test:count` — não a
@@ -59,6 +60,45 @@ vez pelo pai. Qualquer permissão nova do filho tem de entrar ali — derivar do
 subtarefa devolve a decisão ao modelo, que é exatamente o defeito de origem.
 
 Detalhe em `docs/SECURITY.md` §8.1 e `docs/ARCHITECTURE.md` §13.1.
+
+---
+
+## GraphQL no sandbox e o inventário do modelo (2026-07-26 — PR #144)
+
+`strawberry-graphql[fastapi,cli]` entrou na imagem do sandbox — schema por type hints,
+`Schema.execute_sync` para consultar sem subir servidor, `strawberry.fastapi.GraphQLRouter`
+para expor pelo FastAPI que já estava lá e o comando `strawberry` (GraphiQL local).
+
+O inventário que o modelo lê foi atualizado nos **três** lugares em que ele existe — eram
+independentes e é fácil mexer num e esquecer os outros:
+`PYTHON_INVENTORY` (`agent/prompts.js`), a descrição do `run_python` (`tools.js`, que é o
+que muitos modelos leem para decidir chamar a ferramenta) e a verificação automática de
+ambiente (`ENVIRONMENT_QUERY_RE` + `ENVIRONMENT_AUDIT_COMMAND`, para "tem GraphQL aí?"
+rodar `import strawberry` de verdade em vez de o modelo responder de memória).
+
+**ARMADILHA (duas):**
+
+1. O pacote é `strawberry-graphql`, o módulo é `strawberry` — mesma classe do `odfpy`/`odf`.
+   Por isso ele entrou na lista de auditoria, que existe exatamente para os nomes que não
+   batem.
+2. O `pip install` fica numa camada **ao fim** do Dockerfile, não junto do `flask fastapi`.
+   Acrescentar no meio do arquivo invalidaria todas as camadas seguintes — dotnet, Kotlin,
+   Chromium, Playwright — e cada atualização baixaria tudo de novo numa VPS pequena. É o
+   mesmo motivo já documentado no bloco acima dele.
+
+Guarda novo: `agent/prompts.inventory.test.js` compara o que o modelo lê com o que o
+Dockerfile instala. Ele **descarta os comentários** do Dockerfile antes de comparar — a
+primeira versão passava com o pacote desinstalado porque casava com o comentário que o
+cita. Verificado nos dois sentidos: falha ao remover o `pip install`, passa ao devolver.
+
+`atualizar.sh` e o `docker compose up -d --build` já reconstroem a imagem do sandbox
+(`sandbox-image`). Quem subir **sem** `--build` fica com a imagem antiga e o inventário
+promete o que não existe — a regra de conferir no terminal antes de afirmar cobre o caso,
+mas o certo é reconstruir.
+
+O README também passou a descrever a caixa de ferramentas do sandbox (antes era só
+"Python, Bash e geração de arquivos"), incluindo REST e GraphQL. Vale a regra de sempre:
+só entra ali o que está de fato instalado na imagem.
 
 ---
 
