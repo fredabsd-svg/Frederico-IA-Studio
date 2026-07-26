@@ -34,8 +34,14 @@ const {
   sandboxEnvironmentStatus,
   sandboxCheckpointCreate,
   sandboxCheckpointRestore,
+  sandboxCheckpointList,
   sandboxRuntimeDependencies,
-  sandboxLastExecutionLog
+  sandboxLastExecutionLog,
+  sandboxServices,
+  sandboxTransactionBegin,
+  sandboxTransactionCommit,
+  sandboxTransactionRollback,
+  sandboxOpenTransaction
 } = await import('./sandbox.js');
 
 test.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -317,6 +323,91 @@ test('o status do ambiente descreve limites, persistência e geração', async (
   assert.equal(status.rede.disponivel_no_sandbox, false);
   assert.match(status.persistencia['/cache'], /PERSISTENTE/);
   assert.ok(status.limites.memoria_mb > 0);
+});
+
+// ---- 6) Serviços e portas ---------------------------------------------------
+test('um servidor iniciado com sucesso é registrado e cruzado com a porta real', async () => {
+  limpaSessoes();
+  const conversa = 'conversa-servicos-1';
+  // A sonda de portas passa por execInActiveSandbox, que reusa o container
+  // ativo: a saída do `ss` é o que o daemon falso devolve.
+  _setDockerClient(fakeDocker({
+    output: 'LISTEN 0 2048 127.0.0.1:8000 0.0.0.0:* users:(("python3",pid=1452,fd=3))\n',
+    exitCode: 0
+  }));
+  await execInSandbox(conversa, 'nohup uvicorn app:api --port 8000 &', 5000, { userId: USER });
+
+  const s = await sandboxServices(USER, conversa);
+  assert.equal(s.sandbox_ativo, true);
+  const uvicorn = s.servicos.find(x => x.porta === 8000);
+  assert.ok(uvicorn, 'o serviço precisa entrar no registro');
+  assert.equal(uvicorn.nome, 'uvicorn');
+  assert.equal(uvicorn.estado, 'escutando');
+  assert.equal(uvicorn.pid, 1452);
+  assert.match(s.observacao, /NÃO sobrevivem a reinício/);
+});
+
+test('sem sandbox ativo, os serviços aparecem como perdidos — não como fantasmas de pé', async () => {
+  limpaSessoes();
+  const conversa = 'conversa-servicos-2';
+  _setDockerClient(fakeDocker({ output: 'ok\n', exitCode: 0 }));
+  await execInSandbox(conversa, 'vite --port 5173 &', 5000, { userId: USER });
+
+  limpaSessoes(); // simula o container reciclado
+  const s = await sandboxServices(USER, conversa);
+  assert.equal(s.sandbox_ativo, false);
+  assert.equal(s.servicos.find(x => x.porta === 5173).estado, 'perdido_no_reinicio');
+  assert.match(s.observacao, /já foi encerrado com o container/);
+});
+
+// ---- 7) Transação de workspace ----------------------------------------------
+test('a transação desfeita devolve os arquivos e some do estado', () => {
+  const conversa = 'conversa-transacao-1';
+  const ws = workspaceFor(conversa, USER);
+  fs.writeFileSync(path.join(ws.base, 'auth.py'), 'versao = 1\n');
+
+  const inicio = sandboxTransactionBegin(USER, conversa, { label: 'refatorar auth' });
+  assert.ok(inicio.checkpoint);
+  assert.ok(sandboxOpenTransaction(USER, conversa), 'a transação fica aberta entre turnos');
+
+  // Abrir duas ao mesmo tempo confundiria qual é o ponto de retorno.
+  assert.equal(sandboxTransactionBegin(USER, conversa).ja_aberta, true);
+
+  fs.writeFileSync(path.join(ws.base, 'auth.py'), 'versao = 2 (quebrada)\n');
+  fs.writeFileSync(path.join(ws.base, 'sobra.py'), 'lixo\n');
+
+  const r = sandboxTransactionRollback(USER, conversa);
+  assert.equal(r.desfeita, true);
+  assert.equal(fs.readFileSync(path.join(ws.base, 'auth.py'), 'utf8'), 'versao = 1\n');
+  assert.ok(!fs.existsSync(path.join(ws.base, 'sobra.py')));
+  assert.equal(sandboxOpenTransaction(USER, conversa), null, 'desfazer encerra a transação');
+});
+
+test('a transação confirmada encerra sem apagar o ponto de retorno', () => {
+  const conversa = 'conversa-transacao-2';
+  const ws = workspaceFor(conversa, USER);
+  fs.writeFileSync(path.join(ws.base, 'app.py'), 'v1\n');
+
+  const inicio = sandboxTransactionBegin(USER, conversa, { label: 'ajuste ok' });
+  fs.writeFileSync(path.join(ws.base, 'app.py'), 'v2 validada\n');
+
+  const r = sandboxTransactionCommit(USER, conversa);
+  assert.equal(r.confirmada, true);
+  assert.equal(r.checkpoint_preservado, inicio.checkpoint);
+  assert.equal(fs.readFileSync(path.join(ws.base, 'app.py'), 'utf8'), 'v2 validada\n', 'confirmar NÃO reverte');
+  assert.equal(sandboxOpenTransaction(USER, conversa), null);
+  // O ponto de retorno continua listado: confirmar não é apagar o histórico.
+  assert.ok(sandboxCheckpointList(USER, conversa).some(c => c.id === inicio.checkpoint));
+});
+
+test('desfazer sem transação aberta não mexe em nada e explica o caminho certo', () => {
+  const conversa = 'conversa-transacao-3';
+  const ws = workspaceFor(conversa, USER);
+  fs.writeFileSync(path.join(ws.base, 'intacto.py'), 'nada muda\n');
+  const r = sandboxTransactionRollback(USER, conversa);
+  assert.equal(r.aberta, false);
+  assert.match(r.observacao, /checkpoint_restaurar/);
+  assert.equal(fs.readFileSync(path.join(ws.base, 'intacto.py'), 'utf8'), 'nada muda\n');
 });
 
 test('checkpoint e restauração pelo caminho público devolvem o workspace ao ponto anterior', () => {

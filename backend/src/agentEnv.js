@@ -654,6 +654,166 @@ export function createProgressReporter(onProgress, {
   };
 }
 
+// ---- 5c) Serviços e portas ---------------------------------------------------
+// O agente sobe servidor de desenvolvimento com frequência (uvicorn, vite, um
+// http.server para a suíte de navegador). Sem registro, ele não sabe qual porta
+// está ocupada, se o serviço está de pé, nem que ele morreu junto com o
+// container — e acaba subindo uma segunda cópia numa porta já em uso.
+
+// Pura: reconhece um comando que sobe serviço e tenta extrair a porta.
+export function detectServiceStart(command) {
+  const cmd = String(command || '');
+  const servicos = [
+    { nome: 'uvicorn', re: /\buvicorn\b/ },
+    { nome: 'gunicorn', re: /\bgunicorn\b/ },
+    { nome: 'fastapi', re: /\bfastapi\s+(?:dev|run)\b/ },
+    { nome: 'flask', re: /\bflask\s+run\b/ },
+    { nome: 'http.server', re: /\bpython\d?\s+-m\s+http\.server\b/ },
+    { nome: 'streamlit', re: /\bstreamlit\s+run\b/ },
+    { nome: 'strawberry', re: /\bstrawberry\s+server\b/ },
+    // `vite build` e `npm run build` NÃO sobem serviço — só os alvos de servir.
+    { nome: 'vite', re: /\bvite\b(?!\s+build)/ },
+    { nome: 'node', re: /\b(?:npm|yarn|pnpm)\s+(?:run\s+)?(?:dev|start|serve|preview)\b/ },
+    { nome: 'node', re: /\bnode\s+[^\s;|&]*(?:server|app|index)[^\s;|&]*\.[cm]?[jt]s\b/ },
+    { nome: 'php', re: /\bphp\s+-S\b/ }
+  ];
+  const encontrado = servicos.find(s => s.re.test(cmd));
+  if (!encontrado) return null;
+  const porta = extractPort(cmd);
+  return {
+    nome: encontrado.nome,
+    porta,
+    segundo_plano: /(?:^|\s)nohup\b/.test(cmd) || /&\s*(?:$|;)/.test(cmd),
+    comando: cmd.trim().slice(0, 300)
+  };
+}
+
+// Portas plausíveis de serviço local. Um `-p 3` de outro comando qualquer não
+// vira porta, e o intervalo evita casar com números soltos do comando.
+export function extractPort(command) {
+  const cmd = String(command || '');
+  const padroes = [
+    /--port[= ]\s*(\d{2,5})\b/,
+    /\bhttp\.server\s+(\d{2,5})\b/,
+    /-S\s+[\w.]*:(\d{2,5})\b/,
+    /--bind[= ]\s*[\w.[\]]*:(\d{2,5})\b/,
+    /\s-p\s*(\d{2,5})\b/,
+    /(?:0\.0\.0\.0|127\.0\.0\.1|localhost)[:=](\d{2,5})\b/
+  ];
+  for (const re of padroes) {
+    const m = re.exec(cmd);
+    const porta = m && Number(m[1]);
+    if (porta && porta >= 80 && porta <= 65535) return porta;
+  }
+  return null;
+}
+
+// Pura: lê a saída de `ss -ltnpH` OU de `netstat -ltnp`. Os dois formatos
+// existem no sandbox e qual deles responde depende da imagem; o parser aceita
+// ambos em vez de a observabilidade depender de um binário específico.
+export function parseListeningPorts(output) {
+  const encontrados = new Map();
+  for (const linha of String(output || '').split('\n')) {
+    const texto = linha.trim();
+    if (!texto || !/\bLISTEN\b/.test(texto)) continue;
+    // Nos DOIS formatos o endereço local é o quarto campo:
+    //   ss:      LISTEN 0 2048 127.0.0.1:8000 0.0.0.0:*  users:(("python3",pid=1452,...))
+    //   netstat: tcp    0 0    127.0.0.1:8000 0.0.0.0:*  LISTEN 1452/python3
+    const local = texto.split(/\s+/)[3];
+    const m = /^(.*):(\d{1,5})$/.exec(String(local || ''));
+    if (!m) continue;
+    const porta = Number(m[2]);
+    if (!porta) continue;
+    const pidSs = /pid=(\d+)/.exec(texto);
+    const nomeSs = /\(\("([^"]+)"/.exec(texto);
+    const netstat = /(\d+)\/([^\s]+)\s*$/.exec(texto);
+    const pid = Number(pidSs?.[1] || netstat?.[1]) || null;
+    const processo = nomeSs?.[1] || netstat?.[2] || null;
+    const chave = `${porta}|${pid || ''}`;
+    if (!encontrados.has(chave)) {
+      encontrados.set(chave, { porta, endereco: m[1] || '*', pid, processo });
+    }
+  }
+  return [...encontrados.values()].sort((a, b) => a.porta - b.porta);
+}
+
+const SERVICES_FILE = 'services.jsonl';
+
+// O registro guarda a GERAÇÃO do sandbox: é o que permite dizer "este serviço
+// foi iniciado num container que já morreu", em vez de listar um fantasma.
+export function recordServiceStart(agentEnvDir, command, { generation = 0 } = {}) {
+  const detectado = detectServiceStart(command);
+  if (!detectado) return null;
+  try {
+    fs.mkdirSync(agentEnvDir, { recursive: true });
+    fs.appendFileSync(path.join(agentEnvDir, SERVICES_FILE), `${JSON.stringify({ ...detectado, geracao: generation, quando: new Date().toISOString() })}\n`, 'utf8');
+    try { fs.chownSync(agentEnvDir, 1000, 1000); } catch {}
+  } catch { return null; }
+  return detectado;
+}
+
+export function listRecordedServices(agentEnvDir, { limit = 20 } = {}) {
+  let raw = '';
+  try { raw = fs.readFileSync(path.join(agentEnvDir, SERVICES_FILE), 'utf8'); } catch { return []; }
+  const out = [];
+  for (const linha of raw.split('\n')) {
+    if (!linha.trim()) continue;
+    try { out.push(JSON.parse(linha)); } catch {}
+  }
+  return out.slice(-limit);
+}
+
+// Cruza o que o agente iniciou com o que está REALMENTE escutando agora.
+export function reconcileServices(registrados, escutando, { generation = 0 } = {}) {
+  const portasVivas = new Map(escutando.map(p => [p.porta, p]));
+  const servicos = registrados.map(r => {
+    const vivo = r.porta ? portasVivas.get(r.porta) : null;
+    return {
+      ...r,
+      estado: vivo ? 'escutando' : (r.geracao !== generation ? 'perdido_no_reinicio' : 'nao_esta_escutando'),
+      ...(vivo ? { pid: vivo.pid, processo_real: vivo.processo } : {})
+    };
+  });
+  // Portas de pé que ninguém registrou (subidas por um script, por exemplo).
+  const registradas = new Set(registrados.map(r => r.porta).filter(Boolean));
+  const naoRegistradas = escutando.filter(p => !registradas.has(p.porta));
+  return { servicos, portas_sem_registro: naoRegistradas };
+}
+
+// ---- 5d) Transação de workspace ---------------------------------------------
+// Açúcar HONESTO sobre checkpoints: `iniciar` fotografa, `desfazer` restaura,
+// `confirmar` só encerra. O ganho real não é a sintaxe — é a transação ABERTA
+// aparecer no preâmbulo do turno seguinte, para uma alteração em vários arquivos
+// não ficar pela metade em silêncio.
+const TRANSACTION_FILE = 'transacao.json';
+
+export function readTransaction(agentEnvDir) {
+  try { return JSON.parse(fs.readFileSync(path.join(agentEnvDir, TRANSACTION_FILE), 'utf8')); }
+  catch { return null; }
+}
+
+export function writeTransaction(agentEnvDir, dados) {
+  try {
+    fs.mkdirSync(agentEnvDir, { recursive: true });
+    fs.writeFileSync(path.join(agentEnvDir, TRANSACTION_FILE), JSON.stringify(dados, null, 2), 'utf8');
+    return true;
+  } catch { return false; }
+}
+
+export function clearTransaction(agentEnvDir) {
+  try { fs.rmSync(path.join(agentEnvDir, TRANSACTION_FILE), { force: true }); return true; }
+  catch { return false; }
+}
+
+export function formatOpenTransactionNotice(transacao) {
+  if (!transacao) return null;
+  return [
+    `TRANSAÇÃO DE WORKSPACE ABERTA desde ${transacao.aberta_em} (${transacao.rotulo || 'sem rótulo'}).`,
+    `Há um ponto de retorno salvo (checkpoint ${transacao.checkpoint}).`,
+    'Quando a alteração estiver validada, encerre com ambiente/transacao_confirmar. Se ela deu errado, ambiente/transacao_desfazer devolve o workspace ao estado anterior. Não deixe a transação aberta ao terminar a tarefa.'
+  ].join('\n');
+}
+
 // ---- 6) Disco ---------------------------------------------------------------
 export function directoryUsage(base, { maxDepth = 2 } = {}) {
   const sizeOf = (dir) => {

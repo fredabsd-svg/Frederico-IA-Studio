@@ -50,6 +50,8 @@ Todos consultáveis pelo agente (`ambiente` → `status`) e configuráveis no
 | Carência para matar a árvore de processos | `SANDBOX_KILL_GRACE_MS` | 2,5 s |
 | Checkpoints por conversa / tamanho | `CHECKPOINT_KEEP` / `CHECKPOINT_MAX_MB` | 5 / 300 MB |
 | Cota de aviso de disco | `WORKSPACE_QUOTA_MB` | desligada |
+| Progresso ao vivo / aviso de silêncio | `SANDBOX_PROGRESS_INTERVAL_MS` / `SANDBOX_STALL_NOTICE_MS` | 900 ms (piso 200) / 20 s |
+| Log integral da execução | `EXEC_LOG_MAX_BYTES` | 4 MB |
 
 A rede do container fica **desligada por padrão** e só abre quando o pedido do
 turno a autoriza (`assistantPolicy.resolveSandboxNetwork`). O estado real vai
@@ -234,6 +236,49 @@ restaurar.
 
 Checkpoints não commitam nada e nunca saem do servidor.
 
+## 7b. Transação de workspace
+
+`ambiente` → `transacao_iniciar` / `transacao_confirmar` / `transacao_desfazer`.
+É açúcar sobre checkpoints, e vale dizer isso com clareza: `iniciar` fotografa,
+`desfazer` restaura, `confirmar` só encerra (o ponto de retorno **continua** na
+lista de checkpoints — confirmar não apaga histórico).
+
+O ganho real não é a sintaxe: é a transação **aberta** reaparecer no preâmbulo do
+turno seguinte. Sem isso, uma alteração em vários arquivos fica pela metade em
+silêncio — ninguém confirma nem desfaz, e o ponto de retorno vira lixo esquecido
+no disco. O estado fica em `/workspace/.agent-env/transacao.json` e também é
+reportado por `ambiente` → `status` (campo `transacao_aberta`).
+
+Duas transações simultâneas são recusadas: com dois pontos de retorno abertos
+não há como saber qual `desfazer` deveria usar.
+
+## 7c. Serviços e portas
+
+`ambiente` → `servicos` cruza duas fontes:
+
+1. **O que o agente iniciou.** Comandos que sobem servidor (`uvicorn`,
+   `gunicorn`, `flask run`, `python -m http.server`, `vite`, `npm run dev`,
+   `streamlit`, `php -S`, …) são reconhecidos e registrados em
+   `/workspace/.agent-env/services.jsonl`, com a porta quando ela é inferível e
+   a **geração** do sandbox. `npm run build` e `vite build` não contam — não
+   sobem serviço.
+2. **O que está realmente escutando agora**, sondando o container com
+   `ss -ltnpH` (com `netstat -ltnp` como reserva; o parser aceita os dois
+   formatos, para a observabilidade não depender de um binário específico).
+
+O resultado classifica cada serviço em `escutando`, `nao_esta_escutando` ou
+`perdido_no_reinicio` (registrado numa geração anterior à atual), e lista à parte
+as `portas_sem_registro` — portas de pé que ninguém registrou, subidas por um
+script. Sem sandbox ativo, tudo aparece como perdido, em vez de fantasmas "de pé".
+
+Por que importa: sem isso o agente sobe uma segunda cópia numa porta já ocupada,
+ou fica investigando por que o serviço "não responde" quando ele morreu com o
+container. Serviços vivem **só** enquanto o sandbox viver e não são alcançáveis
+de fora dele.
+
+A sonda usa `execInActiveSandbox`: observar não materializa container nem
+prolonga a vida do sandbox.
+
 ## 8. Recursos e limpeza
 
 `ambiente` → `recursos` devolve memória e CPU do container (rota `/stats` do
@@ -254,9 +299,14 @@ estourar.
    comandos (o cache torna isso local).
 3. `list_files` / `read_file`: confirme o que o workspace já contém antes de
    refazer qualquer coisa.
-4. Se o trabalho ficou inconsistente, `ambiente` → `checkpoint_listar` e
-   `checkpoint_restaurar`.
-5. Só então continue — e nunca relate como concluída uma etapa cujo `status` foi
+4. Se havia uma **transação aberta** (o preâmbulo do turno avisa), decida:
+   `transacao_confirmar` se o trabalho está válido, `transacao_desfazer` se ficou
+   inconsistente. Não deixe aberta.
+5. Se subiu servidor antes, `ambiente` → `servicos`: depois de um reinício ele
+   não está mais de pé, e a porta que você anotou não vale nada.
+6. Se o trabalho ficou inconsistente e não havia transação, `ambiente` →
+   `checkpoint_listar` e `checkpoint_restaurar`.
+7. Só então continue — e nunca relate como concluída uma etapa cujo `status` foi
    `timeout`, `cancelado` ou `limite_de_saida`.
 
 ## 10. Testes
@@ -265,15 +315,21 @@ estourar.
   precedência rede × dependência), impressão digital, ciclo de vida e aviso de
   reinício, checkpoints com exclusão de segredos e restauração por hash,
   manifesto de dependências, repórter de progresso (agregação, corte do pedaço,
-  contagem de linhas e silêncio), log com teto e leitura das duas pontas, uso de
-  disco e manifesto do ambiente.
+  contagem de linhas e silêncio), log com teto e leitura das duas pontas,
+  reconhecimento de serviços (e a distinção de `build`, que não sobe nada),
+  parser de `ss`/`netstat`, cruzamento registro × portas vivas, estado da
+  transação, uso de disco e manifesto do ambiente.
 - `backend/src/sandbox.stability.test.js` — execução ponta a ponta com daemon
   falso: resultado estruturado, timeout que preserva o sandbox, timeout que
   precisa derrubá-lo e o aviso de reinício subsequente (entregue uma só vez),
   binds de `/workspace` e `/cache`, `TMPDIR`, manifesto de instalação,
-  checkpoint/restauração e o **streaming**: pedaços entregues antes do fim do
+  checkpoint/restauração, o **streaming** (pedaços entregues antes do fim do
   comando, log guardando o começo que o corte de 12 000 caracteres descarta, e a
-  garantia de que gravar o log não conta como "o comando mexeu em arquivos".
+  garantia de que gravar o log não conta como "o comando mexeu em arquivos"), os
+  **serviços** (registro cruzado com a porta real; sem sandbox ativo aparecem
+  como perdidos, não como fantasmas) e a **transação** (desfazer repõe e limpa,
+  confirmar encerra sem reverter nem apagar o ponto de retorno, e desfazer sem
+  transação aberta não mexe em nada).
 - `docker-guard/src/policy.test.js` — a rota `/containers/<id>/stats` passa e
   continua exigindo posse pela label.
 
@@ -287,9 +343,16 @@ estourar.
   saída integral depois, pelo log em disco. Uma consulta de verdade exigiria
   execução assíncrona de ferramentas (devolver um id e deixar o modelo consultar
   em turnos seguintes) — mudança grande no laço, fora do escopo desta frente.
-- **Registro de portas e serviços** iniciados pelo agente (§3.13).
-- **Transação de workspace explícita** (`begin`/`commit`/`rollback`, §3.11): o
-  par checkpoint + restauração cobre o efeito prático, sem a sintaxe de
-  transação.
-- **Snapshot do ambiente** (§3.2, estratégia C): o que persiste é o cache de
-  pacotes e o manifesto de instalações, não uma imagem do container.
+- **Snapshot do container** (§3.2, estratégia C) — **não deve ser feito neste
+  app.** Um `checkpoint create` de ambiente exigiria `POST /commit` (ou
+  `/images/create`) na API do Docker, e essas rotas estão fora da allowlist do
+  `docker-guard` de propósito: quem pode criar imagem no host pode construir uma
+  imagem arbitrária e escapar do isolamento que o achado F-04 fechou (ver
+  `docs/SECURITY.md` §4). Trocar isso por conveniência reabriria a falha mais
+  grave que o projeto já corrigiu. O que persiste, portanto, é o **cache de
+  pacotes** e o **manifesto de instalações** — que resolvem o problema real
+  (reinstalar rápido depois de um reinício) sem ampliar a superfície de ataque.
+- **Cota de disco imposta**: `WORKSPACE_QUOTA_MB` alimenta o aviso a partir de
+  85%, mas nada BLOQUEIA a escrita quando o limite é passado. Impor exigiria
+  quota do sistema de arquivos (ou `--storage-opt`), decisão de infraestrutura do
+  operador — o app não tem como fazer isso por dentro do container.

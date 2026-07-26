@@ -125,6 +125,10 @@ da árvore da conversa, apagados junto com ela, e **nunca contêm segredos**
 O cache de pacotes fica em `WORKSPACE_ROOT/users/<usuário>/.cache` e é montado
 em `/cache`; ele não é varrido pelo coletor de disco, de propósito.
 
+O agente registra em `/workspace/.agent-env` (persistente, fora dos checkpoints)
+o manifesto de dependências instaladas em runtime, os serviços que subiu, a
+transação de workspace aberta e o log integral da última execução.
+
 Detalhes, taxonomia de falhas e roteiro de recuperação: **`docs/AMBIENTE_EXECUCAO.md`**.
 
 ### Retenção

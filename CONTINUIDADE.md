@@ -22,13 +22,14 @@ Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 - **Último trabalho:** estabilização do **ambiente de execução do agente** (frente abaixo):
   um timeout deixou de derrubar o sandbox, toda execução devolve estado estruturado
   (ambiente × projeto), o reinício é anunciado com o que sobreviveu e o que se perdeu,
-  e o agente ganhou a ferramenta `ambiente` (status, recursos, dependências,
-  checkpoints). Antes dele, o **PR [#147](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/147)**
+  comandos longos transmitem a saída ao vivo, e o agente ganhou a ferramenta `ambiente`
+  (status, recursos, última execução, dependências, serviços/portas, checkpoints e
+  transação de workspace). Antes dele, o **PR [#147](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/147)**
   (o Nino cobrindo o botão de enviar), o **PR [#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)**
   (Playwright + suíte ponta a ponta) e o **PR [#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)**
   (as sete falhas P0 dos sub-agentes).
-- **Última validação:** 2026-07-26 — **833 testes** (backend 717, frontend 57, guarda do
-  Docker 49, sandbox Python 10). Backend e frontend passaram neste contêiner: **698
+- **Última validação:** 2026-07-26 — **844 testes** (backend 728, frontend 57, guarda do
+  Docker 49, sandbox Python 10). Backend e frontend passaram neste contêiner: **709
   passaram, 0 falharam, 19 pulados** (os 19 exigem PostgreSQL, que não está de pé aqui —
   na CI rodam). Os 10 do Python não coletam aqui por falta do `openpyxl`. Os 13 E2E não
   entram nesta contagem porque o `e2e/` não está instalado neste contêiner. A contagem
@@ -62,6 +63,8 @@ O que mudou:
 | Sem visibilidade de recursos | Ferramenta `ambiente` → `recursos`: CPU, memória, disco, maiores diretórios e processos |
 | Comando longo era uma barra parada | **Saída ao vivo** por SSE (`tool_progress`), com terminal no Ambiente de Trabalho e aviso "sem saída há Xs" |
 | Resultado perdia o começo da saída | Log INTEGRAL em `/workspace/.agent-env/ultima-execucao.log` + ação `ultima_execucao` |
+| Servidor subido pelo agente era invisível | `servicos` cruza o que ele subiu com o que está REALMENTE escutando (`ss`/`netstat`), marcando o que morreu no reinício |
+| Edição em vários arquivos sem rede de segurança | `transacao_iniciar/confirmar/desfazer` — e a transação ABERTA reaparece no preâmbulo do turno seguinte |
 
 Detalhe importante da classificação, achado por teste: `ModuleNotFoundError` contém a
 subcadeia `eNotFound` — com regex insensível a maiúsculas, uma dependência ausente virava
@@ -87,20 +90,28 @@ aviso quando o comando emudece); e o agente ganha a ferramenta `ambiente`, que a
 automaticamente quem já tem `run_python`/`bash` (não é uma permissão nova a ligar no
 Assistant Studio).
 
-**Ficou de fora, de propósito** (§11 de `docs/AMBIENTE_EXECUCAO.md`): registro de
-portas/serviços iniciados pelo agente, sintaxe explícita de transação de workspace,
-snapshot do container e a consulta ao progresso **pelo próprio modelo** durante a
-execução — esta última é limitação do laço de function-calling (enquanto a ferramenta
-roda, o modelo está bloqueado esperando o resultado; não há turno em que ele possa
-perguntar). Os dois efeitos práticos estão cobertos: o usuário vê ao vivo, o agente lê o
-log integral depois.
+**Ficou de fora — e dois casos são "não deve ser feito", não "faltou tempo"** (§11 de
+`docs/AMBIENTE_EXECUCAO.md`):
+
+- **Snapshot do container** (o "checkpoint de ambiente" do plano) exigiria `POST /commit`
+  na API do Docker, rota fora da allowlist do `docker-guard` DE PROPÓSITO: quem pode criar
+  imagem no host escapa do isolamento que o F-04 fechou. Não vale reabrir a falha mais
+  grave já corrigida por conveniência — o cache de pacotes + o manifesto de instalações
+  resolvem o problema real (reinstalar rápido depois de um reinício).
+- **Consulta ao progresso pelo próprio modelo durante a execução** é limitação do laço de
+  function-calling: enquanto a ferramenta roda, o modelo está bloqueado esperando o
+  resultado dela, então não existe turno em que ele possa perguntar. Exigiria execução
+  assíncrona de ferramentas. Os dois efeitos práticos estão cobertos: o usuário vê ao
+  vivo, o agente lê o log integral depois.
+- **Cota de disco imposta**: `WORKSPACE_QUOTA_MB` só AVISA (a partir de 85%); bloquear a
+  escrita exigiria quota do sistema de arquivos, decisão do operador.
 
 Onde está: `backend/src/agentEnv.js`, `backend/src/sandbox.js`, ferramenta `ambiente` em
 `backend/src/tools.js`, prompt em `backend/src/agent/prompts.js`, aviso de reinício e
 evento `tool_progress` em `backend/src/agent/loop.js`, interface em
 `frontend/src/hooks/useChat.js` e `frontend/src/components/ExecutionSession.jsx`.
-Documentação em `docs/AMBIENTE_EXECUCAO.md`. Testes: `src/agentEnv.test.js` (27) e
-`src/sandbox.stability.test.js` (13).
+Documentação em `docs/AMBIENTE_EXECUCAO.md`. Testes: `src/agentEnv.test.js` (33) e
+`src/sandbox.stability.test.js` (18).
 
 ---
 

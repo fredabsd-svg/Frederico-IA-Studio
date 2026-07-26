@@ -41,6 +41,16 @@ import {
   createProgressReporter,
   openExecLog,
   readExecLog,
+  detectServiceStart,
+  extractPort,
+  parseListeningPorts,
+  reconcileServices,
+  recordServiceStart,
+  listRecordedServices,
+  readTransaction,
+  writeTransaction,
+  clearTransaction,
+  formatOpenTransactionNotice,
   _lifecycleForTests
 } from './agentEnv.js';
 
@@ -325,6 +335,93 @@ test('o log respeita o teto e marca o corte, sem derrubar a execução', () => {
 
 test('sem execução registrada, o log responde que não existe', () => {
   assert.deepEqual(readExecLog(path.join(tmp(), '.agent-env')), { existe: false });
+});
+
+// ---- 5c) Serviços e portas --------------------------------------------------
+test('reconhece comandos que sobem serviço — e não confunde com build', () => {
+  assert.equal(detectServiceStart('uvicorn app:api --port 8000').nome, 'uvicorn');
+  assert.equal(detectServiceStart('uvicorn app:api --port 8000').porta, 8000);
+  assert.equal(detectServiceStart('python -m http.server 8080').porta, 8080);
+  assert.equal(detectServiceStart('php -S localhost:9000 -t public').porta, 9000);
+  assert.equal(detectServiceStart('nohup npm run dev &').segundo_plano, true);
+  assert.equal(detectServiceStart('npm run build'), null, 'build não sobe serviço');
+  assert.equal(detectServiceStart('vite build'), null, 'vite build também não');
+  assert.equal(detectServiceStart('python analise.py'), null);
+});
+
+test('a porta só é aceita num intervalo plausível', () => {
+  assert.equal(extractPort('uvicorn app:api'), null);
+  assert.equal(extractPort('cmd -p 3'), null, 'um -p 3 solto não é porta de serviço');
+  assert.equal(extractPort('serve --port=5173'), 5173);
+});
+
+test('o parser aceita a saída do ss E a do netstat', () => {
+  const ss = [
+    'LISTEN 0      2048   127.0.0.1:8000       0.0.0.0:*    users:(("python3",pid=1452,fd=3))',
+    'LISTEN 0      511          *:5173             *:*      users:(("node",pid=1600,fd=20))'
+  ].join('\n');
+  const doSs = parseListeningPorts(ss);
+  assert.deepEqual(doSs.map(p => p.porta), [5173, 8000]);
+  assert.equal(doSs.find(p => p.porta === 8000).pid, 1452);
+  assert.equal(doSs.find(p => p.porta === 8000).processo, 'python3');
+
+  const netstat = [
+    'Active Internet connections (only servers)',
+    'Proto Recv-Q Send-Q Local Address           Foreign Address         State       PID/Program name',
+    'tcp        0      0 127.0.0.1:8000          0.0.0.0:*               LISTEN      1452/python3',
+    'tcp        0      0 0.0.0.0:22              0.0.0.0:*               LISTEN      -'
+  ].join('\n');
+  const doNetstat = parseListeningPorts(netstat);
+  assert.deepEqual(doNetstat.map(p => p.porta), [22, 8000]);
+  assert.equal(doNetstat.find(p => p.porta === 8000).processo, 'python3');
+  // O cabeçalho não é linha de socket: não pode virar porta.
+  assert.ok(!doNetstat.some(p => Number.isNaN(p.porta)));
+});
+
+test('o cruzamento separa serviço vivo, serviço morto no reinício e porta sem registro', () => {
+  const registrados = [
+    { nome: 'uvicorn', porta: 8000, geracao: 2 },
+    { nome: 'vite', porta: 5173, geracao: 1 } // subiu num container anterior
+  ];
+  const escutando = [
+    { porta: 8000, pid: 1452, processo: 'python3' },
+    { porta: 9999, pid: 1700, processo: 'node' }  // ninguém registrou
+  ];
+  const r = reconcileServices(registrados, escutando, { generation: 2 });
+  assert.equal(r.servicos.find(s => s.porta === 8000).estado, 'escutando');
+  assert.equal(r.servicos.find(s => s.porta === 8000).pid, 1452);
+  assert.equal(r.servicos.find(s => s.porta === 5173).estado, 'perdido_no_reinicio');
+  assert.deepEqual(r.portas_sem_registro.map(p => p.porta), [9999]);
+});
+
+test('o registro de serviços guarda a geração do sandbox', () => {
+  const dir = path.join(tmp(), '.agent-env');
+  recordServiceStart(dir, 'uvicorn app:api --port 8000 &', { generation: 3 });
+  recordServiceStart(dir, 'ls -la', { generation: 3 });
+  const itens = listRecordedServices(dir);
+  assert.equal(itens.length, 1);
+  assert.equal(itens[0].geracao, 3);
+  assert.equal(itens[0].porta, 8000);
+});
+
+// ---- 5d) Transação de workspace ---------------------------------------------
+test('a transação aberta é lida, avisada e limpa', () => {
+  const dir = path.join(tmp(), '.agent-env');
+  assert.equal(readTransaction(dir), null);
+
+  writeTransaction(dir, { checkpoint: 'cp-1', rotulo: 'refatorar auth', aberta_em: '2026-07-26T12:00:00Z' });
+  const aberta = readTransaction(dir);
+  assert.equal(aberta.checkpoint, 'cp-1');
+
+  const aviso = formatOpenTransactionNotice(aberta);
+  assert.match(aviso, /TRANSAÇÃO DE WORKSPACE ABERTA/);
+  assert.match(aviso, /refatorar auth/);
+  assert.match(aviso, /transacao_confirmar/);
+  assert.match(aviso, /transacao_desfazer/);
+
+  clearTransaction(dir);
+  assert.equal(readTransaction(dir), null);
+  assert.equal(formatOpenTransactionNotice(null), null);
 });
 
 // ---- 6) Disco e manifesto ---------------------------------------------------

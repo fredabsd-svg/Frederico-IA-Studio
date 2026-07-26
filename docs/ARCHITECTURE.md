@@ -187,6 +187,11 @@ execInSandbox(conversationId, cmd, timeout, { userId, ...política })
   aviso de silêncio ("sem saída há Xs"). A saída INTEGRAL vai para
   `/workspace/.agent-env/ultima-execucao.log` — o resultado é aparado nos últimos
   12 mil caracteres e o erro de uma suíte longa costuma estar no começo.
+- **Serviços e transação de workspace** (novo): `ambiente` → `servicos` cruza o
+  que o agente subiu (uvicorn, vite, http.server…) com o que está realmente
+  escutando (`ss`/`netstat`), marcando o que morreu no reinício;
+  `transacao_iniciar/confirmar/desfazer` dá ponto de retorno a uma edição em
+  vários arquivos, e a transação ABERTA reaparece no preâmbulo do turno seguinte.
 - **Estado estruturado + aviso de reinício** (novo): toda execução devolve
   `status`, `diagnostico` (ambiente × projeto), `arquivos_alterados` e, quando o
   container foi trocado, `ambiente_reiniciado` com o que sobreviveu e o que se

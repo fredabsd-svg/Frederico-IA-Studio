@@ -28,8 +28,8 @@ import { untrustedContext, untrustedToolResult } from './promptRegistry.js';
 import { emitExecutionState, finalExecutionState } from './executionState.js';
 import { resolveSandboxNetwork, isToolCallAllowed } from './assistantPolicy.js';
 import { explicitlyAuthorizesPcWrite } from '../execGuard.js';
-import { takeSandboxRestartNotice } from '../sandbox.js';
-import { formatRestartNotice } from '../agentEnv.js';
+import { takeSandboxRestartNotice, sandboxOpenTransaction } from '../sandbox.js';
+import { formatRestartNotice, formatOpenTransactionNotice } from '../agentEnv.js';
 import { SUBAGENT_TOOL_NAME, subagentToolDefinitionFor, listSubagentSpecialists, buildDelegationContext, intersectToolDefinitions, canLaunchDelegationsInParallel, shouldOfferSubagentTool, maxSubagentsPerRun, createSubagentLimiter, runSubagent } from './subagents.js';
 import { buildDocumentContext, DOC_PRECEDENCE_NOTE } from '../docling/context.js';
 import { doclingImageParts, visualElementsNote } from '../docling/vision.js';
@@ -356,6 +356,11 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   // conclui em cima de um estado que não está mais lá.
   const restartNotice = formatRestartNotice(takeSandboxRestartNotice(sandboxOptions.userId, conversationId));
   if (restartNotice) callNotes.push(restartNotice);
+  // Transação de workspace aberta num turno anterior: sem este aviso, uma
+  // alteração em vários arquivos fica pela metade em silêncio — ninguém confirma
+  // nem desfaz, e o ponto de retorno vira lixo esquecido no disco.
+  const openTransaction = formatOpenTransactionNotice(sandboxOpenTransaction(sandboxOptions.userId, conversationId));
+  if (openTransaction) callNotes.push(openTransaction);
   if (forceExecution || modelPlan.requirements.required) callNotes.push(EXECUTION_CONTRACT_NOTE);
   if (MACRO_REQUEST_RE.test(String(userText || ''))) callNotes.push(MACRO_LIMITATION_NOTE);
   if (lowSignalTurn) callNotes.push(LOW_SIGNAL_TURN_NOTE);

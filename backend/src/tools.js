@@ -15,6 +15,10 @@ import {
   sandboxCheckpointRestore,
   sandboxRuntimeDependencies,
   sandboxLastExecutionLog,
+  sandboxServices,
+  sandboxTransactionBegin,
+  sandboxTransactionCommit,
+  sandboxTransactionRollback,
   cleanSandboxTemporary
 } from './sandbox.js';
 import { runGithubTool } from './connectors/github.js';
@@ -43,7 +47,7 @@ export const toolDefinitions = [
   { type: 'function', function: { name: 'read_file', description: 'Lê um arquivo de texto do workspace da sessão.', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } } },
   { type: 'function', function: { name: 'list_files', description: 'Lista arquivos enviados e gerados na sessão.', parameters: { type: 'object', properties: { folder: { type: 'string', enum: ['uploads','outputs','.'] } } } } },
   { type: 'function', function: { name: 'zip_outputs', description: 'Compacta a pasta outputs em um arquivo ZIP.', parameters: { type: 'object', properties: { zip_name: { type: 'string' } } } } },
-  { type: 'function', function: { name: 'ambiente', description: 'Estado e continuidade do ambiente de execução (o sandbox desta conversa). Use quando: (a) um comando falhar e você não souber se a causa é o ambiente ou o código; (b) souber que o sandbox reiniciou e precisar descobrir o que sobreviveu; (c) for começar uma alteração arriscada em vários arquivos e quiser um ponto de retorno; (d) precisar saber memória, CPU ou espaço em disco. (e) um comando for cortado por timeout e você precisar ver a saída COMPLETA (o resultado só traz o fim; o começo, onde o erro costuma estar, fica no log). Ações: "status" (limites, identificadores, o que é persistente e o que é temporário), "recursos" (CPU, memória, disco e maiores processos), "ultima_execucao" (log integral do último comando: começo, fim, duração e se ficou mudo), "dependencias" (pacotes instalados em runtime nesta conversa, que somem quando o sandbox reinicia), "checkpoint_criar" (fotografa o workspace), "checkpoint_listar", "checkpoint_restaurar" (volta o workspace a um checkpoint — o estado atual é salvo antes), "limpar_temporarios".', parameters: { type: 'object', properties: { acao: { type: 'string', enum: ['status','recursos','ultima_execucao','dependencias','checkpoint_criar','checkpoint_listar','checkpoint_restaurar','limpar_temporarios'] }, id: { type: 'string', description: 'Id do checkpoint (só para checkpoint_restaurar).' }, rotulo: { type: 'string', description: 'Rótulo curto do checkpoint (só para checkpoint_criar).' } }, required: ['acao'] } } },
+  { type: 'function', function: { name: 'ambiente', description: 'Estado e continuidade do ambiente de execução (o sandbox desta conversa). Use quando: (a) um comando falhar e você não souber se a causa é o ambiente ou o código; (b) souber que o sandbox reiniciou e precisar descobrir o que sobreviveu; (c) for começar uma alteração arriscada em vários arquivos e quiser um ponto de retorno; (d) precisar saber memória, CPU ou espaço em disco. (e) um comando for cortado por timeout e você precisar ver a saída COMPLETA (o resultado só traz o fim; o começo, onde o erro costuma estar, fica no log). Ações: "status" (limites, identificadores, o que é persistente e o que é temporário), "recursos" (CPU, memória, disco e maiores processos), "ultima_execucao" (log integral do último comando: começo, fim, duração e se ficou mudo), "dependencias" (pacotes instalados em runtime nesta conversa, que somem quando o sandbox reinicia), "servicos" (portas e servidores que você subiu neste sandbox, com o que está REALMENTE escutando agora), "checkpoint_criar" (fotografa o workspace), "checkpoint_listar", "checkpoint_restaurar" (volta o workspace a um checkpoint — o estado atual é salvo antes), "transacao_iniciar"/"transacao_confirmar"/"transacao_desfazer" (edição em vários arquivos com ponto de retorno: abra antes, confirme quando a validação passar, desfaça se quebrar), "limpar_temporarios".', parameters: { type: 'object', properties: { acao: { type: 'string', enum: ['status','recursos','ultima_execucao','dependencias','servicos','checkpoint_criar','checkpoint_listar','checkpoint_restaurar','transacao_iniciar','transacao_confirmar','transacao_desfazer','limpar_temporarios'] }, id: { type: 'string', description: 'Id do checkpoint (só para checkpoint_restaurar).' }, rotulo: { type: 'string', description: 'Rótulo curto do checkpoint (só para checkpoint_criar).' } }, required: ['acao'] } } },
   { type: 'function', function: { name: 'consultar_cnpj', description: 'Consulta os dados cadastrais OFICIAIS de um CNPJ nas bases públicas (BrasilAPI/ReceitaWS): razão social, nome fantasia, situação cadastral, natureza jurídica, porte, CNAE principal e secundários, endereço, telefone, e-mail, capital social, opção pelo Simples/MEI e quadro de sócios (QSA). Funciona SEM o botão de pesquisa. Use SEMPRE que o pedido envolver dados de uma empresa por CNPJ — NÃO use web_search para isso.', parameters: { type: 'object', properties: { cnpj: { type: 'string', description: 'CNPJ com ou sem pontuação (14 dígitos)' } }, required: ['cnpj'] } } }
 ];
 
@@ -657,6 +661,10 @@ export async function runEnvironmentTool(conversationId, args = {}, sandboxOptio
         ? { acao, ...log }
         : { acao, existe: false, observacao: 'Nenhuma execução registrada nesta conversa ainda.' };
     }
+    if (acao === 'servicos') return { acao, ...(await sandboxServices(userId, conversationId)) };
+    if (acao === 'transacao_iniciar') return { acao, ...sandboxTransactionBegin(userId, conversationId, { label: args.rotulo || '' }) };
+    if (acao === 'transacao_confirmar') return { acao, ...sandboxTransactionCommit(userId, conversationId) };
+    if (acao === 'transacao_desfazer') return { acao, ...sandboxTransactionRollback(userId, conversationId) };
     if (acao === 'limpar_temporarios') return { acao, ...(await cleanSandboxTemporary(userId, conversationId)) };
     return { acao, erro: `Ação desconhecida: ${acao}.` };
   } catch (e) {

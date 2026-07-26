@@ -24,6 +24,13 @@ import {
   createProgressReporter,
   openExecLog,
   readExecLog,
+  recordServiceStart,
+  listRecordedServices,
+  parseListeningPorts,
+  reconcileServices,
+  readTransaction,
+  writeTransaction,
+  clearTransaction,
   createCheckpoint,
   listCheckpoints,
   restoreCheckpoint
@@ -876,8 +883,12 @@ export async function execInSandbox(conversationId, cmd, timeoutMs = Number(proc
       const exitCode = interrupted ? 130 : (timedOut ? 124 : (tooBig ? 137 : info.ExitCode));
       // Só registra a instalação quando ela REALMENTE terminou bem: um `pip
       // install` cortado por timeout deixaria o manifesto mentindo.
+      // Instalações e serviços só entram no registro quando o comando REALMENTE
+      // terminou bem: um `pip install` ou um `uvicorn` cortado por timeout
+      // deixaria os manifestos mentindo (e a árvore de processos foi morta).
       if (status === EXEC_STATUS.OK && exitCode === 0 && agentEnvDir) {
         try { recordRuntimeInstall(agentEnvDir, cmd); } catch {}
+        try { recordServiceStart(agentEnvDir, cmd, { generation: sessions.get(key)?.generation || 0 }); } catch {}
       }
       const medida = progress.snapshot();
       execLog?.close({
@@ -989,7 +1000,9 @@ export function sandboxEnvironmentStatus(userId, conversationId, { networkEnable
       ultimo_encerramento: ciclo.ultimo_encerramento
     },
     dependencias_instaladas_em_runtime: listRuntimeInstalls(ws.agentEnv).length,
-    checkpoints: listCheckpoints(checkpointsDirFor(scope, conversationId)).length
+    checkpoints: listCheckpoints(checkpointsDirFor(scope, conversationId)).length,
+    servicos_registrados: listRecordedServices(ws.agentEnv).length,
+    transacao_aberta: readTransaction(ws.agentEnv)
   };
 }
 
@@ -1074,6 +1087,80 @@ export function sandboxCheckpointRestore(userId, conversationId, id) {
 export function sandboxLastExecutionLog(userId, conversationId) {
   const scope = requireUserScope(userId);
   return readExecLog(workspaceFor(conversationId, scope).agentEnv);
+}
+
+// Serviços e portas: cruza o que o agente iniciou com o que está REALMENTE
+// escutando dentro do container agora. Usa execInActiveSandbox de propósito —
+// observar não pode materializar container nem prolongar a vida do sandbox.
+export async function sandboxServices(userId, conversationId) {
+  const scope = requireUserScope(userId);
+  const key = sessionKey(scope, conversationId);
+  const ws = workspaceFor(conversationId, scope);
+  const registrados = listRecordedServices(ws.agentEnv);
+  const geracao = peekSandboxLifecycle(key).geracao;
+  if (!sessions.has(key)) {
+    return {
+      sandbox_ativo: false,
+      observacao: 'Não há sandbox ativo: qualquer serviço iniciado antes já foi encerrado com o container. Suba de novo se precisar.',
+      servicos: registrados.map(r => ({ ...r, estado: 'perdido_no_reinicio' })),
+      portas_sem_registro: []
+    };
+  }
+  // `ss` é o caminho normal; `netstat` é a reserva. O parser aceita os dois.
+  const sonda = await execInActiveSandbox(scope, conversationId,
+    'ss -ltnpH 2>/dev/null || netstat -ltnp 2>/dev/null || true', 10000).catch(() => null);
+  const escutando = parseListeningPorts(sonda?.output || '');
+  return {
+    sandbox_ativo: true,
+    geracao_do_sandbox: geracao,
+    ...reconcileServices(registrados, escutando, { generation: geracao }),
+    observacao: 'Serviços vivem só enquanto este sandbox viver: eles NÃO sobrevivem a reinício nem à reciclagem por ociosidade, e não são alcançáveis de fora do container.'
+  };
+}
+
+// ---- Transação de workspace -------------------------------------------------
+// Açúcar sobre checkpoints, com um ganho real: a transação aberta é anunciada no
+// preâmbulo do turno seguinte, então uma alteração em vários arquivos não fica
+// pela metade em silêncio.
+export function sandboxTransactionBegin(userId, conversationId, { label = '' } = {}) {
+  const scope = requireUserScope(userId);
+  const ws = workspaceFor(conversationId, scope);
+  const aberta = readTransaction(ws.agentEnv);
+  if (aberta) {
+    return { ja_aberta: true, ...aberta, observacao: 'Já existe uma transação aberta. Confirme ou desfaça antes de abrir outra.' };
+  }
+  const cp = createCheckpoint(ws.base, checkpointsDirFor(scope, conversationId), { label: label || 'transação', reason: 'transacao' });
+  const dados = { checkpoint: cp.id, rotulo: String(label || '').slice(0, 120), aberta_em: new Date().toISOString(), arquivos: cp.arquivos };
+  writeTransaction(ws.agentEnv, dados);
+  return { ...dados, observacao: 'Ponto de retorno salvo. Ao validar a alteração, use transacao_confirmar; se der errado, transacao_desfazer.' };
+}
+
+export function sandboxTransactionCommit(userId, conversationId) {
+  const scope = requireUserScope(userId);
+  const ws = workspaceFor(conversationId, scope);
+  const aberta = readTransaction(ws.agentEnv);
+  if (!aberta) return { aberta: false, observacao: 'Não havia transação aberta.' };
+  clearTransaction(ws.agentEnv);
+  // O checkpoint continua na lista: confirmar não apaga o ponto de retorno,
+  // só encerra a transação (dá para voltar depois, se algo aparecer).
+  return { confirmada: true, checkpoint_preservado: aberta.checkpoint, rotulo: aberta.rotulo };
+}
+
+export function sandboxTransactionRollback(userId, conversationId) {
+  const scope = requireUserScope(userId);
+  const ws = workspaceFor(conversationId, scope);
+  const aberta = readTransaction(ws.agentEnv);
+  if (!aberta) return { aberta: false, observacao: 'Não havia transação aberta. Para voltar a um ponto anterior, use checkpoint_listar e checkpoint_restaurar.' };
+  const r = sandboxCheckpointRestore(scope, conversationId, aberta.checkpoint);
+  clearTransaction(ws.agentEnv);
+  return { desfeita: true, ...r, rotulo: aberta.rotulo };
+}
+
+// Consumido pelo preâmbulo do turno: uma transação aberta precisa reaparecer,
+// senão a alteração pela metade some do radar entre um turno e outro.
+export function sandboxOpenTransaction(userId, conversationId) {
+  try { return readTransaction(workspaceFor(conversationId, requireUserScope(userId)).agentEnv); }
+  catch { return null; }
 }
 
 export function sandboxRuntimeDependencies(userId, conversationId) {
