@@ -14,7 +14,7 @@ import { isLowSignalTurn, LOW_SIGNAL_TURN_NOTE } from '../memory/retrievalPolicy
 import { buildModelRuntimeState, isUnsupportedToolError, isUnsupportedVisionError, isModelUnavailableError, isToolChoiceReasoningConflictError, markModelCapabilityUnsupported, modelCompatibilityMessage } from '../modelCapabilities.js';
 import { createToolProtocolStreamGuard, parseTextToolCalls, sanitizeToolProtocolText } from '../toolProtocol.js';
 import { githubToolDefinitions, GITHUB_WRITE_TOOLS, hasGithubConnection } from '../connectors/github.js';
-import { effortCfg, promptFor, promptManifestFor, toolsFor, temperatureFor, developerContextFor, toolAvailabilityNote, ENVIRONMENT_QUERY_RE, verifiedEnvironmentNote, pcFoldersNote, uploadsNote, clipForBriefing, BRIEFING_CHAR_LIMIT, QUALITY_BAR } from './prompts.js';
+import { effortCfg, promptFor, promptManifestFor, toolsFor, temperatureFor, developerContextFor, toolAvailabilityNote, ENVIRONMENT_QUERY_RE, verifiedEnvironmentNote, pcFoldersNote, uploadsNote, clipForBriefing, BRIEFING_CHAR_LIMIT, QUALITY_BAR, PLAN_DELEGATION_TOPIC } from './prompts.js';
 import { listOutputs, mentionsOutputPath, recoverAlternateOutputs, referencedOutputFiles, fileSignature, validateOutputs } from './outputs.js';
 import { OUTPUT_DELIVERY_REPAIR_NOTE, MISSING_OUTPUT_NOTICE, EXECUTION_COMPLETION_REPAIR_NOTE, EXECUTION_INCOMPLETE_NOTICE, TOOL_PROTOCOL_REPAIR_NOTE, TOOL_PROTOCOL_FAILURE_NOTICE, RESPONSE_TRUNCATED_REPAIR_NOTE, RESPONSE_TRUNCATED_NOTICE, EXECUTION_CONTRACT_NOTE, MACRO_REQUEST_RE, MACRO_LIMITATION_NOTE, DEGEN_CHECK_STEP, looksDegenerate, shouldRepairOutputDelivery, shouldRepairExecution, shouldContinueAfterTruncation, materializeTextOutput, endsAwaitingUserReply } from './repair.js';
 import { normalizeWebFetchUrl, classifyToolOutcome, webResearchStopReason, planToolCallBatch, WEB_TOOL_NAMES, webResearchFinalizationNote, WEB_RESEARCH_FETCH_LIMIT, TOOL_CALLS_PER_STEP_LIMIT } from './webResearch.js';
@@ -28,7 +28,7 @@ import { untrustedContext } from './promptRegistry.js';
 import { emitExecutionState, finalExecutionState } from './executionState.js';
 import { resolveSandboxNetwork, isToolCallAllowed } from './assistantPolicy.js';
 import { explicitlyAuthorizesPcWrite } from '../execGuard.js';
-import { SUBAGENT_TOOL_NAME, subagentToolDefinition, shouldOfferSubagentTool, maxSubagentsPerRun, createSubagentLimiter, runSubagent } from './subagents.js';
+import { SUBAGENT_TOOL_NAME, subagentToolDefinition, shouldOfferSubagentTool, maxSubagentsPerRun, createSubagentLimiter, runSubagent, shouldNudgeSubagent, SUBAGENT_NUDGE_NOTE } from './subagents.js';
 import { buildDocumentContext, DOC_PRECEDENCE_NOTE } from '../docling/context.js';
 import { doclingImageParts, visualElementsNote } from '../docling/vision.js';
 
@@ -196,6 +196,8 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   // Teto de delegações SIMULTÂNEAS (as do mesmo lote correm em paralelo).
   const delegationSlot = createSubagentLimiter();
   let subagentRuns = 0;
+  // O lembrete de delegação entra UMA vez por execução (ver shouldNudgeSubagent).
+  let subagentNudged = false;
 
   const uploadNoteForRun = !lowSignalTurn ? uploadsNote(userId, conversationId) : null;
   // Docling: quando ligado e houver documentos já processados nesta conversa,
@@ -306,6 +308,11 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   if (MACRO_REQUEST_RE.test(String(userText || ''))) callNotes.push(MACRO_LIMITATION_NOTE);
   if (lowSignalTurn) callNotes.push(LOW_SIGNAL_TURN_NOTE);
   if (developerContext) callNotes.push(developerContext.note);
+  // O plano do Modo Desenvolvedor (PLAN_BEFORE, nos modos que escrevem) é onde o
+  // modelo decide COMO atacar a tarefa — então é ali que a divisão do trabalho
+  // precisa ser decidida, não depois. Só entra quando a delegação está mesmo
+  // disponível nesta chamada.
+  if (developerContext?.canWrite && subagentsOffered) callNotes.push(PLAN_DELEGATION_TOPIC);
   if (eff.nudge) callNotes.push(eff.nudge);
   if (webSearchActive) callNotes.push(`PESQUISA NA INTERNET — o usuário ativou a busca. Você tem acesso real à web, pelas ferramentas web_search (procurar) e web_fetch (abrir uma página). Nunca diga que "não tem acesso à internet".
 
@@ -562,6 +569,20 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
       emitExecutionState(onEvent, 'continuing', `Orçamento de etapas renovado (fôlego ${autoContinues})`, { runId, step });
     }
     reachedStep = step;
+    // LEMBRETE DE DELEGAÇÃO: numa execução que já se alongou, o modelo não
+    // recebe sinal novo nenhum — e o contexto acumulado, que é exatamente o
+    // custo que o sub-agente evita, só cresce. A nota vai no FIM do array (como
+    // AUTO_CONTINUE_NOTE) para não invalidar o prefixo em cache.
+    if (shouldNudgeSubagent({
+      step: step - windowStart,
+      offered: isToolCallAllowed(SUBAGENT_TOOL_NAME, tools),
+      delegations: subagentRuns,
+      budget: subagentBudget,
+      alreadyNudged: subagentNudged
+    })) {
+      subagentNudged = true;
+      messages.push({ role: 'system', content: SUBAGENT_NUDGE_NOTE });
+    }
     if (await gate(control, onEvent)) { stopped = true; break; }
     onEvent({ type: 'status', content: step === 0 ? 'Pensando...' : 'Continuando...' });
     // Streaming: o texto é enviado token a token para a interface (tela viva)

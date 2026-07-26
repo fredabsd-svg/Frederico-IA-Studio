@@ -13,6 +13,9 @@ const {
   maxParallelSubagents,
   maxSubagentsPerRun,
   runSubagent,
+  shouldNudgeSubagent,
+  subagentNudgeStep,
+  SUBAGENT_NUDGE_NOTE,
   shouldOfferSubagentTool,
   subagentEffort,
   subagentEventForwarder,
@@ -251,4 +254,56 @@ test('a definição da ferramenta exige a tarefa e avisa que o filho não vê a 
   assert.equal(subagentToolDefinition.function.name, SUBAGENT_TOOL_NAME);
   assert.deepEqual(subagentToolDefinition.function.parameters.required, ['tarefa']);
   assert.match(subagentToolDefinition.function.description, /NÃO vê esta conversa/i);
+});
+
+// ---- Acionamento: o gatilho positivo e o lembrete por etapas ----
+//
+// Os guard-rails acima só sabiam dizer NÃO. O que faltava — e é o que estes
+// testes protegem — era o que faz a delegação de fato acontecer.
+
+test('a descrição da ferramenta traz o gatilho de várias entregas independentes', () => {
+  const description = subagentToolDefinition.function.description;
+  assert.match(description, /TRÊS OU MAIS entregas independentes/i);
+  assert.match(description, /UMA chamada por entrega/i);
+  // A contrapartida precisa continuar explícita: delegar não é para tudo.
+  assert.match(description, /integração final/i);
+});
+
+test('o lembrete entra ao passar do limiar sem nenhuma delegação', () => {
+  assert.equal(shouldNudgeSubagent({ step: 15, offered: true, threshold: 15 }), true);
+  assert.equal(shouldNudgeSubagent({ step: 14, offered: true, threshold: 15 }), false);
+});
+
+test('o lembrete não se repete e não incomoda quem já delegou', () => {
+  assert.equal(shouldNudgeSubagent({ step: 40, offered: true, threshold: 15, alreadyNudged: true }), false);
+  assert.equal(shouldNudgeSubagent({ step: 40, offered: true, threshold: 15, delegations: 1 }), false);
+});
+
+test('sem a ferramenta na mesa (ou sem orçamento) o lembrete não entra', () => {
+  // Pedir o que o modelo não pode fazer é pior que ficar calado.
+  assert.equal(shouldNudgeSubagent({ step: 40, offered: false, threshold: 15 }), false);
+  assert.equal(shouldNudgeSubagent({ step: 40, offered: true, threshold: 15, delegations: 0, budget: 0 }), false);
+});
+
+test('SUBAGENT_NUDGE_STEPS ajusta o limiar e 0 desliga só o lembrete', () => {
+  const previous = process.env.SUBAGENT_NUDGE_STEPS;
+  try {
+    delete process.env.SUBAGENT_NUDGE_STEPS;
+    assert.equal(subagentNudgeStep(), 15);
+    process.env.SUBAGENT_NUDGE_STEPS = '25';
+    assert.equal(subagentNudgeStep(), 25);
+    process.env.SUBAGENT_NUDGE_STEPS = '0';
+    assert.equal(subagentNudgeStep(), 0);
+    // Limiar desligado: nem no passo 999 a nota entra — mas a ferramenta segue
+    // oferecida (é o lembrete que some, não a delegação).
+    assert.equal(shouldNudgeSubagent({ step: 999, offered: true }), false);
+    assert.equal(shouldOfferSubagentTool({ depth: 0, hasTools: true }), true);
+  } finally {
+    if (previous === undefined) delete process.env.SUBAGENT_NUDGE_STEPS; else process.env.SUBAGENT_NUDGE_STEPS = previous;
+  }
+});
+
+test('o lembrete oferece uma saída explícita para não forçar delegação ruim', () => {
+  assert.match(SUBAGENT_NUDGE_NOTE, /delegar_subagente/);
+  assert.match(SUBAGENT_NUDGE_NOTE, /ignore este lembrete/i);
 });

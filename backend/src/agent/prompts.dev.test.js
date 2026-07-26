@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { developerContextFor, DEV_MODES, DEV_WRITE_MODES } from './prompts.js';
+import { developerContextFor, DEV_MODES, DEV_WRITE_MODES, PLAN_DELEGATION_TOPIC } from './prompts.js';
 
 // Usamos sempre um projeto GitHub (sem projectId de pasta do PC), assim
 // developerContextFor não toca no banco nem no sandbox — o teste fica isolado.
@@ -100,4 +100,27 @@ test('repo GitHub SEM conexão: não manda clonar, pede reconexão e não dá "n
 test('sem opts (chamadores existentes) mantém o comportamento de conectado', () => {
   // Default githubConnected=true preserva orchestrator/multiModel e o caminho antigo.
   assert.ok(/github_clone/.test(ctx('build').note));
+});
+
+// O plano é onde o modelo decide COMO atacar a tarefa. Sem um tópico sobre
+// divisão do trabalho, um pedido de seis entregas vira uma execução única de
+// dezenas de etapas — foi o que aconteceu antes desta frente.
+test('o tópico de delegação fica FORA da nota do modo (só entra com a ferramenta na mesa)', () => {
+  for (const mode of DEV_MODES) {
+    assert.ok(!/delegar_subagente/.test(developerContextFor({ mode, github: gh, rules: '' }, 'user-1').note),
+      `o modo ${mode} não pode prometer delegação por conta própria — quem decide é o loop`);
+  }
+  assert.match(PLAN_DELEGATION_TOPIC, /SEXTO tópico/);
+  assert.match(PLAN_DELEGATION_TOPIC, /delegar_subagente/);
+  // Precisa aceitar "não delegar" como resposta legítima do plano.
+  assert.match(PLAN_DELEGATION_TOPIC, /sem delegação/i);
+});
+
+// O tópico é acrescentado pelo loop só nos modos que escrevem (os que usam o
+// PLAN_BEFORE). Este teste fixa esse conjunto: ask/plan/review não planejam edição.
+test('só os modos que escrevem passam pelo plano que recebe o tópico de delegação', () => {
+  assert.deepEqual([...DEV_WRITE_MODES].sort(), ['auto', 'build', 'fix']);
+  for (const mode of DEV_MODES) {
+    assert.equal(developerContextFor({ mode, github: gh, rules: '' }, 'user-1').canWrite, DEV_WRITE_MODES.has(mode));
+  }
 });
