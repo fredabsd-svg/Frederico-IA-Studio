@@ -24,7 +24,7 @@ import { guardStreamStall, PROVIDER_CONNECT_TIMEOUT_MS } from './streamGuard.js'
 import { acquireConversationControl, releaseConversationControl, beginProviderRequest, releaseProviderRequest, beginToolRequest, releaseToolRequest, controlInterruptReason, gate } from './control.js';
 import { clientScopeFor, memoryNote, saveMessage, persistAssistantReply } from './persistence.js';
 import { saveCheckpoint, clearCheckpoint, isResumableReason, buildResumeMessages, leadingSystemCount, trimCheckpointMessages, AUTO_CONTINUE_NOTE } from './checkpoint.js';
-import { untrustedContext } from './promptRegistry.js';
+import { untrustedContext, untrustedToolResult } from './promptRegistry.js';
 import { emitExecutionState, finalExecutionState } from './executionState.js';
 import { resolveSandboxNetwork, isToolCallAllowed } from './assistantPolicy.js';
 import { explicitlyAuthorizesPcWrite } from '../execGuard.js';
@@ -1028,7 +1028,13 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
       if (name === 'web_fetch') { try { thumb = JSON.parse(result).thumb || ''; } catch {} }
       onEvent({ type: 'tool_result', id: call.id, name, content: result.slice(0, 2000), ...(thumb ? { thumb } : {}) });
       emitExecutionState(onEvent, 'processing_result', name, { runId, step, tool: name });
-      messages.push({ role: 'tool', tool_call_id: call.id, content: result });
+      // O `result` CRU segue para a interface e para a classificação de falha —
+      // quem precisa dele intacto. Para o MODELO ele vai embrulhado: é texto de
+      // terceiro (página, arquivo, README, saída de comando) e, sem a marca de
+      // dado, era a entrada de injeção mais curta do app. O embrulho também
+      // neutraliza protocolo textual de ferramenta escondido no resultado, que
+      // o próprio loop converteria em execução real caso o modelo o repetisse.
+      messages.push({ role: 'tool', tool_call_id: call.id, content: untrustedToolResult(name, result) });
       // Freio de loop: conta falhas consecutivas das ferramentas
       const outcome = classifyToolOutcome(name, result);
       consecutiveFailures = outcome.failed && !outcome.recoverable ? consecutiveFailures + 1 : 0;

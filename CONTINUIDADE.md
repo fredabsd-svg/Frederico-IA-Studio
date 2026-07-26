@@ -15,18 +15,56 @@ autenticação Better Auth (e-mail/senha, GitHub, Google).
 **Prontidão para produção: 🟡 amarelo — apto com restrições.**
 **Nenhum risco crítico aberto** desde o fechamento do F-04 (o backend não detém mais o
 socket do Docker — ver `docs/SECURITY.md` §4.3). O que ainda impede o verde é a cobertura
-de testes: SSE integrado, retomada após interrupção real, pipeline retomável e injeção
-adversarial não foram executados. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
+de testes: SSE integrado, retomada após interrupção real e pipeline retomável não foram
+executados. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** **PR [#140](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/140)** — mesclado na `main`. Três regressões que deixavam o app
-  inutilizável: a tela "Algo deu errado", o sandbox recusado pelo guarda (Windows **e**
-  VPS) e o erro de chave apontando o provedor errado. Detalhe de cada uma abaixo.
-- **Última validação:** 2026-07-26 — **721 testes** (backend 605, frontend 57, guarda do
-  Docker 49, sandbox Python 10). Localmente sem PostgreSQL no contêiner (19 do backend e
-  9 do Python se autopulam — esperado); **na CI os 10 jobs passaram**, inclusive o
-  "Backend — integração (PostgreSQL real + migrações)", então os que se autopulam aqui
-  rodaram de verdade lá. A contagem vem de `cd backend && npm run test:count` — não a
+- **Último trabalho:** bateria adversarial de injeção de prompt (**F-17 fechado**) e as
+  duas falhas reais que ela expôs. Detalhe abaixo.
+- **Última validação:** 2026-07-26 — **754 testes** (backend 638, frontend 57, guarda do
+  Docker 49, sandbox Python 10). Localmente sem PostgreSQL no contêiner (19 do backend se
+  autopulam — esperado) e sem `pytest` instalado (os 10 do sandbox Python não coletam
+  aqui; na CI rodam). A contagem vem de `cd backend && npm run test:count` — não a
   escreva à mão.
+
+---
+
+## Bateria adversarial de injeção de prompt (2026-07-26 — F-17)
+
+`backend/src/agent/promptInjection.adversarial.test.js` — 33 casos escritos do ponto de
+vista de quem controla o conteúdo externo, cobrindo os quatro vetores previstos no F-17:
+README malicioso no repositório, memória envenenada em turno anterior, delimitador fechado
+à força e resposta maliciosa de outro modelo no multimodelo.
+
+Rodada contra o código anterior, a bateria acusou **15 falhas** — duas causas reais:
+
+**1. O selo do delimitador só cobria a forma canônica.** `untrustedContext()` escapava
+`</untrusted-context>` exato; escapavam da caixa `</untrusted-context foo="1">`,
+`</untrusted-context/>`, `< /…>`, `</ …>` e a tag de **abertura** (que faz o fechamento
+legítimo encerrar o bloco forjado, deixando o resto do payload aparentemente fora dele).
+Os metadados do cabeçalho escapavam só aspas: um `>` ou uma quebra de linha no valor punha
+texto do atacante **antes** do aviso "isto é dado" — o único trecho que o modelo lê como voz
+do aplicativo.
+
+**2. 🔴 O resultado de ferramenta ia CRU para o modelo.** `loop.js` fazia
+`messages.push({ role: 'tool', content: result })` sem wrapper nenhum — apesar de o
+`docs/SECURITY.md` §8 já afirmar que passava por `untrustedContext()`. É o maior canal de
+texto de terceiros do app (`web_fetch` traz a página inteira, `read_file`/`bash` o arquivo
+ou a saída do comando, `github_clone` o README) e a cadeia mais curta até **execução**: o
+mesmo loop converte protocolo textual (`<tool_call>`, `<function=…>`) achado no texto do
+modelo em chamada nativa, então bastava o modelo repetir um trecho da página lida para o
+comando do atacante rodar no sandbox. O teste "a cadeia completa" prova os dois lados:
+sem defesa o eco vira 1 chamada real; com o dado neutralizado, 0.
+
+Correção em `promptRegistry.js`: `neutralizeExternalMarkup()` escapa a marcação estrutural
+(delimitador em qualquer forma tolerante, `trusted-instruction` e o protocolo textual de
+ferramenta), os atributos passam a escapar `<`, `>` e quebra de linha, e
+`untrustedToolResult()` embrulha o resultado no `loop.js`. O `result` **cru** continua indo
+para a interface e para `classifyToolOutcome` — quem precisa dele intacto.
+
+**ARMADILHA:** o casamento é limitado a esses nomes de propósito. Escapar marcação genérica
+mutilaria HTML, XML e código legítimos — e num domínio contábil/fiscal o conteúdo *é* o
+dado. Quatro testes de não-regressão guardam isso (`R$ 1.234,56`, `a < b && b > c`,
+bloco de código, `<div class="card">`).
 
 ---
 
@@ -338,7 +376,6 @@ renderização real (Playwright) em 360, 393, 600, 900, 1000 e 1300px.
 | F-15 | Pipeline multimodelo sem coordenador durável: reinício não retoma a próxima etapa pendente. | 🟠 Alta |
 | F-12 | Sem teste integrado de SSE (duas conversas simultâneas, troca rápida, reconexão). | 🟠 Alta |
 | F-14 | Sem teste de retomada após interrupção **real** do processo. | 🟠 Alta |
-| F-17 | Sem bateria adversarial de injeção de prompt. | 🟠 Alta |
 | F-05b | Sandbox com rede habilitada não tem allowlist de egress. | 🟡 Média |
 | F-13, F-16, F-18, F-19, F-23 | Provedor simulado, relevância de memória (casos negativos), corpus do Docling, git local, validação de artefato com arquivos reais. | 🟡 Média |
 | F-20, F-21 | `App.jsx` com 62 `useState`; bundle de 932 KB num único chunk; CSS em camadas sem inventário. | 🟡 Média |
@@ -361,9 +398,7 @@ renderização real (Playwright) em 360, 393, 600, 900, 1000 e 1300px.
 4. **F-15** — tabela `pipeline_runs` (`pipeline_run_id`, `current_stage`,
    `completed_stages`, `pending_stages`, `artifact_versions`, `status`, `checkpoint`,
    `updated_at`) e retomada no boot.
-5. **F-17** — casos adversariais: README malicioso no repositório, memória envenenada,
-   delimitador fechado à força, resposta maliciosa de outro modelo.
-6. **F-20** — extrair de `App.jsx`, por etapas: shell → estado da conversa → estado da
+5. **F-20** — extrair de `App.jsx`, por etapas: shell → estado da conversa → estado da
    execução → drawers/configurações. `React.lazy` nos painéis pesados.
 
 ---

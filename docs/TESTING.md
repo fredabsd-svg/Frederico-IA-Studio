@@ -127,7 +127,6 @@ Reconhecidas, priorizadas e **não** cobertas até aqui — ver `docs/AUDITORIA_
 | F-14 | Retomada após **interrupção real do processo** (matar o Node no meio) |
 | F-15 | Pipeline multimodelo retomável após reinício |
 | F-16 | Suíte de relevância de memória com casos **negativos** |
-| F-17 | Bateria adversarial de injeção de prompt |
 | F-18 | Corpus documental do Docling (escaneado, DRE, PGFN, células mescladas…) |
 | F-19 | Git local para clone/commit/push do modo desenvolvedor |
 | F-20 | E2E de navegador (Playwright já está disponível na imagem do sandbox) |
