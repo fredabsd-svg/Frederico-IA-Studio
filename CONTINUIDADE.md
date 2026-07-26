@@ -18,8 +18,9 @@ socket do Docker — ver `docs/SECURITY.md` §4.3). O que ainda impede o verde �
 de testes: SSE integrado, retomada após interrupção real e pipeline retomável não foram
 executados. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** correções **P0 dos sub-agentes** (herança de permissões, sandbox,
-  isolamento de contexto, semáforo, ordem e cancelamento). Detalhe abaixo.
+- **Último trabalho:** **PR [#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)** —
+  correções **P0 dos sub-agentes** (herança de permissões, sandbox, isolamento de contexto,
+  semáforo, ordem e cancelamento). Detalhe abaixo.
 - **Última validação:** 2026-07-26 — **769 testes** (backend 653, frontend 57, guarda do
   Docker 49, sandbox Python 10). Localmente sem PostgreSQL no contêiner (19 do backend se
   autopulam — esperado) e sem `pytest` instalado (os 10 do sandbox Python não coletam
@@ -28,7 +29,7 @@ executados. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
 ---
 
-## Sub-agentes: as sete falhas P0 (2026-07-26)
+## Sub-agentes: as sete falhas P0 (2026-07-26 — PR #145)
 
 Revisão técnica externa do mecanismo de delegação apontou 7 achados P0. Todos confirmados
 contra o código e corrigidos nesta frente.
