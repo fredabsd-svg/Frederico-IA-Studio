@@ -15,18 +15,84 @@ autenticação Better Auth (e-mail/senha, GitHub, Google).
 **Prontidão para produção: 🟡 amarelo — apto com restrições.**
 **Nenhum risco crítico aberto** desde o fechamento do F-04 (o backend não detém mais o
 socket do Docker — ver `docs/SECURITY.md` §4.3). O que ainda impede o verde é a cobertura
-de testes: SSE integrado, retomada após interrupção real e pipeline retomável não foram
-executados. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
+de testes: **o SSE integrado saiu do zero** (ver a frente abaixo), mas a retomada após
+interrupção real do processo e o pipeline multimodelo retomável continuam sem teste.
+Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** **PR [#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)** —
-  correções **P0 dos sub-agentes** (herança de permissões, sandbox, isolamento de contexto,
-  semáforo, ordem e cancelamento). Detalhe abaixo. Antes dele, o **PR #144** (GraphQL no
-  sandbox e o inventário de ferramentas que o modelo lê).
-- **Última validação:** 2026-07-26 — **778 testes** (backend 662, frontend 57, guarda do
-  Docker 49, sandbox Python 10). Localmente sem PostgreSQL no contêiner (19 do backend se
-  autopulam — esperado) e sem `pytest` instalado (os 10 do sandbox Python não coletam
-  aqui; na CI rodam). A contagem vem de `cd backend && npm run test:count` — não a
-  escreva à mão.
+- **Último trabalho:** **PR [#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)** —
+  troca do navegador headless para **Playwright** e criação da suíte **ponta a ponta**
+  (`e2e/`). **F-20 fechado**, F-12 e F-13 cobertos em parte. A troca expôs um buraco de
+  SSRF que uma porta ingênua teria aberto. Detalhe abaixo. Antes dele, o **PR
+  [#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)** (as sete falhas
+  P0 dos sub-agentes) e o **PR #144** (GraphQL no sandbox e o inventário de ferramentas).
+- **Última validação:** 2026-07-26 — **802 testes** (backend 677, frontend 57, guarda do
+  Docker 49, sandbox Python 10, ponta a ponta 9), já com a `main` mesclada. Backend e
+  frontend rodaram com PostgreSQL real neste contêiner: **677 passaram, 0 pulados**. Os 9
+  E2E rodaram de verdade. Os 10 do Python não coletam aqui por falta do `openpyxl` — na
+  CI rodam. A contagem vem de `cd backend && npm run test:count` — não a escreva à mão.
+
+---
+
+## Playwright: navegador headless e suíte ponta a ponta (2026-07-26 — PR #146, F-20)
+
+Duas frentes numa só, porque as duas trocam a mesma peça.
+
+### 1. O navegador headless passou a ser o Playwright
+
+`backend/src/agent/pageShot.js` (miniatura de página do `web_fetch`) saiu do
+`puppeteer-core` para o `playwright-core`. A imagem Docker **continua usando o Chromium do
+apt** (`CHROMIUM_PATH=/usr/bin/chromium`) em vez de baixar o do Playwright: seriam ~150 MB
+a mais na imagem de produção por um navegador que o apt já instalou.
+
+**O que quase passou batido — e é o ponto importante desta frente.** O `page.route()` do
+Playwright **não** é chamado de novo no destino de um redirecionamento; o
+`setRequestInterception` do puppeteer era. Medido neste repositório, com um 302 de `/a`
+para `/b`:
+
+| | guarda chamado para `/a` | guarda chamado para `/b` | navegação |
+| --- | --- | --- | --- |
+| puppeteer | sim | **sim** | bloqueada |
+| Playwright | sim | **não** | **seguiu** |
+
+Ou seja: uma porta linha-a-linha teria reaberto SSRF por redirecionamento — bastaria uma
+página pública responder 302 para `169.254.169.254` e o navegador do backend buscaria o
+endereço de metadados da nuvem, exatamente a superfície que o F-04 aponta. A correção
+segue os redirecionamentos **à mão** (`route.fetch({ maxRedirects: 0 })`), validando cada
+salto antes de continuar.
+
+De quebra, dois ganhos: `newPage()` do Playwright abre contexto próprio (cookies não vazam
+de uma miniatura para a seguinte) e o `catch` que fazia `req.continue()` — falha **aberta**
+— virou negação.
+
+`pageShot.test.js`: 15 casos, sem navegador (as decisões são funções puras e o guarda
+depende só da interface do `route`, então um duplo basta).
+
+### 2. Suíte ponta a ponta (`e2e/`)
+
+Chromium real contra o **build de produção** (`vite preview`), backend real e PostgreSQL
+real. O único figurante é o provedor de IA: `e2e/fixtures/provedorFalso.mjs` responde no
+lugar dele, de forma determinística — **nenhum teste usa rede externa ou chave paga**.
+
+9 testes em 3 arquivos: streaming chega aos poucos e persiste; **duas conversas com troca
+no meio do stream não misturam respostas**; recarregar a página no meio da resposta não a
+perde (reconexão); indicador de "processando" na barra lateral; portão de consentimento
+(LGPD); e a mensagem de chave inválida nomeando o provedor certo — a regressão do PR #140,
+que até aqui só tinha teste de unidade.
+
+Novo job `e2e` no CI, com Postgres real e Chromium. Ver `e2e/README.md`.
+
+### Duas coisas que os testes encontraram e **não** foram corrigidas aqui
+
+1. **O avatar do Nino fica por cima do botão de enviar** a 1280px de largura — o
+   Playwright recusa o clique porque o mascote intercepta o ponteiro. É defeito de layout
+   de verdade, não artefato de teste: quem clicar ali acerta o mascote. Os testes enviam
+   com Enter (o caminho principal, anunciado embaixo do campo), então o defeito não fica
+   escondido — fica anotado aqui.
+2. **O modelo padrão do assistente continua sem prefixo de provedor.** Ao montar os
+   testes foi preciso fixar o `modelRef` completo nos assistentes: sem isso o app manda
+   `deepseek/deepseek-chat`, o `getUserProvider` cai no `rows[0]` e o teste da chave
+   inválida recebia um eco normal em vez do 401. É a causa-raiz que já era o item 1 dos
+   próximos passos — agora com uma demonstração reproduzível.
 
 ---
 
@@ -448,13 +514,15 @@ renderização real (Playwright) em 360, 393, 600, 900, 1000 e 1300px.
 | ID | Risco | Severidade |
 | --- | --- | --- |
 | F-15 | Pipeline multimodelo sem coordenador durável: reinício não retoma a próxima etapa pendente. | 🟠 Alta |
-| F-12 | Sem teste integrado de SSE (duas conversas simultâneas, troca rápida, reconexão). | 🟠 Alta |
+| F-12 | SSE integrado: duas conversas, troca rápida e reconexão **agora cobertos** por `e2e/`; falta o caso isolado de `fromSeq` (reconectar sem duplicar eventos). | 🟡 Média |
 | F-14 | Sem teste de retomada após interrupção **real** do processo. | 🟠 Alta |
 | F-05b | Sandbox com rede habilitada não tem allowlist de egress. | 🟡 Média |
-| F-13, F-16, F-18, F-19, F-23 | Provedor simulado, relevância de memória (casos negativos), corpus do Docling, git local, validação de artefato com arquivos reais. | 🟡 Média |
+| F-13 | Provedor simulado: streaming, catálogo e erro 401 **cobertos** por `e2e/fixtures/provedorFalso.mjs`; faltam tool calls e timeout. | 🟡 Média |
+| F-16, F-18, F-19, F-23 | Relevância de memória (casos negativos), corpus do Docling, git local, validação de artefato com arquivos reais. | 🟡 Média |
 | F-24 | Sub-agentes: sem orçamento próprio de tempo/tokens por delegação e sem catálogo de modelos com tool calling **verificado** (hoje qualquer modelo do seletor pode receber uma subtarefa). | 🟡 Média |
 | F-25 | Sub-agentes paralelos compartilham `outputs/`: a atribuição de arquivo por filho pode se cruzar e dois filhos podem gravar o mesmo nome. O conjunto que o usuário recebe está certo (o pai também faz o diff); o rótulo por sub-agente é que não é confiável. | 🟡 Média |
-| F-20, F-21 | `App.jsx` com 62 `useState`; bundle de 932 KB num único chunk; CSS em camadas sem inventário. | 🟡 Média |
+| F-21 | `App.jsx` com 62 `useState`; bundle num único chunk (teto de 1.000 KB no CI); CSS em camadas sem inventário. | 🟡 Média |
+| — | O avatar do Nino cobre o botão de enviar a 1280px de largura (achado dos testes E2E). | 🟡 Média |
 | F-11 | Sem quarentena/reprocesso do que passou com o antivírus degradado. | 🟡 Média |
 
 ---
@@ -468,15 +536,18 @@ renderização real (Playwright) em 360, 393, 600, 900, 1000 e 1300px.
    (`deepseek/deepseek-chat` em `seed.js` e `routes/assistants.js`; `deepseek-chat` em
    `schedules`, `inbox`, `conversations` e `helpers`), migrar os assistentes já gravados
    e decidir o que fazer quando o modelo não for atribuível — hoje o chute é silencioso.
-2. **F-12/F-13** — provedor HTTP simulado + teste integrado de SSE. Destrava boa parte
-   das outras lacunas de teste.
-3. **F-14** — retomada após `kill -9` no meio de um run, com checkpoint real.
-4. **F-15** — tabela `pipeline_runs` (`pipeline_run_id`, `current_stage`,
+2. **Sobreposição do Nino sobre o botão de enviar** (achado dos E2E). Barato de corrigir
+   e visível para quem usa: a 1280px o mascote intercepta o clique.
+3. **F-12/F-13, o que sobrou** — reconexão do `/stream` com `fromSeq` sem duplicar
+   eventos, e tool calls/timeout no provedor falso (`e2e/fixtures/provedorFalso.mjs`,
+   onde o resto já está pronto).
+4. **F-14** — retomada após `kill -9` no meio de um run, com checkpoint real.
+5. **F-15** — tabela `pipeline_runs` (`pipeline_run_id`, `current_stage`,
    `completed_stages`, `pending_stages`, `artifact_versions`, `status`, `checkpoint`,
    `updated_at`) e retomada no boot.
-5. **F-20** — extrair de `App.jsx`, por etapas: shell → estado da conversa → estado da
+6. **F-21** — extrair de `App.jsx`, por etapas: shell → estado da conversa → estado da
    execução → drawers/configurações. `React.lazy` nos painéis pesados.
-6. **F-24/F-25 (sub-agentes, o que sobrou dos P1/P2)** — orçamento por delegação
+7. **F-24/F-25 (sub-agentes, o que sobrou dos P1/P2)** — orçamento por delegação
    (`SUBAGENT_TIMEOUT_MS`, `MAX_STEPS`, `MAX_TOKENS`, deadline compartilhado); diretório
    `outputs/<delegationId>/` com manifesto por filho; catálogo persistido de capacidade de
    tool calling por `provedor+modelo+endpoint` (hoje `markModelCapabilityUnsupported` só
@@ -505,6 +576,10 @@ npm test && npm run dev
 # 4) Antes de commitar
 cd backend  && npm run check   # lint + testes
 cd frontend && npm run check   # lint + testes + build
+
+# 5) Mexeu em interface, streaming ou login? Rode também os E2E (exige Postgres)
+cd e2e && npm install && npm run navegador   # só na primeira vez
+cd e2e && E2E_DATABASE_URL=$DATABASE_URL npm test
 ```
 
 **Convenções que valem a pena manter:**

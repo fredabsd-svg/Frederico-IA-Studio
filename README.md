@@ -205,7 +205,7 @@ chave única do servidor para uso pessoal/de equipe.
 | 🐳 **Backend sem o socket do Docker** | Quem o detém é o serviço `docker-guard`, que valida cada requisição ao daemon (allowlist de rotas, inspeção do corpo de `/containers/create`, posse por label) |
 | 🛡️ **Antivírus honesto nos uploads** | Todo arquivo é escaneado (ClamAV) antes de ser salvo, e a resposta diz se foi `verificado`, `degradado` ou `sem-antivirus` — **nada é apresentado como verificado sem ter sido analisado** |
 | 🧱 **Camada HTTP endurecida** | `helmet`, CORS restrito à própria origem, rate limiting por IP e validação `zod` |
-| 🛰️ **Anti-SSRF no `web_fetch`** | Bloqueia IPs internos e **resolve o DNS validando cada IP** antes de conectar, revalidando a cada redirect |
+| 🛰️ **Anti-SSRF no `web_fetch`** | Bloqueia IPs internos e **resolve o DNS validando cada IP** antes de conectar, revalidando a cada redirect. O navegador headless que gera a miniatura da página segue a mesma regra: **cada salto de redirecionamento é validado antes de ser seguido**, inclusive nos recursos que a página carrega |
 | 🖥️ **Guarda de execução** | `bash` e `run_python` passam pela mesma validação; alterar arquivos reais do PC exige pedido explícito e fica registrado em auditoria |
 | 📄 **Conteúdo externo é dado, não ordem** | Página lida, README de repositório, documento, memória, saída de ferramenta e resposta de outro modelo entram marcados como **dado não confiável** — e a marcação estrutural é neutralizada, para que texto de terceiro não consiga se passar por instrução do aplicativo nem virar chamada de ferramenta. Coberto por uma **bateria adversarial de 33 casos** |
 | 🤝 **Delegação não escala privilégio** | O sub-agente herda um contrato **congelado** do agente que o chamou — ferramentas (interseção com o especialista), rede, escrita nas Pastas do PC e política do sandbox. Nada disso é recalculado a partir da subtarefa, que é texto escrito pelo próprio modelo |
@@ -275,19 +275,22 @@ chave única do servidor para uso pessoal/de equipe.
 | [docs/MULTIMODEL.md](docs/MULTIMODEL.md) | Modos multimodelo e o que ainda falta |
 | [docs/MEMORY.md](docs/MEMORY.md) | Memória semântica e recuperação de contexto |
 | [docs/DOCLING.md](docs/DOCLING.md) | Camada de compreensão documental |
+| [e2e/README.md](e2e/README.md) | Testes de navegador: como rodar, o provedor simulado e as armadilhas já pagas |
+| [docs/FREDERICO_COMPANION.md](docs/FREDERICO_COMPANION.md) | O copiloto Nino em detalhe |
 | [VPS-DEPLOY.md](VPS-DEPLOY.md) | Publicação em VPS com HTTPS |
 | [NOTEBOOK-SERVIDOR.md](NOTEBOOK-SERVIDOR.md) | Acesso remoto com notebook e Tailscale |
 | [docs/CHANGELOG_HISTORY.md](docs/CHANGELOG_HISTORY.md) | Histórico completo do projeto |
-| [VPS-DEPLOY.md](VPS-DEPLOY.md) | Publicação em VPS com HTTPS |
-| [NOTEBOOK-SERVIDOR.md](NOTEBOOK-SERVIDOR.md) | Acesso remoto com notebook e Tailscale |
-| [docs/DOCLING.md](docs/DOCLING.md) | Camada de compreensão documental |
-| [docs/FREDERICO_COMPANION.md](docs/FREDERICO_COMPANION.md) | O copiloto Nino em detalhe |
 
 ## 🤝 Contribuir
 
 Toda mudança relevante precisa: atualizar o `CONTINUIDADE.md` (que é **curto** — o
 histórico vai para `docs/CHANGELOG_HISTORY.md`), passar por `npm run check` nos dois
 lados, receber um commit descritivo em português e ser enviada ao GitHub na mesma sessão.
+
+Mexeu em interface, streaming ou login? Rode também os testes de navegador
+(`cd e2e && npm test` — exige PostgreSQL; ver [e2e/README.md](e2e/README.md)).
+Eles sobem o **build de produção** e conversam com um provedor de IA simulado,
+então não precisam de chave nem de internet.
 
 <div align="center">
 

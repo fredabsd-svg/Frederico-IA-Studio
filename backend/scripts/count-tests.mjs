@@ -52,11 +52,30 @@ for (const suite of SUITES) {
   linhas.push(`| ${suite.nome} | ${r.total} | ${r.pass} | ${r.fail} | ${r.skip} |`);
 }
 
+// Ponta a ponta (e2e/): LISTADOS, não executados aqui. Rodá-los exigiria
+// PostgreSQL, navegador e os três servidores de pé — caro demais para um script
+// de contagem, e este roda na máquina de quem escreve documentação. O
+// `playwright test --list` dá o número honesto sem subir nada. Quem executa de
+// verdade é o job "Ponta a ponta (navegador real)" do CI.
+const e2e = spawnSync('npx', ['playwright', 'test', '--list', '--reporter=list'], {
+  cwd: path.join(repoRoot, 'e2e'), encoding: 'utf8', shell: false
+});
+const e2eSaida = `${e2e.stdout || ''}\n${e2e.stderr || ''}`;
+const e2eTotal = Number(/^Total: (\d+) tests?/m.exec(e2eSaida)?.[1] ?? 0);
+const linhaE2E = e2eTotal
+  ? `| Ponta a ponta (navegador) | ${e2eTotal} | — | — | — |`
+  : '| Ponta a ponta (navegador) | — | — | — | indisponível (rode `cd e2e && npm install`) |';
+
 const tabela = [
   '| Suíte | Testes | Passaram | Falharam | Pulados |',
   '| --- | ---: | ---: | ---: | ---: |',
   ...linhas,
-  `| **Total** | **${somaTotal}** | | | |`
+  linhaE2E,
+  `| **Total** | **${somaTotal + e2eTotal}** | | | |`,
+  '',
+  '> Ponta a ponta entra na conta como **listados**: este script não os executa',
+  '> (precisariam de PostgreSQL, navegador e os servidores de pé). Quem os roda',
+  '> é o job "Ponta a ponta (navegador real)" do CI.'
 ].join('\n');
 
 console.log(tabela);

@@ -29,6 +29,12 @@ npm run check            # lint + test + build
 # sandbox (Python)
 python -m pip install openpyxl==3.1.5
 python -m unittest discover -s sandbox -p '*_test.py' -v
+
+# ponta a ponta (navegador real) — exige Postgres; ver e2e/README.md
+cd e2e
+npm install
+npm run navegador        # baixa o Chromium do Playwright (uma vez)
+E2E_DATABASE_URL=postgres://studio:studio@127.0.0.1:5432/studio npm test
 ```
 
 Com Postgres disponível, **nenhum** teste do backend deve ser pulado — o CI falha se
@@ -59,8 +65,9 @@ semântica, e testar com Postgres puro esconderia diferenças de comportamento.
 | `backend-unit` | Suíte do backend **sem** banco, em Node 20 e Node 22 |
 | `backend-integration` | Postgres real: migrações do zero + idempotência + tabelas + cascade; suíte completa **sem skips**; boot real do backend + `/api/health`; portão de autenticação (9 rotas → 401) |
 | `frontend` | Todos os 7 arquivos de teste + build + catraca de bundle (≤ 1.000 KB) |
+| `e2e` | **Navegador real** (Chromium) contra o build de produção do frontend, backend real e Postgres real; o provedor de IA é simulado (`e2e/fixtures/provedorFalso.mjs`). Cobre streaming, troca de conversa no meio da resposta, reconexão e o portão de consentimento |
 | `compose` | `docker compose config` dos dois arquivos + build das imagens do backend e do guarda + **checagem de que só o `docker-guard` monta o socket** (regressão do F-04) |
-| `contagem` | Executa tudo e publica a contagem no resumo |
+| `contagem` | Executa tudo e publica a contagem no resumo (os E2E entram **listados**, não executados — quem os roda é o job `e2e`) |
 
 Node 20 = o da imagem de produção; Node 22 = a linha LTS atual. O que roda na VPS é testado.
 
@@ -109,6 +116,8 @@ teste — vários módulos leem essas variáveis no momento da importação.
 | `docker-guard/src/policy.test.js` | Cada fuga conhecida é barrada: container privilegiado, bind de `/`, bind do próprio `docker.sock`, `/etc`/`/proc`/`/root`, travessia com `..`, prefixo parecido (`/ws-outro` não é `/ws`), `CapAdd`, GPU, `PidMode`/`UsernsMode` do host, rede do host, outra imagem, volume nomeado; endurecimento e cotas obrigatórios; rotas perigosas (`build`, `images/create`, `archive`, `update`, `swarm`…) recusadas |
 | `docker-guard/src/server.test.js` | **Proxy real** contra um daemon Docker falso num socket unix: cada bloqueio verifica que a requisição **não chegou** ao daemon; posse por label impede derrubar o Postgres do compose; o `hijack` do exec faz o túnel de bytes e é recusado em container de terceiro |
 | `backend/src/sandbox.dockerAccess.test.js` | O backend reporta em `/api/health` se está atrás do guarda ou com o socket na mão |
+| `backend/src/agent/pageShot.test.js` | Guarda de rede da miniatura de página: host interno/loopback/metadados barrado, esquema não-http recusado, URL ilegível **negada** (falha fechada) e — o que a troca do puppeteer pelo Playwright poderia ter quebrado — **redirecionamento de página pública para a rede interna abortado antes de chegar ao navegador** |
+| `e2e/tests/*.spec.js` | Navegador real contra o build de produção: streaming chega aos poucos, resposta persiste, troca de conversa no meio do stream não mistura respostas, reconexão depois de recarregar, indicador de "processando" na barra lateral, portão de consentimento (LGPD) e a mensagem de chave inválida nomeando o provedor certo (regressão do PR #140) |
 
 Scripts de apoio: `backend/scripts/run-tests.mjs` e `frontend/scripts/run-tests.mjs`
 (descoberta de testes independente da versão do Node), `backend/scripts/check-migrations.mjs`,
@@ -120,14 +129,14 @@ Scripts de apoio: `backend/scripts/run-tests.mjs` e `frontend/scripts/run-tests.
 
 Reconhecidas, priorizadas e **não** cobertas até aqui — ver `docs/AUDITORIA_2026-07.md`:
 
-| ID | Lacuna |
-| --- | --- |
-| F-12 | SSE integrado: duas conversas simultâneas, troca rápida, reconexão com `fromSeq` |
-| F-13 | Provedor HTTP simulado completo (streaming, tool calls, erros, timeout) |
-| F-14 | Retomada após **interrupção real do processo** (matar o Node no meio) |
-| F-15 | Pipeline multimodelo retomável após reinício |
-| F-16 | Suíte de relevância de memória com casos **negativos** |
-| F-18 | Corpus documental do Docling (escaneado, DRE, PGFN, células mescladas…) |
-| F-19 | Git local para clone/commit/push do modo desenvolvedor |
-| F-20 | E2E de navegador (Playwright já está disponível na imagem do sandbox) |
-| F-23 | Validação de artefato: XLSX com `#REF!`, DOCX vazio, PDF com página em branco |
+| ID | Lacuna | Situação |
+| --- | --- | --- |
+| F-12 | SSE integrado: duas conversas simultâneas, troca rápida, reconexão | **Coberta em parte** por `e2e/tests/multiconversa.spec.js`: duas conversas, troca no meio do streaming sem mistura, e reconexão depois de recarregar a página. **Falta** o caso específico de `fromSeq` (reconectar o `/stream` sem duplicar eventos) exercitado de forma isolada |
+| F-13 | Provedor HTTP simulado completo (streaming, tool calls, erros, timeout) | **Coberta em parte** por `e2e/fixtures/provedorFalso.mjs`: streaming com ritmo controlado, catálogo e erro 401. **Falta** tool calls e timeout |
+| F-14 | Retomada após **interrupção real do processo** (matar o Node no meio) | Aberta |
+| F-15 | Pipeline multimodelo retomável após reinício | Aberta |
+| F-16 | Suíte de relevância de memória com casos **negativos** | Aberta |
+| F-18 | Corpus documental do Docling (escaneado, DRE, PGFN, células mescladas…) | Aberta |
+| F-19 | Git local para clone/commit/push do modo desenvolvedor | Aberta |
+| F-20 | E2E de navegador | **Fechada** — `e2e/`, Chromium real contra o build de produção, no CI |
+| F-23 | Validação de artefato: XLSX com `#REF!`, DOCX vazio, PDF com página em branco | Aberta |
