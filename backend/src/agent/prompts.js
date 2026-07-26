@@ -135,6 +135,7 @@ const PYTHON_INVENTORY = [
   'PDF/OCR: PyMuPDF/fitz, pypdf, PyPDF2, pdfplumber, camelot, ocrmypdf, pdf2image, pytesseract (idioma por), opencv-python-headless.',
   'Utilidades: python-dateutil, pytz, tzdata, PyYAML, rapidfuzz, phonenumbers, unidecode, xmltodict (ler XML), jsonschema (validar JSON), num2words (número por extenso).',
   'Web/texto offline: beautifulsoup4, lxml, Flask, FastAPI, Uvicorn e httpx.',
+  'GraphQL: strawberry-graphql (o módulo importável é strawberry) com graphql-core. Define o schema por type hints, roda consulta sem servidor com Schema.execute_sync, expõe via FastAPI com strawberry.fastapi.GraphQLRouter e tem o comando strawberry (CLI) para subir um GraphiQL local.',
   'Qualidade e bancos: pytest, black, ruff, mypy, isort, SQLAlchemy, psycopg (PostgreSQL v3), psycopg2 e clientes MySQL/Redis/MongoDB.',
   'Vetores: CairoSVG e svglib para converter ou compor SVG/PDF.',
   'ML em CPU: scikit-learn e onnxruntime para inferência; transformers, sentencepiece e safetensors para tokenização, configuração e arquivos de modelo. Sem PyTorch/TensorFlow, use modelos ONNX com onnxruntime para executar inferência.',
@@ -370,7 +371,7 @@ export function toolAvailabilityNote(tools, { includeInventory = false, sandboxN
   if (includeInventory && names.has('bash')) {
     lines.push('Inventário de shell instalado via bash:');
     for (const item of SHELL_INVENTORY) lines.push(`- ${item}`);
-    lines.push('VERIFICAÇÃO OBRIGATÓRIA DE AMBIENTE: antes de afirmar que algo existe ou falta, execute o comando correspondente. Para C#: `command -v dotnet && dotnet --version`; para Kotlin: `command -v kotlinc && kotlinc -version`; para odfpy use `python -c "import odf"`; para PostgreSQL use `python -c "import psycopg, psycopg2"`.');
+    lines.push('VERIFICAÇÃO OBRIGATÓRIA DE AMBIENTE: antes de afirmar que algo existe ou falta, execute o comando correspondente. Para C#: `command -v dotnet && dotnet --version`; para Kotlin: `command -v kotlinc && kotlinc -version`; para odfpy use `python -c "import odf"`; para PostgreSQL use `python -c "import psycopg, psycopg2"`; para GraphQL use `python -c "import strawberry"` (o pacote strawberry-graphql importa como strawberry).');
   }
   if (includeInventory && names.has('bash')) {
     lines.push('Exemplos úteis de LibreOffice: soffice --headless --convert-to xlsx --outdir /workspace/outputs arquivo.xls; soffice --headless --convert-to pdf --outdir /workspace/outputs relatorio.docx.');
@@ -382,14 +383,14 @@ export function toolAvailabilityNote(tools, { includeInventory = false, sandboxN
   return lines.join('\n');
 }
 
-export const ENVIRONMENT_QUERY_RE = /\b(ambiente|sandbox|diagn[oó]stico|invent[aá]rio|instalad[oa]s?|aus[eê]ncia|falta|dispon[ií]vel|vers[aã]o|compilador(?:es)?|linguagem(?:ns)?|ferramenta(?:s)?|toolchain|dotnet|c#|kotlin|kotlinc|odfpy|psycopg2)\b/i;
+export const ENVIRONMENT_QUERY_RE = /\b(ambiente|sandbox|diagn[oó]stico|invent[aá]rio|instalad[oa]s?|aus[eê]ncia|falta|dispon[ií]vel|vers[aã]o|compilador(?:es)?|linguagem(?:ns)?|ferramenta(?:s)?|toolchain|dotnet|c#|kotlin|kotlinc|odfpy|psycopg2|strawberry|graphql)\b/i;
 const ENVIRONMENT_AUDIT_COMMAND = [
   'set +e',
   'if command -v dotnet >/dev/null 2>&1; then echo "dotnet=present $(dotnet --version)"; else echo "dotnet=absent"; fi',
   'if command -v kotlinc >/dev/null 2>&1; then echo "kotlinc=present $(kotlinc -version 2>&1 | tail -n 1)"; else echo "kotlinc=absent"; fi',
   "python - <<'PY'",
   'import importlib.util',
-  "for label, module in [('odfpy_import_odf', 'odf'), ('psycopg_v3', 'psycopg'), ('psycopg2', 'psycopg2')]:",
+  "for label, module in [('odfpy_import_odf', 'odf'), ('psycopg_v3', 'psycopg'), ('psycopg2', 'psycopg2'), ('strawberry_graphql_import_strawberry', 'strawberry')]:",
   "    print(f'{label}=' + ('present' if importlib.util.find_spec(module) else 'absent'))",
   'PY'
 ].join('\n');
