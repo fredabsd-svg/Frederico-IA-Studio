@@ -310,6 +310,32 @@ ferramenta que vaze como texto (`sanitizeToolProtocolText`), na exibição **e**
 
 ---
 
+## 13.1 Sub-agentes (`agent/subagents.js`)
+
+Delegação em **tempo de execução**: o próprio agente principal decide, no meio do trabalho,
+mandar uma subtarefa para um `runAgent` completo com ferramentas de verdade. Diferente do
+Modo Equipe (`orchestrator.js`), onde os especialistas são escolhidos antes pela interface e
+não executam ferramentas.
+
+| Peça | Comportamento |
+| --- | --- |
+| Oferta da ferramenta | `shouldOfferSubagentTool` — desliga em turno social, modo gratuito, sem ferramentas, dentro de outro sub-agente e com `SUBAGENTS_ENABLED=false`. |
+| Escolha do especialista | `especialista_id` com **`enum` dos ids reais** da conta (`listSubagentSpecialists`). Id inexistente devolve `SUBAGENT_SPECIALIST_NOT_FOUND` — não há fallback silencioso. Sem especialista, o filho usa o perfil do pai. |
+| Autorização | `DelegationContext` congelado (ver `SECURITY.md` §8.1). Nada é recalculado a partir da subtarefa. |
+| Contexto | Janela isolada: sem memória e sem histórico. O filho vê o prompt protegido, a subtarefa e o manifesto de uploads/documentos da conversa. |
+| Paralelismo | `createSubagentLimiter` — semáforo com contador e fila FIFO. Lote **só** de delegações corre em paralelo; lote misto (`write_file` + delegação) volta a correr em série, na ordem pedida. |
+| Cancelamento | `control.activeTools` é um `Set`: o Parar aborta todas as ferramentas em voo, não só a última registrada. |
+| Custo | `usage` do filho soma na do pai; esforço limitado a `alto`; tetos `SUBAGENT_MAX_PER_RUN` (4, máx. 10) e `SUBAGENT_MAX_PARALLEL` (2, máx. 4). |
+| O que volta ao pai | Só o JSON de `summarizeSubagentResult`: resultado, arquivos, especialista e modelo REAIS. O texto corrido do filho nunca entra na resposta do pai (`FORWARDED_EVENTS`). |
+
+- **Testes:** `agent/subagents.test.js`, `agent.control.test.js`.
+- **Lacuna:** sem teste de ponta a ponta do `loop.js` com delegação real simulada (F-13);
+  sem orçamento próprio de tempo/tokens por delegação; arquivos de dois filhos paralelos
+  ainda compartilham `outputs/` (a atribuição por filho pode se cruzar — o conjunto que o
+  usuário recebe está correto porque o pai também faz o diff).
+
+---
+
 ## 14. Integração GitHub (`connectors/github.js`)
 
 - Token do usuário cifrado em `user_connectors` (AES-256-GCM, `crypto.js`).

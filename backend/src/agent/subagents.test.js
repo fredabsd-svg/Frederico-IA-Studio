@@ -8,8 +8,11 @@ process.env.DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || 'test-key';
 const {
   MAX_SUBAGENT_DEPTH,
   SUBAGENT_TOOL_NAME,
+  buildDelegationContext,
   buildSubagentTask,
+  canLaunchDelegationsInParallel,
   createSubagentLimiter,
+  intersectToolDefinitions,
   maxParallelSubagents,
   maxSubagentsPerRun,
   runSubagent,
@@ -17,8 +20,12 @@ const {
   subagentEffort,
   subagentEventForwarder,
   subagentToolDefinition,
+  subagentToolDefinitionFor,
   summarizeSubagentResult
 } = await import('./subagents.js');
+const { sandboxPolicy } = await import('../sandbox.js');
+
+const toolDef = (name) => ({ type: 'function', function: { name } });
 
 // ---- Guard-rail 1: quando a delegação é oferecida ----
 
@@ -251,4 +258,174 @@ test('a definição da ferramenta exige a tarefa e avisa que o filho não vê a 
   assert.equal(subagentToolDefinition.function.name, SUBAGENT_TOOL_NAME);
   assert.deepEqual(subagentToolDefinition.function.parameters.required, ['tarefa']);
   assert.match(subagentToolDefinition.function.description, /NÃO vê esta conversa/i);
+});
+
+// ---- Limitador: o teto precisa valer com fila de verdade (P0-05) ----
+
+test('createSubagentLimiter nunca ultrapassa o teto com MAIS tarefas do que vagas', async () => {
+  // Reprodução do defeito do Promise.race: com duas tarefas esperando a MESMA
+  // corrida, a conclusão de uma liberava as duas — pico 3 com limite 2.
+  const limitar = createSubagentLimiter(2);
+  const iniciadas = [];
+  let ativas = 0;
+  let pico = 0;
+  const resolvers = new Map();
+  const tarefa = (n) => () => new Promise(resolve => {
+    iniciadas.push(n);
+    ativas += 1;
+    pico = Math.max(pico, ativas);
+    resolvers.set(n, () => { ativas -= 1; resolve(n); });
+  });
+
+  const promessas = [1, 2, 3, 4, 5].map(n => limitar(tarefa(n)));
+  await new Promise(setImmediate);
+  assert.deepEqual(iniciadas, [1, 2]);
+
+  resolvers.get(1)();
+  await new Promise(setImmediate);
+  assert.deepEqual(iniciadas, [1, 2, 3], 'uma vaga livre solta UMA tarefa, não a fila inteira');
+  assert.equal(pico, 2);
+
+  resolvers.get(2)();
+  await new Promise(setImmediate);
+  assert.deepEqual(iniciadas, [1, 2, 3, 4]);
+  assert.equal(pico, 2);
+
+  resolvers.get(3)();
+  await new Promise(setImmediate);
+  resolvers.get(4)();
+  resolvers.get(5)();
+  assert.deepEqual(await Promise.all(promessas), [1, 2, 3, 4, 5]);
+  assert.equal(pico, 2, 'nunca passou do teto em nenhum momento');
+});
+
+test('createSubagentLimiter devolve a vaga quando a tarefa lança de forma síncrona', async () => {
+  const limitar = createSubagentLimiter(1);
+  await assert.rejects(limitar(() => { throw new Error('estourou antes de virar promessa'); }), /estourou/);
+  assert.equal(await limitar(() => Promise.resolve('a fila seguiu')), 'a fila seguiu');
+});
+
+// ---- Ordem: paralelizar só lote homogêneo (P0-06) ----
+
+test('só paraleliza quando o lote é SÓ de delegações', () => {
+  assert.equal(canLaunchDelegationsInParallel([SUBAGENT_TOOL_NAME, SUBAGENT_TOOL_NAME]), true);
+  // write_file criando o arquivo + delegação para revisá-lo: o filho não pode
+  // partir antes da escrita acontecer.
+  assert.equal(canLaunchDelegationsInParallel(['write_file', SUBAGENT_TOOL_NAME]), false);
+  assert.equal(canLaunchDelegationsInParallel([SUBAGENT_TOOL_NAME, 'bash']), false);
+  assert.equal(canLaunchDelegationsInParallel(['bash']), false);
+  assert.equal(canLaunchDelegationsInParallel([]), false);
+});
+
+// ---- DelegationContext: a fronteira de autorização (P0-01, P0-02, P0-03) ----
+
+test('o filho não pode ganhar ferramenta que o pai não tinha', () => {
+  const contexto = buildDelegationContext({ toolNames: ['read_file', 'list_files'] });
+  // O especialista escolhido é um assistente com poderes MAIORES; a interseção
+  // com o pai é o que vale.
+  const doEspecialista = ['read_file', 'list_files', 'bash', 'run_python', 'write_file'].map(toolDef);
+  const efetivas = intersectToolDefinitions(doEspecialista, contexto.allowedToolNames)
+    .map(tool => tool.function.name);
+  assert.deepEqual(efetivas, ['read_file', 'list_files']);
+});
+
+test('a delegação não se propaga: a própria ferramenta sai da herança', () => {
+  const contexto = buildDelegationContext({ toolNames: ['bash', SUBAGENT_TOOL_NAME, 'bash'] });
+  assert.deepEqual(contexto.allowedToolNames, ['bash']);
+});
+
+test('sem lista herdada, a interseção não inventa restrição', () => {
+  const tools = ['bash'].map(toolDef);
+  assert.deepEqual(intersectToolDefinitions(tools, null), tools);
+});
+
+test('rede, escrita no PC e escrita no GitHub vêm do pai — e o contexto é imutável', () => {
+  const contexto = buildDelegationContext({
+    toolNames: ['bash'],
+    networkEnabled: true,
+    pcWriteAuthorized: true,
+    sandboxOptions: { readOnlyPc: false, writablePcFolderId: 'pasta-1', networkEnabled: true, userId: 'u' }
+  });
+  assert.equal(contexto.networkEnabled, true);
+  assert.equal(contexto.pcWriteAuthorized, true);
+  assert.equal(contexto.gitWriteAuthorized, false, 'escrita no GitHub nunca se herda');
+  // Congelado de propósito: nada no caminho da subtarefa pode reescrever isto.
+  assert.equal(Object.isFrozen(contexto), true);
+  assert.equal(Object.isFrozen(contexto.sandboxOptions), true);
+  assert.throws(() => { 'use strict'; contexto.networkEnabled = false; }, TypeError);
+});
+
+test('a política de sandbox do filho é IDÊNTICA à do pai, mesmo com outro modelo', () => {
+  // Era isto que reciclava o container no meio da execução: pai em
+  // `write:<projeto>`, filho em `read-only`, cada um derrubando o do outro.
+  const doPai = { readOnlyPc: false, writablePcFolderId: 'projeto-x', networkEnabled: true, userId: 'u', model: 'openai/gpt-4o' };
+  const contexto = buildDelegationContext({ sandboxOptions: doPai });
+  const doFilho = { ...contexto.sandboxOptions, model: 'deepseek::deepseek-chat' };
+  assert.equal(sandboxPolicy(doFilho).key, sandboxPolicy(doPai).key);
+  assert.equal(sandboxPolicy(doFilho).key, 'write:projeto-x|network:on');
+});
+
+test('runSubagent repassa o contexto de delegação e o perfil do pai ao filho', async () => {
+  const contexto = buildDelegationContext({
+    assistant: { id: 'a1', name: 'Perfil do pai', tools: ['read_file'] },
+    toolNames: ['read_file']
+  });
+  let recebido = null;
+  await runSubagent({
+    userId: 'u', conversationId: 'c', args: { tarefa: 'conferir a nota' },
+    depth: 0, onEvent: () => {}, delegation: contexto,
+    runner: async (params) => { recebido = params; return { text: 'ok' }; }
+  });
+  assert.equal(recebido.delegation, contexto, 'o mesmo objeto congelado chega ao filho');
+  // Sem especialista pedido, o filho herda o PERFIL do pai — não o assistente
+  // padrão com o conjunto de ferramentas inteiro.
+  assert.equal(recebido.assistant.name, 'Perfil do pai');
+});
+
+// ---- Especialistas: inventário real e nada de fallback silencioso (P1-01, P1-02) ----
+
+test('a definição leva o inventário de especialistas como enum de ids', () => {
+  const definicao = subagentToolDefinitionFor([
+    { id: 'asst_1', name: 'Fiscal' },
+    { id: 'asst_2', name: 'Contábil' }
+  ]);
+  const campo = definicao.function.parameters.properties.especialista_id;
+  assert.deepEqual(campo.enum, ['asst_1', 'asst_2']);
+  assert.match(campo.description, /asst_1 = Fiscal/);
+  assert.match(campo.description, /asst_2 = Contábil/);
+});
+
+test('sem assistentes cadastrados, o campo de especialista nem é oferecido', () => {
+  assert.equal('especialista_id' in subagentToolDefinitionFor([]).function.parameters.properties, false);
+});
+
+test('especialista inexistente RECUSA a delegação em vez de trocar em silêncio', async () => {
+  let chamou = false;
+  const { result } = await runSubagent({
+    userId: 'u', conversationId: 'c',
+    args: { tarefa: 'apurar o ICMS', especialista_id: 'Fiscal' },   // nome inventado pelo modelo
+    depth: 0, onEvent: () => {},
+    runner: async () => { chamou = true; return { text: 'ok' }; }
+  });
+  assert.equal(chamou, false, 'não podia ter rodado o assistente padrão no lugar');
+  const payload = JSON.parse(result);
+  assert.equal(payload.code, 'SUBAGENT_SPECIALIST_NOT_FOUND');
+  assert.match(payload.error, /Fiscal/);
+});
+
+test('o resultado diz QUEM executou — especialista e modelo', () => {
+  const payload = summarizeSubagentResult({ text: 'feito' }, { especialista: 'Fiscal', modelo: 'openai/gpt-4o' });
+  assert.equal(payload.especialista, 'Fiscal');
+  assert.equal(payload.modelo, 'openai/gpt-4o');
+});
+
+// ---- Truncamento da subtarefa: declarado, nunca silencioso (P2-01) ----
+
+test('subtarefa longa é cortada COM aviso ao sub-agente', () => {
+  const curta = buildSubagentTask({ tarefa: 'somar a coluna C' });
+  assert.doesNotMatch(curta, /TAREFA TRUNCADA/);
+
+  const longa = buildSubagentTask({ tarefa: `${'x'.repeat(6000)} NÃO ARREDONDE PARA CIMA` });
+  assert.match(longa, /\[TAREFA TRUNCADA/);
+  assert.doesNotMatch(longa, /NÃO ARREDONDE/, 'a regra final realmente se perdeu — por isso o aviso');
 });

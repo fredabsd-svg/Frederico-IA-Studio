@@ -3,7 +3,7 @@
 // Extraído de agent.js (refatoração mecânica, sem mudança de comportamento).
 
 // ---- Controle de execução (pausar / continuar / parar) ----
-const controls = new Map(); // conversationId -> { paused, stopped, activeRequests: Set, activeTool }
+const controls = new Map(); // conversationId -> { paused, stopped, activeRequests: Set, activeTools: Set }
 
 export class ConversationBusyError extends Error {
   constructor() {
@@ -21,7 +21,12 @@ export function acquireConversationControl(conversationId, userId = null) {
   // estiverem em voo.
   // userId (opcional) marca o dono da execução — alimenta o teto de conversas
   // SIMULTÂNEAS por usuário (multiconversa), sem mudar nenhum comportamento.
-  const control = { paused: false, stopped: false, activeRequests: new Set(), activeTool: null, userId };
+  // activeTools é um Set pela MESMA razão: com sub-agentes em paralelo, dois
+  // filhos podem ter um bash/run_python em voo ao mesmo tempo. Com um slot
+  // único, `beginToolRequest` sobrescrevia o anterior e o Parar abortava só a
+  // última ferramenta registrada — as outras seguiam consumindo CPU e gravando
+  // arquivos depois que o usuário já tinha parado a tarefa.
+  const control = { paused: false, stopped: false, activeRequests: new Set(), activeTools: new Set(), userId };
   controls.set(conversationId, control);
   return control;
 }
@@ -52,12 +57,12 @@ export function releaseProviderRequest(control, request) {
 
 export function beginToolRequest(control) {
   const request = new AbortController();
-  control.activeTool = request;
+  control.activeTools.add(request);
   return request;
 }
 
 export function releaseToolRequest(control, request) {
-  if (control?.activeTool === request) control.activeTool = null;
+  control?.activeTools?.delete(request);
 }
 
 export function controlInterruptReason(control, request) {
@@ -74,9 +79,10 @@ function abortActiveProviderRequest(control, reason) {
   }
 }
 
-function abortActiveToolRequest(control, reason) {
-  const request = control?.activeTool;
-  if (request && !request.signal.aborted) request.abort(reason);
+function abortActiveToolRequests(control, reason) {
+  for (const request of control?.activeTools || []) {
+    if (request && !request.signal.aborted) request.abort(reason);
+  }
 }
 
 export function setControl(conversationId, action) {
@@ -93,7 +99,7 @@ export function setControl(conversationId, action) {
     c.stopped = true;
     c.paused = false;
     abortActiveProviderRequest(c, 'stop');
-    abortActiveToolRequest(c, 'stop');
+    abortActiveToolRequests(c, 'stop');
   }
   return c;
 }

@@ -264,6 +264,33 @@ foram corrigidas nesta frente:
    apesar de esta seção já afirmar o contrário. Era o maior canal de texto de terceiros do
    app (`web_fetch`, `read_file`, `bash`, `github_clone`) e a cadeia mais curta até execução.
 
+### 8.1 Delegação a sub-agentes — a fronteira de autorização
+
+Um sub-agente (`agent/subagents.js`) roda um `runAgent` COMPLETO, com ferramentas de
+verdade, a partir de um texto que **o modelo principal escreveu**. Isso faz da delegação um
+caso especial de conteúdo não confiável: se qualquer permissão for derivada desse texto, o
+modelo passa a ser a fonte da própria autorização.
+
+Controles:
+
+| Superfície | Regra |
+| --- | --- |
+| Ferramentas | `allowedTools = ferramentas efetivas do pai ∩ ferramentas do especialista`. A poda é feita no `loop.js` com `intersectToolDefinitions`. Um assistente com apenas `read_file` não ganha `bash`/`write_file` ao delegar. |
+| Rede do sandbox | Herdada do pai. O filho **não** chama `resolveSandboxNetwork` sobre a subtarefa. |
+| Escrita nas Pastas do PC | Herdada do pai. O filho **não** chama `explicitlyAuthorizesPcWrite` sobre a subtarefa. |
+| Política de sandbox | O filho recebe o `sandboxOptions` do pai verbatim → mesma `sandboxPolicy().key` → mesmo container. |
+| Escrita no GitHub | Nunca se herda (`gitWriteAuthorized: false`). |
+| Profundidade | `MAX_SUBAGENT_DEPTH = 1` — sub-agente não delega. O nome da ferramenta é removido da herança. |
+| Contexto | Janela isolada: sem memória de longo prazo e sem histórico da conversa (o prompt do filho afirma isso, e agora é verdade). |
+
+Tudo isso viaja num objeto **congelado** (`buildDelegationContext`), montado uma única vez
+pelo pai a partir do pedido real do usuário, e é o mesmo para todas as delegações da
+execução. Testes em `agent/subagents.test.js`.
+
+**Lacuna conhecida:** a herança é garantida por construção e por teste unitário do contrato
+(interseção, congelamento, igualdade da chave de política). Falta o teste de ponta a ponta
+do `runAgent` com um provedor simulado — depende do F-13.
+
 ---
 
 ## 9. LGPD

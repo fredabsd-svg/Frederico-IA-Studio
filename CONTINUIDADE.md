@@ -22,13 +22,14 @@ Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 - **Último trabalho:** **PR [#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)** —
   troca do navegador headless para **Playwright** e criação da suíte **ponta a ponta**
   (`e2e/`). **F-20 fechado**, F-12 e F-13 cobertos em parte. A troca expôs um buraco de
-  SSRF que uma porta ingênua teria aberto. Detalhe abaixo.
-- **Última validação:** 2026-07-26 — **778 testes** (backend 653, frontend 57, guarda do
-  Docker 49, sandbox Python 10, ponta a ponta 9). Backend e frontend rodaram com
-  PostgreSQL real neste contêiner: **653 passaram, 0 pulados**. Os 9 E2E rodaram de
-  verdade (3 execuções seguidas, 9/9 nas três). Os 10 do Python não coletam aqui por
-  falta do `openpyxl` — na CI rodam. A contagem vem de `cd backend && npm run test:count`
-  — não a escreva à mão.
+  SSRF que uma porta ingênua teria aberto. Detalhe abaixo. Antes dele, o **PR
+  [#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)** (as sete falhas
+  P0 dos sub-agentes) e o **PR #144** (GraphQL no sandbox e o inventário de ferramentas).
+- **Última validação:** 2026-07-26 — **802 testes** (backend 677, frontend 57, guarda do
+  Docker 49, sandbox Python 10, ponta a ponta 9), já com a `main` mesclada. Backend e
+  frontend rodaram com PostgreSQL real neste contêiner: **677 passaram, 0 pulados**. Os 9
+  E2E rodaram de verdade. Os 10 do Python não coletam aqui por falta do `openpyxl` — na
+  CI rodam. A contagem vem de `cd backend && npm run test:count` — não a escreva à mão.
 
 ---
 
@@ -92,6 +93,78 @@ Novo job `e2e` no CI, com Postgres real e Chromium. Ver `e2e/README.md`.
    `deepseek/deepseek-chat`, o `getUserProvider` cai no `rows[0]` e o teste da chave
    inválida recebia um eco normal em vez do 401. É a causa-raiz que já era o item 1 dos
    próximos passos — agora com uma demonstração reproduzível.
+
+---
+
+## Sub-agentes: as sete falhas P0 (2026-07-26 — PR #145)
+
+Revisão técnica externa do mecanismo de delegação apontou 7 achados P0. Todos confirmados
+contra o código e corrigidos nesta frente.
+
+| # | Falha | Correção |
+| --- | --- | --- |
+| P0-01 | Sem especialista válido, o filho rodava com `assistant = null` e `toolsFor(null)` liberava **todas** as ferramentas — um assistente só-leitura ganhava `bash`/`write_file` ao delegar | `allowedTools = pai ∩ especialista` (`intersectToolDefinitions`); sem especialista, o filho herda o **perfil do pai** |
+| P0-02 | `runAgent` recalculava rede e escrita no PC a partir do `userText` — que, no filho, é a subtarefa **escrita pelo modelo** | Herdadas do `DelegationContext`; o filho não chama `resolveSandboxNetwork` nem `explicitlyAuthorizesPcWrite` |
+| P0-03 | Pai em `write:<projeto>` e filho em `read-only`: cada um derrubava o container do outro na primeira ferramenta | `sandboxOptions` e `developerContext` herdados verbatim → mesma `sandboxPolicy().key` |
+| P0-04 | O prompt dizia "você não vê o histórico", mas o filho usava o mesmo `conversationId` e recebia memória + histórico inteiros | Janela isolada: sem `buildContext` e sem `selectHistoryForContext` quando `isSubagent` |
+| P0-05 | `Promise.race([...ativas])` liberava **várias** tarefas por vaga: limite 2, pico 3 | Semáforo com contador + fila FIFO |
+| P0-06 | Delegações do lote eram lançadas **antes** das outras ferramentas: `write_file` + delegar para revisar o arquivo → o filho lia o que ainda não existia | Paralelismo só em lote homogêneo (`canLaunchDelegationsInParallel`); lote misto roda em série |
+| P0-07 | `control.activeTool` era slot único: com dois filhos executando, o Parar abortava só o último | `control.activeTools` virou `Set` |
+
+De carona, três achados P1/P2 que tornavam os P0 difíceis de perceber:
+
+- **P1-01/P1-02** — `especialista` era texto livre pedindo "o nome exato" sem o modelo saber
+  quais existem: ele inventava "Fiscal", "Revisor", e o código caía no assistente padrão em
+  silêncio, com a interface anunciando o nome pedido. Agora vai `especialista_id` com
+  **`enum` dos ids reais** da conta e id inexistente devolve `SUBAGENT_SPECIALIST_NOT_FOUND`.
+  O resultado carrega o especialista e o modelo que **de fato** rodaram, e a interface mostra.
+- **P2-01** — a subtarefa era cortada em 6.000 caracteres em silêncio (o que se perde são as
+  regras do final). O corte passa a ser declarado ao sub-agente.
+
+**ARMADILHA:** a fronteira de autorização é o `DelegationContext` **congelado**, montado uma
+vez pelo pai. Qualquer permissão nova do filho tem de entrar ali — derivar do texto da
+subtarefa devolve a decisão ao modelo, que é exatamente o defeito de origem.
+
+Detalhe em `docs/SECURITY.md` §8.1 e `docs/ARCHITECTURE.md` §13.1.
+
+---
+
+## GraphQL no sandbox e o inventário do modelo (2026-07-26 — PR #144)
+
+`strawberry-graphql[fastapi,cli]` entrou na imagem do sandbox — schema por type hints,
+`Schema.execute_sync` para consultar sem subir servidor, `strawberry.fastapi.GraphQLRouter`
+para expor pelo FastAPI que já estava lá e o comando `strawberry` (GraphiQL local).
+
+O inventário que o modelo lê foi atualizado nos **três** lugares em que ele existe — eram
+independentes e é fácil mexer num e esquecer os outros:
+`PYTHON_INVENTORY` (`agent/prompts.js`), a descrição do `run_python` (`tools.js`, que é o
+que muitos modelos leem para decidir chamar a ferramenta) e a verificação automática de
+ambiente (`ENVIRONMENT_QUERY_RE` + `ENVIRONMENT_AUDIT_COMMAND`, para "tem GraphQL aí?"
+rodar `import strawberry` de verdade em vez de o modelo responder de memória).
+
+**ARMADILHA (duas):**
+
+1. O pacote é `strawberry-graphql`, o módulo é `strawberry` — mesma classe do `odfpy`/`odf`.
+   Por isso ele entrou na lista de auditoria, que existe exatamente para os nomes que não
+   batem.
+2. O `pip install` fica numa camada **ao fim** do Dockerfile, não junto do `flask fastapi`.
+   Acrescentar no meio do arquivo invalidaria todas as camadas seguintes — dotnet, Kotlin,
+   Chromium, Playwright — e cada atualização baixaria tudo de novo numa VPS pequena. É o
+   mesmo motivo já documentado no bloco acima dele.
+
+Guarda novo: `agent/prompts.inventory.test.js` compara o que o modelo lê com o que o
+Dockerfile instala. Ele **descarta os comentários** do Dockerfile antes de comparar — a
+primeira versão passava com o pacote desinstalado porque casava com o comentário que o
+cita. Verificado nos dois sentidos: falha ao remover o `pip install`, passa ao devolver.
+
+`atualizar.sh` e o `docker compose up -d --build` já reconstroem a imagem do sandbox
+(`sandbox-image`). Quem subir **sem** `--build` fica com a imagem antiga e o inventário
+promete o que não existe — a regra de conferir no terminal antes de afirmar cobre o caso,
+mas o certo é reconstruir.
+
+O README também passou a descrever a caixa de ferramentas do sandbox (antes era só
+"Python, Bash e geração de arquivos"), incluindo REST e GraphQL. Vale a regra de sempre:
+só entra ali o que está de fato instalado na imagem.
 
 ---
 
@@ -446,7 +519,9 @@ renderização real (Playwright) em 360, 393, 600, 900, 1000 e 1300px.
 | F-05b | Sandbox com rede habilitada não tem allowlist de egress. | 🟡 Média |
 | F-13 | Provedor simulado: streaming, catálogo e erro 401 **cobertos** por `e2e/fixtures/provedorFalso.mjs`; faltam tool calls e timeout. | 🟡 Média |
 | F-16, F-18, F-19, F-23 | Relevância de memória (casos negativos), corpus do Docling, git local, validação de artefato com arquivos reais. | 🟡 Média |
-| F-21 | `App.jsx` com 62 `useState`; bundle num único chunk (957 KB, teto 1.000); CSS em camadas sem inventário. | 🟡 Média |
+| F-24 | Sub-agentes: sem orçamento próprio de tempo/tokens por delegação e sem catálogo de modelos com tool calling **verificado** (hoje qualquer modelo do seletor pode receber uma subtarefa). | 🟡 Média |
+| F-25 | Sub-agentes paralelos compartilham `outputs/`: a atribuição de arquivo por filho pode se cruzar e dois filhos podem gravar o mesmo nome. O conjunto que o usuário recebe está certo (o pai também faz o diff); o rótulo por sub-agente é que não é confiável. | 🟡 Média |
+| F-21 | `App.jsx` com 62 `useState`; bundle num único chunk (teto de 1.000 KB no CI); CSS em camadas sem inventário. | 🟡 Média |
 | — | O avatar do Nino cobre o botão de enviar a 1280px de largura (achado dos testes E2E). | 🟡 Média |
 | F-11 | Sem quarentena/reprocesso do que passou com o antivírus degradado. | 🟡 Média |
 
@@ -472,6 +547,12 @@ renderização real (Playwright) em 360, 393, 600, 900, 1000 e 1300px.
    `updated_at`) e retomada no boot.
 6. **F-21** — extrair de `App.jsx`, por etapas: shell → estado da conversa → estado da
    execução → drawers/configurações. `React.lazy` nos painéis pesados.
+7. **F-24/F-25 (sub-agentes, o que sobrou dos P1/P2)** — orçamento por delegação
+   (`SUBAGENT_TIMEOUT_MS`, `MAX_STEPS`, `MAX_TOKENS`, deadline compartilhado); diretório
+   `outputs/<delegationId>/` com manifesto por filho; catálogo persistido de capacidade de
+   tool calling por `provedor+modelo+endpoint` (hoje `markModelCapabilityUnsupported` só
+   vive em memória e se perde no reinício); controle "Usar sub-agentes: automático /
+   desligado / obrigatório" e motivo de indisponibilidade na interface.
 
 ---
 
