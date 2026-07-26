@@ -18,11 +18,38 @@ socket do Docker — ver `docs/SECURITY.md` §4.3). O que ainda impede o verde �
 de testes: SSE integrado, retomada após interrupção real, pipeline retomável e injeção
 adversarial não foram executados. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Branch:** `claude/mobile-site-responsiveness-8z0eb9` → **PR [#131](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/131)**
-- **Última validação:** 2026-07-25 — **684 testes, todos passando** (backend 598,
-  frontend 45, guarda do Docker 40, Python 1), com PostgreSQL real e **zero pulados**;
-  21 migrações aplicadas em banco vazio, reexecução idempotente; boot do backend e  `/api/health` verificados.
-  A contagem vem de `cd backend && npm run test:count` — não a escreva à mão.
+- **Branch:** `claude/new-session-dm3140` → PR aberto (correção da tela "Algo deu errado").
+- **Última validação:** 2026-07-26 — **705 testes** (backend 598, frontend 57, guarda do
+  Docker 40, sandbox Python 10), sem PostgreSQL no contêiner (19 do backend e 9 do Python
+  se autopulam — esperado; o CI roda com Postgres real). `npm run check` verde nos dois
+  lados. A contagem vem de `cd backend && npm run test:count` — não a escreva à mão.
+
+---
+
+## 🔴 A tela "Algo deu errado por aqui" (2026-07-26 — branch `claude/new-session-dm3140`)
+
+Abrir **qualquer conversa em que a IA tivesse usado uma ferramenta** derrubava a
+aplicação inteira na tela do `ErrorBoundary`. Causa:
+
+```js
+export { SUBAGENT_TOOL } from '../executionSteps.js';   // ExecutionSession.jsx
+```
+
+Um re-export cria a **entrada de exportação** do módulo, mas **não** uma variável
+local. `SUBAGENT_TOOL` era usado logo abaixo em `summarize()` e em `ResultView()` —
+ou seja, referência a um global inexistente. `summarize()` roda num `useMemo` do
+`ExecutionSessionInner`, que o `App.jsx` monta para todo bloco `type: 'tool'`:
+`ReferenceError` na primeira renderização e a árvore inteira caindo. Corrigido
+importando o nome (binding de verdade) e reexportando a partir dele — a superfície
+pública do módulo continua igual. Reproduzido no Chromium antes e depois.
+
+**É a segunda ocorrência da mesma classe de bug** (a primeira foi `chunksIncluded`,
+no Context Builder). Nada pegava: `node --check` não pega — a sintaxe é válida; o
+build não pega — o bundler resolve exportações, não escopo; e o `lint` do frontend
+**ignorava os `.jsx` por inteiro**. Daí a rede nova: `frontend/scripts/reexportBindings.mjs`
+acusa nome re-exportado que é usado no próprio arquivo, roda também nos `.jsx` e tem
+12 testes próprios (`scripts/` entrou na varredura do `run-tests.mjs` — um guarda que
+erra é pior que guarda nenhum).
 
 ---
 
