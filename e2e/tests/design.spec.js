@@ -6,6 +6,7 @@
 // iframe isolado. As demais camadas já têm teste — o núcleo puro em
 // backend/src/design/core.test.js e as rotas em routes/design.http.test.js —,
 // mas nenhuma delas abre um navegador, e o preview é a promessa central do modo.
+import assert from 'node:assert/strict';
 import { test, expect, criarConta, abrirLogado } from '../fixtures/app.js';
 
 async function abrirModoDesign(page, request, modelo) {
@@ -102,4 +103,92 @@ test('o projeto criado aparece na lista ao voltar', async ({ page, request }) =>
   await page.getByRole('button', { name: 'Projetos' }).click();
   // Sem título informado, o pedido vira o nome do projeto.
   await expect(page.getByText('catálogo de serviços contábeis')).toBeVisible();
+});
+
+// ---- v2: edição inline e controles de ajuste --------------------------------
+
+test('clicar num elemento da prévia leva o alvo para o compositor', async ({ page, request }) => {
+  await abrirModoDesign(page, request, 'design-web');
+  await gerarPrimeiroProjeto(page, 'Site ou protótipo', 'uma landing institucional');
+  const frame = page.frameLocator('iframe[title="Prévia do design"]');
+  await expect(frame.locator('#titulo-e2e')).toBeVisible({ timeout: 60_000 });
+
+  // Só o navegador prova este caminho: o iframe está em ORIGEM OPACA, então o
+  // clique só chega à interface pela ponte injetada + postMessage. Nenhum teste
+  // de unidade cobre a travessia.
+  await page.getByRole('button', { name: /Editar elemento/ }).click();
+  await frame.locator('#titulo-e2e').click();
+
+  // A etiqueta do alvo aparece acima do compositor e o placeholder muda —
+  // é o que responde "o que eu vou mudar?" na hora de escrever o pedido.
+  await expect(page.locator('.dsTargetChip')).toContainText('<h1>');
+  await expect(page.locator('.dsTargetChip')).toContainText('Contabilidade sem sustos');
+  await expect(page.getByPlaceholder('O que muda neste elemento?')).toBeFocused();
+
+  // E o pedido sobe com o alvo: o histórico registra em que elemento foi.
+  await page.getByPlaceholder('O que muda neste elemento?').fill('deixe o título maior');
+  await page.getByPlaceholder('O que muda neste elemento?').press('Enter');
+  await expect(page.locator('.dsBubble.user').last()).toContainText('<h1>', { timeout: 60_000 });
+});
+
+test('a seleção pode ser cancelada sem virar pedido', async ({ page, request }) => {
+  await abrirModoDesign(page, request, 'design-web');
+  await gerarPrimeiroProjeto(page, 'Site ou protótipo', 'uma landing');
+  const frame = page.frameLocator('iframe[title="Prévia do design"]');
+  await expect(frame.locator('#titulo-e2e')).toBeVisible({ timeout: 60_000 });
+
+  await page.getByRole('button', { name: /Editar elemento/ }).click();
+  await frame.locator('#texto-e2e').click();
+  await expect(page.locator('.dsTargetChip')).toBeVisible();
+
+  await page.locator('.dsTargetChip button').click();
+  await expect(page.locator('.dsTargetChip')).toHaveCount(0);
+  await expect(page.getByPlaceholder('O que você quer mudar?')).toBeVisible();
+});
+
+test('o slider muda a prévia na hora, sem gerar versão nova', async ({ page, request }) => {
+  await abrirModoDesign(page, request, 'design-web');
+  await gerarPrimeiroProjeto(page, 'Site ou protótipo', 'uma landing com marca');
+  const frame = page.frameLocator('iframe[title="Prévia do design"]');
+  const titulo = frame.locator('#titulo-e2e');
+  await expect(titulo).toBeVisible({ timeout: 60_000 });
+
+  const corInicial = await titulo.evaluate(el => getComputedStyle(el).color);
+
+  await page.getByRole('tab', { name: /Ajustes/ }).click();
+  // Os controles são derivados do artefato: o HTML do provedor falso declara
+  // quatro variáveis, então são quatro controles.
+  await expect(page.locator('.dsAdjustItem')).toHaveCount(4);
+
+  await page.locator('.dsAdjustHex').first().fill('#0a7d55');
+  await page.locator('.dsAdjustHex').first().blur();
+
+  // A cor muda DENTRO do iframe — o CSS foi aplicado por postMessage, sem
+  // recarregar a página e sem passar pelo modelo.
+  await expect.poll(async () => titulo.evaluate(el => getComputedStyle(el).color), { timeout: 15_000 })
+    .toBe('rgb(10, 125, 85)');
+  assert(corInicial !== 'rgb(10, 125, 85)');
+
+  // E não nasceu versão nenhuma: ajustar não é gerar.
+  await page.getByRole('tab', { name: /Versões/ }).click();
+  await expect(page.locator('.dsVersion')).toHaveCount(1);
+});
+
+test('o ajuste é gravado e sobrevive a reabrir o projeto', async ({ page, request }) => {
+  await abrirModoDesign(page, request, 'design-web');
+  await gerarPrimeiroProjeto(page, 'Site ou protótipo', 'uma landing persistente');
+  const frame = page.frameLocator('iframe[title="Prévia do design"]');
+  await expect(frame.locator('#titulo-e2e')).toBeVisible({ timeout: 60_000 });
+
+  await page.getByRole('tab', { name: /Ajustes/ }).click();
+  await page.locator('.dsAdjustHex').first().fill('#0a7d55');
+  await page.locator('.dsAdjustHex').first().blur();
+  await expect(page.locator('.dsAdjustItem').first()).toHaveClass(/on/);
+
+  // Sai e volta: o valor gravado tem de vir do servidor, já aplicado na prévia.
+  await page.getByRole('button', { name: 'Projetos' }).click();
+  await page.getByText('uma landing persistente').click();
+  const frame2 = page.frameLocator('iframe[title="Prévia do design"]');
+  await expect.poll(async () => frame2.locator('#titulo-e2e').evaluate(el => getComputedStyle(el).color), { timeout: 30_000 })
+    .toBe('rgb(10, 125, 85)');
 });

@@ -1,0 +1,21 @@
+-- Modo Design v2 — ajustes finos do projeto (os "sliders").
+--
+-- Guarda um JSON pequeno com as variáveis CSS que o usuário mexeu à mão:
+-- `{"corPrimaria":"#0a7d55","raio":18}`. Só entram chaves do catálogo fechado
+-- em `src/design/tokens.js`, já validadas por tipo (cor em hex, medida dentro
+-- da faixa) — o valor vai parar dentro de uma folha de estilo.
+--
+-- Por que uma COLUNA no projeto e não uma versão nova a cada arrasto do slider:
+--
+-- 1) Arrastar um controle não é uma decisão de design que mereça entrar no
+--    histórico. Uma versão por movimento encheria a lista de ruído e comeria a
+--    janela de poda (as versões de verdade sairiam para dar lugar a "mudei a
+--    cor 2 graus").
+-- 2) O ajuste é uma CAMADA aplicada na hora de renderizar e exportar, não uma
+--    reescrita do artefato. Isso é o que permite mexer nos sliders e, depois,
+--    pedir uma edição no chat sem que uma coisa apague a outra: o modelo edita
+--    a base, a sobreposição continua por cima.
+-- 3) É por projeto, não por versão, porque é assim que o usuário pensa nele —
+--    "a cor da minha proposta", não "a cor da versão 4".
+
+ALTER TABLE design_projects ADD COLUMN IF NOT EXISTS adjustments TEXT;

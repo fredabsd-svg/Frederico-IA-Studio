@@ -266,7 +266,9 @@ test('o preview roda em origem opaca: CSP sandbox sem allow-same-origin', { skip
   const r = await call('GET', `/api/design/preview/${token}`);
 
   assert.equal(r.status, 200);
-  assert.equal(r.text, HTML);
+  // O artefato sai inteiro; a prévia acrescenta a ponte de seleção/ajuste (v2),
+  // que NÃO acompanha a exportação — o teste do .html baixado guarda isso.
+  assert.ok(r.text.startsWith(HTML.replace('</body></html>', '')));
   const csp = r.headers.get('content-security-policy');
   // Este cabeçalho é o que impede o HTML gerado por IA de enxergar o cookie de
   // sessão e o DOM do app, mesmo servido do mesmo domínio. `allow-same-origin`
@@ -391,4 +393,182 @@ test('projeto com marca de outra conta é recusado', { skip: needsDb }, async ()
   } finally {
     currentUser = USER_A;
   }
+});
+
+// ---- v2: ajustes finos (sliders) -------------------------------------------
+
+// Artefato que segue o contrato das variáveis de ajuste (o system prompt exige
+// esse bloco :root em toda saída HTML).
+const HTML_TOKENS = [
+  '<!DOCTYPE html><html lang="pt-BR"><head><style>',
+  ':root{--fred-cor-primaria:#1f3b8a;--fred-cor-secundaria:#e8523f;--fred-fonte-base:16px;--fred-raio:12px}',
+  'h1{color:var(--fred-cor-primaria)}',
+  '</style></head><body><h1>Contabilidade</h1></body></html>',
+].join('');
+
+async function projetoComTokens() {
+  nextReply = HTML_TOKENS;
+  const r = await call('POST', '/api/design/projects', { outputType: 'web', prompt: 'landing com variáveis' });
+  assert.equal(r.status, 200, r.text);
+  return r.json;
+}
+
+test('os controles são DERIVADOS do artefato, não uma lista fixa', { skip: needsDb }, async () => {
+  const comTokens = await projetoComTokens();
+  assert.deepEqual(comTokens.tokens.map(t => t.id), ['corPrimaria', 'corSecundaria', 'fonteBase', 'raio']);
+  assert.equal(comTokens.tokens[0].defaultValue, '#1f3b8a');
+
+  // Artefato que não segue o contrato: nenhum controle. A tela usa isso para
+  // explicar o motivo, em vez de mostrar sliders que não fazem nada.
+  const semTokens = await newProject();
+  assert.deepEqual(semTokens.tokens, []);
+});
+
+test('o system prompt pede as variáveis nas saídas HTML e NÃO em slides', { skip: needsDb }, async () => {
+  await newProject('document', 'proposta');
+  assert.match(lastRequest.messages[0].content, /--fred-cor-primaria/);
+  await newProject('slides', 'apresentação');
+  assert.ok(!lastRequest.messages[0].content.includes('--fred-cor-primaria'));
+});
+
+test('salvar ajuste não chama a IA nem cria versão', { skip: needsDb }, async () => {
+  const project = await projetoComTokens();
+  const antes = lastRequest;
+
+  const r = await call('PUT', `/api/design/projects/${project.id}/adjustments`, {
+    adjustments: { corPrimaria: '#0a7d55', raio: 0 },
+  });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.json.adjustments, { corPrimaria: '#0a7d55', raio: 0 });
+  assert.equal(r.json.currentVersion.versionNumber, 1, 'o ajuste não é uma versão nova');
+  assert.equal(lastRequest, antes, 'nenhuma chamada ao provedor');
+});
+
+test('valor inválido é descartado em vez de virar CSS', { skip: needsDb }, async () => {
+  const project = await projetoComTokens();
+  const r = await call('PUT', `/api/design/projects/${project.id}/adjustments`, {
+    adjustments: {
+      corPrimaria: '#fff;background-image:url(http://x/y)',
+      raio: 999,
+      naoExiste: 'qualquer coisa',
+    },
+  });
+  assert.equal(r.status, 200);
+  // A cor com carga some; a medida fora da faixa é trazida para dentro dela.
+  assert.deepEqual(r.json.adjustments, { raio: 32 });
+});
+
+test('o ajuste entra na prévia como sobreposição, sem tocar no artefato', { skip: needsDb }, async () => {
+  const project = await projetoComTokens();
+  await call('PUT', `/api/design/projects/${project.id}/adjustments`, { adjustments: { corPrimaria: '#0a7d55' } });
+
+  const preview = await call('GET', `/api/design/projects/${project.id}/preview`);
+  assert.match(preview.text, /--fred-cor-primaria: #0a7d55 !important/);
+  // O valor original continua no documento: o ajuste é camada, não reescrita.
+  assert.match(preview.text, /--fred-cor-primaria:#1f3b8a/);
+
+  // E a versão guardada segue intacta — é ela que o modelo recebe ao editar.
+  const detalhe = await call('GET', `/api/design/projects/${project.id}`);
+  assert.equal(detalhe.json.currentVersion.content, HTML_TOKENS);
+});
+
+test('o que você vê é o que você baixa: o ajuste vai na exportação', { skip: needsDb }, async () => {
+  const project = await projetoComTokens();
+  await call('PUT', `/api/design/projects/${project.id}/adjustments`, { adjustments: { raio: 24 } });
+  const exportado = await call('GET', `/api/design/projects/${project.id}/export?format=html`);
+  assert.match(exportado.text, /--fred-raio: 24px !important/);
+  // Mas o arquivo baixado NÃO leva a ponte de edição: é o design, não o editor.
+  assert.ok(!exportado.text.includes('fred-preview-selecionado'));
+  assert.ok(!exportado.text.includes('data-fred-alvo'));
+});
+
+test('ajustes sobrevivem a uma nova geração e a uma reversão', { skip: needsDb }, async () => {
+  const project = await projetoComTokens();
+  await call('PUT', `/api/design/projects/${project.id}/adjustments`, { adjustments: { corPrimaria: '#0a7d55' } });
+
+  nextReply = HTML_TOKENS.replace('Contabilidade', 'Contabilidade II');
+  const gerado = await call('POST', `/api/design/projects/${project.id}/generate`, { prompt: 'v2' });
+  assert.deepEqual(gerado.json.adjustments, { corPrimaria: '#0a7d55' }, 'o ajuste é do projeto, não da versão');
+
+  const revertido = await call('POST', `/api/design/projects/${project.id}/revert`, { versionId: project.currentVersionId });
+  assert.deepEqual(revertido.json.adjustments, { corPrimaria: '#0a7d55' });
+});
+
+test('ajuste em projeto de outra conta é 404', { skip: needsDb }, async () => {
+  const project = await projetoComTokens();
+  currentUser = USER_B;
+  try {
+    const r = await call('PUT', `/api/design/projects/${project.id}/adjustments`, { adjustments: { raio: 4 } });
+    assert.equal(r.status, 404);
+  } finally {
+    currentUser = USER_A;
+  }
+});
+
+test('slides: os controles vêm do deck que NÓS montamos', { skip: needsDb }, async () => {
+  const project = await newProject('slides', 'apresentação');
+  // O modelo devolve JSON, mas o HTML renderizado é nosso — e ele declara as
+  // mesmas variáveis, então a apresentação também ganha sliders de cor.
+  assert.ok(project.tokens.some(t => t.id === 'corPrimaria'));
+  await call('PUT', `/api/design/projects/${project.id}/adjustments`, { adjustments: { corPrimaria: '#0a7d55' } });
+  const preview = await call('GET', `/api/design/projects/${project.id}/preview`);
+  assert.match(preview.text, /--fred-cor-primaria: #0a7d55 !important/);
+});
+
+// ---- v2: edição inline ------------------------------------------------------
+
+test('a prévia carrega a ponte de seleção; a exportação, não', { skip: needsDb }, async () => {
+  const project = await newProject();
+  const preview = await call('GET', `/api/design/projects/${project.id}/preview`);
+  assert.match(preview.text, /fred-preview-selecionado/, 'a ponte precisa estar na prévia');
+  assert.match(preview.text, /data-fred-alvo/);
+
+  const exportado = await call('GET', `/api/design/projects/${project.id}/export`);
+  assert.equal(exportado.text, HTML, 'o arquivo baixado sai exatamente como o artefato');
+});
+
+test('o alvo clicado vira instrução de mexer SÓ nele', { skip: needsDb }, async () => {
+  const project = await newProject();
+  nextReply = HTML;
+  await call('POST', `/api/design/projects/${project.id}/generate`, {
+    prompt: 'deixe maior',
+    target: { tag: 'h1', classes: 'hero', caminho: 'body > h1', texto: 'Contabilidade', html: '<h1 class="hero">Contabilidade</h1>' },
+  });
+  const enviado = lastRequest.messages.at(-1).content;
+  assert.match(enviado, /ALVO/);
+  assert.match(enviado, /<h1 class="hero">Contabilidade<\/h1>/);
+  assert.match(enviado, /APENAS esse elemento/);
+});
+
+test('o histórico registra em QUE elemento a mudança foi pedida', { skip: needsDb }, async () => {
+  const project = await newProject();
+  nextReply = HTML;
+  const r = await call('POST', `/api/design/projects/${project.id}/generate`, {
+    prompt: 'deixe maior',
+    target: { tag: 'h1', texto: 'Contabilidade', html: '<h1>Contabilidade</h1>' },
+  });
+  // Sem isso, "deixe maior" no histórico não diz maior o quê.
+  const fala = r.json.messages.filter(m => m.role === 'user').at(-1);
+  assert.match(fala.content, /deixe maior/);
+  assert.match(fala.content, /<h1>/);
+});
+
+test('alvo sem nada que identifique é ignorado (vira edição normal)', { skip: needsDb }, async () => {
+  const project = await newProject();
+  nextReply = HTML;
+  await call('POST', `/api/design/projects/${project.id}/generate`, { prompt: 'mude a cor', target: { classes: 'só isso' } });
+  assert.ok(!lastRequest.messages.at(-1).content.includes('ALVO'));
+});
+
+test('slides: o alvo é o número do slide, sem o HTML do deck', { skip: needsDb }, async () => {
+  const project = await newProject('slides', 'apresentação');
+  nextReply = '{"slides":[{"layout":"title","title":"A","body":""}]}';
+  await call('POST', `/api/design/projects/${project.id}/generate`, {
+    prompt: 'troque o título',
+    target: { tag: 'h2', slide: 2, texto: 'Escopo', html: '<h2>Escopo</h2>' },
+  });
+  const enviado = lastRequest.messages.at(-1).content;
+  assert.match(enviado, /slide 2/);
+  assert.match(enviado, /APENAS esse slide/);
+  assert.ok(!enviado.includes('<h2>Escopo</h2>'), 'o HTML do deck confundiria o modelo, que devolve JSON');
 });

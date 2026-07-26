@@ -17,7 +17,7 @@ export const NO_KEY_MSG =
   'Nenhum provedor de IA configurado. Adicione uma chave em Configurações › Provedor de IA para usar o Modo Design.';
 
 export async function generateArtifact({
-  userId, outputType, prompt, current = '', designSystem = null, history = [], model = '',
+  userId, outputType, prompt, current = '', designSystem = null, history = [], model = '', target = null,
 }) {
   if (String(current || '').length > MAX_EDIT_CONTEXT_CHARS) {
     return {
@@ -29,7 +29,7 @@ export async function generateArtifact({
   const provider = await getUserProvider(userId, model);
   if (!provider.hasKey || !provider.client) return { ok: false, error: NO_KEY_MSG };
 
-  const messages = buildGenerateMessages({ outputType, prompt, current, designSystem, history });
+  const messages = buildGenerateMessages({ outputType, prompt, current, designSystem, history, target });
 
   let completion;
   try {

@@ -12,6 +12,8 @@
 // salvo é exatamente o tipo de confusão que faria o preview de uma apresentação
 // renderizar JSON cru dentro de um iframe.
 
+import { TOKENS_PROMPT } from './tokens.js';
+
 export const OUTPUT_TYPES = ['web', 'slides', 'document'];
 
 // Limites de entrada. Não são regras de negócio sofisticadas — são o teto que
@@ -109,9 +111,74 @@ export function designSystemBlock(ds) {
 }
 
 export function buildSystemPrompt(outputType, designSystem = null) {
-  return [BASE_RULES, outputTypeRules(outputType), designSystemBlock(designSystem)]
+  // O contrato das variáveis de ajuste só vale para as saídas em que o CSS é do
+  // MODELO. Em `slides` o CSS é nosso (o deck é montado por render.js, já com as
+  // variáveis), e mandar essa regra junto só convidaria o modelo a devolver CSS
+  // onde ele deve devolver JSON.
+  const tokens = outputType === 'slides' ? '' : TOKENS_PROMPT;
+  return [BASE_RULES, outputTypeRules(outputType), tokens, designSystemBlock(designSystem)]
     .filter(Boolean)
     .join('\n\n');
+}
+
+// ---- Edição inline (um elemento específico) --------------------------------
+
+export const MAX_TARGET_HTML = 1200;
+export const MAX_TARGET_TEXT = 240;
+
+// Normaliza o descritor do elemento clicado na prévia. Ele vem da PONTE, que
+// roda dentro do iframe — ou seja, de um contexto que executa código gerado por
+// IA. Nada dali entra no prompt sem passar por aqui: campos fora da lista somem
+// e todo texto é limitado.
+export function sanitizeTarget(input) {
+  if (!input || typeof input !== 'object') return null;
+  const html = clamp(input.html, MAX_TARGET_HTML);
+  const texto = clamp(input.texto, MAX_TARGET_TEXT).trim();
+  const tag = clamp(input.tag, 40).trim().toLowerCase();
+  const slide = Number.isFinite(Number(input.slide)) && Number(input.slide) > 0
+    ? Math.min(MAX_SLIDES, Math.trunc(Number(input.slide)))
+    : null;
+  // Sem nada que identifique o elemento, o alvo não serve para nada — melhor
+  // tratar como edição normal do que mandar um bloco vazio ao modelo.
+  if (!tag && !texto && !html && !slide) return null;
+  return {
+    tag,
+    classes: clamp(input.classes, 200).trim(),
+    id: clamp(input.id, 100).trim(),
+    caminho: clamp(input.caminho, 300).trim(),
+    slide,
+    texto,
+    html,
+    truncado: Boolean(input.truncado),
+  };
+}
+
+// Bloco que diz ao modelo QUAL elemento mexer.
+//
+// Em `slides` o alvo é o NÚMERO do slide: o modelo edita o JSON, não o HTML do
+// deck — mandar a marcação que nós geramos o faria devolver HTML no lugar do
+// JSON, e o artefato inteiro seria recusado.
+export function targetBlock(target, outputType) {
+  if (!target) return '';
+  if (outputType === 'slides') {
+    if (!target.slide) return '';
+    return [
+      `ALVO: o slide ${target.slide} da apresentação.`,
+      target.texto ? `Texto visível no ponto clicado: "${target.texto}"` : '',
+      'Altere APENAS esse slide no JSON. Os demais devem sair idênticos.',
+    ].filter(Boolean).join('\n');
+  }
+  const linhas = ['ALVO: o usuário clicou num elemento específico da página.'];
+  if (target.tag) linhas.push(`Tag: <${target.tag}>`);
+  if (target.id) linhas.push(`id: ${target.id}`);
+  if (target.classes) linhas.push(`class: ${target.classes}`);
+  if (target.caminho) linhas.push(`Caminho: ${target.caminho}`);
+  if (target.texto) linhas.push(`Texto: "${target.texto}"`);
+  if (target.html) {
+    linhas.push('Trecho atual do elemento:', target.html + (target.truncado ? '\n(trecho cortado)' : ''));
+  }
+  linhas.push('Altere APENAS esse elemento. O restante do documento deve sair idêntico.');
+  return linhas.join('\n');
 }
 
 const clamp = (v, max) => (v == null ? '' : String(v).slice(0, max));
@@ -123,7 +190,7 @@ const clamp = (v, max) => (v == null ? '' : String(v).slice(0, max));
 // conteúdo atual inteiro; repetir as versões anteriores multiplicaria o custo
 // sem acrescentar informação.
 export function buildGenerateMessages({
-  outputType, prompt, current = '', designSystem = null, history = [], maxHistory = MAX_HISTORY,
+  outputType, prompt, current = '', designSystem = null, history = [], maxHistory = MAX_HISTORY, target = null,
 } = {}) {
   const system = buildSystemPrompt(outputType, designSystem);
   const past = (Array.isArray(history) ? history : [])
@@ -141,8 +208,13 @@ export function buildGenerateMessages({
         : 'HTML ATUAL (edite-o, não recomece):',
       current,
       '',
-      'PEDIDO DE MUDANÇA:',
     );
+    // O bloco do alvo vem DEPOIS do artefato e ANTES do pedido: é a última
+    // coisa que o modelo lê antes da instrução, que é onde a restrição "só este
+    // elemento" tem mais chance de ser respeitada.
+    const alvo = targetBlock(target, outputType);
+    if (alvo) userParts.push(alvo, '');
+    userParts.push('PEDIDO DE MUDANÇA:');
   }
   userParts.push(clamp(prompt, MAX_PROMPT_CHARS));
 

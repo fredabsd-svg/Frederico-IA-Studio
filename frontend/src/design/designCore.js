@@ -85,3 +85,64 @@ export function exportUrl(api, projectId, format, versionId = '') {
   if (versionId) params.set('versionId', versionId);
   return `${api}/api/design/projects/${encodeURIComponent(projectId)}/export?${params}`;
 }
+
+// ---- Ponte com a prévia (v2) -----------------------------------------------
+
+// Tipos de mensagem trocados com o iframe. O outro lado está em
+// backend/src/design/bridge.js — as duas listas precisam bater, e um teste em
+// cada ponta guarda isso. Divergir não dá erro: a seleção simplesmente para de
+// funcionar, em silêncio.
+export const PREVIEW_MESSAGES = {
+  pronto: 'fred-preview-pronto',
+  selecionado: 'fred-preview-selecionado',
+  modo: 'fred-preview-modo',
+  ajustes: 'fred-preview-ajustes',
+  limparSelecao: 'fred-preview-limpar',
+};
+
+// Aceita uma mensagem vinda do iframe?
+//
+// A origem NÃO serve de checagem aqui: o documento da prévia roda em origem
+// opaca (é o ponto do sandbox), então `event.origin` chega como "null" e
+// compará-lo não prova nada. O que prova é a JANELA de onde veio — só o iframe
+// que nós montamos tem esse `contentWindow`.
+export function isPreviewMessage(event, frame) {
+  if (!frame || !event || event.source !== frame.contentWindow) return false;
+  const tipo = event.data && event.data.tipo;
+  return typeof tipo === 'string' && Object.values(PREVIEW_MESSAGES).includes(tipo);
+}
+
+// Rótulo curto do elemento selecionado, para a etiqueta acima do compositor.
+export function targetLabel(target) {
+  if (!target) return '';
+  if (target.slide) return `Slide ${target.slide}`;
+  const texto = String(target.texto || '').trim();
+  const tag = String(target.tag || 'elemento');
+  if (!texto) return `<${tag}>`;
+  return `<${tag}> ${texto.length > 42 ? `${texto.slice(0, 42)}…` : texto}`;
+}
+
+// Valor efetivo de um controle: o ajuste do usuário quando existe, senão o que
+// o próprio design declara. É o que faz o slider abrir na posição certa em vez
+// de saltar para um padrão nosso na primeira renderização.
+export function tokenValue(token, adjustments) {
+  const ajuste = adjustments ? adjustments[token.id] : undefined;
+  return ajuste === undefined || ajuste === null || ajuste === '' ? token.defaultValue : ajuste;
+}
+
+// CSS de sobreposição para o ajuste AO VIVO, enquanto o usuário arrasta.
+//
+// É uma segunda implementação da que existe no backend (design/tokens.js), e a
+// duplicação é intencional: o efeito precisa ser instantâneo, sem ida ao
+// servidor. O backend continua sendo a autoridade — ele revalida tudo ao gravar
+// e é ele quem monta a prévia e a exportação. O que sai daqui vive só no iframe.
+export function liveOverrideCss(tokens, adjustments) {
+  const linhas = [];
+  for (const token of tokens || []) {
+    const valor = tokenValue(token, adjustments);
+    if (valor === undefined || valor === null || valor === '') continue;
+    const css = token.kind === 'cor' ? valor : `${valor}${token.unit || ''}`;
+    linhas.push(`  ${token.cssVar}: ${css} !important;`);
+  }
+  return linhas.length ? `:root{\n${linhas.join('\n')}\n}` : '';
+}

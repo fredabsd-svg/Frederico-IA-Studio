@@ -100,28 +100,36 @@ function renderSlide(slide, index) {
     + `<div class="pad">${inner}</div><span class="num">${n}</span>${notes}</section>`;
 }
 
+// As variáveis do deck usam os MESMOS nomes do catálogo de ajustes
+// (design/tokens.js). É o que faz os sliders de cor valerem também para uma
+// apresentação: a sobreposição de `:root` é a mesma para os três tipos de saída,
+// e a interface descobre os controles lendo o HTML servido — aqui, este.
+// `--fred-fonte-base` fica de fora de propósito: o deck escala a tipografia em
+// `cqw` (proporcional ao slide), então um tamanho em px não teria efeito, e um
+// controle que não faz nada é pior do que controle nenhum.
 const DECK_CSS = `
-:root{--primary:%PRIMARY%;--secondary:%SECONDARY%;--ink:#12151c;--muted:#5b6474;--paper:#fff;
---font-heading:%FONT_HEADING%;--font-body:%FONT_BODY%}
+:root{--fred-cor-primaria:%PRIMARY%;--fred-cor-secundaria:%SECONDARY%;
+--fred-cor-texto:#12151c;--fred-cor-fundo:#fff;--fred-raio:10px;
+--muted:#5b6474;--font-heading:%FONT_HEADING%;--font-body:%FONT_BODY%}
 *{box-sizing:border-box}
-html,body{margin:0;padding:0;background:#0e1117;color:var(--ink);font-family:var(--font-body)}
+html,body{margin:0;padding:0;background:#0e1117;color:var(--fred-cor-texto);font-family:var(--font-body)}
 .deck{display:flex;flex-direction:column;align-items:center;gap:24px;padding:24px}
 .slide{container-type:inline-size;position:relative;width:100%;max-width:1280px;aspect-ratio:16/9;
-background:var(--paper);border-radius:10px;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.45)}
+background:var(--fred-cor-fundo);border-radius:var(--fred-raio);overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.45)}
 .slide .pad{position:absolute;inset:0;padding:6cqw 7cqw;display:flex;flex-direction:column;justify-content:center}
-h1{font-family:var(--font-heading);font-size:6.4cqw;line-height:1.08;margin:0 0 2cqw;color:var(--primary);letter-spacing:-.02em}
-h2{font-family:var(--font-heading);font-size:4.4cqw;line-height:1.15;margin:0 0 3cqw;color:var(--primary);letter-spacing:-.015em}
-h2::after{content:"";display:block;width:9cqw;height:.5cqw;background:var(--secondary);border-radius:1cqw;margin-top:1.6cqw}
-p{font-size:2.5cqw;line-height:1.5;margin:0 0 1.4cqw;color:var(--ink)}
+h1{font-family:var(--font-heading);font-size:6.4cqw;line-height:1.08;margin:0 0 2cqw;color:var(--fred-cor-primaria);letter-spacing:-.02em}
+h2{font-family:var(--font-heading);font-size:4.4cqw;line-height:1.15;margin:0 0 3cqw;color:var(--fred-cor-primaria);letter-spacing:-.015em}
+h2::after{content:"";display:block;width:9cqw;height:.5cqw;background:var(--fred-cor-secundaria);border-radius:1cqw;margin-top:1.6cqw}
+p{font-size:2.5cqw;line-height:1.5;margin:0 0 1.4cqw;color:var(--fred-cor-texto)}
 ul{margin:0 0 1.4cqw;padding-left:3.4cqw}
 li{font-size:2.5cqw;line-height:1.5;margin-bottom:1.1cqw}
-li::marker{color:var(--secondary)}
+li::marker{color:var(--fred-cor-secundaria)}
 .lead p,.lead li{font-size:2.9cqw;color:var(--muted)}
 .center{text-align:center;margin:auto}
 .center h1{font-size:7.4cqw}
 .cols{display:grid;grid-template-columns:1fr 1fr;gap:5cqw;align-items:start}
 .hero{position:absolute;inset:0;padding:7cqw;display:flex;flex-direction:column;justify-content:flex-end;
-background:linear-gradient(135deg,var(--primary),var(--secondary));color:#fff}
+background:linear-gradient(135deg,var(--fred-cor-primaria),var(--fred-cor-secundaria));color:#fff}
 .hero h1,.hero p,.hero li{color:#fff}
 .num{position:absolute;right:3cqw;bottom:2.4cqw;font-size:1.6cqw;color:var(--muted);opacity:.75}
 .slide-image-full .num{color:#fff}

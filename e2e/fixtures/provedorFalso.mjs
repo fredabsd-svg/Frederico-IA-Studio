@@ -33,11 +33,21 @@ const dorme = (ms) => new Promise(r => setTimeout(r, ms));
 // A resposta vem propositalmente "suja" — com conversa em volta e cerca de
 // código —, que é como os modelos reais respondem: é justamente a limpeza que
 // o teste precisa exercitar.
+// O bloco `:root` com as variáveis `--fred-*` não é enfeite: é o contrato que o
+// system prompt exige das saídas HTML e é dele que a interface deriva os
+// controles de ajuste (backend/src/design/tokens.js). Sem ele aqui, o teste dos
+// sliders não teria o que ajustar.
 const HTML_DESIGN = [
   '<!DOCTYPE html>',
   '<html lang="pt-BR"><head><meta charset="utf-8"><title>Landing E2E</title>',
-  '<style>body{font-family:Arial,sans-serif;margin:0}h1{color:#1f3b8a;padding:40px}</style>',
-  '</head><body><h1 id="titulo-e2e">Contabilidade sem sustos</h1></body></html>'
+  '<style>',
+  ':root{--fred-cor-primaria:#1f3b8a;--fred-cor-secundaria:#e8523f;--fred-fonte-base:16px;--fred-raio:12px}',
+  'body{font-family:Arial,sans-serif;margin:0}',
+  'h1{color:var(--fred-cor-primaria);padding:40px;font-size:calc(var(--fred-fonte-base) * 2.4)}',
+  'p{padding:0 40px}',
+  '</style>',
+  '</head><body><h1 id="titulo-e2e">Contabilidade sem sustos</h1>',
+  '<p id="texto-e2e">Fechamento em dois dias.</p></body></html>'
 ].join('\n');
 
 const RESPOSTAS_DESIGN = {

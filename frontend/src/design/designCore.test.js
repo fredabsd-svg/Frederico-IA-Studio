@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   DESIGN_OUTPUT_TYPES, outputTypeMeta, exportFormatsFor, formatWhen,
   versionLabel, canSubmit, exportUrl, modelLabel,
+  PREVIEW_MESSAGES, isPreviewMessage, targetLabel, tokenValue, liveOverrideCss,
 } from './designCore.js';
 
 // A lista de formatos aqui espelha EXPORT_FORMATS do backend
@@ -65,4 +66,59 @@ test('o rótulo do modelo esconde o id do provedor', () => {
   assert.equal(modelLabel('gpt-4o-mini'), 'gpt-4o-mini');
   assert.equal(modelLabel(''), '');
   assert.equal(modelLabel(null), '');
+});
+
+// ---- Ponte com a prévia (v2) -----------------------------------------------
+
+test('os tipos de mensagem batem com os do backend', () => {
+  // O outro lado é backend/src/design/bridge.js. Divergir não dá erro: a
+  // seleção simplesmente para de funcionar, em silêncio.
+  assert.deepEqual(Object.keys(PREVIEW_MESSAGES).sort(), ['ajustes', 'limparSelecao', 'modo', 'pronto', 'selecionado']);
+  for (const valor of Object.values(PREVIEW_MESSAGES)) assert.match(valor, /^fred-preview-/);
+});
+
+test('só aceita mensagem da JANELA do iframe — origem não serve de prova', () => {
+  // A prévia roda em origem opaca: `event.origin` chega como "null" e comparar
+  // isso não prova nada. O que prova é ter vindo do contentWindow do nosso frame.
+  const janela = {};
+  const frame = { contentWindow: janela };
+  const boa = { source: janela, origin: 'null', data: { tipo: PREVIEW_MESSAGES.selecionado } };
+  assert.equal(isPreviewMessage(boa, frame), true);
+  // Mesma forma, outra janela (outro iframe, um popup, uma extensão): recusada.
+  assert.equal(isPreviewMessage({ ...boa, source: {} }, frame), false);
+  assert.equal(isPreviewMessage(boa, null), false);
+  // Tipo fora do contrato não passa nem vindo da janela certa.
+  assert.equal(isPreviewMessage({ source: janela, data: { tipo: 'qualquer-coisa' } }, frame), false);
+  assert.equal(isPreviewMessage({ source: janela, data: {} }, frame), false);
+});
+
+test('a etiqueta do alvo resume o elemento sem despejar o HTML', () => {
+  assert.equal(targetLabel({ tag: 'h1', texto: 'Bem-vindo' }), '<h1> Bem-vindo');
+  assert.equal(targetLabel({ tag: 'div', texto: '' }), '<div>');
+  assert.equal(targetLabel({ slide: 3, tag: 'h2', texto: 'Escopo' }), 'Slide 3');
+  assert.match(targetLabel({ tag: 'p', texto: 'x'.repeat(90) }), /…$/);
+  assert.equal(targetLabel(null), '');
+});
+
+test('o controle abre no valor do design quando não há ajuste', () => {
+  const token = { id: 'raio', kind: 'medida', unit: 'px', defaultValue: 12 };
+  assert.equal(tokenValue(token, {}), 12);
+  assert.equal(tokenValue(token, { raio: 0 }), 0, 'zero é ajuste, não ausência');
+  assert.equal(tokenValue(token, { raio: null }), 12, 'nulo volta ao valor do design');
+  assert.equal(tokenValue(token, null), 12);
+});
+
+test('o CSS ao vivo cobre só os tokens do design, com unidade', () => {
+  const tokens = [
+    { id: 'corPrimaria', cssVar: '--fred-cor-primaria', kind: 'cor', defaultValue: '#1f3b8a' },
+    { id: 'raio', cssVar: '--fred-raio', kind: 'medida', unit: 'px', defaultValue: 12 },
+  ];
+  const css = liveOverrideCss(tokens, { corPrimaria: '#0a7d55' });
+  assert.match(css, /--fred-cor-primaria: #0a7d55 !important;/);
+  // O token não tocado também entra, com o valor do próprio design: o bloco é
+  // uma foto completa do estado, e não um diff — assim uma restauração parcial
+  // não deixa metade do CSS antigo valendo.
+  assert.match(css, /--fred-raio: 12px !important;/);
+  assert.equal(liveOverrideCss([], {}), '');
+  assert.equal(liveOverrideCss(null, {}), '');
 });

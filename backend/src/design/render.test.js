@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { escapeHtml, parseSlideBody, splitColumns, renderSlidesDeck, renderPlaceholder } from './render.js';
+import { detectTokens } from './tokens.js';
 
 // O deck de slides é o único HTML do Modo Design que NÓS montamos — nos
 // projetos `web`/`document` o HTML é do modelo e roda em origem opaca. Aqui o
@@ -74,9 +75,19 @@ test('o design system pinta o deck sem escapar da declaração CSS', () => {
   const html = renderSlidesDeck([{ layout: 'title', title: 'A', body: '', notes: '' }], {
     designSystem: { primaryColor: '#0a7d55', secondaryColor: '#ffb703', fontHeading: 'Playfair Display' },
   });
-  assert.match(html, /--primary:#0a7d55/);
-  assert.match(html, /--secondary:#ffb703/);
+  assert.match(html, /--fred-cor-primaria:#0a7d55/);
+  assert.match(html, /--fred-cor-secundaria:#ffb703/);
   assert.match(html, /'Playfair Display'/);
+});
+
+test('o deck declara as MESMAS variáveis do catálogo de ajustes', () => {
+  // É o que faz os sliders de cor valerem para uma apresentação: a interface
+  // descobre os controles lendo o HTML servido, e aqui o HTML é nosso.
+  // `--fred-fonte-base` fica de fora de propósito — o deck escala a tipografia
+  // em `cqw`, e um controle em px não teria efeito nenhum.
+  const html = renderSlidesDeck([{ layout: 'title', title: 'A', body: '', notes: '' }]);
+  const tokens = detectTokens(html).map(t => t.id);
+  assert.deepEqual(tokens.sort(), ['corFundo', 'corPrimaria', 'corSecundaria', 'corTexto', 'raio']);
 });
 
 test('deck sem slides não quebra (gera um documento vazio válido)', () => {

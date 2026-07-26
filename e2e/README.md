@@ -66,6 +66,11 @@ pede um artefato pronto, não um texto que chega aos poucos. E a resposta do
 `design-web` vem propositalmente suja — é a limpeza (`extractArtifact`) que o
 teste precisa exercitar de ponta a ponta.
 
+O HTML do `design-web` declara o bloco `:root` com as variáveis `--fred-*`, que
+não é enfeite: é o contrato que o system prompt exige das saídas HTML e é dele
+que a interface deriva os controles de ajuste. Sem esse bloco, o teste dos
+sliders não teria o que ajustar.
+
 Não há modo "provedor que trava": o watchdog de stream parado já tem teste
 unitário (`backend/src/agent/streamGuard.test.js`), e reproduzi-lo aqui custaria
 os 30 s do menor timeout possível por um resultado que aquele dá em milissegundos.

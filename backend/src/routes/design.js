@@ -18,17 +18,19 @@ import { db, now } from '../db.js';
 import { validate, schemas } from '../validation.js';
 import { makeRouter, enforceDailyLimit } from './helpers.js';
 import {
-  sanitizeProjectInput, sanitizeDesignSystemInput, contentMatchesType,
+  sanitizeProjectInput, sanitizeDesignSystemInput, contentMatchesType, sanitizeTarget,
   parseSlidesJson, versionSummary, resolveExportFormat, safeFileName, defaultTitle,
 } from '../design/core.js';
 import { renderSlidesDeck, renderPlaceholder } from '../design/render.js';
+import { applyAdjustments, detectTokens } from '../design/tokens.js';
+import { bridgeSnippet } from '../design/bridge.js';
 import { generateArtifact } from '../design/generate.js';
 import { htmlToPdf } from '../design/pdf.js';
 import { slidesToPptx } from '../design/pptx.js';
 import {
   createProject, getProject, getProjectByToken, listProjects, updateProject, deleteProject,
   rotatePreviewToken, currentVersion, currentVersionByProjectId, getVersion, listVersions,
-  addVersion, setCurrentVersion, listMessages, addMessage,
+  addVersion, setCurrentVersion, listMessages, addMessage, setAdjustments, adjustmentsByProjectId,
   listDesignSystems, getDesignSystem, createDesignSystem, updateDesignSystem, deleteDesignSystem,
   serializeProject, serializeVersion,
 } from '../design/store.js';
@@ -74,7 +76,21 @@ async function projectPayload(userId, projectId) {
   return serializeProject(project, {
     previewUrl: previewUrl(project),
     currentVersion: version ? serializeVersion(version, { withContent: true }) : null,
+    // Os controles de ajuste são DERIVADOS do artefato: a interface desenha um
+    // por variável que ESTE design declara. Um artefato que não segue o
+    // contrato (gerado antes dele, ou por um modelo que o ignorou) devolve
+    // lista vazia, e a tela diz isso em vez de oferecer sliders inertes.
+    tokens: version ? detectTokens(renderableHtml(project, version)) : [],
   });
+}
+
+// HTML efetivamente renderizado deste projeto — o artefato do modelo em
+// `web`/`document`, o deck montado por nós em `slides`. É onde as variáveis de
+// ajuste são procuradas, e é o mesmo texto que vai para a prévia.
+function renderableHtml(project, version) {
+  if (!version || !contentMatchesType(version.content, project.output_type)) return '';
+  if (project.output_type !== 'slides') return version.content;
+  return renderSlidesDeck(parseSlidesJson(version.content).slides, { title: project.title });
 }
 
 // ---- Projetos ---------------------------------------------------------------
@@ -152,11 +168,32 @@ router.post('/design/projects/:id/preview-token', async (req, res) => {
   res.json({ previewToken: token, previewUrl: previewUrl(project) });
 });
 
+// ---- Ajustes finos (os "sliders") -------------------------------------------
+
+// Grava as variáveis CSS que o usuário mexeu à mão. NÃO chama a IA e NÃO cria
+// versão: o ajuste é uma camada aplicada na hora de renderizar e exportar (ver
+// a migration 023). O efeito ao vivo já aconteceu no navegador enquanto ele
+// arrastava o controle; esta rota só torna a mudança permanente.
+router.put('/design/projects/:id/adjustments', validate(schemas.designAdjustments), async (req, res) => {
+  const project = await requireProject(req, res);
+  if (!project) return;
+  const saved = await setAdjustments(req.userId, project.id, req.body.adjustments);
+  if (!saved) return res.status(404).json(NOT_FOUND);
+  res.json(await projectPayload(req.userId, project.id));
+});
+
 // ---- Geração e refinamento --------------------------------------------------
 
 // Caminho único de geração: monta o contexto, chama o modelo, valida o artefato,
 // grava a versão e registra as duas falas no chat do projeto. Usado tanto pela
 // criação com prompt quanto pelo /generate.
+// Rótulo curto do alvo, para o histórico do chat.
+function targetLabel(target) {
+  if (target.slide) return `slide ${target.slide}`;
+  const texto = target.texto ? `"${target.texto.slice(0, 40)}${target.texto.length > 40 ? '…' : ''}"` : '';
+  return [`<${target.tag || 'elemento'}>`, texto].filter(Boolean).join(' ');
+}
+
 async function runGeneration(req, project, prompt) {
   const limitError = await enforceDailyLimit(req.userId);
   if (limitError) return { ok: false, status: 429, error: limitError };
@@ -165,6 +202,11 @@ async function runGeneration(req, project, prompt) {
   const version = await currentVersion(req.userId, project.id);
   const history = await listMessages(req.userId, project.id);
 
+  // Alvo da edição inline: o elemento que o usuário clicou na prévia. Vem da
+  // ponte dentro do iframe, então passa por `sanitizeTarget` antes de virar
+  // prompt (ver design/core.js).
+  const target = sanitizeTarget(req.body?.target);
+
   const result = await generateArtifact({
     userId: req.userId,
     outputType: project.output_type,
@@ -172,12 +214,15 @@ async function runGeneration(req, project, prompt) {
     current: version?.content || '',
     designSystem,
     history,
+    target,
     model: String(req.body?.model || ''),
   });
 
   // A fala do usuário é registrada mesmo quando a geração falha: sem ela, o
   // chat mostraria uma resposta de erro sem a pergunta que a causou.
-  await addMessage(req.userId, project.id, 'user', prompt);
+  // A fala registrada diz em que o pedido foi aplicado — sem isso, "deixe maior"
+  // no histórico não conta em QUE elemento a mudança foi pedida.
+  await addMessage(req.userId, project.id, 'user', target ? `${prompt}\n↳ ${targetLabel(target)}` : prompt);
   if (!result.ok) {
     await addMessage(req.userId, project.id, 'assistant', result.error);
     return { ok: false, status: 502, error: result.error };
@@ -243,7 +288,14 @@ router.post('/design/projects/:id/revert', validate(schemas.designRevert), async
 
 // Monta o HTML que o iframe renderiza. Para `slides` o HTML é NOSSO (o deck
 // montado a partir do JSON); para `web`/`document` é o artefato do modelo.
-function previewHtml(project, version) {
+//
+// Duas camadas são acrescentadas AQUI, e só aqui:
+//   * os ajustes do usuário (sobreposição de `:root` — ver design/tokens.js);
+//   * a ponte de seleção/ajuste ao vivo (design/bridge.js).
+// A ponte NÃO vai na exportação: o arquivo baixado tem de sair limpo, sem o
+// nosso script de edição dentro. Os ajustes vão nos dois — o que o usuário vê
+// é o que ele baixa.
+function previewHtml(project, version, adjustments) {
   if (!version) {
     return renderPlaceholder('Este projeto ainda não tem nenhuma versão. Descreva o que você quer no chat ao lado.');
   }
@@ -253,11 +305,15 @@ function previewHtml(project, version) {
   if (!contentMatchesType(version.content, project.output_type)) {
     return renderPlaceholder('O conteúdo desta versão não corresponde ao tipo do projeto e não foi renderizado.');
   }
-  if (project.output_type === 'slides') {
-    const parsed = parseSlidesJson(version.content);
-    return renderSlidesDeck(parsed.slides, { title: project.title });
-  }
-  return version.content;
+  const html = applyAdjustments(renderableHtml(project, version), adjustments);
+  return injectBridge(html);
+}
+
+// A ponte entra depois dos ajustes, no fim do documento, para que o `<style>`
+// de ajuste ao vivo que ela cria fique por cima de tudo.
+function injectBridge(html) {
+  const at = html.toLowerCase().lastIndexOf('</body>');
+  return at === -1 ? html + bridgeSnippet() : html.slice(0, at) + bridgeSnippet() + html.slice(at);
 }
 
 // Cabeçalhos que tornam o HTML gerado inofensivo para o app.
@@ -285,7 +341,7 @@ router.get('/design/preview/:token', async (req, res) => {
   const project = await getProjectByToken(req.params.token);
   if (!project) return previewResponse(res.status(404), renderPlaceholder('Prévia não encontrada ou expirada.'));
   const version = await currentVersionByProjectId(project.id);
-  previewResponse(res, previewHtml(project, version));
+  previewResponse(res, previewHtml(project, version, await adjustmentsByProjectId(project.id)));
 });
 
 // Mesmo conteúdo, pela sessão do dono. Útil fora do navegador (testes, checagem
@@ -294,16 +350,19 @@ router.get('/design/projects/:id/preview', async (req, res) => {
   const project = await requireProject(req, res);
   if (!project) return;
   const version = await currentVersion(req.userId, project.id);
-  previewResponse(res, previewHtml(project, version));
+  previewResponse(res, previewHtml(project, version, await adjustmentsByProjectId(project.id)));
 });
 
 // ---- Exportação -------------------------------------------------------------
 
-// HTML autocontido da versão escolhida — é também a base do PDF.
-function exportableHtml(project, version) {
-  if (project.output_type !== 'slides') return version.content;
-  const parsed = parseSlidesJson(version.content);
-  return renderSlidesDeck(parsed.slides, { title: project.title });
+// HTML autocontido da versão escolhida — é também a base do PDF. Leva os
+// ajustes do usuário, mas NÃO a ponte: o arquivo baixado é o design, não o
+// editor.
+function exportableHtml(project, version, adjustments, designSystem = null) {
+  const base = project.output_type === 'slides'
+    ? renderSlidesDeck(parseSlidesJson(version.content).slides, { title: project.title, designSystem })
+    : version.content;
+  return applyAdjustments(base, adjustments);
 }
 
 router.get('/design/projects/:id/export', async (req, res) => {
@@ -333,9 +392,7 @@ router.get('/design/projects/:id/export', async (req, res) => {
     return res.send(buffer);
   }
 
-  const html = project.output_type === 'slides'
-    ? renderSlidesDeck(parseSlidesJson(version.content).slides, { title: project.title, designSystem })
-    : exportableHtml(project, version);
+  const html = exportableHtml(project, version, await adjustmentsByProjectId(project.id), designSystem);
 
   if (format === 'pdf') {
     const pdf = await htmlToPdf(html, project.output_type);

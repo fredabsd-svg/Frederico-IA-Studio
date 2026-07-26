@@ -90,14 +90,16 @@ export function useDesign() {
     }
   }, [loadProjects, openProject]);
 
-  const generate = useCallback(async (projectId, prompt, model = '') => {
+  // `target` é o elemento clicado na prévia (edição inline). Vai junto do
+  // pedido para que o modelo saiba o que NÃO mexer.
+  const generate = useCallback(async (projectId, prompt, model = '', target = null) => {
     setBusy(true);
     setError('');
     try {
       const r = await fetch(`${API}/api/design/projects/${encodeURIComponent(projectId)}/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, model }),
+        body: JSON.stringify({ prompt, model, target }),
       });
       const data = await r.json().catch(() => null);
       // Mesmo no erro a resposta traz o pacote atualizado (com a fala do
@@ -134,6 +136,31 @@ export function useDesign() {
       return false;
     } finally {
       setBusy(false);
+    }
+  }, []);
+
+  // Ajustes finos. O efeito visual JÁ aconteceu no iframe quando o usuário
+  // mexeu no controle; esta chamada só torna a mudança permanente. Por isso ela
+  // atualiza o projeto em memória de forma otimista: voltar o slider para o
+  // valor antigo enquanto a resposta não chega seria um salto na tela.
+  const saveAdjustments = useCallback(async (projectId, adjustments) => {
+    setProject(prev => (prev?.id === projectId ? { ...prev, adjustments } : prev));
+    try {
+      const r = await fetch(`${API}/api/design/projects/${encodeURIComponent(projectId)}/adjustments`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ adjustments }),
+      });
+      if (!r.ok) { setError(await readError(r, 'Não consegui salvar o ajuste.')); return false; }
+      const data = await r.json();
+      // O servidor é a autoridade sobre o que foi aceito: um valor recusado
+      // (cor fora do formato, medida fora da faixa) some aqui, e o controle
+      // volta para o valor do design em vez de mostrar algo que não vale.
+      setProject(prev => (prev?.id === projectId ? { ...prev, ...data, messages: prev.messages, versions: prev.versions } : prev));
+      return true;
+    } catch {
+      setError('Não consegui salvar o ajuste.');
+      return false;
     }
   }, []);
 
@@ -191,6 +218,6 @@ export function useDesign() {
     projects, systems, project, loading, busy, error,
     setError, loadProjects, loadSystems, openProject, closeProject,
     createProject, generate, revert, removeProject, renameProject,
-    saveSystem, removeSystem,
+    saveAdjustments, saveSystem, removeSystem,
   };
 }

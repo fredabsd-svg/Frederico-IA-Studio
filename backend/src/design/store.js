@@ -7,6 +7,7 @@
 // capacidade (ver a nota 2 da migration 022 e docs/DESIGN_STUDIO.md).
 import { nanoid } from 'nanoid';
 import { db, now } from '../db.js';
+import { sanitizeAdjustments } from './tokens.js';
 
 // Quantas versões ficam navegáveis por projeto. Um HTML gerado tem dezenas de
 // KB e o refinamento por conversa cria uma versão POR MENSAGEM — sem poda, um
@@ -28,6 +29,7 @@ export function serializeProject(row, extra = {}) {
     designSystemId: row.design_system_id || null,
     previewToken: row.preview_token,
     currentVersionId: row.current_version_id || null,
+    adjustments: parseAdjustments(row.adjustments),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     ...extra,
@@ -135,6 +137,29 @@ export async function rotatePreviewToken(userId, id) {
   const r = await db.prepare('UPDATE design_projects SET preview_token=?, updated_at=? WHERE id=? AND user_id=?')
     .run(token, now(), id, userId);
   return r.changes > 0 ? token : null;
+}
+
+// Ajustes gravados. Passam por `sanitizeAdjustments` mesmo vindo do BANCO: a
+// coluna é texto livre para o Postgres, e um valor gravado por uma versão
+// antiga do código (ou por um restore) não pode virar CSS sem conferência.
+function parseAdjustments(raw) {
+  if (!raw) return {};
+  try { return sanitizeAdjustments(JSON.parse(raw)); } catch { return {}; }
+}
+
+export async function setAdjustments(userId, projectId, adjustments) {
+  const clean = sanitizeAdjustments(adjustments);
+  const value = Object.keys(clean).length ? JSON.stringify(clean) : null;
+  const r = await db.prepare('UPDATE design_projects SET adjustments=?, updated_at=? WHERE id=? AND user_id=?')
+    .run(value, now(), projectId, userId);
+  return r.changes > 0 ? clean : null;
+}
+
+// Ajustes a partir do id do projeto — usado pela rota de prévia, que não tem
+// sessão e por isso não pode passar por `getProject`.
+export async function adjustmentsByProjectId(projectId) {
+  const row = await db.prepare('SELECT adjustments FROM design_projects WHERE id=?').get(projectId);
+  return parseAdjustments(row?.adjustments);
 }
 
 // ---- Versões ----------------------------------------------------------------

@@ -92,19 +92,63 @@ PR #147 corrigiu no chat principal.
 
 **Ficou de fora, e está escrito em `docs/DESIGN_STUDIO.md` §Limites:** sem
 imagens (o layout `image-full` entrega um painel na cor da marca, não uma foto);
-edição inline, sliders de ajuste e tela de compartilhamento público são a v2; e
-`document` **não** reaproveita o pipeline de Word/PDF do agente — aquele caminho
-roda Python numa sandbox Docker presa a uma CONVERSA, e um projeto de design não
-é uma conversa nem tem workspace. Em vez de esticar aquele pipeline, o
-`document` gera HTML paginado e imprime com o Chromium que a imagem já traz;
-quem precisa de `.docx` editável continua no chat principal.
+tela de compartilhamento público; e `document` **não** reaproveita o pipeline de
+Word/PDF do agente — aquele caminho roda Python numa sandbox Docker presa a uma
+CONVERSA, e um projeto de design não é uma conversa nem tem workspace. Em vez de
+esticar aquele pipeline, o `document` gera HTML paginado e imprime com o Chromium
+que a imagem já traz; quem precisa de `.docx` editável continua no chat principal.
 
-Onde está: migration `022_design_studio.sql`; backend em `src/design/`
-(`core.js` puro, `render.js` puro, `store.js`, `generate.js`, `pdf.js`,
-`pptx.js`) e `src/routes/design.js`; frontend em `src/components/Design*.jsx`,
-`src/design/designCore.js`, `src/hooks/useDesign.js` e `src/design.css`.
-Documentação em `docs/DESIGN_STUDIO.md` (e `docs/SECURITY.md` §6.1).
-Testes: 28 + 10 + 5 puros, 13 de banco, 24 de rota e 5 em navegador real.
+### v2: edição inline e controles de ajuste
+
+**Edição inline.** Ligue "Editar elemento", clique no que quer mudar e o pedido
+vale só para ele — o modelo recebe um bloco `ALVO` com tag, classes, caminho e o
+trecho de HTML, mais a instrução de deixar o resto idêntico.
+
+O caminho do clique é o ponto interessante. A prévia roda em ORIGEM OPACA: de
+fora, `iframe.contentDocument` é `null` e nenhum seletor alcança o documento —
+e isso é a razão de o modo ser seguro, não um obstáculo a contornar. Então o
+backend injeta na prévia (e SÓ nela) um script-ponte que realça o elemento sob o
+cursor e devolve o descritor por `postMessage`. A interface valida a mensagem
+pela JANELA (`event.source === iframe.contentWindow`): numa origem opaca,
+`event.origin` chega como "null" e comparar isso não prova nada. Em
+apresentações o alvo é o NÚMERO do slide — o modelo edita o JSON, e mandar o HTML
+do deck (que é nosso) o faria devolver HTML onde deve devolver JSON.
+
+**Controles de ajuste.** Sliders de cor, tipografia, espaçamento e arredondamento
+que mudam a prévia na hora, sem versão nova e sem chamada à IA.
+
+Isso exigiu um CONTRATO, não um truque: o system prompt passou a exigir que toda
+saída HTML declare um bloco `:root` com variáveis `--fred-*` e as use no resto do
+CSS. Sem ele, um slider de "cor primária" seria adivinhação — num HTML arbitrário
+a cor está espalhada em vinte declarações escritas de jeitos diferentes
+(`#1f3b8a`, `rgb(...)`, `bg-blue-900` do Tailwind), e reescrever por regex ora
+acertaria, ora pintaria o texto de fundo. Com as variáveis, o ajuste é uma
+sobreposição de `:root`.
+
+Três consequências que valem lembrar ao mexer nisso:
+
+- **A lista de controles é derivada do artefato**, não fixa: `detectTokens` lê o
+  HTML servido. Um design fora do contrato (gerado antes da v2) mostra ZERO
+  controles, e a tela explica o porquê em vez de oferecer sliders inertes.
+- **O ajuste é camada, não reescrita**: fica numa coluna do projeto e é aplicado
+  ao renderizar e ao exportar. É o que permite mexer no slider e depois pedir uma
+  edição no chat sem que uma coisa apague a outra. E o que você vê é o que você
+  baixa — a exportação leva os ajustes, mas NÃO leva a ponte de edição.
+- **Ajustar não cria versão.** Um arrasto de slider não é decisão de design que
+  mereça histórico; uma versão por movimento comeria a janela de poda.
+
+O deck de slides passou a usar os mesmos nomes de variável, então apresentações
+também ganham os controles de cor. `--fred-fonte-base` fica de fora ali de
+propósito: o deck escala a tipografia em `cqw`, e um valor em px não teria efeito
+— controle que não faz nada é pior que controle nenhum.
+
+Onde está: migrations `022_design_studio.sql` e `023_design_ajustes.sql`; backend
+em `src/design/` (`core.js`, `render.js`, `tokens.js` e `bridge.js` puros,
+`store.js`, `generate.js`, `pdf.js`, `pptx.js`) e `src/routes/design.js`;
+frontend em `src/components/Design*.jsx`, `src/design/designCore.js`,
+`src/hooks/useDesign.js` e `src/design.css`. Documentação em
+`docs/DESIGN_STUDIO.md` (e `docs/SECURITY.md` §6.1).
+Testes: 37 + 11 + 19 + 6 + 5 puros, 13 de banco, 38 de rota e 9 em navegador real.
 
 ---
 
@@ -325,11 +369,10 @@ Novo job `e2e` no CI, com Postgres real e Chromium. Ver `e2e/README.md`.
    `updated_at`) e retomada no boot.
 5. **F-21** — extrair de `App.jsx`, por etapas: shell → estado da conversa → estado da
    execução → drawers/configurações. `React.lazy` nos painéis pesados.
-6. **Modo Design v2 (opcional, sem risco aberto)** — edição inline (clicar num
-   elemento da prévia e pedir a mudança só dele, via `data-editable-id` +
-   `postMessage`), controles de ajuste que reescrevem variáveis CSS sem chamar a
-   IA, imagens no artefato (a geração de imagens já existe no app) e tela de
-   compartilhamento público sobre o token de prévia que já existe.
+6. **Modo Design, o que sobrou (opcional, sem risco aberto)** — edição inline e
+   controles de ajuste estão **feitos**; falta imagens no artefato (a geração de
+   imagens já existe no app) e a tela de compartilhamento público sobre o token
+   de prévia que já existe.
 7. **F-24/F-25 (sub-agentes, o que sobrou dos P1/P2)** — orçamento por delegação
    (`SUBAGENT_TIMEOUT_MS`, `MAX_STEPS`, `MAX_TOKENS`, deadline compartilhado); diretório
    `outputs/<delegationId>/` com manifesto por filho; catálogo persistido de capacidade de

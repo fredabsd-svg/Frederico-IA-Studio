@@ -226,7 +226,8 @@ navegadores. As defesas, em resumo (detalhe em `docs/DESIGN_STUDIO.md`):
 | URL da prévia | capacidade de 32 caracteres aleatórios, na única rota de API sem sessão; regenerável por `POST /api/design/projects/:id/preview-token` |
 | Impressão em PDF | Chromium do backend com a guarda de rede do §6; o conteúdo entra por `setContent` (about:blank, origem opaca), sem navegação de topo |
 | Antes de renderizar | `contentMatchesType` confere que o conteúdo salvo bate com o `output_type` |
-| Marca do usuário | cor só em hex, nome de fonte sem aspas/`;` — os dois são interpolados dentro de CSS |
+| Marca e ajustes do usuário | cor só em hex, nome de fonte sem aspas/`;`, medida dentro da faixa do token — todos entram dentro de CSS |
+| Ponte de edição (v2) | injetada **só na prévia**, nunca na exportação; é constante (nada interpolado); o descritor do elemento que ela envia passa por `sanitizeTarget` antes de virar prompt. A interface valida a mensagem pela JANELA (`event.source === iframe.contentWindow`) — numa origem opaca, `event.origin` chega como "null" e não prova nada |
 
 Regressões guardadas em `backend/src/routes/design.http.test.js` (cabeçalhos) e
 `e2e/tests/design.spec.js` (atributo do iframe, no navegador de verdade).

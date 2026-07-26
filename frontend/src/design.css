@@ -211,10 +211,12 @@
 
 .dsTabs { flex: none; display: flex; gap: 6px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
 .dsTabs button {
-  flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-  font-size: var(--fs-sm); padding: 9px 8px; border-radius: var(--r-md);
+  flex: 1; min-width: 0; display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  font-size: var(--fs-xs); padding: 9px 6px; border-radius: var(--r-md);
   border: 1px solid var(--line); background: var(--panel2); color: var(--muted); cursor: pointer;
+  white-space: nowrap;
 }
+.dsTabs button svg { flex: none; }
 .dsTabs button.on { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .dsCount { font-size: var(--fs-2xs); background: var(--panel); border-radius: var(--r-full); padding: 1px 7px; }
 
@@ -244,6 +246,72 @@
   border-radius: var(--r-md); border: 1px solid var(--accent); background: var(--accent); color: var(--on-accent); cursor: pointer;
 }
 .dsSend:disabled { opacity: .45; cursor: not-allowed; }
+
+/* ---- Seleção de elemento (edição inline) ---------------------------------- */
+
+.dsSelectBtn.on {
+  color: var(--accent); border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.dsPreviewTip {
+  position: absolute; left: 50%; top: 14px; transform: translateX(-50%);
+  display: inline-flex; align-items: center; gap: 8px;
+  background: var(--panel); border: 1px solid var(--accent); color: var(--text);
+  border-radius: var(--r-full); padding: 8px 15px; font-size: var(--fs-xs);
+  box-shadow: 0 8px 26px rgba(0, 0, 0, .25); pointer-events: none;
+}
+.dsPreviewTip kbd {
+  font: inherit; font-size: var(--fs-2xs); border: 1px solid var(--line);
+  border-radius: var(--r-sm); padding: 1px 5px; background: var(--panel2);
+}
+
+/* Etiqueta do elemento escolhido, logo acima do compositor: é o que responde
+   "o que vou mudar?" no momento em que a pessoa escreve o pedido. */
+.dsTargetChip {
+  flex: none; display: flex; align-items: center; gap: 8px; min-width: 0;
+  border: 1px solid var(--accent); border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  padding: 8px 10px; font-size: var(--fs-xs); color: var(--text);
+}
+.dsTargetChip svg { flex: none; color: var(--accent); }
+.dsTargetChip span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, Consolas, monospace; }
+.dsTargetChip button { flex: none; border: none; background: transparent; color: var(--muted); padding: 3px; display: flex; border-radius: var(--r-sm); cursor: pointer; }
+.dsTargetChip button:hover { color: var(--danger); }
+
+/* ---- Ajustes finos (sliders) ---------------------------------------------- */
+
+.dsAdjust { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 12px; padding: 12px; }
+.dsAdjustHead { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: var(--fs-xs); color: var(--muted); }
+.dsAdjustHead span { display: inline-flex; align-items: center; gap: 6px; }
+.dsAdjustHead button {
+  display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  font: inherit; font-size: var(--fs-xs); color: var(--muted);
+  border: 1px solid var(--line); background: var(--panel2); border-radius: var(--r-sm); padding: 5px 9px;
+}
+.dsAdjustHead button:hover { border-color: var(--accent); color: var(--accent); }
+
+.dsAdjustList { display: flex; flex-direction: column; gap: 10px; }
+.dsAdjustItem {
+  display: flex; flex-direction: column; gap: 7px;
+  border: 1px solid var(--line); background: var(--panel2); border-radius: var(--r-md); padding: 11px 12px;
+}
+.dsAdjustItem.on { border-color: var(--accent); }
+.dsAdjustTop { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.dsAdjustTop b { font-size: var(--fs-sm); }
+.dsAdjustTop span { font-size: var(--fs-xs); color: var(--muted); font-family: ui-monospace, Consolas, monospace; }
+.dsAdjustItem small { font-size: var(--fs-2xs); color: var(--muted); }
+.dsAdjustItem input[type="range"] { width: 100%; accent-color: var(--accent); cursor: pointer; padding: 0; }
+.dsAdjustControl { display: flex; gap: 8px; align-items: center; }
+.dsAdjustControl input[type="color"] {
+  flex: none; width: 48px; height: 34px; padding: 2px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--panel); border-radius: var(--r-sm);
+}
+.dsAdjustHex {
+  flex: 1; min-width: 0; font-family: ui-monospace, Consolas, monospace;
+  border: 1px solid var(--line); background: var(--panel); color: var(--text);
+  border-radius: var(--r-sm); padding: 7px 9px; font-size: var(--fs-xs); outline: none;
+}
+.dsAdjustHex:focus { border-color: var(--accent); }
 
 /* ---- Histórico de versões ------------------------------------------------- */
 

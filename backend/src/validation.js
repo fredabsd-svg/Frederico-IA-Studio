@@ -189,6 +189,29 @@ export const schemas = {
     prompt: z.string({ error: 'Descreva o que você quer.' }).trim().min(1, 'Descreva o que você quer.')
       .max(DESIGN_MAX_PROMPT_CHARS, 'O pedido é grande demais. Resuma o que você precisa.'),
     model: modelId.nullish(),
+    // Edição inline: o elemento clicado na prévia. Os tetos aqui são só o
+    // primeiro freio — o descritor vem de dentro do iframe (onde roda código
+    // gerado por IA) e é normalizado de novo por `sanitizeTarget`.
+    target: z.looseObject({
+      tag: z.string().trim().max(40).nullish(),
+      classes: z.string().max(300).nullish(),
+      id: z.string().max(200).nullish(),
+      caminho: z.string().max(400).nullish(),
+      slide: z.coerce.number().nullish(),
+      texto: z.string().max(1000).nullish(),
+      html: z.string().max(4000).nullish(),
+      truncado: z.coerce.boolean().nullish(),
+    }).nullish(),
+  }),
+
+  // Ajustes finos: só as chaves do catálogo em design/tokens.js sobrevivem, e a
+  // validação por tipo (hex / faixa numérica) acontece em `sanitizeAdjustments`.
+  // Aqui garantimos apenas que veio um objeto pequeno de valores escalares.
+  designAdjustments: z.looseObject({
+    adjustments: z.record(
+      z.string().max(40),
+      z.union([z.string().max(40), z.number(), z.null()]),
+    ).nullish(),
   }),
 
   designRevert: z.looseObject({

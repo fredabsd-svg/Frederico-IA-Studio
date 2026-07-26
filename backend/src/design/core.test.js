@@ -5,6 +5,7 @@ import {
   stripCodeFence, extractHtmlDocument, extractJsonObject, parseSlidesJson, normalizeSlide,
   extractArtifact, contentMatchesType, sanitizeProjectInput, sanitizeColor, sanitizeFontName,
   sanitizeDesignSystemInput, versionSummary, resolveExportFormat, safeFileName,
+  sanitizeTarget, targetBlock, MAX_TARGET_HTML, MAX_TARGET_TEXT,
 } from './core.js';
 
 // A resposta do modelo é a fronteira menos confiável do Modo Design: ele pode
@@ -222,4 +223,79 @@ test('o resumo da versão diz o que mudou sem despejar o artefato', () => {
   assert.match(versionSummary('slides', 3, '{"slides":[{"layout":"title"},{"layout":"content"}]}'), /Versão 3.*2 slides/);
   assert.match(versionSummary('slides', 1, '{"slides":[{"layout":"title"}]}'), /1 slide\./);
   assert.match(versionSummary('web', 2, HTML), /Versão 2.*KB de HTML/);
+});
+
+// ---- Edição inline ---------------------------------------------------------
+
+test('o alvo vindo da prévia é normalizado antes de virar prompt', () => {
+  // O descritor nasce DENTRO do iframe, o contexto que executa código gerado
+  // por IA. Campo fora da lista some; texto e HTML entram limitados.
+  const alvo = sanitizeTarget({
+    tag: 'H1', classes: 'hero', id: 'titulo', caminho: 'section > h1',
+    texto: 'x'.repeat(9999), html: 'y'.repeat(9999), truncado: true,
+    onclick: 'alert(1)', extra: { a: 1 },
+  });
+  assert.equal(alvo.tag, 'h1');
+  assert.equal(alvo.texto.length, MAX_TARGET_TEXT);
+  assert.equal(alvo.html.length, MAX_TARGET_HTML);
+  assert.deepEqual(Object.keys(alvo).sort(), ['caminho', 'classes', 'html', 'id', 'slide', 'tag', 'texto', 'truncado']);
+});
+
+test('alvo vazio ou sem nada que identifique vira null (edição normal)', () => {
+  assert.equal(sanitizeTarget(null), null);
+  assert.equal(sanitizeTarget('h1'), null);
+  assert.equal(sanitizeTarget({}), null);
+  assert.equal(sanitizeTarget({ classes: 'só isso' }), null);
+});
+
+test('número de slide inválido não passa', () => {
+  assert.equal(sanitizeTarget({ slide: 0, tag: 'h1' }).slide, null);
+  assert.equal(sanitizeTarget({ slide: -3, tag: 'h1' }).slide, null);
+  assert.equal(sanitizeTarget({ slide: 'abc', tag: 'h1' }).slide, null);
+  assert.equal(sanitizeTarget({ slide: 3.7, tag: 'h1' }).slide, 3);
+  assert.equal(sanitizeTarget({ slide: 9999, tag: 'h1' }).slide, MAX_SLIDES);
+});
+
+test('o bloco do alvo manda alterar SÓ aquele elemento', () => {
+  const bloco = targetBlock(sanitizeTarget({ tag: 'h1', classes: 'hero', texto: 'Bem-vindo', html: '<h1 class="hero">Bem-vindo</h1>' }), 'web');
+  assert.match(bloco, /ALVO/);
+  assert.match(bloco, /<h1>/);
+  assert.match(bloco, /class: hero/);
+  assert.match(bloco, /<h1 class="hero">Bem-vindo<\/h1>/);
+  assert.match(bloco, /APENAS esse elemento/);
+});
+
+test('em slides o alvo é o NÚMERO do slide, nunca o HTML do deck', () => {
+  // O modelo edita o JSON; o HTML do deck é montado por nós. Mandar essa
+  // marcação o faria devolver HTML onde deve devolver JSON — e o artefato
+  // inteiro seria recusado.
+  const alvo = sanitizeTarget({ tag: 'h2', slide: 3, texto: 'Escopo', html: '<h2>Escopo</h2>' });
+  const bloco = targetBlock(alvo, 'slides');
+  assert.match(bloco, /slide 3/);
+  assert.match(bloco, /APENAS esse slide/);
+  assert.ok(!bloco.includes('<h2>'), 'nada de marcação do deck no prompt de slides');
+});
+
+test('clique fora de um slide não vira alvo numa apresentação', () => {
+  assert.equal(targetBlock(sanitizeTarget({ tag: 'main', texto: 'fundo' }), 'slides'), '');
+});
+
+test('sem alvo, a mensagem de edição fica como era antes', () => {
+  const semAlvo = buildGenerateMessages({ outputType: 'web', prompt: 'mude a cor', current: HTML });
+  assert.ok(!semAlvo.at(-1).content.includes('ALVO'));
+});
+
+test('com alvo, o bloco entra entre o artefato e o pedido', () => {
+  const alvo = sanitizeTarget({ tag: 'h1', texto: 'Bem-vindo', html: '<h1>Bem-vindo</h1>' });
+  const user = buildGenerateMessages({ outputType: 'web', prompt: 'deixe maior', current: HTML, target: alvo }).at(-1).content;
+  assert.ok(user.indexOf('HTML ATUAL') < user.indexOf('ALVO'), 'o artefato vem primeiro');
+  assert.ok(user.indexOf('ALVO') < user.indexOf('deixe maior'), 'o pedido vem por último');
+});
+
+test('o contrato das variáveis de ajuste só vale para saídas HTML', () => {
+  // Em `slides` o CSS é nosso (o deck), e pedir um bloco :root ao modelo o
+  // convidaria a devolver CSS onde ele deve devolver JSON.
+  assert.match(buildSystemPrompt('web'), /--fred-cor-primaria/);
+  assert.match(buildSystemPrompt('document'), /--fred-cor-primaria/);
+  assert.doesNotMatch(buildSystemPrompt('slides'), /--fred-cor-primaria/);
 });

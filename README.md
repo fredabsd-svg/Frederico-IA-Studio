@@ -115,6 +115,11 @@ vivo.
 - **Refinamento por conversa** — "deixe o cabeçalho mais escuro", "adicione uma
   seção de perguntas frequentes". Cada pedido vira uma **versão**, e dá para
   voltar para qualquer uma sem perder as seguintes.
+- **Edição inline** — clique num elemento da prévia e peça a mudança só dele:
+  o resto do documento sai idêntico.
+- **Ajustes na hora** — sliders de cor, tipografia, espaçamento e arredondamento
+  que mudam a prévia **sem gastar uma geração**. Os controles são derivados do
+  próprio design: aparecem os que ele expõe.
 - **Prévia isolada** — o HTML gerado roda num iframe de origem opaca, sem
   acesso à sua sessão nem ao resto da interface.
 - **Exportação**: `.html` para site, `.pdf` e `.pptx` para apresentação, `.pdf`

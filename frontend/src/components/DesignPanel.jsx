@@ -88,9 +88,10 @@ export function DesignPanel({ onClose, model = '', askConfirm }) {
               error={design.error}
               model={model}
               onBack={() => { design.closeProject(); setView('home'); }}
-              onGenerate={(prompt) => design.generate(design.project.id, prompt, model)}
+              onGenerate={(prompt, target) => design.generate(design.project.id, prompt, model, target)}
               onRevert={(versionId) => design.revert(design.project.id, versionId)}
               onRename={(title) => design.renameProject(design.project.id, title)}
+              onSaveAdjustments={(ajustes) => design.saveAdjustments(design.project.id, ajustes)}
             />
           )}
 
