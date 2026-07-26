@@ -1464,6 +1464,8 @@ export default function App({ user } = {}) {
       assistants={assistants}
       draft={input}
       onApplyDraft={setInput}
+      conversationId={current?.id || null}
+      conversationTitle={current?.title || ''}
       showToast={showToast}
     />
     {copilotOpen && <CopilotPanel copilot={copilot} onClose={() => setCopilotOpen(false)} />}
