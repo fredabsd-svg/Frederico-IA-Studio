@@ -18,15 +18,19 @@ socket do Docker — ver `docs/SECURITY.md` §4.3). O que ainda impede o verde �
 de testes: SSE integrado, retomada após interrupção real, pipeline retomável e injeção
 adversarial não foram executados. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Branch:** `claude/new-session-dm3140` → **PR [#140](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/140)** (app inutilizável: tela de erro + sandbox recusado).
+- **Último trabalho:** **PR [#140](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/140)** — mesclado na `main`. Três regressões que deixavam o app
+  inutilizável: a tela "Algo deu errado", o sandbox recusado pelo guarda (Windows **e**
+  VPS) e o erro de chave apontando o provedor errado. Detalhe de cada uma abaixo.
 - **Última validação:** 2026-07-26 — **721 testes** (backend 605, frontend 57, guarda do
-  Docker 49, sandbox Python 10), sem PostgreSQL no contêiner (19 do backend e 9 do Python
-  se autopulam — esperado; o CI roda com Postgres real). `npm run check` verde nos dois
-  lados. A contagem vem de `cd backend && npm run test:count` — não a escreva à mão.
+  Docker 49, sandbox Python 10). Localmente sem PostgreSQL no contêiner (19 do backend e
+  9 do Python se autopulam — esperado); **na CI os 10 jobs passaram**, inclusive o
+  "Backend — integração (PostgreSQL real + migrações)", então os que se autopulam aqui
+  rodaram de verdade lá. A contagem vem de `cd backend && npm run test:count` — não a
+  escreva à mão.
 
 ---
 
-## "Chave da API inválida" apontando o provedor errado (2026-07-26 — mesma branch)
+## "Chave da API inválida" apontando o provedor errado (2026-07-26 — PR #140)
 
 Conta com DeepSeek **e** OpenRouter: o OpenRouter sincronizou 345 modelos às
 21:42:55 (chave válida) e o chat falhou às 21:42 com "Chave da API inválida ou
@@ -56,7 +60,7 @@ os defaults sem prefixo continuam sendo gravados. O certo é o assistente guarda
 
 ---
 
-## 🔴 O sandbox não subia em NENHUM ambiente (2026-07-26 — mesma branch)
+## 🔴 O sandbox não subia em NENHUM ambiente (2026-07-26 — PR #140)
 
 `POST /containers/create` era recusado pelo guarda em toda tentativa, então
 nenhuma ferramenta rodava. Mesmo sintoma no PC e na VPS, causas diferentes:
@@ -86,7 +90,7 @@ Correções em `docker-guard/src/policy.js`:
 
 ---
 
-## 🔴 A tela "Algo deu errado por aqui" (2026-07-26 — branch `claude/new-session-dm3140`)
+## 🔴 A tela "Algo deu errado por aqui" (2026-07-26 — PR #140)
 
 Abrir **qualquer conversa em que a IA tivesse usado uma ferramenta** derrubava a
 aplicação inteira na tela do `ErrorBoundary`. Causa:
@@ -344,15 +348,22 @@ renderização real (Playwright) em 360, 393, 600, 900, 1000 e 1300px.
 
 ## Próximos passos (em ordem)
 
-1. **F-12/F-13** — provedor HTTP simulado + teste integrado de SSE. Destrava boa parte
+1. **Modelo do assistente sem provedor** (causa raiz do 401 do PR #140, ainda aberta).
+   `getUserProvider` cai em `rows[0]` — o provedor mais ANTIGO — quando o id do modelo
+   não tem prefixo `<provedor>::` e não aparece em catálogo nenhum. O assistente deve
+   guardar um `modelRef` completo. Envolve: unificar os dois defaults incoerentes
+   (`deepseek/deepseek-chat` em `seed.js` e `routes/assistants.js`; `deepseek-chat` em
+   `schedules`, `inbox`, `conversations` e `helpers`), migrar os assistentes já gravados
+   e decidir o que fazer quando o modelo não for atribuível — hoje o chute é silencioso.
+2. **F-12/F-13** — provedor HTTP simulado + teste integrado de SSE. Destrava boa parte
    das outras lacunas de teste.
-2. **F-14** — retomada após `kill -9` no meio de um run, com checkpoint real.
-3. **F-15** — tabela `pipeline_runs` (`pipeline_run_id`, `current_stage`,
+3. **F-14** — retomada após `kill -9` no meio de um run, com checkpoint real.
+4. **F-15** — tabela `pipeline_runs` (`pipeline_run_id`, `current_stage`,
    `completed_stages`, `pending_stages`, `artifact_versions`, `status`, `checkpoint`,
    `updated_at`) e retomada no boot.
-4. **F-17** — casos adversariais: README malicioso no repositório, memória envenenada,
+5. **F-17** — casos adversariais: README malicioso no repositório, memória envenenada,
    delimitador fechado à força, resposta maliciosa de outro modelo.
-5. **F-20** — extrair de `App.jsx`, por etapas: shell → estado da conversa → estado da
+6. **F-20** — extrair de `App.jsx`, por etapas: shell → estado da conversa → estado da
    execução → drawers/configurações. `React.lazy` nos painéis pesados.
 
 ---
