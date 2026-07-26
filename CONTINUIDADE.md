@@ -19,17 +19,72 @@ de testes: **o SSE integrado saiu do zero** (ver a frente abaixo), mas a retomad
 interrupção real do processo e o pipeline multimodelo retomável continuam sem teste.
 Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** **PR [#147](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/147)** —
-  o personagem do copiloto cobria o **botão de enviar**; corrigido (frente abaixo). Foi o
-  primeiro defeito que a suíte E2E encontrou sozinha. Antes dele, o **PR
-  [#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)** (Playwright +
-  suíte ponta a ponta), o **PR [#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)**
-  (as sete falhas P0 dos sub-agentes) e o **PR #144** (GraphQL no sandbox).
-- **Última validação:** 2026-07-26 — **806 testes** (backend 677, frontend 57, guarda do
-  Docker 49, sandbox Python 10, ponta a ponta 13). Backend e frontend rodaram com
-  PostgreSQL real neste contêiner: **677 passaram, 0 pulados**. Os 13 E2E rodaram de
-  verdade. Os 10 do Python não coletam aqui por falta do `openpyxl` — na CI rodam. A
-  contagem vem de `cd backend && npm run test:count` — não a escreva à mão.
+- **Último trabalho:** estabilização do **ambiente de execução do agente** (frente abaixo):
+  um timeout deixou de derrubar o sandbox, toda execução devolve estado estruturado
+  (ambiente × projeto), o reinício é anunciado com o que sobreviveu e o que se perdeu,
+  e o agente ganhou a ferramenta `ambiente` (status, recursos, dependências,
+  checkpoints). Antes dele, o **PR [#147](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/147)**
+  (o Nino cobrindo o botão de enviar), o **PR [#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)**
+  (Playwright + suíte ponta a ponta) e o **PR [#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)**
+  (as sete falhas P0 dos sub-agentes).
+- **Última validação:** 2026-07-26 — **823 testes** (backend 707, frontend 57, guarda do
+  Docker 49, sandbox Python 10). Backend e frontend passaram neste contêiner: **688
+  passaram, 0 falharam, 19 pulados** (os 19 exigem PostgreSQL, que não está de pé aqui —
+  na CI rodam). Os 10 do Python não coletam aqui por falta do `openpyxl`. Os 13 E2E não
+  entram nesta contagem porque o `e2e/` não está instalado neste contêiner. A contagem
+  vem de `cd backend && npm run test:count` — não a escreva à mão.
+
+---
+
+## Estabilização do ambiente de execução do agente (2026-07-26)
+
+O pedido era largo: tornar o ambiente onde o agente edita arquivos, instala pacotes e
+roda testes **estável, persistente, observável e recuperável**, de modo que uma falha de
+infraestrutura não seja confundida com falha do projeto. O diagnóstico apontou uma causa
+raiz que explicava a maioria dos sintomas:
+
+**Um timeout matava o container inteiro.** Os processos filhos morriam (correto), mas
+levavam junto os pacotes instalados no turno, os serviços de apoio e todo o estado fora
+do workspace — e o modelo não era avisado de nada. Ele seguia trabalhando como se o
+ambiente anterior existisse: reinstalava, repetia etapas e, no pior caso, declarava
+concluída uma execução que havia sido cortada.
+
+O que mudou:
+
+| Antes | Agora |
+| --- | --- |
+| Timeout derrubava o sandbox | Mata a **árvore de processos** (`FREDERICO_EXEC_ID` varrido em `/proc/*/environ`, alcança netos); só derruba o container se ela sobreviver à carência |
+| Resultado era `{exitCode, output}` | + `status`, `sucesso`, `duracao_ms`, `processo_encerrado`, `saida_parcial`, `arquivos_alterados`, `diagnostico` |
+| Falha de ambiente parecia bug do código | Taxonomia com `falha_do_projeto`: dependência, rede, permissão, recurso e ferramenta são do AMBIENTE; teste quebrado e exit ≠ 0 são do projeto |
+| Reinício era silencioso | Evento `ambiente_reiniciado` com motivo, geração e as listas **preservado/perdido** — entregue uma única vez |
+| `pip install` sumia com o container | `/cache` é bind do host por usuário (pip/npm/uv/poetry) e as instalações ficam num manifesto em `/workspace/.agent-env` |
+| Sem rede de segurança para edições | Checkpoints do workspace (criar/listar/restaurar), fora da árvore da conversa, **sem segredos** |
+| Sem visibilidade de recursos | Ferramenta `ambiente` → `recursos`: CPU, memória, disco, maiores diretórios e processos |
+
+Detalhe importante da classificação, achado por teste: `ModuleNotFoundError` contém a
+subcadeia `eNotFound` — com regex insensível a maiúsculas, uma dependência ausente virava
+"problema de rede", exatamente o diagnóstico trocado que o módulo existe para evitar. Os
+códigos de erro do sistema passaram a ser casados com fronteira de palavra e sem `i`.
+
+Também: `/containers/<id>/stats` liberado no `docker-guard` (leitura, com posse pela
+label — sem ela não dá para distinguir "morreu por falta de memória" de "o código
+quebrou"), `/runtime/tmp` como `TMPDIR` descartável e `/artifacts` persistente na imagem
+do sandbox.
+
+**Mudança visível para o usuário:** o assistente passa a avisar quando uma execução não
+terminou, em vez de relatar sucesso; e o agente ganha a ferramenta `ambiente`, que
+acompanha automaticamente quem já tem `run_python`/`bash` (não é uma permissão nova a
+ligar no Assistant Studio).
+
+**Ficou de fora, de propósito** (§11 de `docs/AMBIENTE_EXECUCAO.md`): streaming de logs
+em tempo real de comandos longos, registro de portas/serviços iniciados pelo agente,
+sintaxe explícita de transação de workspace e snapshot do container.
+
+Onde está: `backend/src/agentEnv.js`, `backend/src/sandbox.js`, ferramenta `ambiente` em
+`backend/src/tools.js`, prompt em `backend/src/agent/prompts.js`, aviso de reinício no
+preâmbulo do turno em `backend/src/agent/loop.js`. Documentação em
+`docs/AMBIENTE_EXECUCAO.md`. Testes: `src/agentEnv.test.js` (21) e
+`src/sandbox.stability.test.js` (9).
 
 ---
 

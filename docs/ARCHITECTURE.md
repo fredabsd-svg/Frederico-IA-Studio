@@ -177,7 +177,18 @@ execInSandbox(conversationId, cmd, timeout, { userId, ...política })
 - **Invalidação direcionada** (novo): mudar pastas do PC descarta só os sandboxes **daquele** usuário.
 - **Observação sem efeito colateral:** `execInActiveSandbox(userId, conversationId, ...)` —
   não cria, não troca, não mata; usado pelo monitor do copiloto.
-- **Testes:** `src/sandbox.isolation.test.js` (11 casos), `src/sandbox.id.test.js`.
+- **Timeout NÃO derruba mais o container** (novo): o comando leva
+  `FREDERICO_EXEC_ID` no ambiente, e o encerramento varre `/proc/*/environ` para
+  matar a árvore inteira (filhos, netos). O sandbox só cai se a árvore
+  sobreviver à carência — antes, um `pytest` travado custava as dependências da
+  sessão.
+- **Estado estruturado + aviso de reinício** (novo): toda execução devolve
+  `status`, `diagnostico` (ambiente × projeto), `arquivos_alterados` e, quando o
+  container foi trocado, `ambiente_reiniciado` com o que sobreviveu e o que se
+  perdeu. Camadas: `/workspace` e `/cache` persistentes, `/runtime/tmp`
+  descartável. Ver **`docs/AMBIENTE_EXECUCAO.md`**.
+- **Testes:** `src/sandbox.isolation.test.js` (11 casos), `src/sandbox.id.test.js`,
+  `src/sandbox.stability.test.js`, `src/agentEnv.test.js`.
 
 ---
 

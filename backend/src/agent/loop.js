@@ -28,6 +28,8 @@ import { untrustedContext, untrustedToolResult } from './promptRegistry.js';
 import { emitExecutionState, finalExecutionState } from './executionState.js';
 import { resolveSandboxNetwork, isToolCallAllowed } from './assistantPolicy.js';
 import { explicitlyAuthorizesPcWrite } from '../execGuard.js';
+import { takeSandboxRestartNotice } from '../sandbox.js';
+import { formatRestartNotice } from '../agentEnv.js';
 import { SUBAGENT_TOOL_NAME, subagentToolDefinitionFor, listSubagentSpecialists, buildDelegationContext, intersectToolDefinitions, canLaunchDelegationsInParallel, shouldOfferSubagentTool, maxSubagentsPerRun, createSubagentLimiter, runSubagent } from './subagents.js';
 import { buildDocumentContext, DOC_PRECEDENCE_NOTE } from '../docling/context.js';
 import { doclingImageParts, visualElementsNote } from '../docling/vision.js';
@@ -348,6 +350,12 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   if (environmentNote) messages.push({ role: 'user', content: untrustedContext('verified-environment-output', environmentNote) });
   if (developerContext?.userRules) messages.push({ role: 'user', content: untrustedContext('project-rules', developerContext.userRules) });
   const callNotes = [];
+  // Reinício do sandbox entre turnos: o modelo precisa saber ANTES de agir. Sem
+  // este aviso ele continua supondo que os pacotes instalados, os processos e os
+  // arquivos temporários do turno anterior ainda existem — e retrabalha ou, pior,
+  // conclui em cima de um estado que não está mais lá.
+  const restartNotice = formatRestartNotice(takeSandboxRestartNotice(sandboxOptions.userId, conversationId));
+  if (restartNotice) callNotes.push(restartNotice);
   if (forceExecution || modelPlan.requirements.required) callNotes.push(EXECUTION_CONTRACT_NOTE);
   if (MACRO_REQUEST_RE.test(String(userText || ''))) callNotes.push(MACRO_LIMITATION_NOTE);
   if (lowSignalTurn) callNotes.push(LOW_SIGNAL_TURN_NOTE);

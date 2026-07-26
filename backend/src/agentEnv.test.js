@@ -1,0 +1,286 @@
+// Estabilidade do ambiente de execução (plano de estabilização).
+//
+// O que estes testes provam:
+//   1) uma falha de AMBIENTE não é confundida com bug do projeto — e vice-versa;
+//   2) um comando interrompido nunca é classificado como sucesso;
+//   3) o reinício do sandbox gera UM aviso estruturado, com o que sobreviveu e
+//      o que se perdeu, entregue uma única vez;
+//   4) o checkpoint copia o workspace, IGNORA segredos e restaura por hash;
+//   5) o manifesto de dependências de runtime sobrevive à morte do container.
+import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+
+import {
+  ERROR_CATEGORIES,
+  EXEC_STATUS,
+  TERMINATION_REASONS,
+  classifyExecOutcome,
+  fingerprintWorkspace,
+  fingerprintChanged,
+  noteSandboxCreated,
+  noteSandboxTerminated,
+  takeRestartNotice,
+  peekSandboxLifecycle,
+  formatRestartNotice,
+  isSecretPath,
+  isCheckpointSkipped,
+  collectCheckpointFiles,
+  createCheckpoint,
+  listCheckpoints,
+  restoreCheckpoint,
+  pruneCheckpoints,
+  detectPackageInstall,
+  recordRuntimeInstall,
+  listRuntimeInstalls,
+  directoryUsage,
+  environmentManifest,
+  _lifecycleForTests
+} from './agentEnv.js';
+
+const tmpdirs = [];
+function tmp() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'frederico-agentenv-'));
+  tmpdirs.push(dir);
+  return dir;
+}
+test.after(() => { for (const dir of tmpdirs) fs.rmSync(dir, { recursive: true, force: true }); });
+
+// ---- 1) Classificação -------------------------------------------------------
+test('dependência ausente é falha de AMBIENTE, não bug do projeto', () => {
+  const r = classifyExecOutcome({ exitCode: 1, output: 'Traceback...\nModuleNotFoundError: No module named "pandas"' });
+  assert.equal(r.categoria, ERROR_CATEGORIES.DEPENDENCY);
+  assert.equal(r.falha_do_projeto, false);
+});
+
+test('sem rede, um pip install falho é erro de REDE (a rede vence a dependência)', () => {
+  const saida = [
+    'WARNING: Retrying after connection broken by NewConnectionError',
+    'Could not fetch URL https://pypi.org/simple/requests/',
+    'ERROR: No matching distribution found for requests'
+  ].join('\n');
+  const r = classifyExecOutcome({ exitCode: 1, output: saida });
+  assert.equal(r.categoria, ERROR_CATEGORIES.NETWORK);
+  assert.equal(r.falha_do_projeto, false);
+});
+
+test('teste que roda e falha é falha DO PROJETO', () => {
+  const r = classifyExecOutcome({ exitCode: 1, output: '=== 3 failed, 12 passed in 4.2s ===\nAssertionError: esperado 7, obtido 5' });
+  assert.equal(r.categoria, ERROR_CATEGORIES.TEST);
+  assert.equal(r.falha_do_projeto, true);
+});
+
+test('OOM e disco cheio são limite de RECURSO', () => {
+  assert.equal(classifyExecOutcome({ exitCode: 137, output: 'Killed' }).categoria, ERROR_CATEGORIES.RESOURCE);
+  assert.equal(classifyExecOutcome({ exitCode: 1, output: 'OSError: [Errno 28] No space left on device' }).categoria, ERROR_CATEGORIES.RESOURCE);
+});
+
+test('permissão negada não é bug do projeto', () => {
+  const r = classifyExecOutcome({ exitCode: 1, output: "PermissionError: [Errno 13] Permission denied: '/etc/hosts'" });
+  assert.equal(r.categoria, ERROR_CATEGORIES.PERMISSION);
+  assert.equal(r.falha_do_projeto, false);
+});
+
+test('erro comum do programa continua sendo do projeto', () => {
+  const r = classifyExecOutcome({ exitCode: 2, output: 'ValueError: could not convert string to float' });
+  assert.equal(r.categoria, ERROR_CATEGORIES.APPLICATION);
+  assert.equal(r.falha_do_projeto, true);
+});
+
+test('timeout e cancelamento NUNCA viram culpa do projeto nem sucesso', () => {
+  const timeout = classifyExecOutcome({ exitCode: 124, output: 'rodando...', status: EXEC_STATUS.TIMEOUT });
+  assert.equal(timeout.categoria, ERROR_CATEGORIES.RESOURCE);
+  assert.equal(timeout.falha_do_projeto, 'indeterminado');
+
+  const cancelado = classifyExecOutcome({ exitCode: 130, output: '', status: EXEC_STATUS.CANCELED });
+  assert.equal(cancelado.falha_do_projeto, false);
+  assert.match(cancelado.acao_recomendada, /não trate o resultado como sucesso/i);
+});
+
+test('exit 0 é OK', () => {
+  assert.equal(classifyExecOutcome({ exitCode: 0, output: 'pronto' }).categoria, ERROR_CATEGORIES.OK);
+});
+
+// ---- 2) Impressão digital ---------------------------------------------------
+test('a impressão digital detecta arquivo criado e ignora o script da ferramenta', () => {
+  const base = tmp();
+  fs.writeFileSync(path.join(base, 'dados.csv'), 'a,b\n1,2\n');
+  const antes = fingerprintWorkspace(base);
+  assert.equal(antes.arquivos, 1);
+
+  fs.writeFileSync(path.join(base, '.tmp_123_abc.py'), 'print(1)');
+  const comScript = fingerprintWorkspace(base);
+  assert.equal(comScript.arquivos, 1, 'o .tmp_*.py da própria ferramenta não conta como alteração do usuário');
+
+  fs.writeFileSync(path.join(base, 'relatorio.xlsx'), 'x');
+  assert.equal(fingerprintChanged(antes, fingerprintWorkspace(base)), true);
+});
+
+test('sem base de comparação, arquivos_alterados é indeterminado (null), nunca "false"', () => {
+  assert.equal(fingerprintChanged(null, { arquivos: 1 }), null);
+});
+
+// ---- 3) Ciclo de vida e aviso de reinício -----------------------------------
+test('o primeiro sandbox não é reinício; o segundo é — e o aviso sai UMA vez', () => {
+  const key = `teste/${crypto.randomBytes(4).toString('hex')}`;
+  const primeiro = noteSandboxCreated(key, 'container-1');
+  assert.equal(primeiro.generation, 1);
+  assert.equal(primeiro.restarted, false);
+  assert.equal(takeRestartNotice(key), null);
+
+  noteSandboxTerminated(key, TERMINATION_REASONS.TIMEOUT);
+  const segundo = noteSandboxCreated(key, 'container-2');
+  assert.equal(segundo.generation, 2);
+  assert.equal(segundo.restarted, true);
+
+  const aviso = takeRestartNotice(key);
+  assert.equal(aviso.evento, 'ambiente_reiniciado');
+  assert.equal(aviso.motivo, TERMINATION_REASONS.TIMEOUT);
+  assert.equal(aviso.sandbox_anterior, 'container-1');
+  assert.equal(aviso.sandbox_atual, 'container-2');
+  assert.ok(aviso.preservado.length && aviso.perdido.length);
+  assert.equal(takeRestartNotice(key), null, 'o aviso é consumido: não repete a cada execução');
+
+  const texto = formatRestartNotice(aviso);
+  assert.match(texto, /AMBIENTE REINICIADO/);
+  assert.match(texto, /PRESERVADO/);
+  assert.match(texto, /PERDIDO/);
+  _lifecycleForTests.delete(key);
+});
+
+test('o ciclo de vida registra o motivo do último encerramento', () => {
+  const key = `teste/${crypto.randomBytes(4).toString('hex')}`;
+  noteSandboxCreated(key, 'c1');
+  noteSandboxTerminated(key, TERMINATION_REASONS.IDLE);
+  const ciclo = peekSandboxLifecycle(key);
+  assert.equal(ciclo.ultimo_encerramento.motivo, TERMINATION_REASONS.IDLE);
+  assert.equal(ciclo.sandbox_atual, null);
+  _lifecycleForTests.delete(key);
+});
+
+// ---- 4) Checkpoints ---------------------------------------------------------
+test('segredos e diretórios pesados ficam FORA do checkpoint', () => {
+  for (const rel of ['.env', '.env.local', 'app/credentials.json', 'secrets/token.txt', 'chaves/servidor.pem', '.git/config']) {
+    assert.ok(isSecretPath(rel), `${rel} deveria ser tratado como segredo`);
+  }
+  assert.ok(!isSecretPath('src/environment.py'));
+  assert.ok(isCheckpointSkipped('node_modules/left-pad/index.js'));
+  assert.ok(isCheckpointSkipped('.venv/lib/python3.12/site-packages/x.py'));
+  assert.ok(!isCheckpointSkipped('src/app.py'));
+});
+
+test('checkpoint copia o workspace, pula o segredo e restaura o estado anterior', () => {
+  const base = tmp();
+  const checkpoints = tmp();
+  fs.mkdirSync(path.join(base, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(base, 'src', 'app.py'), 'versao = 1\n');
+  fs.writeFileSync(path.join(base, '.env'), 'OPENAI_API_KEY=segredo-real\n');
+  fs.mkdirSync(path.join(base, 'node_modules', 'x'), { recursive: true });
+  fs.writeFileSync(path.join(base, 'node_modules', 'x', 'index.js'), 'modulo pesado');
+
+  const criado = createCheckpoint(base, checkpoints, { label: 'antes da refatoração' });
+  assert.equal(criado.arquivos, 1, 'só src/app.py entra: .env é segredo e node_modules é pesado');
+
+  // Nenhuma cópia do segredo pode existir dentro do checkpoint.
+  const copiados = [];
+  const walk = (dir) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) walk(full); else copiados.push(full);
+    }
+  };
+  walk(checkpoints);
+  assert.ok(!copiados.some(f => f.endsWith('.env')), 'o .env NUNCA pode ser copiado para o checkpoint');
+  assert.ok(!copiados.some(f => fs.readFileSync(f, 'utf8').includes('segredo-real')));
+
+  // Estraga o trabalho: altera um arquivo e cria outro.
+  fs.writeFileSync(path.join(base, 'src', 'app.py'), 'versao = 2 (quebrada)\n');
+  fs.writeFileSync(path.join(base, 'src', 'lixo.py'), 'sobra da tentativa\n');
+
+  const r = restoreCheckpoint(base, checkpoints, criado.id);
+  assert.equal(r.restaurados, 1);
+  assert.equal(r.removidos, 1, 'o arquivo criado depois do checkpoint é removido');
+  assert.equal(r.divergentes, 0, 'os hashes conferem depois de restaurar');
+  assert.equal(fs.readFileSync(path.join(base, 'src', 'app.py'), 'utf8'), 'versao = 1\n');
+  assert.ok(!fs.existsSync(path.join(base, 'src', 'lixo.py')));
+  // O que o checkpoint não guarda também não é destruído por ele.
+  assert.ok(fs.existsSync(path.join(base, '.env')), 'restaurar não pode apagar o .env do usuário');
+  assert.ok(fs.existsSync(path.join(base, 'node_modules', 'x', 'index.js')));
+});
+
+test('checkpoint inexistente falha com código próprio, sem mexer no workspace', () => {
+  const base = tmp();
+  fs.writeFileSync(path.join(base, 'a.txt'), 'intacto');
+  assert.throws(() => restoreCheckpoint(base, tmp(), 'nao-existe'), { code: 'CHECKPOINT_NOT_FOUND' });
+  assert.equal(fs.readFileSync(path.join(base, 'a.txt'), 'utf8'), 'intacto');
+});
+
+test('workspace grande demais é recusado ANTES de gravar qualquer coisa', () => {
+  const base = tmp();
+  fs.writeFileSync(path.join(base, 'grande.bin'), Buffer.alloc(4096));
+  assert.throws(() => collectCheckpointFiles(base, { maxBytes: 1024 }), { code: 'CHECKPOINT_TOO_LARGE' });
+});
+
+test('a poda mantém apenas os checkpoints mais recentes', () => {
+  const base = tmp();
+  const checkpoints = tmp();
+  fs.writeFileSync(path.join(base, 'a.txt'), 'x');
+  for (let i = 0; i < 4; i++) createCheckpoint(base, checkpoints, { label: `n${i}`, keep: 10 });
+  assert.equal(listCheckpoints(checkpoints).length, 4);
+  pruneCheckpoints(checkpoints, 2);
+  assert.equal(listCheckpoints(checkpoints).length, 2);
+});
+
+// ---- 5) Dependências de runtime ---------------------------------------------
+test('reconhece os comandos de instalação que os modelos realmente escrevem', () => {
+  assert.equal(detectPackageInstall('pip install requests').gerenciador, 'pip');
+  assert.equal(detectPackageInstall('python -m pip install "pandas>=2"').gerenciador, 'pip');
+  assert.equal(detectPackageInstall('cd app && npm install').gerenciador, 'npm');
+  assert.equal(detectPackageInstall('pnpm add vitest').gerenciador, 'pnpm');
+  assert.equal(detectPackageInstall('poetry add httpx').gerenciador, 'poetry');
+  assert.equal(detectPackageInstall('python analise.py'), null);
+  assert.equal(detectPackageInstall('grep -r "pip install" .'), null, 'buscar pelo texto não é instalar');
+});
+
+test('o manifesto de dependências vive no workspace e não duplica o mesmo comando', () => {
+  const dir = path.join(tmp(), '.agent-env');
+  recordRuntimeInstall(dir, 'pip install requests');
+  recordRuntimeInstall(dir, 'pip install requests');
+  recordRuntimeInstall(dir, 'npm install axios');
+  recordRuntimeInstall(dir, 'ls -la');
+  const itens = listRuntimeInstalls(dir);
+  assert.equal(itens.length, 2);
+  assert.deepEqual(itens.map(i => i.gerenciador), ['pip', 'npm']);
+});
+
+// ---- 6) Disco e manifesto ---------------------------------------------------
+test('o uso de disco aponta os maiores diretórios', () => {
+  const base = tmp();
+  fs.mkdirSync(path.join(base, 'pesada'), { recursive: true });
+  fs.mkdirSync(path.join(base, 'leve'), { recursive: true });
+  fs.writeFileSync(path.join(base, 'pesada', 'a.bin'), Buffer.alloc(8192));
+  fs.writeFileSync(path.join(base, 'leve', 'b.txt'), 'oi');
+  const uso = directoryUsage(base);
+  assert.ok(uso.bytes >= 8192);
+  assert.equal(uso.maiores[0].caminho, 'pesada');
+});
+
+test('o manifesto diz o que é persistente, o que é temporário e quais são os limites', () => {
+  const m = environmentManifest({
+    instanceId: 'env-1',
+    sessionKey: 'usuario/conversa',
+    generation: 3,
+    limits: { memoryMb: 1024, cpus: 1, pids: 256, commandTimeoutMs: 45000, maxOutputBytes: 100, idleTtlMs: 1800000, maxSandboxesPerUser: 2 },
+    network: false,
+    workspace: { base: '/workspace', arquivos: 7, bytes: 900 }
+  });
+  assert.equal(m.identificadores.geracao_do_sandbox, 3);
+  assert.equal(m.limites.tempo_max_por_comando_s, 45);
+  assert.equal(m.rede.disponivel_no_sandbox, false);
+  assert.match(m.persistencia['/workspace'], /PERSISTENTE/);
+  assert.match(m.persistencia['/runtime/tmp'], /TEMPOR/);
+  assert.match(m.persistencia['/tmp'], /NÃO use/);
+});

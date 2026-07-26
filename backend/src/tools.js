@@ -3,7 +3,19 @@ import path from 'path';
 import net from 'net';
 import dns from 'dns';
 import { nanoid } from 'nanoid';
-import { execInSandbox, workspaceFor, safeJoin, pcFolderMounts } from './sandbox.js';
+import {
+  execInSandbox,
+  workspaceFor,
+  safeJoin,
+  pcFolderMounts,
+  sandboxEnvironmentStatus,
+  sandboxResources,
+  sandboxCheckpointCreate,
+  sandboxCheckpointList,
+  sandboxCheckpointRestore,
+  sandboxRuntimeDependencies,
+  cleanSandboxTemporary
+} from './sandbox.js';
 import { runGithubTool } from './connectors/github.js';
 import { createCache } from './cache.js';
 import { captureThumbnail } from './agent/pageShot.js';
@@ -30,6 +42,7 @@ export const toolDefinitions = [
   { type: 'function', function: { name: 'read_file', description: 'Lê um arquivo de texto do workspace da sessão.', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } } },
   { type: 'function', function: { name: 'list_files', description: 'Lista arquivos enviados e gerados na sessão.', parameters: { type: 'object', properties: { folder: { type: 'string', enum: ['uploads','outputs','.'] } } } } },
   { type: 'function', function: { name: 'zip_outputs', description: 'Compacta a pasta outputs em um arquivo ZIP.', parameters: { type: 'object', properties: { zip_name: { type: 'string' } } } } },
+  { type: 'function', function: { name: 'ambiente', description: 'Estado e continuidade do ambiente de execução (o sandbox desta conversa). Use quando: (a) um comando falhar e você não souber se a causa é o ambiente ou o código; (b) souber que o sandbox reiniciou e precisar descobrir o que sobreviveu; (c) for começar uma alteração arriscada em vários arquivos e quiser um ponto de retorno; (d) precisar saber memória, CPU ou espaço em disco. Ações: "status" (limites, identificadores, o que é persistente e o que é temporário), "recursos" (CPU, memória, disco e maiores processos), "dependencias" (pacotes instalados em runtime nesta conversa, que somem quando o sandbox reinicia), "checkpoint_criar" (fotografa o workspace), "checkpoint_listar", "checkpoint_restaurar" (volta o workspace a um checkpoint — o estado atual é salvo antes), "limpar_temporarios".', parameters: { type: 'object', properties: { acao: { type: 'string', enum: ['status','recursos','dependencias','checkpoint_criar','checkpoint_listar','checkpoint_restaurar','limpar_temporarios'] }, id: { type: 'string', description: 'Id do checkpoint (só para checkpoint_restaurar).' }, rotulo: { type: 'string', description: 'Rótulo curto do checkpoint (só para checkpoint_criar).' } }, required: ['acao'] } } },
   { type: 'function', function: { name: 'consultar_cnpj', description: 'Consulta os dados cadastrais OFICIAIS de um CNPJ nas bases públicas (BrasilAPI/ReceitaWS): razão social, nome fantasia, situação cadastral, natureza jurídica, porte, CNAE principal e secundários, endereço, telefone, e-mail, capital social, opção pelo Simples/MEI e quadro de sócios (QSA). Funciona SEM o botão de pesquisa. Use SEMPRE que o pedido envolver dados de uma empresa por CNPJ — NÃO use web_search para isso.', parameters: { type: 'object', properties: { cnpj: { type: 'string', description: 'CNPJ com ou sem pontuação (14 dígitos)' } }, required: ['cnpj'] } } }
 ];
 
@@ -609,6 +622,41 @@ async function auditExecution(sandboxOptions = {}, { tool, payload, guardContext
   } catch { /* auditoria é best-effort */ }
 }
 
+// Ferramenta `ambiente`: diagnóstico, recursos e checkpoints do sandbox.
+// Roda inteiramente no BACKEND — nenhuma destas ações depende de o container
+// estar de pé, justamente porque a pergunta mais comum ("o que sobrou depois do
+// reinício?") acontece quando ele NÃO está.
+export async function runEnvironmentTool(conversationId, args = {}, sandboxOptions = {}) {
+  const userId = sandboxOptions.userId;
+  const acao = String(args.acao || 'status');
+  try {
+    if (acao === 'status') {
+      return { acao, ...sandboxEnvironmentStatus(userId, conversationId, { networkEnabled: sandboxOptions.networkEnabled === true }) };
+    }
+    if (acao === 'recursos') return { acao, ...(await sandboxResources(userId, conversationId)) };
+    if (acao === 'dependencias') {
+      const itens = sandboxRuntimeDependencies(userId, conversationId);
+      return {
+        acao,
+        instalacoes: itens,
+        observacao: itens.length
+          ? 'Estes pacotes foram instalados em runtime nesta conversa. Se o sandbox reiniciou, eles NÃO estão mais no container — reinstale com os mesmos comandos (o cache em /cache torna isso local e rápido) antes de concluir que o código quebrou.'
+          : 'Nenhuma instalação em runtime registrada nesta conversa.'
+      };
+    }
+    if (acao === 'checkpoint_criar') return { acao, ...sandboxCheckpointCreate(userId, conversationId, { label: args.rotulo || '' }) };
+    if (acao === 'checkpoint_listar') return { acao, checkpoints: sandboxCheckpointList(userId, conversationId) };
+    if (acao === 'checkpoint_restaurar') {
+      if (!args.id) return { acao, erro: 'Informe o id do checkpoint (use checkpoint_listar).' };
+      return { acao, ...sandboxCheckpointRestore(userId, conversationId, args.id) };
+    }
+    if (acao === 'limpar_temporarios') return { acao, ...(await cleanSandboxTemporary(userId, conversationId)) };
+    return { acao, erro: `Ação desconhecida: ${acao}.` };
+  } catch (e) {
+    return { acao, erro: String(e?.message || e).slice(0, 300), codigo: e?.code || null };
+  }
+}
+
 export async function runTool(conversationId, name, args = {}, sandboxOptions = {}, runtime = {}) {
   const signal = runtime?.signal;
   if (name === 'web_search') return JSON.stringify(await webSearch(args.query || '', { signal }));
@@ -627,6 +675,7 @@ export async function runTool(conversationId, name, args = {}, sandboxOptions = 
     }
     return JSON.stringify(res);
   }
+  if (name === 'ambiente') return JSON.stringify(await runEnvironmentTool(conversationId, args, sandboxOptions));
   if (name === 'consultar_cnpj') return JSON.stringify(await consultarCnpj(args.cnpj || '', { signal }));
   // Conector GitHub: roda no BACKEND (o token do usuário nunca entra no sandbox).
   if (name.startsWith('github_')) return JSON.stringify(await runGithubTool(name, args, { userId: sandboxOptions.userId, conversationId, signal }));

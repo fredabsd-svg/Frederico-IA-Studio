@@ -107,6 +107,23 @@ ao destino no fim. Nada é bufferizado inteiro na RAM.
 > Docker** — do contrário um derruba os sandboxes do outro ao subir. O app hoje pressupõe
 > processo único (estado de SSE, controle e fila vive em memória).
 
+### Sandbox — estabilidade do ambiente
+
+| Variável | Padrão | O que faz |
+| --- | --- | --- |
+| `SANDBOX_KILL_GRACE_MS` | 2.500 | Carência entre matar a árvore de processos do comando e derrubar o container. Um timeout só custa o sandbox se a árvore não morrer nesse tempo |
+| `CHECKPOINT_KEEP` | 5 | Checkpoints de workspace mantidos por conversa |
+| `CHECKPOINT_MAX_MB` | 300 | Teto por checkpoint; acima disso a criação é recusada |
+| `WORKSPACE_QUOTA_MB` | 0 (sem aviso) | Cota usada só para AVISAR o agente a partir de 85% |
+
+Os checkpoints ficam em `WORKSPACE_ROOT/.checkpoints/<usuário>/<conversa>` — fora
+da árvore da conversa, apagados junto com ela, e **nunca contêm segredos**
+(`.env`, `*.pem`, `credentials.json`, `secrets/`, `tokens/`, `.git/config`).
+O cache de pacotes fica em `WORKSPACE_ROOT/users/<usuário>/.cache` e é montado
+em `/cache`; ele não é varrido pelo coletor de disco, de propósito.
+
+Detalhes, taxonomia de falhas e roteiro de recuperação: **`docs/AMBIENTE_EXECUCAO.md`**.
+
 ### Retenção
 
 `CONVERSATION_RETENTION_DAYS` (0), `USAGE_RETENTION_DAYS` (365),
