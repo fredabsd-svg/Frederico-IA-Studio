@@ -118,6 +118,7 @@ teste — vários módulos leem essas variáveis no momento da importação.
 | `backend/src/sandbox.dockerAccess.test.js` | O backend reporta em `/api/health` se está atrás do guarda ou com o socket na mão |
 | `backend/src/agent/pageShot.test.js` | Guarda de rede da miniatura de página: host interno/loopback/metadados barrado, esquema não-http recusado, URL ilegível **negada** (falha fechada) e — o que a troca do puppeteer pelo Playwright poderia ter quebrado — **redirecionamento de página pública para a rede interna abortado antes de chegar ao navegador** |
 | `e2e/tests/*.spec.js` | Navegador real contra o build de produção: streaming chega aos poucos, resposta persiste, troca de conversa no meio do stream não mistura respostas, reconexão depois de recarregar, indicador de "processando" na barra lateral, portão de consentimento (LGPD) e a mensagem de chave inválida nomeando o provedor certo (regressão do PR #140) |
+| `e2e/tests/layout.spec.js` | **Nada pode cobrir o botão de enviar**: sobreposição zero em oito larguras (1920 → 390px), compositor alto não empurra o personagem de volta, **clique real** no botão no desktop e no celular, e um guarda contra o exagero (o personagem tem de continuar visível na janela). Nasceu de um defeito real que a suíte encontrou — o avatar do copiloto cobria o botão em 1280px e em todas as larguras abaixo |
 
 Scripts de apoio: `backend/scripts/run-tests.mjs` e `frontend/scripts/run-tests.mjs`
 (descoberta de testes independente da versão do Node), `backend/scripts/check-migrations.mjs`,

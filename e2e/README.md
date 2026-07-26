@@ -95,9 +95,11 @@ Duas regras que o conjunto segue:
 - **`reuseExistingServer` está desligado de propósito.** Reaproveitar um
   servidor que ficou de pé faz o teste rodar contra código velho e falhar (ou
   passar) sem motivo aparente.
-- **Enviar com Enter, não com clique no botão.** A 1280px de largura o avatar
-  do Nino fica por cima do botão de enviar e o Playwright recusa o clique.
-  A sobreposição é um defeito de layout de verdade, anotado em `CONTINUIDADE.md`.
+- **O helper `enviar()` usa Enter, não o clique no botão** — é o caminho
+  principal ("Enter envia", escrito embaixo do campo) e o mais rápido. O clique
+  tem teste próprio em `tests/layout.spec.js`: o avatar do Nino cobria o botão
+  de enviar (defeito encontrado por esta suíte e corrigido depois), e é lá que
+  a regressão fica guardada.
 - **Ao recarregar, o app abre em "Nova conversa"** — a conversa anterior fica na
   barra lateral e precisa ser clicada.
 - **Conversa recém-criada se chama "Nova conversa"** até ganhar título da
