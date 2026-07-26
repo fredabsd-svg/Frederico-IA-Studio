@@ -20,6 +20,10 @@ import { PassThrough } from 'node:stream';
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'frederico-stability-'));
 process.env.WORKSPACE_ROOT = root;
 process.env.SANDBOX_KILL_GRACE_MS = '150'; // carência curta: o teste não pode dormir 2,5s
+// Intervalo do progresso no PISO permitido (200 ms; o padrão é 900 ms e o piso
+// existe para não inundar o SSE). Os pedaços do teste são espaçados o
+// suficiente para o intervalo bater entre eles.
+process.env.SANDBOX_PROGRESS_INTERVAL_MS = '200';
 
 const {
   _setDockerClient,
@@ -30,7 +34,8 @@ const {
   sandboxEnvironmentStatus,
   sandboxCheckpointCreate,
   sandboxCheckpointRestore,
-  sandboxRuntimeDependencies
+  sandboxRuntimeDependencies,
+  sandboxLastExecutionLog
 } = await import('./sandbox.js');
 
 test.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -40,7 +45,7 @@ const USER = 'usuario-estabilidade';
 // ---- Daemon falso -----------------------------------------------------------
 // `killEndsCommand: false` simula a árvore de processos que NÃO morre — é o
 // único caso em que derrubar o container continua sendo o certo.
-function fakeDocker({ output = 'ok\n', exitCode = 0, hang = false, killEndsCommand = true } = {}) {
+function fakeDocker({ output = 'ok\n', outputChunks = null, chunkDelayMs = 0, exitCode = 0, hang = false, killEndsCommand = true } = {}) {
   const state = { criados: [], execs: [], kills: 0, removidos: 0 };
   const makeContainer = (id, createOptions) => {
     let pendente = null; // stream do comando principal ainda aberto
@@ -66,7 +71,18 @@ function fakeDocker({ output = 'ok\n', exitCode = 0, hang = false, killEndsComma
               return stream;
             }
             if (hang) { pendente = stream; return stream; } // nunca termina por conta própria
-            setImmediate(() => { stream.write(Buffer.from(output)); stream.end(); });
+            // Emissão em pedaços, opcionalmente espaçados: é o que permite
+            // verificar que o progresso chega ANTES do comando terminar.
+            const chunks = outputChunks || [output];
+            let i = 0;
+            const emite = () => {
+              if (i >= chunks.length) { stream.end(); return; }
+              const chunk = chunks[i++];
+              if (chunk) stream.write(Buffer.from(chunk));
+              if (chunkDelayMs > 0) setTimeout(emite, chunkDelayMs).unref?.();
+              else setImmediate(emite);
+            };
+            setImmediate(emite);
             return stream;
           },
           async inspect() { return { ExitCode: hang ? -1 : exitCode }; }
@@ -220,6 +236,72 @@ test('instalação bem-sucedida entra no manifesto; interrompida, não', async (
   _setDockerClient(fakeDocker({ hang: true }));
   await execInSandbox(conversa, 'pip install pandas', 120, { userId: USER });
   assert.equal(sandboxRuntimeDependencies(USER, conversa).length, 1, 'um install cortado por timeout não pode entrar no manifesto');
+});
+
+// ---- 4b) Streaming da saída -------------------------------------------------
+test('a saída chega em pedaços ANTES do fim e o log em disco guarda tudo', async () => {
+  limpaSessoes();
+  const conversa = 'conversa-streaming-1';
+  // Três pedaços espaçados: o comando só termina depois do último, então um
+  // evento de progresso que chegue antes disso prova o streaming.
+  _setDockerClient(fakeDocker({
+    outputChunks: ['COMEÇO: coletando testes\n', 'meio\n'.repeat(3000), 'FIM: 3000 passaram\n'],
+    chunkDelayMs: 300,
+    exitCode: 0
+  }));
+
+  const eventos = [];
+  const r = await execInSandbox(conversa, 'pytest -q', 5000, {
+    userId: USER,
+    onProgress: (p) => eventos.push(p)
+  });
+
+  assert.equal(r.status, 'ok');
+  assert.ok(eventos.length >= 2, `o progresso precisa chegar em pedaços (recebidos: ${eventos.length})`);
+  // O primeiro evento traz só o começo: chegou enquanto o comando ainda rodava.
+  assert.match(eventos[0].trecho, /COMEÇO: coletando testes/);
+  assert.ok(!eventos[0].trecho.includes('FIM: 3000 passaram'), 'o primeiro evento é anterior ao fim do comando');
+  assert.ok(eventos.at(-1).linhas > eventos[0].linhas, 'os contadores avançam a cada pedaço');
+  // Mais de 200 linhas: o resumo de progresso entra no resultado.
+  assert.ok(r.progresso, 'saída longa deve trazer o resumo de progresso');
+  assert.equal(r.progresso.linhas, 3002);
+  assert.equal(r.progresso.log_completo, '.agent-env/ultima-execucao.log');
+
+  // O resultado é aparado nos últimos 12 mil caracteres e PERDE o começo; o log
+  // em disco é o que permite ao agente ver onde a coisa começou a dar errado.
+  assert.ok(!r.output.includes('COMEÇO: coletando testes'), 'o resultado aparado perde o começo');
+  const log = fs.readFileSync(path.join(workspaceFor(conversa, USER).agentEnv, 'ultima-execucao.log'), 'utf8');
+  assert.match(log, /COMEÇO: coletando testes/);
+  assert.match(log, /FIM: 3000 passaram/);
+});
+
+test('comando curto e bem-sucedido NÃO carrega resumo de progresso (evita ruído)', async () => {
+  limpaSessoes();
+  _setDockerClient(fakeDocker({ output: 'ok\n', exitCode: 0 }));
+  const r = await execInSandbox('conversa-streaming-2', 'echo ok', 5000, { userId: USER });
+  assert.equal(r.progresso, undefined);
+});
+
+test('o log do último comando é lido pela ação ultima_execucao, com as duas pontas', async () => {
+  limpaSessoes();
+  const conversa = 'conversa-streaming-3';
+  _setDockerClient(fakeDocker({ output: 'saída curta\n', exitCode: 3 }));
+  await execInSandbox(conversa, 'python quebra.py', 5000, { userId: USER });
+
+  const log = sandboxLastExecutionLog(USER, conversa);
+  assert.equal(log.existe, true);
+  assert.equal(log.comando, 'python quebra.py');
+  assert.equal(log.exit_code, 3);
+  assert.match(log.trecho_inicial, /saída curta/);
+});
+
+test('a gravação do log NÃO conta como "o comando mexeu em arquivos"', async () => {
+  limpaSessoes();
+  const conversa = 'conversa-streaming-4';
+  workspaceFor(conversa, USER);
+  _setDockerClient(fakeDocker({ output: 'muita saída\n'.repeat(50), exitCode: 0 }));
+  const r = await execInSandbox(conversa, 'echo muito', 5000, { userId: USER });
+  assert.equal(r.arquivos_alterados, false, 'o log e o manifesto são escrituração interna, não trabalho do comando');
 });
 
 // ---- 5) Status e checkpoints pelo caminho público --------------------------

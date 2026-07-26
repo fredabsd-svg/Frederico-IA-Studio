@@ -27,8 +27,8 @@ Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
   (o Nino cobrindo o botão de enviar), o **PR [#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)**
   (Playwright + suíte ponta a ponta) e o **PR [#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)**
   (as sete falhas P0 dos sub-agentes).
-- **Última validação:** 2026-07-26 — **823 testes** (backend 707, frontend 57, guarda do
-  Docker 49, sandbox Python 10). Backend e frontend passaram neste contêiner: **688
+- **Última validação:** 2026-07-26 — **833 testes** (backend 717, frontend 57, guarda do
+  Docker 49, sandbox Python 10). Backend e frontend passaram neste contêiner: **698
   passaram, 0 falharam, 19 pulados** (os 19 exigem PostgreSQL, que não está de pé aqui —
   na CI rodam). Os 10 do Python não coletam aqui por falta do `openpyxl`. Os 13 E2E não
   entram nesta contagem porque o `e2e/` não está instalado neste contêiner. A contagem
@@ -60,6 +60,8 @@ O que mudou:
 | `pip install` sumia com o container | `/cache` é bind do host por usuário (pip/npm/uv/poetry) e as instalações ficam num manifesto em `/workspace/.agent-env` |
 | Sem rede de segurança para edições | Checkpoints do workspace (criar/listar/restaurar), fora da árvore da conversa, **sem segredos** |
 | Sem visibilidade de recursos | Ferramenta `ambiente` → `recursos`: CPU, memória, disco, maiores diretórios e processos |
+| Comando longo era uma barra parada | **Saída ao vivo** por SSE (`tool_progress`), com terminal no Ambiente de Trabalho e aviso "sem saída há Xs" |
+| Resultado perdia o começo da saída | Log INTEGRAL em `/workspace/.agent-env/ultima-execucao.log` + ação `ultima_execucao` |
 
 Detalhe importante da classificação, achado por teste: `ModuleNotFoundError` contém a
 subcadeia `eNotFound` — com regex insensível a maiúsculas, uma dependência ausente virava
@@ -71,20 +73,34 @@ label — sem ela não dá para distinguir "morreu por falta de memória" de "o 
 quebrou"), `/runtime/tmp` como `TMPDIR` descartável e `/artifacts` persistente na imagem
 do sandbox.
 
-**Mudança visível para o usuário:** o assistente passa a avisar quando uma execução não
-terminou, em vez de relatar sucesso; e o agente ganha a ferramenta `ambiente`, que
-acompanha automaticamente quem já tem `run_python`/`bash` (não é uma permissão nova a
-ligar no Assistant Studio).
+Sobre o **corte da saída**: o resultado entregue ao modelo tem os últimos 12 mil
+caracteres, e o erro de uma suíte longa está quase sempre no COMEÇO — que o corte
+descartava. A saída inteira agora é gravada enquanto o comando roda, e o resultado aponta
+o arquivo (`progresso.log_completo`). A gravação é síncrona de propósito: com
+`createWriteStream`, o `end()` não garante os bytes em disco e a leitura no mesmo tique
+encontrava o arquivo vazio. E `.agent-env` saiu da impressão digital do workspace — sem
+isso, gravar o log fazia `arquivos_alterados` sair `true` em toda execução.
 
-**Ficou de fora, de propósito** (§11 de `docs/AMBIENTE_EXECUCAO.md`): streaming de logs
-em tempo real de comandos longos, registro de portas/serviços iniciados pelo agente,
-sintaxe explícita de transação de workspace e snapshot do container.
+**Mudança visível para o usuário:** o assistente passa a avisar quando uma execução não
+terminou, em vez de relatar sucesso; comandos longos mostram a saída **ao vivo** (com
+aviso quando o comando emudece); e o agente ganha a ferramenta `ambiente`, que acompanha
+automaticamente quem já tem `run_python`/`bash` (não é uma permissão nova a ligar no
+Assistant Studio).
+
+**Ficou de fora, de propósito** (§11 de `docs/AMBIENTE_EXECUCAO.md`): registro de
+portas/serviços iniciados pelo agente, sintaxe explícita de transação de workspace,
+snapshot do container e a consulta ao progresso **pelo próprio modelo** durante a
+execução — esta última é limitação do laço de function-calling (enquanto a ferramenta
+roda, o modelo está bloqueado esperando o resultado; não há turno em que ele possa
+perguntar). Os dois efeitos práticos estão cobertos: o usuário vê ao vivo, o agente lê o
+log integral depois.
 
 Onde está: `backend/src/agentEnv.js`, `backend/src/sandbox.js`, ferramenta `ambiente` em
-`backend/src/tools.js`, prompt em `backend/src/agent/prompts.js`, aviso de reinício no
-preâmbulo do turno em `backend/src/agent/loop.js`. Documentação em
-`docs/AMBIENTE_EXECUCAO.md`. Testes: `src/agentEnv.test.js` (21) e
-`src/sandbox.stability.test.js` (9).
+`backend/src/tools.js`, prompt em `backend/src/agent/prompts.js`, aviso de reinício e
+evento `tool_progress` em `backend/src/agent/loop.js`, interface em
+`frontend/src/hooks/useChat.js` e `frontend/src/components/ExecutionSession.jsx`.
+Documentação em `docs/AMBIENTE_EXECUCAO.md`. Testes: `src/agentEnv.test.js` (27) e
+`src/sandbox.stability.test.js` (13).
 
 ---
 

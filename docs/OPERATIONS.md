@@ -115,6 +115,9 @@ ao destino no fim. Nada é bufferizado inteiro na RAM.
 | `CHECKPOINT_KEEP` | 5 | Checkpoints de workspace mantidos por conversa |
 | `CHECKPOINT_MAX_MB` | 300 | Teto por checkpoint; acima disso a criação é recusada |
 | `WORKSPACE_QUOTA_MB` | 0 (sem aviso) | Cota usada só para AVISAR o agente a partir de 85% |
+| `SANDBOX_PROGRESS_INTERVAL_MS` | 900 (piso 200) | Frequência do progresso ao vivo dos comandos no SSE |
+| `SANDBOX_STALL_NOTICE_MS` | 20.000 | Silêncio a partir do qual a interface avisa "sem saída há Xs" |
+| `EXEC_LOG_MAX_BYTES` | 4.194.304 | Teto do log integral da última execução (`/workspace/.agent-env`) |
 
 Os checkpoints ficam em `WORKSPACE_ROOT/.checkpoints/<usuário>/<conversa>` — fora
 da árvore da conversa, apagados junto com ela, e **nunca contêm segredos**

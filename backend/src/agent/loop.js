@@ -1096,7 +1096,13 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
       } else {
         const activeTool = beginToolRequest(control);
         try {
-          result = await runTool(conversationId, name, args, sandboxOptions, { signal: activeTool.signal });
+          // Progresso ao vivo do comando: sem isto, um `pytest` de 40s é uma
+          // barra parada — o usuário não sabe se está processando ou travado, e
+          // o `tool_result` só chega no fim.
+          result = await runTool(conversationId, name, args, sandboxOptions, {
+            signal: activeTool.signal,
+            onProgress: (p) => onEvent({ type: 'tool_progress', id: call.id, ...p })
+          });
         } catch (err) {
           if (controlInterruptReason(control, activeTool) === 'stop') {
             stopped = true;

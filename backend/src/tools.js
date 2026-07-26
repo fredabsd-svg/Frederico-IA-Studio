@@ -14,6 +14,7 @@ import {
   sandboxCheckpointList,
   sandboxCheckpointRestore,
   sandboxRuntimeDependencies,
+  sandboxLastExecutionLog,
   cleanSandboxTemporary
 } from './sandbox.js';
 import { runGithubTool } from './connectors/github.js';
@@ -42,7 +43,7 @@ export const toolDefinitions = [
   { type: 'function', function: { name: 'read_file', description: 'Lê um arquivo de texto do workspace da sessão.', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } } },
   { type: 'function', function: { name: 'list_files', description: 'Lista arquivos enviados e gerados na sessão.', parameters: { type: 'object', properties: { folder: { type: 'string', enum: ['uploads','outputs','.'] } } } } },
   { type: 'function', function: { name: 'zip_outputs', description: 'Compacta a pasta outputs em um arquivo ZIP.', parameters: { type: 'object', properties: { zip_name: { type: 'string' } } } } },
-  { type: 'function', function: { name: 'ambiente', description: 'Estado e continuidade do ambiente de execução (o sandbox desta conversa). Use quando: (a) um comando falhar e você não souber se a causa é o ambiente ou o código; (b) souber que o sandbox reiniciou e precisar descobrir o que sobreviveu; (c) for começar uma alteração arriscada em vários arquivos e quiser um ponto de retorno; (d) precisar saber memória, CPU ou espaço em disco. Ações: "status" (limites, identificadores, o que é persistente e o que é temporário), "recursos" (CPU, memória, disco e maiores processos), "dependencias" (pacotes instalados em runtime nesta conversa, que somem quando o sandbox reinicia), "checkpoint_criar" (fotografa o workspace), "checkpoint_listar", "checkpoint_restaurar" (volta o workspace a um checkpoint — o estado atual é salvo antes), "limpar_temporarios".', parameters: { type: 'object', properties: { acao: { type: 'string', enum: ['status','recursos','dependencias','checkpoint_criar','checkpoint_listar','checkpoint_restaurar','limpar_temporarios'] }, id: { type: 'string', description: 'Id do checkpoint (só para checkpoint_restaurar).' }, rotulo: { type: 'string', description: 'Rótulo curto do checkpoint (só para checkpoint_criar).' } }, required: ['acao'] } } },
+  { type: 'function', function: { name: 'ambiente', description: 'Estado e continuidade do ambiente de execução (o sandbox desta conversa). Use quando: (a) um comando falhar e você não souber se a causa é o ambiente ou o código; (b) souber que o sandbox reiniciou e precisar descobrir o que sobreviveu; (c) for começar uma alteração arriscada em vários arquivos e quiser um ponto de retorno; (d) precisar saber memória, CPU ou espaço em disco. (e) um comando for cortado por timeout e você precisar ver a saída COMPLETA (o resultado só traz o fim; o começo, onde o erro costuma estar, fica no log). Ações: "status" (limites, identificadores, o que é persistente e o que é temporário), "recursos" (CPU, memória, disco e maiores processos), "ultima_execucao" (log integral do último comando: começo, fim, duração e se ficou mudo), "dependencias" (pacotes instalados em runtime nesta conversa, que somem quando o sandbox reinicia), "checkpoint_criar" (fotografa o workspace), "checkpoint_listar", "checkpoint_restaurar" (volta o workspace a um checkpoint — o estado atual é salvo antes), "limpar_temporarios".', parameters: { type: 'object', properties: { acao: { type: 'string', enum: ['status','recursos','ultima_execucao','dependencias','checkpoint_criar','checkpoint_listar','checkpoint_restaurar','limpar_temporarios'] }, id: { type: 'string', description: 'Id do checkpoint (só para checkpoint_restaurar).' }, rotulo: { type: 'string', description: 'Rótulo curto do checkpoint (só para checkpoint_criar).' } }, required: ['acao'] } } },
   { type: 'function', function: { name: 'consultar_cnpj', description: 'Consulta os dados cadastrais OFICIAIS de um CNPJ nas bases públicas (BrasilAPI/ReceitaWS): razão social, nome fantasia, situação cadastral, natureza jurídica, porte, CNAE principal e secundários, endereço, telefone, e-mail, capital social, opção pelo Simples/MEI e quadro de sócios (QSA). Funciona SEM o botão de pesquisa. Use SEMPRE que o pedido envolver dados de uma empresa por CNPJ — NÃO use web_search para isso.', parameters: { type: 'object', properties: { cnpj: { type: 'string', description: 'CNPJ com ou sem pontuação (14 dígitos)' } }, required: ['cnpj'] } } }
 ];
 
@@ -650,6 +651,12 @@ export async function runEnvironmentTool(conversationId, args = {}, sandboxOptio
       if (!args.id) return { acao, erro: 'Informe o id do checkpoint (use checkpoint_listar).' };
       return { acao, ...sandboxCheckpointRestore(userId, conversationId, args.id) };
     }
+    if (acao === 'ultima_execucao') {
+      const log = sandboxLastExecutionLog(userId, conversationId);
+      return log.existe
+        ? { acao, ...log }
+        : { acao, existe: false, observacao: 'Nenhuma execução registrada nesta conversa ainda.' };
+    }
     if (acao === 'limpar_temporarios') return { acao, ...(await cleanSandboxTemporary(userId, conversationId)) };
     return { acao, erro: `Ação desconhecida: ${acao}.` };
   } catch (e) {
@@ -659,6 +666,10 @@ export async function runEnvironmentTool(conversationId, args = {}, sandboxOptio
 
 export async function runTool(conversationId, name, args = {}, sandboxOptions = {}, runtime = {}) {
   const signal = runtime?.signal;
+  // Progresso ao vivo: só as ferramentas que executam no sandbox têm o que
+  // transmitir. O loop repassa isso como evento SSE, para o usuário ver a saída
+  // do comando ENQUANTO ele roda, em vez de esperar o fim.
+  const onProgress = runtime?.onProgress;
   if (name === 'web_search') return JSON.stringify(await webSearch(args.query || '', { signal }));
   if (name === 'web_fetch') {
     const res = await webFetch(args.url || '', { signal });
@@ -693,7 +704,7 @@ export async function runTool(conversationId, name, args = {}, sandboxOptions = 
     fs.writeFileSync(script, args.code || '', 'utf8');
     try { fs.chownSync(script, 1000, 1000); } catch {}
     try {
-      const result = await execInSandbox(conversationId, `python ${path.basename(script)}`, runtime.timeoutMs, { ...sandboxOptions, signal });
+      const result = await execInSandbox(conversationId, `python ${path.basename(script)}`, runtime.timeoutMs, { ...sandboxOptions, signal, onProgress });
       return JSON.stringify(result);
     } finally {
       try { fs.unlinkSync(script); } catch {}
@@ -702,7 +713,7 @@ export async function runTool(conversationId, name, args = {}, sandboxOptions = 
   if (name === 'bash') {
     guardCommand(args.command || '', guardContext);
     await auditExecution(sandboxOptions, { tool: 'bash', payload: args.command, guardContext, pcMounts });
-    return JSON.stringify(await execInSandbox(conversationId, args.command, runtime.timeoutMs, { ...sandboxOptions, signal }));
+    return JSON.stringify(await execInSandbox(conversationId, args.command, runtime.timeoutMs, { ...sandboxOptions, signal, onProgress }));
   }
   if (name === 'write_file') {
     if (resolveMountedPcPath(args.path, pcMounts)) throw new Error('write_file grava apenas no workspace da conversa. Para editar uma pasta do PC autorizada, use bash ou run_python.');

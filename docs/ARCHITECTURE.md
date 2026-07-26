@@ -182,6 +182,11 @@ execInSandbox(conversationId, cmd, timeout, { userId, ...política })
   matar a árvore inteira (filhos, netos). O sandbox só cai se a árvore
   sobreviver à carência — antes, um `pytest` travado custava as dependências da
   sessão.
+- **Saída ao vivo** (novo): `execInSandbox` aceita `onProgress`; o loop repassa
+  como evento SSE `tool_progress` e a interface mostra um terminal ao vivo, com
+  aviso de silêncio ("sem saída há Xs"). A saída INTEGRAL vai para
+  `/workspace/.agent-env/ultima-execucao.log` — o resultado é aparado nos últimos
+  12 mil caracteres e o erro de uma suíte longa costuma estar no começo.
 - **Estado estruturado + aviso de reinício** (novo): toda execução devolve
   `status`, `diagnostico` (ambiente × projeto), `arquivos_alterados` e, quando o
   container foi trocado, `ambiente_reiniciado` com o que sobreviveu e o que se

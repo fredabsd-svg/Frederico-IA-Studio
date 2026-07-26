@@ -129,6 +129,55 @@ protege: `ModuleNotFoundError` contém a subcadeia `eNotFound`, então os códig
 de erro do sistema são casados com fronteira de palavra e sem `ignore case`,
 senão uma dependência ausente viraria "problema de rede".
 
+## 4b. Saída ao vivo e log integral
+
+Antes, a saída de um comando só chegava no fim: um `pytest` de 40 s era uma barra
+parada, e não havia como saber se estava processando ou travado. Agora
+`execInSandbox` aceita `onProgress` e o `loop.js` o repassa como evento SSE
+`tool_progress`, casado pelo `id` da chamada:
+
+```json
+{ "type": "tool_progress", "id": "call_1", "trecho": "…", "linhas": 812, "bytes": 40311, "decorrido_ms": 12400 }
+```
+
+A transmissão é **agregada**, não por byte: um relatório a cada
+`SANDBOX_PROGRESS_INTERVAL_MS` (padrão 900 ms, piso de 200 ms), com o pedaço
+aparado em 2 000 caracteres por evento e um teto de 200 000 caracteres por
+execução — passado o teto, a transmissão para e o log em disco continua. A
+interface acumula os pedaços e mostra um terminal ao vivo no Ambiente de
+Trabalho da IA, com rolagem automática.
+
+**Detecção de silêncio.** Se o comando fica mudo por mais de
+`SANDBOX_STALL_NOTICE_MS` (padrão 20 s), o relatório passa a trazer
+`parado_ha_ms` e a interface avisa "sem saída há Xs". É o que distingue
+"processando em silêncio" de "travado" — inclusive no cartão fechado, sem
+precisar abrir o painel.
+
+**Log integral.** O resultado entregue ao modelo é aparado nos **últimos 12 000
+caracteres**, e o erro de uma suíte longa costuma estar no **começo**. Enquanto o
+comando roda, a saída inteira é gravada em
+`/workspace/.agent-env/ultima-execucao.log` (persistente, com teto de
+`EXEC_LOG_MAX_BYTES`), com um `ultima-execucao.json` ao lado guardando comando,
+status, exit code e duração. Quando há o que consultar, o resultado aponta o
+caminho:
+
+```json
+"progresso": { "linhas": 3002, "bytes": 15044, "sem_saida_ha_ms": 12, "log_completo": ".agent-env/ultima-execucao.log" }
+```
+
+O campo `progresso` só aparece quando ajuda (execução interrompida ou mais de 200
+linhas de saída) — em comando curto e bem-sucedido seria ruído em todo resultado.
+O agente lê o log com `ambiente` → `ultima_execucao` (que entrega as duas pontas
+e aponta o arquivo para leitura completa) ou direto com `read_file`.
+
+A escrita do log é **síncrona**, num descritor aberto uma vez. Um
+`createWriteStream` seria mais idiomático, mas o `end()` dele não garante os
+bytes em disco: a leitura no mesmo tique encontrava o arquivo vazio.
+
+O diretório `.agent-env` é **excluído da impressão digital** do workspace — sem
+isso, a própria gravação do log faria `arquivos_alterados` sair `true` em toda
+execução, e o campo perderia o sentido.
+
 ## 5. Reinício: o que foi preservado, o que foi perdido
 
 Cada sandbox tem uma **geração**. Quando um container novo entra em serviço para
@@ -215,21 +264,29 @@ estourar.
 - `backend/src/agentEnv.test.js` — classificação de falhas (incluindo a
   precedência rede × dependência), impressão digital, ciclo de vida e aviso de
   reinício, checkpoints com exclusão de segredos e restauração por hash,
-  manifesto de dependências, uso de disco e manifesto do ambiente.
+  manifesto de dependências, repórter de progresso (agregação, corte do pedaço,
+  contagem de linhas e silêncio), log com teto e leitura das duas pontas, uso de
+  disco e manifesto do ambiente.
 - `backend/src/sandbox.stability.test.js` — execução ponta a ponta com daemon
   falso: resultado estruturado, timeout que preserva o sandbox, timeout que
   precisa derrubá-lo e o aviso de reinício subsequente (entregue uma só vez),
-  binds de `/workspace` e `/cache`, `TMPDIR`, manifesto de instalação e
-  checkpoint/restauração pelo caminho público.
+  binds de `/workspace` e `/cache`, `TMPDIR`, manifesto de instalação,
+  checkpoint/restauração e o **streaming**: pedaços entregues antes do fim do
+  comando, log guardando o começo que o corte de 12 000 caracteres descarta, e a
+  garantia de que gravar o log não conta como "o comando mexeu em arquivos".
 - `docker-guard/src/policy.test.js` — a rota `/containers/<id>/stats` passa e
   continua exigindo posse pela label.
 
 ## 11. O que este trabalho NÃO cobriu
 
-- **Streaming de logs em tempo real** de um comando longo (§3.5 do plano): a
-  saída continua chegando ao modelo no fim da execução. O `status` estruturado
-  já diz se o comando foi cortado, mas não há `process logs` incremental nem
-  consulta ao progresso sem interromper.
+- **Consulta ao progresso pelo MODELO durante a execução** (`process status` /
+  `process logs` de §3.5): é uma limitação do próprio laço de function-calling —
+  enquanto uma ferramenta roda, o modelo está bloqueado esperando o resultado
+  dela, então não há turno em que ele possa perguntar. O que existe cobre os dois
+  efeitos práticos: o **usuário** vê a saída ao vivo (§4b) e o **agente** lê a
+  saída integral depois, pelo log em disco. Uma consulta de verdade exigiria
+  execução assíncrona de ferramentas (devolver um id e deixar o modelo consultar
+  em turnos seguintes) — mudança grande no laço, fora do escopo desta frente.
 - **Registro de portas e serviços** iniciados pelo agente (§3.13).
 - **Transação de workspace explícita** (`begin`/`commit`/`rollback`, §3.11): o
   par checkpoint + restauração cobre o efeito prático, sem a sintaxe de

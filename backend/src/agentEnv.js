@@ -257,6 +257,11 @@ export const HEAVY_DIRS = Object.freeze(new Set([
   '.ruff_cache', '.next', '.nuxt', 'target', '.gradle', '.tox'
 ]));
 
+// A escrituração do próprio mecanismo (log ao vivo da execução, manifesto de
+// dependências) NÃO conta como "o comando mexeu em arquivos" — senão TODA
+// execução sairia com arquivos_alterados=true e o campo perderia o sentido.
+export const AGENT_ENV_DIR = '.agent-env';
+
 export function fingerprintWorkspace(base, { maxEntries = 20000 } = {}) {
   const fp = { arquivos: 0, bytes: 0, mtime_mais_recente: 0, truncado: false };
   const stack = [base];
@@ -267,6 +272,10 @@ export function fingerprintWorkspace(base, { maxEntries = 20000 } = {}) {
     try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { continue; }
     for (const entry of entries) {
       if (++visited > maxEntries) { fp.truncado = true; return fp; }
+      // Antes do lstat: o mtime do PRÓPRIO diretório .agent-env muda a cada
+      // execução (o log ao vivo é gravado lá), e isso bastaria para a impressão
+      // digital acusar mudança em todo comando.
+      if (entry.name === AGENT_ENV_DIR) continue;
       const full = path.join(dir, entry.name);
       let stat;
       try { stat = fs.lstatSync(full); } catch { continue; }
@@ -506,6 +515,143 @@ export function listRuntimeInstalls(agentEnvDir) {
 
 export function clearRuntimeInstalls(agentEnvDir) {
   try { fs.rmSync(path.join(agentEnvDir, PACKAGES_FILE), { force: true }); return true; } catch { return false; }
+}
+
+// ---- 5b) Log ao vivo da execução --------------------------------------------
+// O resultado devolvido ao modelo é aparado nos últimos 12 mil caracteres — e o
+// erro de uma suíte longa costuma estar no COMEÇO. Enquanto o comando roda, a
+// saída inteira é gravada num arquivo dentro do workspace (persistente), então
+// depois de um timeout o agente ainda consegue ler o que aconteceu do início.
+export const EXEC_LOG_FILE = 'ultima-execucao.log';
+export const EXEC_LOG_META = 'ultima-execucao.json';
+const EXEC_LOG_MAX_BYTES = Math.max(64 * 1024, Number(process.env.EXEC_LOG_MAX_BYTES || 4 * 1024 * 1024));
+
+// Gravador com teto: passado o limite, para de escrever e marca o corte. Nunca
+// lança — perder o log não pode derrubar a execução.
+//
+// A escrita é SÍNCRONA, num descritor aberto uma única vez. Um createWriteStream
+// seria mais idiomático, mas o `close()` dele não garante que os bytes já estão
+// no disco: a leitura logo depois (ação "ultima_execucao", feita no mesmo tique)
+// encontrava o arquivo vazio. Os pedaços chegam em quadros de dezenas de KB e o
+// teto total da saída é de poucos MB, então o custo é irrelevante.
+export function openExecLog(agentEnvDir, { maxBytes = EXEC_LOG_MAX_BYTES } = {}) {
+  let fd = null;
+  let bytes = 0;
+  let cortado = false;
+  let fechado = false;
+  const file = path.join(agentEnvDir, EXEC_LOG_FILE);
+  try {
+    fs.mkdirSync(agentEnvDir, { recursive: true });
+    fd = fs.openSync(file, 'w');
+    try { fs.chownSync(agentEnvDir, 1000, 1000); } catch {}
+  } catch { fd = null; }
+  const escreve = (texto) => { try { fs.writeSync(fd, texto); } catch {} };
+  return {
+    caminho: `${AGENT_ENV_DIR}/${EXEC_LOG_FILE}`,
+    write(chunk) {
+      if (fd === null || cortado) return;
+      bytes += Buffer.byteLength(chunk);
+      if (bytes > maxBytes) {
+        cortado = true;
+        escreve(`\n[LOG CORTADO em ${maxBytes} bytes]\n`);
+        return;
+      }
+      escreve(chunk);
+    },
+    close(meta) {
+      if (fechado) return; // 'end', 'close' e o cancelamento podem chamar juntos
+      fechado = true;
+      if (fd !== null) { try { fs.closeSync(fd); } catch {} fd = null; }
+      // O sandbox roda como uid 1000 e precisa poder LER o próprio log
+      // (o agente o abre com read_file quando quer a saída inteira).
+      try { fs.chmodSync(file, 0o666); } catch {}
+      if (!meta) return;
+      try {
+        fs.writeFileSync(path.join(agentEnvDir, EXEC_LOG_META), JSON.stringify({ ...meta, bytes, cortado, log: `${AGENT_ENV_DIR}/${EXEC_LOG_FILE}` }, null, 2), 'utf8');
+      } catch {}
+    }
+  };
+}
+
+// Lido pela ferramenta `ambiente` (ação "ultima_execucao"): entrega as duas
+// pontas do log, porque a causa costuma estar no começo e o desfecho no fim.
+export function readExecLog(agentEnvDir, { headChars = 4000, tailChars = 4000 } = {}) {
+  let meta = null;
+  try { meta = JSON.parse(fs.readFileSync(path.join(agentEnvDir, EXEC_LOG_META), 'utf8')); } catch {}
+  let conteudo = '';
+  try { conteudo = fs.readFileSync(path.join(agentEnvDir, EXEC_LOG_FILE), 'utf8'); } catch {}
+  if (!meta && !conteudo) return { existe: false };
+  const inteiro = conteudo.length <= headChars + tailChars;
+  return {
+    existe: true,
+    ...(meta || {}),
+    caracteres: conteudo.length,
+    trecho_inicial: inteiro ? conteudo : conteudo.slice(0, headChars),
+    ...(inteiro ? {} : { trecho_final: conteudo.slice(-tailChars), observacao: `O log tem ${conteudo.length} caracteres; o meio foi omitido. Leia ${AGENT_ENV_DIR}/${EXEC_LOG_FILE} com read_file para ver tudo.` })
+  };
+}
+
+// Repórter de progresso: agrega a saída e chama `onProgress` no máximo a cada
+// `intervalMs`. Também avisa quando o comando fica MUDO — sem isso, "travou" e
+// "está processando em silêncio" são indistinguíveis de fora.
+export function createProgressReporter(onProgress, {
+  intervalMs = Math.max(200, Number(process.env.SANDBOX_PROGRESS_INTERVAL_MS || 900)),
+  stallMs = Math.max(2000, Number(process.env.SANDBOX_STALL_NOTICE_MS || 20000)),
+  chunkChars = 2000,
+  totalChars = 200_000,
+  now = () => Date.now()
+} = {}) {
+  const inicio = now();
+  let pendente = '';
+  let enviados = 0;
+  let bytes = 0;
+  let linhas = 0;
+  let ultimaSaida = inicio;
+  let ultimoAviso = 0;
+  let timer = null;
+
+  const flush = () => {
+    const agora = now();
+    if (pendente) {
+      let trecho = pendente;
+      pendente = '';
+      if (enviados >= totalChars) return; // teto: para de transmitir, o log em disco continua
+      if (trecho.length > chunkChars) trecho = `…${trecho.slice(-chunkChars)}`;
+      enviados += trecho.length;
+      try { onProgress({ trecho, bytes, linhas, decorrido_ms: agora - inicio }); } catch {}
+      return;
+    }
+    // Nada saiu: só avisa uma vez por janela de silêncio.
+    const parado = agora - ultimaSaida;
+    if (parado >= stallMs && agora - ultimoAviso >= stallMs) {
+      ultimoAviso = agora;
+      try { onProgress({ parado_ha_ms: parado, bytes, linhas, decorrido_ms: agora - inicio }); } catch {}
+    }
+  };
+
+  return {
+    start() {
+      if (typeof onProgress !== 'function' || timer) return;
+      timer = setInterval(flush, intervalMs);
+      timer.unref?.();
+    },
+    push(texto) {
+      bytes += Buffer.byteLength(texto);
+      for (let i = 0; i < texto.length; i++) if (texto[i] === '\n') linhas++;
+      ultimaSaida = now();
+      if (typeof onProgress === 'function') pendente += texto;
+    },
+    stop() {
+      if (timer) { clearInterval(timer); timer = null; }
+      if (typeof onProgress === 'function' && pendente) flush();
+    },
+    // Resumo que entra no resultado: quantas linhas saíram e há quanto tempo o
+    // comando estava mudo quando foi cortado.
+    snapshot() {
+      const agora = now();
+      return { linhas, bytes, decorrido_ms: agora - inicio, sem_saida_ha_ms: agora - ultimaSaida };
+    }
+  };
 }
 
 // ---- 6) Disco ---------------------------------------------------------------

@@ -226,6 +226,7 @@ O QUE SOBREVIVE E O QUE SOME (o sandbox pode reiniciar no meio do trabalho):
 - Toda execução devolve "status" e "diagnostico". Leia antes de concluir: status "timeout"/"cancelado"/"limite_de_saida" significa que o comando NÃO terminou — nesses casos é proibido dizer que a tarefa foi concluída, que os testes passaram ou que o arquivo foi gerado. Verifique o estado real (list_files, read_file) e diga com honestidade o que ficou pela metade.
 - "diagnostico.falha_do_projeto: false" quer dizer que a culpa é do ambiente (dependência ausente, rede desligada, permissão, memória), não do código. Não saia refatorando o projeto por causa disso — trate o ambiente.
 - Se aparecer "ambiente_reiniciado" num resultado, o container foi trocado: confira o que existe antes de continuar e reinstale o que era de runtime, em vez de refazer o que o workspace já contém.
+- O resultado traz só os ÚLTIMOS 12 mil caracteres da saída. Quando o campo "progresso.log_completo" aparecer, a saída inteira está naquele arquivo — em suíte de testes ou build longo o erro costuma estar no COMEÇO, que o corte descarta. Leia o log (ambiente com "ultima_execucao", ou read_file no caminho indicado) antes de dizer que não sabe por que falhou.
 - Antes de uma alteração arriscada em vários arquivos, use ambiente com "checkpoint_criar"; se der errado, "checkpoint_restaurar" devolve o workspace ao ponto anterior.`;
 
 export function protectedProfilePrompt(profile, { includeQuality = true, includeCompletion = true } = {}) {
@@ -366,7 +367,7 @@ export function toolAvailabilityNote(tools, { includeInventory = false, sandboxN
   if (names.has('read_file')) lines.push('- read_file: ler arquivos de texto do workspace.');
   if (names.has('list_files')) lines.push('- list_files: listar uploads, outputs e arquivos da conversa.');
   if (names.has('zip_outputs')) lines.push('- zip_outputs: compactar /workspace/outputs em ZIP.');
-  if (names.has('ambiente')) lines.push('- ambiente: estado do sandbox (limites, o que é persistente, geração), recursos (CPU/memória/disco), dependências instaladas em runtime e checkpoints do workspace (criar/listar/restaurar). Use ao investigar uma falha que pode ser do AMBIENTE e antes de alterações arriscadas em vários arquivos.');
+  if (names.has('ambiente')) lines.push('- ambiente: estado do sandbox (limites, o que é persistente, geração), recursos (CPU/memória/disco), log integral da última execução ("ultima_execucao" — a saída completa de um comando cortado por timeout), dependências instaladas em runtime e checkpoints do workspace (criar/listar/restaurar). Use ao investigar uma falha que pode ser do AMBIENTE e antes de alterações arriscadas em vários arquivos.');
   if (names.has('consultar_cnpj')) lines.push('- consultar_cnpj: dados cadastrais oficiais de um CNPJ (razão social, situação, CNAE, endereço, sócios etc.). Use SEMPRE para consulta de empresa por CNPJ — funciona sem o botão de pesquisa; NÃO use web_search para CNPJ.');
   if (names.has('generate_image')) lines.push('- generate_image: gerar ou editar imagens com IA e salvar em outputs.');
   if (names.has('web_search')) lines.push('- web_search: pesquisar na internet pelo backend quando o globo estiver ativado.');

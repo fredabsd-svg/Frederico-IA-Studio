@@ -38,6 +38,9 @@ import {
   listRuntimeInstalls,
   directoryUsage,
   environmentManifest,
+  createProgressReporter,
+  openExecLog,
+  readExecLog,
   _lifecycleForTests
 } from './agentEnv.js';
 
@@ -254,6 +257,74 @@ test('o manifesto de dependências vive no workspace e não duplica o mesmo coma
   const itens = listRuntimeInstalls(dir);
   assert.equal(itens.length, 2);
   assert.deepEqual(itens.map(i => i.gerenciador), ['pip', 'npm']);
+});
+
+// ---- 5b) Progresso ao vivo e log da execução --------------------------------
+test('o repórter de progresso agrega a saída e respeita o intervalo', () => {
+  const eventos = [];
+  let agora = 0;
+  const rep = createProgressReporter(e => eventos.push(e), { intervalMs: 1000, stallMs: 5000, now: () => agora });
+  rep.push('linha 1\nlinha 2\n');
+  // Sem o timer (que o teste não roda), nada foi transmitido ainda.
+  assert.equal(eventos.length, 0);
+  agora = 1200;
+  rep.stop(); // o stop faz o flush do que ficou pendente
+  assert.equal(eventos.length, 1);
+  assert.equal(eventos[0].trecho, 'linha 1\nlinha 2\n');
+  assert.equal(eventos[0].linhas, 2);
+  assert.equal(eventos[0].bytes, Buffer.byteLength('linha 1\nlinha 2\n'));
+});
+
+test('o repórter conta linhas e o silêncio mesmo sem ninguém ouvindo', () => {
+  let agora = 0;
+  const rep = createProgressReporter(undefined, { now: () => agora });
+  rep.push('a\nb\nc\n');
+  agora = 30_000;
+  const s = rep.snapshot();
+  assert.equal(s.linhas, 3);
+  assert.equal(s.sem_saida_ha_ms, 30_000);
+  assert.equal(s.decorrido_ms, 30_000);
+});
+
+test('o trecho transmitido é limitado, mas o contador continua íntegro', () => {
+  const eventos = [];
+  const rep = createProgressReporter(e => eventos.push(e), { chunkChars: 50 });
+  rep.push('x'.repeat(500));
+  rep.stop();
+  assert.ok(eventos[0].trecho.length <= 51, 'o pedaço enviado ao navegador é aparado');
+  assert.match(eventos[0].trecho, /^…/, 'o corte é explícito');
+  assert.equal(eventos[0].bytes, 500, 'o total transmitido continua verdadeiro');
+});
+
+test('o log em disco guarda a saída INTEIRA e é lido pelas duas pontas', () => {
+  const dir = path.join(tmp(), '.agent-env');
+  const log = openExecLog(dir);
+  log.write(`COMEÇO: aqui está o erro\n${'meio\n'.repeat(2000)}`);
+  log.write('FIM: resumo\n');
+  log.close({ comando: 'pytest', status: 'timeout', exit_code: 124 });
+
+  const lido = readExecLog(dir, { headChars: 100, tailChars: 100 });
+  assert.equal(lido.existe, true);
+  assert.equal(lido.comando, 'pytest');
+  assert.equal(lido.status, 'timeout');
+  assert.match(lido.trecho_inicial, /COMEÇO: aqui está o erro/, 'o começo, onde o erro costuma estar, é preservado');
+  assert.match(lido.trecho_final, /FIM: resumo/);
+  assert.match(lido.observacao, /read_file/);
+});
+
+test('o log respeita o teto e marca o corte, sem derrubar a execução', () => {
+  const dir = path.join(tmp(), '.agent-env');
+  const log = openExecLog(dir, { maxBytes: 100 });
+  log.write('a'.repeat(500));
+  log.write('depois do corte');
+  log.close({ comando: 'yes' });
+  const lido = readExecLog(dir);
+  assert.match(lido.trecho_inicial, /LOG CORTADO/);
+  assert.ok(!lido.trecho_inicial.includes('depois do corte'));
+});
+
+test('sem execução registrada, o log responde que não existe', () => {
+  assert.deepEqual(readExecLog(path.join(tmp(), '.agent-env')), { existe: false });
 });
 
 // ---- 6) Disco e manifesto ---------------------------------------------------

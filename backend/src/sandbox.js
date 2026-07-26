@@ -21,6 +21,9 @@ import {
   clearRuntimeInstalls,
   directoryUsage,
   environmentManifest,
+  createProgressReporter,
+  openExecLog,
+  readExecLog,
   createCheckpoint,
   listCheckpoints,
   restoreCheckpoint
@@ -712,7 +715,7 @@ async function killExecTree(container, execId) {
 
 export async function execInSandbox(conversationId, cmd, timeoutMs = Number(process.env.TOOL_TIMEOUT_MS || 45000), options = {}) {
   conversationId = assertConversationId(conversationId);
-  const { signal, ...sandboxOptions } = options || {};
+  const { signal, onProgress, ...sandboxOptions } = options || {};
   // Chave composta: toda remocao/troca de sessao abaixo mira SO o sandbox
   // (usuario, conversa) deste run — nunca o de outro usuario.
   const userId = requireUserScope(sandboxOptions.userId);
@@ -723,28 +726,52 @@ export async function execInSandbox(conversationId, cmd, timeoutMs = Number(proc
   // interrupção, se ele chegou a mexer em arquivos. Sem isso o agente só pode
   // supor — e supor "não mexeu" já causou retrabalho e sobrescrita.
   let workspaceBase = null;
+  let agentEnvDir = null;
   let before = null;
   try {
-    workspaceBase = workspaceFor(conversationId, userId).base;
+    const ws = workspaceFor(conversationId, userId);
+    workspaceBase = ws.base;
+    agentEnvDir = ws.agentEnv;
     before = fingerprintWorkspace(workspaceBase);
   } catch {}
+  // Progresso ao vivo (para o usuário, via SSE) e log integral em disco (para o
+  // agente, depois de uma interrupção): o resultado é aparado nos últimos 12 mil
+  // caracteres, mas o erro de uma suíte longa costuma estar no começo.
+  const progress = createProgressReporter(onProgress);
+  const execLog = agentEnvDir ? openExecLog(agentEnvDir) : null;
   const decorate = (result, status) => {
     const after = workspaceBase ? fingerprintWorkspace(workspaceBase) : null;
     const diagnostico = classifyExecOutcome({ exitCode: result.exitCode, output: result.output, status });
     const notice = takeRestartNotice(key);
+    const medida = progress.snapshot();
+    const interrompido = status !== EXEC_STATUS.OK;
     return {
       ...result,
       status,
       sucesso: status === EXEC_STATUS.OK && result.exitCode === 0,
       duracao_ms: Date.now() - startedAt,
-      processo_encerrado: status !== EXEC_STATUS.OK,
-      saida_parcial: status !== EXEC_STATUS.OK && !!result.output,
+      processo_encerrado: interrompido,
+      saida_parcial: interrompido && !!result.output,
       arquivos_alterados: fingerprintChanged(before, after),
       diagnostico,
+      // Só quando ajuda: num comando curto e bem-sucedido, estes campos seriam
+      // ruído em todo resultado de ferramenta.
+      ...(interrompido || medida.linhas > 200 ? {
+        progresso: {
+          linhas: medida.linhas,
+          bytes: medida.bytes,
+          sem_saida_ha_ms: medida.sem_saida_ha_ms,
+          ...(execLog ? { log_completo: execLog.caminho } : {})
+        }
+      } : {}),
       ...(notice ? { ambiente_reiniciado: notice } : {})
     };
   };
-  const canceledResult = () => decorate({ exitCode: 130, output: '[INTERROMPIDO: comando cancelado pelo usuario]' }, EXEC_STATUS.CANCELED);
+  const canceledResult = () => {
+    progress.stop();
+    execLog?.close({ comando: String(cmd).slice(0, 500), status: EXEC_STATUS.CANCELED, exit_code: 130, iniciado_em: new Date(startedAt).toISOString() });
+    return decorate({ exitCode: 130, output: '[INTERROMPIDO: comando cancelado pelo usuario]' }, EXEC_STATUS.CANCELED);
+  };
   if (signal?.aborted) return canceledResult();
   let container = await getContainer(conversationId, sandboxOptions);
   if (signal?.aborted) {
@@ -810,9 +837,13 @@ export async function execInSandbox(conversationId, cmd, timeoutMs = Number(proc
   // em vez de tentar remover os cabeçalhos "na mão" (que corrompia a saída).
   const stdout = new PassThrough(), stderr = new PassThrough();
   try { container.modem.demuxStream(stream, stdout, stderr); } catch {}
+  progress.start();
   const onData = (chunk) => {
     bytes += chunk.length;
-    if (!tooBig) output += chunk.toString('utf8');
+    const texto = chunk.toString('utf8');
+    progress.push(texto);
+    execLog?.write(texto);
+    if (!tooBig) output += texto;
     // Limita a saída acumulada no BACKEND (o limite de memória é do container,
     // não do Node): evita OOM com `yes`/prints gigantes.
     if (bytes > MAX_OUTPUT_BYTES && !tooBig) {
@@ -831,6 +862,7 @@ export async function execInSandbox(conversationId, cmd, timeoutMs = Number(proc
       if (settled) return; // 'end', 'close' e 'error' podem disparar juntos
       settled = true;
       clearTimeout(timer);
+      progress.stop();
       signal?.removeEventListener('abort', interrupt);
       const info = await exec.inspect().catch(() => ({ ExitCode: -1 }));
       let clean = output.replace(/[\x00-\x08\x0E-\x1F]/g, '');
@@ -844,9 +876,18 @@ export async function execInSandbox(conversationId, cmd, timeoutMs = Number(proc
       const exitCode = interrupted ? 130 : (timedOut ? 124 : (tooBig ? 137 : info.ExitCode));
       // Só registra a instalação quando ela REALMENTE terminou bem: um `pip
       // install` cortado por timeout deixaria o manifesto mentindo.
-      if (status === EXEC_STATUS.OK && exitCode === 0 && workspaceBase) {
-        try { recordRuntimeInstall(path.join(workspaceBase, '.agent-env'), cmd); } catch {}
+      if (status === EXEC_STATUS.OK && exitCode === 0 && agentEnvDir) {
+        try { recordRuntimeInstall(agentEnvDir, cmd); } catch {}
       }
+      const medida = progress.snapshot();
+      execLog?.close({
+        comando: String(cmd).slice(0, 500),
+        status,
+        exit_code: exitCode,
+        iniciado_em: new Date(startedAt).toISOString(),
+        duracao_ms: medida.decorrido_ms,
+        linhas: medida.linhas
+      });
       resolve(decorate({ exitCode, output: clean.slice(-12000) }, status));
     };
     finishExecution = finish;
@@ -1025,6 +1066,14 @@ export function sandboxCheckpointRestore(userId, conversationId, id) {
   let seguranca = null;
   try { seguranca = createCheckpoint(ws.base, dir, { label: 'antes da restauração', reason: 'automatico' }); } catch {}
   return { ...restoreCheckpoint(ws.base, dir, id), checkpoint_de_seguranca: seguranca?.id || null };
+}
+
+// Log integral da última execução. É o que dá substância ao "saída parcial
+// disponível": depois de um timeout, o agente lê o começo da saída — onde o
+// erro costuma estar — em vez de só os últimos 12 mil caracteres.
+export function sandboxLastExecutionLog(userId, conversationId) {
+  const scope = requireUserScope(userId);
+  return readExecLog(workspaceFor(conversationId, scope).agentEnv);
 }
 
 export function sandboxRuntimeDependencies(userId, conversationId) {
