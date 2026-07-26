@@ -19,9 +19,10 @@ de testes: **o SSE integrado saiu do zero** (ver a frente abaixo), mas a retomad
 interrupção real do processo e o pipeline multimodelo retomável continuam sem teste.
 Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** troca do navegador headless para **Playwright** e criação da suíte
-  **ponta a ponta** (`e2e/`) — **F-20 fechado**, F-12 e F-13 cobertos em parte. A troca
-  expôs um buraco de SSRF que uma porta ingênua teria aberto. Detalhe abaixo.
+- **Último trabalho:** **PR [#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)** —
+  troca do navegador headless para **Playwright** e criação da suíte **ponta a ponta**
+  (`e2e/`). **F-20 fechado**, F-12 e F-13 cobertos em parte. A troca expôs um buraco de
+  SSRF que uma porta ingênua teria aberto. Detalhe abaixo.
 - **Última validação:** 2026-07-26 — **778 testes** (backend 653, frontend 57, guarda do
   Docker 49, sandbox Python 10, ponta a ponta 9). Backend e frontend rodaram com
   PostgreSQL real neste contêiner: **653 passaram, 0 pulados**. Os 9 E2E rodaram de
@@ -31,7 +32,7 @@ Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
 ---
 
-## Playwright: navegador headless e suíte ponta a ponta (2026-07-26 — F-20)
+## Playwright: navegador headless e suíte ponta a ponta (2026-07-26 — PR #146, F-20)
 
 Duas frentes numa só, porque as duas trocam a mesma peça.
 
