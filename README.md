@@ -30,6 +30,7 @@ isolado, não descritos em texto.
 |---|---|
 | *"Monte uma planilha de fluxo de caixa com estes lançamentos"* | `.xlsx` com fórmulas **recalculadas e conferidas** |
 | *"Faça um relatório em Word a partir deste PDF"* | `.docx` com capa, tabelas estilizadas e rodapé paginado |
+| *"Transforme isto numa proposta em PDF para o cliente"* | `.pdf` com capa, sumário, fonte embutida e **auditoria de formatação** antes da entrega |
 | *"Fotografei esta nota fiscal — extraia os dados"* | Leitura por **visão ou OCR**, sem você digitar nada |
 | *"Consulte o CNPJ 00.000.000/0001-91"* | Razão social, situação, CNAE, endereço e sócios (dados oficiais) |
 | *"Pesquise as mudanças da reforma tributária e resuma"* | Busca na web com **miniatura real** das páginas abertas |
@@ -92,9 +93,15 @@ veja **[docs/CONFIGURACAO.md](docs/CONFIGURACAO.md)**.
 ### 💬 Conversa que produz resultado
 
 - **Arquivos reais no chat** — Excel, Word, PDF, CSV, ZIP, imagens, gráficos e OCR.
-- **Documentos com design de agência** — kits prontos e testados (capa, tabelas
-  estilizadas, gráficos, callouts, rodapé paginado), com modo **sóbrio/registrável**
-  para ata e contrato.
+- **Documentos com design de agência** — kits prontos e testados (capa, sumário
+  paginado, tabelas estilizadas, listas, indicadores, gráficos, callouts e rodapé
+  "Página X de Y"), com modo **sóbrio/registrável** para ata e contrato. Word,
+  Excel e PDF seguem **a mesma grade**: uma única aresta de texto na página
+  inteira, do título ao rodapé.
+- **PDF que abre igual em qualquer leitor** — fonte embutida, texto copiável e
+  pesquisável. Antes de ser entregue, o arquivo passa por uma **auditoria
+  automática** (margem, glifos, fonte, metadados): um PDF com defeito grave falha
+  na geração em vez de chegar torto até o cliente.
 - **Câmera e imagens** — fotografe um documento pelo celular ou pela webcam; a IA
   lê sozinha (visão nos modelos com visão, OCR nos demais).
 - **Consulta de CNPJ** — dados cadastrais oficiais (BrasilAPI/ReceitaWS).
@@ -291,6 +298,12 @@ Mexeu em interface, streaming ou login? Rode também os testes de navegador
 (`cd e2e && npm test` — exige PostgreSQL; ver [e2e/README.md](e2e/README.md)).
 Eles sobem o **build de produção** e conversam com um provedor de IA simulado,
 então não precisam de chave nem de internet.
+
+Mexeu nos kits de documento (`sandbox/docpro.py`, `xlspro.py`, `pdfpro.py`)?
+Rode `python -m unittest discover -s sandbox -p '*_test.py'`. Eles fixam o
+contrato de layout — se um bloco novo puser texto fora da grade da página, o
+teste acusa antes de o arquivo chegar ao cliente (ver
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §19).
 
 <div align="center">
 

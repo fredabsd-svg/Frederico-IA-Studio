@@ -19,9 +19,10 @@ de testes: **o SSE integrado saiu do zero** (ver a frente abaixo), mas a retomad
 interrupção real do processo e o pipeline multimodelo retomável continuam sem teste.
 Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** a **arquitetura de formatação dos documentos** (frente abaixo) — os
-  kits Word/Excel/PDF passaram a ter uma grade única e o `pdfpro` audita o arquivo que
-  gera. Antes dele, o **PR [#147](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/147)**
+- **Último trabalho:** **PR [#149](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/149)** —
+  a **arquitetura de formatação dos documentos** (frente abaixo): os kits Word/Excel/PDF
+  passaram a ter uma grade única e o `pdfpro` audita o arquivo que gera. Antes dele, o
+  **PR [#147](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/147)**
   (o copiloto cobria o botão de enviar), o **PR
   [#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)** (Playwright +
   suíte ponta a ponta) e o **PR [#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)**
@@ -34,7 +35,7 @@ Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
 ---
 
-## Formatação dos documentos: uma grade só, e o PDF se audita (2026-07-26)
+## Formatação dos documentos: uma grade só, e o PDF se audita (2026-07-26 — PR #149)
 
 Um relatório entregue em PDF veio com o conteúdo certo e a construção errada. Medindo o
 arquivo (não olhando: medindo), o diagnóstico foi objetivo:
