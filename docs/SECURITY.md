@@ -231,8 +231,38 @@ como instrução. O prompt personalizado do usuário passa por `protectedProfile
 amplia permissões: as ferramentas oferecidas ao modelo saem de `assistantPolicy.js`, não do
 texto do prompt.
 
-**Lacuna:** não existe bateria adversarial automatizada (README malicioso, delimitador
-fechado à força, memória envenenada). **Risco aberto F-17.**
+### 8.1 O que o wrapper garante
+
+`untrustedContext()` (em `backend/src/agent/promptRegistry.js`) neutraliza, no conteúdo e
+nos atributos do cabeçalho, a marcação que o modelo poderia ler como **estrutura do
+aplicativo**:
+
+| Marcação | Por que importa |
+| --- | --- |
+| `<untrusted-context>` (abertura **e** fechamento, em qualquer forma tolerante: `</untrusted-context foo="1">`, `</ …>`, `< /…>`, sem `>`) | Fechar o delimitador faz o dado fingir que acabou e que quem volta a falar é o aplicativo. Abrir um bloco falso tem o efeito espelhado: o fechamento legítimo encerra o bloco forjado e o resto do payload parece estar fora da caixa. |
+| `<trusted-instruction>` | O marcador oposto: forjá-lo promove dado a ordem. |
+| `<tool_call>`, `<function=…>`, `<function name=…>` | `loop.js` converte protocolo **textual** de ferramenta achado no texto do modelo em chamada **nativa**. Sem neutralizar na entrada, bastava o modelo repetir um trecho da página lida para o comando do atacante virar execução real no sandbox. |
+
+O casamento é limitado a esses nomes de propósito: escapar marcação genérica mutilaria HTML,
+XML e código legítimos — e num domínio contábil/fiscal o conteúdo **é** o dado.
+
+### 8.2 Bateria adversarial (F-17 — FECHADO)
+
+`backend/src/agent/promptInjection.adversarial.test.js` — 33 casos escritos do ponto de
+vista do atacante, cobrindo os quatro vetores previstos no F-17: README malicioso no
+repositório, memória envenenada em turno anterior, delimitador fechado à força e resposta
+maliciosa de outro modelo no pipeline multimodelo. Inclui a **cadeia completa** (página lida
+→ eco do modelo → execução) e os casos de não-regressão que provam que dado legítimo
+atravessa o wrapper sem perda.
+
+Rodada contra o código anterior à correção, a bateria acusa **15 falhas**. Duas eram reais e
+foram corrigidas nesta frente:
+
+1. O escape do delimitador só cobria a forma canônica `</untrusted-context>`; qualquer
+   variação tolerante escapava da caixa.
+2. **Resultado de ferramenta ia CRU para o contexto** (`role: 'tool'`), sem wrapper nenhum —
+   apesar de esta seção já afirmar o contrário. Era o maior canal de texto de terceiros do
+   app (`web_fetch`, `read_file`, `bash`, `github_clone`) e a cadeia mais curta até execução.
 
 ---
 
