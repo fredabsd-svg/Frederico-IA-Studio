@@ -141,8 +141,10 @@ export const subagentToolDefinition = subagentToolDefinitionFor([]);
 export async function listSubagentSpecialists(userId) {
   if (!userId) return [];
   try {
-    const rows = await db.prepare('SELECT id, name, model FROM assistants WHERE user_id=? ORDER BY created_at ASC LIMIT ?')
-      .all(userId, MAX_SPECIALISTS_OFFERED);
+    // O teto entra literal (é constante de código, não entrada do usuário): um
+    // `LIMIT ?` deixaria o Postgres inferir o tipo de um parâmetro sem contexto.
+    const rows = await db.prepare(`SELECT id, name, model FROM assistants WHERE user_id=? ORDER BY created_at ASC LIMIT ${MAX_SPECIALISTS_OFFERED}`)
+      .all(userId);
     return (rows || [])
       .map(row => ({ id: String(row.id || ''), name: String(row.name || '').trim(), model: row.model || null }))
       .filter(row => row.id && row.name);
