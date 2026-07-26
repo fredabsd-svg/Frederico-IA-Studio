@@ -76,7 +76,11 @@ async function gatherContext(req, { prefs, text }) {
     if (knowledgeBlock) used.knowledge = hits.map(h => h.title);
   }
 
-  const requested = req.body?.shareContext === true;
+  // Tri-estado: true pede o contexto, false dispensa nesta mensagem e ausente
+  // segue a preferência. Coagir para booleano aqui apagaria a diferença entre
+  // "não quero desta vez" e "não disse nada".
+  const raw = req.body?.shareContext;
+  const requested = typeof raw === 'boolean' ? raw : undefined;
   const decision = decideContextAccess(prefs, requested);
   const conversationId = String(req.body?.conversationId || '').trim();
   if (decision.allowed && conversationId) {

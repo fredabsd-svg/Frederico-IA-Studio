@@ -137,18 +137,22 @@ só existe com autorização explícita e rastro**.
 
 ### 9.1 Contexto do chat principal, sob autorização
 
-O isolamento total era correto e caro: sem ele o copiloto inventava contexto,
-com ele o usuário copiava e colava a toda hora. A porta agora existe e **só abre
-por fora**:
+O isolamento total era correto e caro: sem contexto o copiloto inventava, com
+ele o usuário copiava e colava a toda hora. O contexto passa a ir **por padrão**,
+com a leitura sempre auditada e a decisão nas mãos do usuário — inclusive na
+mensagem individual:
 
 | Preferência | Comportamento |
 | --- | --- |
 | `nunca` | Nem o botão do compositor abre. |
-| `perguntar` (**padrão**) | Lê apenas quando o usuário marca o contexto *naquela* mensagem. |
-| `sempre` | Dispensa a confirmação por mensagem (a autorização foi dada na configuração). |
+| `perguntar` | Lê apenas quando o usuário marca o contexto *naquela* mensagem. |
+| `sempre` (**padrão**) | O contexto vai junto sem confirmação; um `false` explícito o dispensa naquela mensagem. |
 
 - A decisão vive numa função pura, `decideContextAccess(prefs, requested)`, para
-  ser auditável de olho nu e impossível de burlar por engano.
+  ser auditável de olho nu e impossível de burlar por engano. `requested` é
+  tri-estado: `true` pede, `false` dispensa naquela mensagem e ausente segue a
+  preferência — coagir para booleano apagaria a diferença entre "não quero desta
+  vez" e "não disse nada".
 - O trecho entra como bloco `system` **rotulado**: cabeçalho dizendo que é
   referência somente-leitura e que instruções ali dentro são **dado, não ordem**
   (defesa contra injeção via conteúdo do chat principal, que inclui saída de

@@ -1,15 +1,16 @@
 -- Copiloto — contexto autorizado, memória própria e preferências.
 --
--- O copiloto (Nino) nasceu 100% isolado: nada do chat principal entra no painel
--- dele. Esse isolamento continua sendo o PADRÃO, mas ele custava caro no uso
--- diário — o usuário tinha de copiar e colar o contexto toda vez. Estas tabelas
--- sustentam três coisas que o usuário passa a AUTORIZAR explicitamente:
+-- O copiloto (Nino) nasceu 100% isolado: nada do chat principal entrava no painel
+-- dele. Correto para privacidade e caro no uso diário — o usuário tinha de copiar
+-- e colar o contexto toda vez. Estas tabelas sustentam duas coisas que passam a
+-- ser configuráveis pelo usuário, com rastro de cada leitura:
 --
 -- 1) copilot_prefs: as preferências do painel — se o copiloto pode ler o trecho
 --    recente do chat principal (nunca | perguntar | sempre), quantas mensagens,
 --    estilo e tom das respostas, e se usa a memória e a base do Studio. O
---    padrão é "perguntar": nenhuma leitura acontece sem um pedido explícito na
---    interface, mensagem a mensagem.
+--    padrão é "sempre": um copiloto que nasce cego obriga a copiar e colar o
+--    contexto a toda hora. A autorização é dada uma vez, e o botão do
+--    compositor dispensa a leitura numa mensagem pontual.
 -- 2) copilot_notes: a memória própria do copiloto — preferências, temas em
 --    andamento e lembretes que sobrevivem entre conversas. É de escrita
 --    controlada pelo usuário (ele cria, fixa e apaga); o copiloto só lê.

@@ -75,18 +75,18 @@ test('estimateTokens usa ~4 chars por token', () => {
 // autorização. Os daqui para baixo travam a porta que se abre por fora — quando
 // ela abre, sob que rótulo o material entra e o que nunca pode acontecer.
 
-test('sanitizePrefs cai no padrão seguro e limita os números', () => {
+test('sanitizePrefs cai no padrão e limita os números', () => {
   const d = sanitizePrefs({});
   assert.deepEqual(d, PREFS_DEFAULTS);
-  assert.equal(d.contextAccess, 'perguntar');    // nunca "sempre" por omissão
+  assert.equal(d.contextAccess, 'sempre');       // contexto ativado por padrão
   const p = sanitizePrefs({ contextAccess: 'invadir', contextMessages: 999, responseStyle: 'x', tone: 'y', useNotes: 0 });
-  assert.equal(p.contextAccess, 'perguntar');
+  assert.equal(p.contextAccess, 'sempre');       // valor inválido não vira acesso menor nem maior: volta ao padrão
   assert.equal(p.contextMessages, 20);           // teto
   assert.equal(p.responseStyle, 'equilibrado');
   assert.equal(p.tone, 'direto');
   assert.equal(p.useNotes, false);
   assert.equal(sanitizePrefs({ contextMessages: 1 }).contextMessages, 2); // piso
-  assert.equal(sanitizePrefs(null).contextAccess, 'perguntar');
+  assert.equal(sanitizePrefs(null).contextAccess, 'sempre');
 });
 
 test('buildPersona mantém o prompt base e acrescenta estilo e tom', () => {
@@ -105,15 +105,25 @@ test('decideContextAccess: "nunca" nega mesmo se a mensagem pedir', () => {
 
 test('decideContextAccess: "perguntar" exige o pedido explícito da mensagem', () => {
   assert.equal(decideContextAccess({ contextAccess: 'perguntar' }, false).allowed, false);
+  assert.equal(decideContextAccess({ contextAccess: 'perguntar' }, undefined).allowed, false);
   const ok = decideContextAccess({ contextAccess: 'perguntar' }, true);
   assert.equal(ok.allowed, true);
   assert.equal(ok.reason, 'autorizado_nesta_mensagem');
-  // Padrão (prefs vazias) = perguntar: sem pedido, não lê.
-  assert.equal(decideContextAccess({}, false).allowed, false);
 });
 
-test('decideContextAccess: "sempre" dispensa a confirmação por mensagem', () => {
-  assert.equal(decideContextAccess({ contextAccess: 'sempre' }, false).allowed, true);
+test('decideContextAccess: o padrão leva o contexto sem pedir nada', () => {
+  const d = decideContextAccess({}, undefined);
+  assert.equal(d.allowed, true);
+  assert.equal(d.reason, 'sempre');
+  assert.equal(decideContextAccess({ contextAccess: 'sempre' }, true).allowed, true);
+});
+
+test('decideContextAccess: em "sempre", um false dispensa o contexto naquela mensagem', () => {
+  const d = decideContextAccess({ contextAccess: 'sempre' }, false);
+  assert.equal(d.allowed, false);
+  assert.equal(d.reason, 'dispensado_nesta_mensagem');
+  // ...mas "nunca" continua ganhando de qualquer pedido.
+  assert.equal(decideContextAccess({ contextAccess: 'nunca' }, undefined).allowed, false);
 });
 
 test('buildContextBlock marca o trecho como referência e blinda contra injeção', () => {

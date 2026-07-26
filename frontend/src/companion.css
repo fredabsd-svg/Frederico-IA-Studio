@@ -630,3 +630,12 @@ body:not(.dark) .companionPanel {
 .app.theme-light .cwNote { background: rgba(0, 0, 0, .03); border-color: rgba(0, 0, 0, .08); }
 .app.theme-light .cwMsgActions button:hover, .app.theme-light .cwNoteActions button:hover { background: rgba(0, 0, 0, .06); color: #0f172a; }
 .app.theme-light .cwUsed { background: rgba(0, 0, 0, .04); border-color: rgba(0, 0, 0, .08); }
+
+/* Contexto dispensado nesta mensagem — o contraponto neutro do .cwContextOn */
+.cwContextOff {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  font-size: 11.5px; color: #8b96af; padding: 7px 9px; margin-bottom: 6px;
+  background: rgba(255, 255, 255, .04); border: 1px solid rgba(255, 255, 255, .08); border-radius: 10px;
+}
+.cwContextOn .cwLink, .cwContextOff .cwLink { margin-left: auto; }
+.app.theme-light .cwContextOff { background: rgba(0, 0, 0, .03); border-color: rgba(0, 0, 0, .08); }

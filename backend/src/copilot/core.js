@@ -2,13 +2,12 @@
 // Concentra os prompts de sistema, a montagem das mensagens enviadas ao modelo e
 // a sanitização de entradas.
 //
-// A regra de ISOLAMENTO continua sendo o PADRÃO: sem nada explicitamente
-// autorizado, as mensagens do chat do copiloto não incluem nada da conversa
-// principal — só o histórico do próprio copiloto. O que mudou é que agora
-// existe uma porta, e ela só abre por fora: quem chama `buildChatMessages`
-// pode passar `context` (trecho do chat principal que o usuário autorizou),
-// `notes` (a memória própria do copiloto) e `knowledge` (a base do Studio).
-// Nada disso é buscado aqui dentro — este módulo não fala com o banco.
+// Este módulo NÃO busca nada sozinho: sem blocos passados por quem chama, as
+// mensagens do chat do copiloto contêm só o histórico do próprio copiloto.
+// A porta abre por fora — `buildChatMessages` recebe `context` (trecho do chat
+// principal autorizado pelo usuário), `notes` (a memória própria do copiloto) e
+// `knowledge` (a base do Studio). Quem decide o que entra é routes/copilot.js,
+// consultando as preferências; este arquivo não fala com o banco.
 
 export const MAX_HISTORY = 20;          // últimas trocas consideradas no contexto
 export const MAX_MESSAGE_CHARS = 8000;  // teto por mensagem enviada ao modelo
@@ -47,15 +46,18 @@ const clampInt = (v, min, max, fallback) => {
 
 // `contextAccess` é a autorização para ler o trecho recente do chat principal:
 //   nunca     — a porta fica fechada; nem o botão da interface abre.
-//   perguntar — PADRÃO: só lê quando o usuário marca "levar o contexto" naquela
-//               mensagem. Uma autorização por vez, nunca implícita.
-//   sempre    — o usuário abriu mão de confirmar mensagem a mensagem.
+//   perguntar — só lê quando o usuário marca "levar o contexto" naquela mensagem.
+//   sempre    — PADRÃO: o contexto vai junto sem confirmação. Um copiloto que
+//               nasce cego obriga a copiar e colar a toda hora; a autorização é
+//               dada uma vez na configuração, e cada leitura continua auditada.
+//               Mesmo aqui o usuário pode DISPENSAR o contexto numa mensagem
+//               pontual (o botão do compositor funciona nos dois sentidos).
 export const CONTEXT_ACCESS = ['nunca', 'perguntar', 'sempre'];
 export const RESPONSE_STYLES = ['curto', 'equilibrado', 'detalhado'];
 export const TONES = ['direto', 'amigavel', 'formal'];
 
 export const PREFS_DEFAULTS = {
-  contextAccess: 'perguntar',
+  contextAccess: 'sempre',
   contextMessages: 6,      // quantas mensagens do chat principal, no máximo
   responseStyle: 'equilibrado',
   tone: 'direto',
@@ -78,13 +80,21 @@ export function sanitizePrefs(input = {}) {
 
 // A decisão de ler (ou não) o chat principal, isolada numa função pura: é a
 // regra que precisa ser óbvia de auditar e impossível de burlar por engano.
-// "nunca" ganha de tudo; "perguntar" exige o pedido explícito daquela mensagem;
-// "sempre" dispensa a confirmação porque o usuário já a deu na configuração.
+//
+// `requested` é a intenção DAQUELA mensagem e tem três valores: true (leve o
+// contexto), false (não leve desta vez) e undefined (siga a preferência).
+// "nunca" ganha de tudo. Em "sempre", o contexto vai por padrão, mas um `false`
+// explícito dispensa a leitura — pedir sigilo numa pergunta pontual não deveria
+// exigir uma ida às configurações.
 export function decideContextAccess(prefs, requested) {
   const p = sanitizePrefs(prefs);
   if (p.contextAccess === 'nunca') return { allowed: false, reason: 'desativado' };
-  if (p.contextAccess === 'sempre') return { allowed: true, reason: 'sempre' };
-  return requested
+  if (p.contextAccess === 'sempre') {
+    return requested === false
+      ? { allowed: false, reason: 'dispensado_nesta_mensagem' }
+      : { allowed: true, reason: 'sempre' };
+  }
+  return requested === true
     ? { allowed: true, reason: 'autorizado_nesta_mensagem' }
     : { allowed: false, reason: 'nao_solicitado' };
 }

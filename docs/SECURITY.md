@@ -235,9 +235,10 @@ O mesmo vale para o **contexto do chat principal levado ao copiloto** (migraçã
 trecho entra como bloco `system` delimitado, com cabeçalho declarando que é referência
 somente-leitura e que instruções ali dentro são **dado, não ordem** — importante porque
 esse material inclui resposta de modelo e arquivos colados pelo usuário. A leitura só
-acontece sob autorização (`decideContextAccess`: `nunca` bloqueia sempre, `perguntar` — o
-padrão — exige o pedido explícito daquela mensagem), é escopada pelo dono da conversa e
-fica registrada em `companion_audit`. Testes: `backend/src/copilot/core.test.js`.
+acontece sob autorização (`decideContextAccess`: `nunca` bloqueia sempre; `perguntar` exige
+o pedido explícito daquela mensagem; `sempre` — o padrão — leva o contexto, e um `false`
+explícito o dispensa numa mensagem pontual), é escopada pelo dono da conversa e fica
+registrada em `companion_audit`. Testes: `backend/src/copilot/core.test.js`.
 
 **Lacuna:** não existe bateria adversarial automatizada (README malicioso, delimitador
 fechado à força, memória envenenada). **Risco aberto F-17.**

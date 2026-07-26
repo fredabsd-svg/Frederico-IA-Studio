@@ -111,9 +111,10 @@ O personagem que acompanha o Studio — e explica o que está acontecendo.
 - **Estados ao vivo**: pensando, analisando, digitando, sugestão, dúvida — lidos
   da atividade real do app, nunca inventados.
 - **Painel próprio** com conversa, memória e documentos, separado do chat principal.
-- **Contexto sob autorização**: por padrão ele não enxerga a conversa principal.
-  Você escolhe entre *nunca*, *perguntar* (marca o contexto na mensagem em que
-  quiser) e *sempre* — e cada leitura fica no log de auditoria.
+- **Contexto do chat principal por padrão**: ele acompanha a conversa aberta sem
+  você precisar copiar e colar — e um clique no compositor dispensa a leitura
+  numa pergunta pontual. Prefere outro arranjo? *perguntar* (só quando você
+  marcar) ou *nunca*. Cada leitura fica no log de auditoria.
 - **Memória própria**: preferências, temas e lembretes que você escreve ficam
   entre conversas; as fixadas entram sempre. Ele não anota nada sozinho.
 - **Ações no Studio**: levar uma resposta para o compositor do chat principal,

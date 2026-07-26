@@ -5,7 +5,7 @@ import { PROMPT_ACTIONS, buildCoachMessage } from '../promptCoach.js';
 import {
   MessageSquare, FolderOpen, Send, Trash2, Eraser, Bell,
   FileText, Download, Eye, X, Wand2, Brain, Link2, Copy,
-  BookmarkPlus, ArrowUpToLine, Pin, PinOff, Plus, ScrollText, Check,
+  BookmarkPlus, ArrowUpToLine, Pin, PinOff, Plus, ScrollText, Check, Link2Off,
 } from 'lucide-react';
 import { NinoAvatar, NINO_CAPTION } from './NinoAvatar.jsx';
 
@@ -17,8 +17,8 @@ const NOTE_KIND_LABEL = {
 };
 const CONTEXT_LABEL = {
   nunca: 'Nunca ler o chat principal',
-  perguntar: 'Perguntar (você marca quando quiser)',
-  sempre: 'Sempre levar o contexto',
+  perguntar: 'Só quando eu marcar na mensagem',
+  sempre: 'Sempre levar o contexto (padrão)',
 };
 const STYLE_LABEL = { curto: 'Curtas', equilibrado: 'Equilibradas', detalhado: 'Detalhadas' };
 const TONE_LABEL = { direto: 'Direto', amigavel: 'Amigável', formal: 'Formal' };
@@ -33,7 +33,8 @@ function fmtSize(bytes) {
 }
 
 // O espaço PRÓPRIO do copiloto: aberto pelo avatar, com três abas — Conversa
-// (isolada do chat principal por padrão), Memória (as preferências e as notas
+// (leva o contexto da conversa principal aberta, e o botão do compositor
+// dispensa isso quando o usuário quiser), Memória (as preferências e as notas
 // que ele mantém entre conversas) e Documentos (a caixa própria dele).
 export function CopilotWorkspace({
   copilot, companion, state = 'aguardando', onClose,
@@ -89,15 +90,15 @@ function ChatTab({ copilot, companion, name, unread, quiet, conversationId, conv
   const { messages, sending, loading, error, send, clearChat, prefs } = copilot;
   const [text, setText] = useState('');
   const [tools, setTools] = useState(false);
-  const [shareContext, setShareContext] = useState(false);
+  // null = segue a preferência; true/false = decisão só desta mensagem.
+  const [shareOverride, setShareOverride] = useState(null);
   const [summarizing, setSummarizing] = useState(false);
   const scrollRef = useRef(null);
 
-  const access = prefs?.contextAccess || 'perguntar';
-  const contextAlways = access === 'sempre';
+  const access = prefs?.contextAccess || 'sempre';
   const canShare = access !== 'nunca' && !!conversationId;
-  // Em "sempre" o contexto vai de qualquer forma; o botão vira só indicador.
-  const willShare = canShare && (contextAlways || shareContext);
+  const byPreference = access === 'sempre';
+  const willShare = canShare && (shareOverride == null ? byPreference : shareOverride);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -110,12 +111,16 @@ function ChatTab({ copilot, companion, name, unread, quiet, conversationId, conv
     if (!t || sending) return;
     send(t, { shareContext: willShare, conversationId });
     setText('');
+    setShareOverride(null); // a decisão valia só para aquela mensagem
   }
   function runTool(actionId) {
     const draft = text.trim();
     if (!draft) return;
     const msg = buildCoachMessage(actionId, draft);
-    if (msg) { send(msg, { shareContext: willShare, conversationId }); setText(''); setTools(false); }
+    if (msg) {
+      send(msg, { shareContext: willShare, conversationId });
+      setText(''); setTools(false); setShareOverride(null);
+    }
   }
   async function summarize() {
     setSummarizing(true);
@@ -149,7 +154,8 @@ function ChatTab({ copilot, companion, name, unread, quiet, conversationId, conv
             <span className="cwEmptyFace"><NinoAvatar state="observando" name={name} quiet={quiet} /></span>
             <b>Oi! Eu sou o {name}.</b>
             <span>Este é o nosso canto — separado do chat principal. Me use para revisar textos, lapidar prompts, organizar ideias ou tirar dúvidas do Studio.</span>
-            {canShare && <span className="cwEmptyHint">Quando precisar que eu veja do que se trata lá no chat, use o botão <Link2 size={12} /> antes de enviar.</span>}
+            {canShare && byPreference && <span className="cwEmptyHint">Já acompanho o que está na conversa aberta. Se preferir sigilo numa pergunta, desligue o <Link2 size={12} /> antes de enviar.</span>}
+            {canShare && !byPreference && <span className="cwEmptyHint">Quando precisar que eu veja do que se trata lá no chat, ligue o <Link2 size={12} /> antes de enviar.</span>}
           </div>
         )}
         {messages.map(m => (
@@ -189,12 +195,19 @@ function ChatTab({ copilot, companion, name, unread, quiet, conversationId, conv
         </div>
       )}
 
-      {willShare && (
-        <div className="cwContextOn">
-          <Link2 size={12} /> Vou ler as últimas {prefs?.contextMessages || 6} mensagens
-          {conversationTitle ? ` de “${conversationTitle}”` : ' do chat principal'}
-          {contextAlways && <span className="cwDim"> · sempre (mude em Memória)</span>}
-        </div>
+      {canShare && (
+        willShare ? (
+          <div className="cwContextOn">
+            <Link2 size={12} /> Vou ler as últimas {prefs?.contextMessages || 6} mensagens
+            {conversationTitle ? ` de “${conversationTitle}”` : ' do chat principal'}
+            <button type="button" className="cwLink" onClick={() => setShareOverride(false)}>não levar desta vez</button>
+          </div>
+        ) : (
+          <div className="cwContextOff">
+            <Link2Off size={12} /> Sem o contexto do chat principal nesta mensagem
+            <button type="button" className="cwLink" onClick={() => setShareOverride(true)}>levar mesmo assim</button>
+          </div>
+        )
       )}
 
       <form className="cwComposer" onSubmit={submit}>
@@ -204,18 +217,18 @@ function ChatTab({ copilot, companion, name, unread, quiet, conversationId, conv
         <button
           type="button"
           className={`cwToolBtn ${willShare ? 'on' : ''}`}
-          disabled={!canShare || contextAlways}
+          disabled={!canShare}
           aria-pressed={willShare}
           title={
             access === 'nunca' ? 'Leitura do chat principal desativada (mude em Memória)'
               : !conversationId ? 'Abra uma conversa no chat principal para poder compartilhá-la'
-                : contextAlways ? 'Contexto sempre ligado (mude em Memória)'
+                : willShare ? 'Não levar o contexto nesta mensagem'
                   : 'Levar as últimas mensagens do chat principal nesta pergunta'
           }
-          aria-label="Levar o contexto do chat principal"
-          onClick={() => setShareContext(v => !v)}
+          aria-label={willShare ? 'Não levar o contexto nesta mensagem' : 'Levar o contexto do chat principal'}
+          onClick={() => setShareOverride(v => (v == null ? !byPreference : !v))}
         >
-          <Link2 size={16} />
+          {willShare ? <Link2 size={16} /> : <Link2Off size={16} />}
         </button>
         <textarea
           value={text}
@@ -331,16 +344,17 @@ function MemoryTab({ copilot, name, quiet, showToast }) {
         <label className="cwPrefLabel" htmlFor="cwCtxAccess">Acesso ao chat principal</label>
         <select
           id="cwCtxAccess"
-          value={prefs?.contextAccess || 'perguntar'}
+          value={prefs?.contextAccess || 'sempre'}
           onChange={e => savePrefs({ contextAccess: e.target.value })}
         >
-          {(prefsOptions?.contextAccess || ['nunca', 'perguntar', 'sempre']).map(v => (
+          {(prefsOptions?.contextAccess || ['sempre', 'perguntar', 'nunca']).map(v => (
             <option key={v} value={v}>{CONTEXT_LABEL[v] || v}</option>
           ))}
         </select>
         <p className="cwPrefHint">
-          Por padrão o {name} não enxerga a conversa principal. Com “perguntar”, ele só lê quando você
-          marca o botão de contexto na mensagem. Toda leitura fica registrada na auditoria.
+          Por padrão o {name} acompanha a conversa principal aberta — é o que evita ter de copiar e colar
+          contexto. O botão de contexto no compositor dispensa a leitura numa mensagem pontual, e toda
+          leitura fica registrada na auditoria.
         </p>
 
         {prefs?.contextAccess !== 'nunca' && (
