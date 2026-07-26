@@ -85,7 +85,34 @@ test('keeps a running tool alive on pause and interrupts it on stop', () => {
     assert.equal(controlInterruptReason(control, toolRequest), 'stop');
 
     releaseToolRequest(control, toolRequest);
-    assert.equal(control.activeTool, null);
+    assert.equal(control.activeTools.size, 0);
+  } finally {
+    releaseConversationControl(id, control);
+  }
+});
+
+test('stop interrupts EVERY tool in flight, not just the last one registered', () => {
+  // Dois sub-agentes em paralelo podem ter um bash/run_python rodando ao mesmo
+  // tempo. Com o slot único anterior, `beginToolRequest` sobrescrevia o
+  // anterior e o Parar abortava só o último — o primeiro seguia consumindo CPU
+  // e gravando arquivos depois de o usuário ter parado a tarefa.
+  const id = 'control-parallel-tools';
+  const control = acquireConversationControl(id);
+  try {
+    const primeiro = beginToolRequest(control);
+    const segundo = beginToolRequest(control);
+    assert.equal(control.activeTools.size, 2);
+
+    setControl(id, 'stop');
+    assert.equal(primeiro.signal.aborted, true);
+    assert.equal(segundo.signal.aborted, true);
+    assert.equal(controlInterruptReason(control, primeiro), 'stop');
+
+    // Liberar um não afeta o outro (era o efeito colateral do slot único).
+    releaseToolRequest(control, primeiro);
+    assert.equal(control.activeTools.has(segundo), true);
+    releaseToolRequest(control, segundo);
+    assert.equal(control.activeTools.size, 0);
   } finally {
     releaseConversationControl(id, control);
   }
