@@ -18,14 +18,48 @@ socket do Docker — ver `docs/SECURITY.md` §4.3). O que ainda impede o verde �
 de testes: SSE integrado, retomada após interrupção real e pipeline retomável não foram
 executados. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** **PR [#144](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/144)** —
-  GraphQL no sandbox (`strawberry-graphql`) e o inventário de ferramentas que o modelo lê.
-  Detalhe abaixo.
-- **Última validação:** 2026-07-26 — **763 testes** (backend 647, frontend 57, guarda do
+- **Último trabalho:** **PR [#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)** —
+  correções **P0 dos sub-agentes** (herança de permissões, sandbox, isolamento de contexto,
+  semáforo, ordem e cancelamento). Detalhe abaixo. Antes dele, o **PR #144** (GraphQL no
+  sandbox e o inventário de ferramentas que o modelo lê).
+- **Última validação:** 2026-07-26 — **778 testes** (backend 662, frontend 57, guarda do
   Docker 49, sandbox Python 10). Localmente sem PostgreSQL no contêiner (19 do backend se
   autopulam — esperado) e sem `pytest` instalado (os 10 do sandbox Python não coletam
   aqui; na CI rodam). A contagem vem de `cd backend && npm run test:count` — não a
   escreva à mão.
+
+---
+
+## Sub-agentes: as sete falhas P0 (2026-07-26 — PR #145)
+
+Revisão técnica externa do mecanismo de delegação apontou 7 achados P0. Todos confirmados
+contra o código e corrigidos nesta frente.
+
+| # | Falha | Correção |
+| --- | --- | --- |
+| P0-01 | Sem especialista válido, o filho rodava com `assistant = null` e `toolsFor(null)` liberava **todas** as ferramentas — um assistente só-leitura ganhava `bash`/`write_file` ao delegar | `allowedTools = pai ∩ especialista` (`intersectToolDefinitions`); sem especialista, o filho herda o **perfil do pai** |
+| P0-02 | `runAgent` recalculava rede e escrita no PC a partir do `userText` — que, no filho, é a subtarefa **escrita pelo modelo** | Herdadas do `DelegationContext`; o filho não chama `resolveSandboxNetwork` nem `explicitlyAuthorizesPcWrite` |
+| P0-03 | Pai em `write:<projeto>` e filho em `read-only`: cada um derrubava o container do outro na primeira ferramenta | `sandboxOptions` e `developerContext` herdados verbatim → mesma `sandboxPolicy().key` |
+| P0-04 | O prompt dizia "você não vê o histórico", mas o filho usava o mesmo `conversationId` e recebia memória + histórico inteiros | Janela isolada: sem `buildContext` e sem `selectHistoryForContext` quando `isSubagent` |
+| P0-05 | `Promise.race([...ativas])` liberava **várias** tarefas por vaga: limite 2, pico 3 | Semáforo com contador + fila FIFO |
+| P0-06 | Delegações do lote eram lançadas **antes** das outras ferramentas: `write_file` + delegar para revisar o arquivo → o filho lia o que ainda não existia | Paralelismo só em lote homogêneo (`canLaunchDelegationsInParallel`); lote misto roda em série |
+| P0-07 | `control.activeTool` era slot único: com dois filhos executando, o Parar abortava só o último | `control.activeTools` virou `Set` |
+
+De carona, três achados P1/P2 que tornavam os P0 difíceis de perceber:
+
+- **P1-01/P1-02** — `especialista` era texto livre pedindo "o nome exato" sem o modelo saber
+  quais existem: ele inventava "Fiscal", "Revisor", e o código caía no assistente padrão em
+  silêncio, com a interface anunciando o nome pedido. Agora vai `especialista_id` com
+  **`enum` dos ids reais** da conta e id inexistente devolve `SUBAGENT_SPECIALIST_NOT_FOUND`.
+  O resultado carrega o especialista e o modelo que **de fato** rodaram, e a interface mostra.
+- **P2-01** — a subtarefa era cortada em 6.000 caracteres em silêncio (o que se perde são as
+  regras do final). O corte passa a ser declarado ao sub-agente.
+
+**ARMADILHA:** a fronteira de autorização é o `DelegationContext` **congelado**, montado uma
+vez pelo pai. Qualquer permissão nova do filho tem de entrar ali — derivar do texto da
+subtarefa devolve a decisão ao modelo, que é exatamente o defeito de origem.
+
+Detalhe em `docs/SECURITY.md` §8.1 e `docs/ARCHITECTURE.md` §13.1.
 
 ---
 
@@ -418,6 +452,8 @@ renderização real (Playwright) em 360, 393, 600, 900, 1000 e 1300px.
 | F-14 | Sem teste de retomada após interrupção **real** do processo. | 🟠 Alta |
 | F-05b | Sandbox com rede habilitada não tem allowlist de egress. | 🟡 Média |
 | F-13, F-16, F-18, F-19, F-23 | Provedor simulado, relevância de memória (casos negativos), corpus do Docling, git local, validação de artefato com arquivos reais. | 🟡 Média |
+| F-24 | Sub-agentes: sem orçamento próprio de tempo/tokens por delegação e sem catálogo de modelos com tool calling **verificado** (hoje qualquer modelo do seletor pode receber uma subtarefa). | 🟡 Média |
+| F-25 | Sub-agentes paralelos compartilham `outputs/`: a atribuição de arquivo por filho pode se cruzar e dois filhos podem gravar o mesmo nome. O conjunto que o usuário recebe está certo (o pai também faz o diff); o rótulo por sub-agente é que não é confiável. | 🟡 Média |
 | F-20, F-21 | `App.jsx` com 62 `useState`; bundle de 932 KB num único chunk; CSS em camadas sem inventário. | 🟡 Média |
 | F-11 | Sem quarentena/reprocesso do que passou com o antivírus degradado. | 🟡 Média |
 
@@ -440,6 +476,12 @@ renderização real (Playwright) em 360, 393, 600, 900, 1000 e 1300px.
    `updated_at`) e retomada no boot.
 5. **F-20** — extrair de `App.jsx`, por etapas: shell → estado da conversa → estado da
    execução → drawers/configurações. `React.lazy` nos painéis pesados.
+6. **F-24/F-25 (sub-agentes, o que sobrou dos P1/P2)** — orçamento por delegação
+   (`SUBAGENT_TIMEOUT_MS`, `MAX_STEPS`, `MAX_TOKENS`, deadline compartilhado); diretório
+   `outputs/<delegationId>/` com manifesto por filho; catálogo persistido de capacidade de
+   tool calling por `provedor+modelo+endpoint` (hoje `markModelCapabilityUnsupported` só
+   vive em memória e se perde no reinício); controle "Usar sub-agentes: automático /
+   desligado / obrigatório" e motivo de indisponibilidade na interface.
 
 ---
 

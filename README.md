@@ -160,8 +160,11 @@ O personagem que acompanha o Studio — e explica o que está acontecendo.
 - **Conector GitHub** — clone, alteração e **push ou Pull Request em 1 clique**;
   o token fica cifrado e nunca entra no sandbox.
 - **Sub-agentes** — o próprio agente delega uma subtarefa a um `runAgent` completo,
-  com ferramentas e janela de contexto própria e descartável; os arquivos gerados
-  aparecem normalmente em `outputs/`.
+  com ferramentas e uma janela de contexto **própria e descartável** (sem histórico
+  nem memória da conversa); os arquivos gerados aparecem normalmente em `outputs/`.
+  Delegar **não amplia acesso**: o sub-agente nunca recebe mais ferramentas, rede ou
+  escrita do que o agente que o chamou. Você escolhe o especialista entre os
+  assistentes que já cadastrou — e vê no cartão quem executou e com qual modelo.
 - **Rotinas** — tarefas que rodam sozinhas em horários marcados.
 - **Tarefas em segundo plano**, caixa de entrada por cliente e templates de pedido.
 
@@ -205,6 +208,7 @@ chave única do servidor para uso pessoal/de equipe.
 | 🛰️ **Anti-SSRF no `web_fetch`** | Bloqueia IPs internos e **resolve o DNS validando cada IP** antes de conectar, revalidando a cada redirect |
 | 🖥️ **Guarda de execução** | `bash` e `run_python` passam pela mesma validação; alterar arquivos reais do PC exige pedido explícito e fica registrado em auditoria |
 | 📄 **Conteúdo externo é dado, não ordem** | Página lida, README de repositório, documento, memória, saída de ferramenta e resposta de outro modelo entram marcados como **dado não confiável** — e a marcação estrutural é neutralizada, para que texto de terceiro não consiga se passar por instrução do aplicativo nem virar chamada de ferramenta. Coberto por uma **bateria adversarial de 33 casos** |
+| 🤝 **Delegação não escala privilégio** | O sub-agente herda um contrato **congelado** do agente que o chamou — ferramentas (interseção com o especialista), rede, escrita nas Pastas do PC e política do sandbox. Nada disso é recalculado a partir da subtarefa, que é texto escrito pelo próprio modelo |
 | 🩺 **Healthcheck com métricas** | `GET /api/health` expõe uptime, política do antivírus, sandboxes ativos/órfãos e os limites de upload vigentes |
 | 📋 **LGPD embutida** | Consentimento registrado (art. 8º), exportar tudo em JSON, apagar histórico e excluir conta — **hard delete** |
 

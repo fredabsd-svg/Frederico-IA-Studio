@@ -126,7 +126,13 @@ function ResultView({ step, conversationId }) {
   // falha E o que deu tempo de apurar), e esconder o parcial não ajuda ninguém.
   if (step.name === SUBAGENT_TOOL && (parsed?.resultado != null || parsed?.arquivos)) {
     return <div className="esDelegation">
-      {parsed.especialista && <div className="esDelegWho"><Users size={13} /> {parsed.especialista}</div>}
+      {/* Quem REALMENTE executou. Antes, um especialista inexistente caía no
+          assistente padrão em silêncio e este rótulo mostrava o nome pedido —
+          o modelo entra junto para a substituição nunca passar despercebida. */}
+      {(parsed.especialista || parsed.modelo) && <div className="esDelegWho">
+        <Users size={13} /> {parsed.especialista || 'sub-agente'}
+        {parsed.modelo && <span className="esDelegModel"> · {parsed.modelo}</span>}
+      </div>}
       {parsed.error && <pre className="esOutput err">{parsed.error}</pre>}
       <pre className="esOutput">{parsed.resultado || '(o sub-agente não devolveu texto)'}</pre>
       {Array.isArray(parsed.arquivos) && parsed.arquivos.length > 0 && <>
