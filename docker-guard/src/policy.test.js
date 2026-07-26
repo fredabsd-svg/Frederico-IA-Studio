@@ -286,3 +286,77 @@ test('isForbiddenSource cobre socket, raiz e diretórios de sistema', () => {
   assert.equal(isForbiddenSource('/srv/frederico/workspaces/users/a/b'), false);
   assert.equal(isForbiddenSource('/home/fred/Documentos'), false);
 });
+
+// ── Regressões de 2026-07: o sandbox ficou inutilizável nos DOIS ambientes ────
+//
+// Sintoma idêntico nos dois: TODO POST /containers/create recusado, então
+// nenhuma ferramenta rodava. As causas eram diferentes.
+
+test('Windows: o dois-pontos da unidade não faz a origem virar "C"', () => {
+  // Era isto que aparecia no log: "bind por volume nomeado não é permitido:
+  // C:\Users\...\workspaces\...:/workspace" — bindSource cortava em "C".
+  assert.equal(bindSource('C:\\Users\\conta\\Studio/workspaces/u/c:/workspace'), 'C:\\Users\\conta\\Studio/workspaces/u/c');
+  assert.equal(bindSource('C:/dados/ws:/workspace:ro'), 'C:/dados/ws');
+  assert.equal(bindSource('/a/b:/workspace:ro'), '/a/b', 'POSIX continua igual');
+});
+
+test('Windows: caminho com letra de unidade é aceito e normalizado', () => {
+  assert.equal(normalizeHostPath('C:\\Users\\conta\\Studio/workspaces'), 'C:/Users/conta/Studio/workspaces');
+  assert.equal(normalizeHostPath('c:/dados/../dados/ws'), 'C:/dados/ws');
+  assert.equal(normalizeHostPath('\\\\servidor\\share'), null, 'UNC continua fora do escopo');
+  assert.equal(normalizeHostPath('meu-volume'), null, 'volume nomeado continua sendo null');
+});
+
+test('Windows: a comparação com a raiz ignora maiúsculas/minúsculas', () => {
+  assert.equal(isInsideRoot('c:/studio/workspaces/u/c', 'C:\\Studio\\workspaces'), true);
+  assert.equal(isInsideRoot('D:/studio/workspaces/u/c', 'C:/studio/workspaces'), false, 'outra unidade, outro lugar');
+  assert.equal(isInsideRoot('/ws/u', '/WS'), false, 'em POSIX a caixa continua importando');
+});
+
+test('Windows: container do Docker Desktop é aceito ponta a ponta', () => {
+  const raizWindows = { ...limits, workspaceRoot: 'C:\\Users\\conta\\Downloads\\Studio/workspaces' };
+  const corpo = corpoLegitimo({}, {
+    Binds: ['C:\\Users\\conta\\Downloads\\Studio/workspaces/users/QpK/SurtIL:/workspace']
+  });
+  assert.deepEqual(validateCreate(corpo, raizWindows), { allow: true });
+});
+
+test('Windows: fora do workspace continua recusado', () => {
+  const raizWindows = { ...limits, workspaceRoot: 'C:/Studio/workspaces' };
+  const corpo = corpoLegitimo({}, { Binds: ['C:\\Windows\\System32:/workspace'] });
+  assert.equal(validateCreate(corpo, raizWindows).allow, false);
+});
+
+test('Windows: com Pastas do PC ligadas, os diretórios de sistema seguem barrados', () => {
+  const pc = { ...limits, workspaceRoot: 'C:/Studio/workspaces', allowPcFolders: true };
+  for (const p of ['C:\\Windows\\System32', 'C:/Program Files/algo', 'C:/', 'C:/Users/conta/AppData/Roaming']) {
+    const corpo = corpoLegitimo({}, { Binds: [`${p}:/workspace`] });
+    assert.equal(validateCreate(corpo, pc).allow, false, `${p} deveria ser barrado`);
+  }
+});
+
+test('VPS: workspace sob /root é aceito — a blocklist não pode vencer a raiz', () => {
+  // `git clone` logado como root (é o que o VPS-DEPLOY.md manda) põe o projeto
+  // em /root/Frederico-IA-Studio, e GUARD_WORKSPACE_ROOT vira .../workspaces.
+  // A regra /^\/root/ recusava todo container do app.
+  const vps = { ...limits, workspaceRoot: '/root/Frederico-IA-Studio/workspaces' };
+  const corpo = corpoLegitimo({}, {
+    Binds: ['/root/Frederico-IA-Studio/workspaces/users/usuario-a/conversa-1:/workspace']
+  });
+  assert.deepEqual(validateCreate(corpo, vps), { allow: true });
+});
+
+test('VPS: a precedência vale só DENTRO da raiz — /root fora dela segue barrado', () => {
+  const vps = { ...limits, workspaceRoot: '/root/Frederico-IA-Studio/workspaces' };
+  for (const p of ['/root/.ssh', '/root', '/etc/shadow', '/var/run/docker.sock']) {
+    const corpo = corpoLegitimo({}, { Binds: [`${p}:/workspace`] });
+    assert.equal(validateCreate(corpo, vps).allow, false, `${p} deveria ser barrado`);
+  }
+});
+
+test('o socket do Docker é barrado mesmo se a raiz o contiver', () => {
+  // Cinto e suspensório: nem uma raiz mal configurada libera o socket.
+  const raizAbsurda = { ...limits, workspaceRoot: '/var/run' };
+  const corpo = corpoLegitimo({}, { Binds: ['/var/run/docker.sock:/workspace'] });
+  assert.equal(validateCreate(corpo, raizAbsurda).allow, false);
+});

@@ -18,11 +18,41 @@ socket do Docker — ver `docs/SECURITY.md` §4.3). O que ainda impede o verde �
 de testes: SSE integrado, retomada após interrupção real, pipeline retomável e injeção
 adversarial não foram executados. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Branch:** `claude/new-session-dm3140` → PR aberto (correção da tela "Algo deu errado").
-- **Última validação:** 2026-07-26 — **705 testes** (backend 598, frontend 57, guarda do
-  Docker 40, sandbox Python 10), sem PostgreSQL no contêiner (19 do backend e 9 do Python
+- **Branch:** `claude/new-session-dm3140` → **PR [#140](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/140)** (app inutilizável: tela de erro + sandbox recusado).
+- **Última validação:** 2026-07-26 — **714 testes** (backend 598, frontend 57, guarda do
+  Docker 49, sandbox Python 10), sem PostgreSQL no contêiner (19 do backend e 9 do Python
   se autopulam — esperado; o CI roda com Postgres real). `npm run check` verde nos dois
   lados. A contagem vem de `cd backend && npm run test:count` — não a escreva à mão.
+
+---
+
+## 🔴 O sandbox não subia em NENHUM ambiente (2026-07-26 — mesma branch)
+
+`POST /containers/create` era recusado pelo guarda em toda tentativa, então
+nenhuma ferramenta rodava. Mesmo sintoma no PC e na VPS, causas diferentes:
+
+| Ambiente | Log | Causa |
+| --- | --- | --- |
+| Windows (Docker Desktop) | `bind por volume nomeado não é permitido: C:\Users\...\workspaces\...:/workspace` | `bindSource` cortava no primeiro `:` — o da **letra de unidade**. A origem virava `"C"`, que não começa com `/`, e caía na regra de volume nomeado. |
+| VPS | `caminho proibido no host: /root/...` | `git clone` logado como root (o que o `VPS-DEPLOY.md` manda fazer) põe o projeto em `/root/<projeto>`, então `GUARD_WORKSPACE_ROOT` vira `/root/<projeto>/workspaces` — e a blocklist tem `/^\/root/`. |
+
+Correções em `docker-guard/src/policy.js`:
+
+- `normalizeHostPath` aceita caminho do Windows (`C:\a\b` / `C:/a/b`), devolve a
+  forma canônica e continua recusando UNC e volume nomeado; `isInsideRoot`
+  compara sem caixa quando os dois lados têm letra de unidade.
+- `bindSource` ignora o `:` da unidade.
+- **A raiz do workspace tem precedência sobre a blocklist de diretórios de
+  sistema** — ela vem da configuração do operador, não do backend, então confiar
+  nela não amplia a superfície que o F-04 fecha.
+- O **socket do Docker saiu da blocklist comum** (`isDockerSocket`) e é barrado
+  antes de tudo: nem uma raiz mal configurada o libera.
+- Blocklist equivalente para Windows (`C:\Windows`, `Program Files`,
+  `ProgramData`, `AppData`) — sem ela, ligar "Pastas do PC" num host Windows
+  ficaria sem blocklist nenhuma, já que as regras POSIX nunca casam com `C:/...`.
+
+9 testes novos (40 → 49), incluindo os invariantes: socket sempre barrado, `/root`
+**fora** da raiz segue barrado e os diretórios de sistema do Windows também.
 
 ---
 
