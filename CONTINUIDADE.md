@@ -62,6 +62,10 @@ cita. Verificado nos dois sentidos: falha ao remover o `pip install`, passa ao d
 promete o que não existe — a regra de conferir no terminal antes de afirmar cobre o caso,
 mas o certo é reconstruir.
 
+O README também passou a descrever a caixa de ferramentas do sandbox (antes era só
+"Python, Bash e geração de arquivos"), incluindo REST e GraphQL. Vale a regra de sempre:
+só entra ali o que está de fato instalado na imagem.
+
 ---
 
 ## Bateria adversarial de injeção de prompt (2026-07-26 — PR #143, F-17)
