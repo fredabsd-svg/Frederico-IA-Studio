@@ -12,6 +12,14 @@
 // arquivos que ele gera caem em outputs/ e aparecem normalmente para o usuário.
 // O que ele NÃO faz: gravar mensagens na conversa, gravar checkpoint e delegar
 // de novo (ver os guard-rails abaixo).
+//
+// AUTORIZAÇÃO NÃO SE NEGOCIA COM O MODELO. Tudo que o filho pode fazer vem de um
+// `DelegationContext` IMUTÁVEL montado pelo pai (`buildDelegationContext`) a
+// partir do pedido REAL do usuário: ferramentas efetivas, política de sandbox,
+// rede e escrita nas Pastas do PC. O texto da subtarefa é escrito pelo modelo,
+// então ele nunca pode ser fonte de permissão — sem esse contexto, um "baixe da
+// API" ou "salve na pasta" inventado pelo próprio modelo abriria rede e escrita
+// que o usuário nunca autorizou.
 
 import { db } from '../db.js';
 
@@ -47,17 +55,36 @@ export function maxParallelSubagents() {
 
 // Limitador de concorrência: a tarefa começa assim que houver vaga e a chamada
 // devolve, na hora, a promessa do resultado — quem lança não bloqueia.
+//
+// SEMÁFORO DE VERDADE (contador + fila FIFO). A versão anterior fazia
+// `Promise.race([...ativas])` para esperar vaga: com DUAS tarefas em espera, as
+// duas aguardavam a MESMA corrida e a conclusão de uma única tarefa liberava as
+// duas ao mesmo tempo — com limite 2 e quatro tarefas, o pico observado era 3.
+// Mais chamadas simultâneas ao provedor do que o configurado significa 429, CPU
+// disputada e concorrência não prevista no sandbox. Aqui cada vaga liberada
+// solta EXATAMENTE uma tarefa da fila, na ordem em que entrou.
 export function createSubagentLimiter(limit = maxParallelSubagents()) {
-  const active = new Set();
-  return (task) => {
-    const slot = active.size >= limit ? Promise.race([...active]) : Promise.resolve();
-    const promise = slot.then(task);
-    // A fila só acompanha a CONCLUSÃO (erro incluído) — uma rejeição aqui não
-    // pode derrubar o Promise.race de quem está esperando vaga.
-    const tracked = promise.then(() => {}, () => {}).then(() => { active.delete(tracked); });
-    active.add(tracked);
-    return promise;
+  let running = 0;
+  const queue = [];
+  const release = () => {
+    running -= 1;
+    const next = queue.shift();
+    if (next) next();
   };
+  return (task) => new Promise((resolve, reject) => {
+    const start = () => {
+      running += 1;
+      let promise;
+      // Uma tarefa que lança SÍNCRONO também precisa devolver a vaga — do
+      // contrário a fila trava para sempre.
+      try { promise = Promise.resolve(task()); }
+      catch (err) { promise = Promise.reject(err); }
+      promise.then(resolve, reject);
+      promise.then(release, release);
+    };
+    if (running < limit) start();
+    else queue.push(start);
+  });
 }
 
 export function subagentResultChars() {
@@ -70,22 +97,60 @@ export function subagentsEnabled() {
   return String(process.env.SUBAGENTS_ENABLED || '').toLowerCase() !== 'false';
 }
 
-export const subagentToolDefinition = {
-  type: 'function',
-  function: {
-    name: SUBAGENT_TOOL_NAME,
-    description: 'Delega uma subtarefa AUTOCONTIDA a um sub-agente com contexto próprio, que executa ferramentas e devolve só o resultado final. Use quando a subtarefa for pesada e isolável (varrer muitos arquivos, analisar um documento longo, apurar um ponto específico, testar uma hipótese) e o detalhe do caminho NÃO precisar ocupar esta conversa. Não use para pedidos curtos que você já resolve direto — delegar custa tempo e tokens. O sub-agente NÃO vê esta conversa: escreva a tarefa completa, com todos os dados necessários.',
-    parameters: {
-      type: 'object',
-      properties: {
-        tarefa: { type: 'string', description: 'Instrução completa e autocontida, com todo o contexto necessário (caminhos de arquivo, números, regras). O sub-agente não enxerga o histórico desta conversa.' },
-        entregar: { type: 'string', description: 'O que deve voltar como resultado: um resumo, uma tabela, o caminho de um arquivo gerado, uma conclusão objetiva.' },
-        especialista: { type: 'string', description: '(opcional) nome exato de um assistente cadastrado no Assistant Studio, para o sub-agente usar o prompt e as ferramentas dele.' }
-      },
-      required: ['tarefa']
-    }
+// Quantos especialistas cabem no inventário mandado ao modelo. Acima disso a
+// definição da ferramenta cresce mais do que ajuda.
+const MAX_SPECIALISTS_OFFERED = 20;
+
+const SUBAGENT_TOOL_DESCRIPTION = 'Delega uma subtarefa AUTOCONTIDA a um sub-agente com contexto próprio, que executa ferramentas e devolve só o resultado final. Use quando a subtarefa for pesada e isolável (varrer muitos arquivos, analisar um documento longo, apurar um ponto específico, testar uma hipótese) e o detalhe do caminho NÃO precisar ocupar esta conversa. Não use para pedidos curtos que você já resolve direto — delegar custa tempo e tokens. O sub-agente NÃO vê esta conversa: escreva a tarefa completa, com todos os dados necessários. Ele trabalha com as MESMAS ferramentas e as mesmas autorizações desta tarefa — delegar não amplia acesso.';
+
+// Monta a definição da ferramenta com o INVENTÁRIO real de especialistas do
+// usuário. Antes, `especialista` era texto livre pedindo "o nome exato" sem que
+// o modelo soubesse quais nomes existem — na prática ele inventava "Fiscal",
+// "Contábil", "Revisor", e o código caía num assistente padrão em silêncio.
+// Agora o id vai como `enum`: ou o modelo escolhe um que existe, ou não escolhe.
+export function subagentToolDefinitionFor(specialists = []) {
+  const list = (Array.isArray(specialists) ? specialists : []).slice(0, MAX_SPECIALISTS_OFFERED);
+  const properties = {
+    tarefa: { type: 'string', description: 'Instrução completa e autocontida, com todo o contexto necessário (caminhos de arquivo, números, regras). O sub-agente não enxerga o histórico desta conversa.' },
+    entregar: { type: 'string', description: 'O que deve voltar como resultado: um resumo, uma tabela, o caminho de um arquivo gerado, uma conclusão objetiva.' }
+  };
+  if (list.length) {
+    const inventory = list.map(s => `${s.id} = ${s.name}`).join(' | ');
+    properties.especialista_id = {
+      type: 'string',
+      enum: list.map(s => s.id),
+      description: `(opcional) id de um assistente cadastrado, para o sub-agente usar o prompt dele. Só estes ids existem: ${inventory}. Não invente id nem nome — sem um destes, omita o campo e o sub-agente usa o mesmo perfil desta conversa.`
+    };
   }
-};
+  return {
+    type: 'function',
+    function: {
+      name: SUBAGENT_TOOL_NAME,
+      description: SUBAGENT_TOOL_DESCRIPTION,
+      parameters: { type: 'object', properties, required: ['tarefa'] }
+    }
+  };
+}
+
+// Definição sem especialistas (conta sem assistentes cadastrados, e o default
+// usado pelos testes e por chamadores que não precisam do inventário).
+export const subagentToolDefinition = subagentToolDefinitionFor([]);
+
+// Inventário de especialistas oferecido ao modelo. Falha de banco não pode
+// derrubar a execução: sem inventário, a delegação segue sem especialista.
+export async function listSubagentSpecialists(userId) {
+  if (!userId) return [];
+  try {
+    const rows = await db.prepare('SELECT id, name, model FROM assistants WHERE user_id=? ORDER BY created_at ASC LIMIT ?')
+      .all(userId, MAX_SPECIALISTS_OFFERED);
+    return (rows || [])
+      .map(row => ({ id: String(row.id || ''), name: String(row.name || '').trim(), model: row.model || null }))
+      .filter(row => row.id && row.name);
+  } catch (err) {
+    console.error('[subagente] inventário de especialistas indisponível:', err.message);
+    return [];
+  }
+}
 
 // Decide se a ferramenta de delegação é OFERECIDA ao modelo nesta execução.
 // Pura de propósito (sem I/O): é o ponto testável dos guard-rails.
@@ -107,7 +172,15 @@ export function subagentEffort(parentEffort) {
 // Monta o texto que o sub-agente recebe como pedido. Ele parte de uma conversa
 // vazia, então tudo que importa precisa estar aqui.
 export function buildSubagentTask(args = {}) {
-  const tarefa = String(args.tarefa || '').trim().slice(0, DEFAULT_TASK_CHARS);
+  const original = String(args.tarefa || '').trim();
+  // Corte SILENCIOSO era o pior caso: numa instrução longa, o que se perde são
+  // justamente as regras do final ("não altere X", "arredonde para baixo") — e
+  // o sub-agente executava achando que tinha a instrução inteira. Agora o corte
+  // é declarado, para ele saber que falta coisa e dizer isso no resultado.
+  const truncated = original.length > DEFAULT_TASK_CHARS;
+  const tarefa = truncated
+    ? `${original.slice(0, DEFAULT_TASK_CHARS)}\n\n[TAREFA TRUNCADA: a instrução acima foi cortada em ${DEFAULT_TASK_CHARS} caracteres. Execute o que está escrito e avise no resultado que a instrução chegou incompleta.]`
+    : original;
   const entregar = String(args.entregar || '').trim().slice(0, 600);
   const parts = [tarefa];
   parts.push(entregar
@@ -119,14 +192,17 @@ export function buildSubagentTask(args = {}) {
 
 // Normaliza o retorno do runAgent no JSON compacto que volta como resultado da
 // ferramenta. É o ÚNICO conteúdo do sub-agente que entra no contexto do pai.
-export function summarizeSubagentResult(result, { especialista = null, limit = null } = {}) {
+export function summarizeSubagentResult(result, { especialista = null, modelo = null, limit = null } = {}) {
   if (!result) return { ok: false, error: 'O sub-agente não retornou resultado.', code: 'SUBAGENT_EMPTY' };
   if (result.stopped) return { ok: false, error: 'Execução interrompida pelo usuário.', code: 'CANCELED' };
   const max = limit || subagentResultChars();
   const texto = String(result.text || '').trim();
   return {
     ok: !result.incomplete && !result.providerFailure,
+    // Quem REALMENTE executou. Sem isso, o pai (e a interface) não tinham como
+    // saber se o especialista pedido foi mesmo o que rodou.
     ...(especialista ? { especialista } : {}),
+    ...(modelo ? { modelo } : {}),
     resultado: texto.length > max ? `${texto.slice(0, max)}\n…[resultado truncado]` : texto,
     ...(Array.isArray(result.files) && result.files.length
       ? { arquivos: result.files.map(file => String(file?.path || file || '')).filter(Boolean).slice(0, 40) }
@@ -153,15 +229,17 @@ export function subagentEventForwarder(onEvent, label, delegationId = '') {
   };
 }
 
-// Busca o assistente pelo NOME (o modelo escreve o nome, não o id). Sem match,
-// o sub-agente roda com o assistente padrão — delegar nunca falha por causa de
-// um nome digitado errado.
-export async function findSubagentAssistant(userId, name) {
-  const wanted = String(name || '').trim();
+// Busca o assistente pelo id (caminho novo, vindo do `enum` da ferramenta) ou
+// pelo nome exato (compatibilidade com o parâmetro antigo). Sem match devolve
+// null e quem chama RECUSA a delegação: o fallback silencioso para o assistente
+// padrão fazia a interface anunciar "Delegando para Fiscal" enquanto rodava o
+// assistente geral com o modelo do pai — uma mentira difícil de perceber.
+export async function findSubagentAssistant(userId, ref) {
+  const wanted = String(ref || '').trim();
   if (!userId || !wanted) return null;
   try {
-    const row = await db.prepare('SELECT * FROM assistants WHERE user_id=? AND lower(name)=lower(?) ORDER BY created_at ASC LIMIT 1')
-      .get(userId, wanted);
+    const row = await db.prepare('SELECT * FROM assistants WHERE user_id=? AND (id=? OR lower(name)=lower(?)) ORDER BY created_at ASC LIMIT 1')
+      .get(userId, wanted, wanted);
     if (!row) return null;
     const parse = (value, fallback) => {
       if (value == null) return fallback;
@@ -173,6 +251,58 @@ export async function findSubagentAssistant(userId, name) {
     console.error('[subagente] falha ao carregar o especialista:', err.message);
     return null;
   }
+}
+
+// Lançar as delegações do lote em paralelo só é seguro quando o lote NÃO tem
+// mais nada. Num lote misto (`write_file` + `delegar_subagente` para revisar o
+// arquivo), o filho partia antes da escrita acontecer. Pura de propósito: é o
+// ponto testável da regra de ordem.
+export function canLaunchDelegationsInParallel(toolCallNames = []) {
+  const names = Array.isArray(toolCallNames) ? toolCallNames : [];
+  if (!names.length) return false;
+  return names.every(name => name === SUBAGENT_TOOL_NAME);
+}
+
+// ---- DelegationContext: o que o filho herda, e SÓ o que ele herda ----
+
+// Objeto congelado, montado uma única vez pelo pai a partir do pedido real do
+// usuário. É a fronteira de autorização da árvore de execução inteira: o filho
+// não recalcula nada disto a partir do texto da subtarefa (que o modelo
+// escreveu) nem cai no conjunto padrão de ferramentas.
+export function buildDelegationContext({
+  assistant = null,
+  toolNames = [],
+  sandboxOptions = {},
+  developerContext = null,
+  networkEnabled = false,
+  pcWriteAuthorized = false
+} = {}) {
+  const allowedToolNames = Object.freeze([...new Set(
+    (Array.isArray(toolNames) ? toolNames : [])
+      .map(name => String(name || ''))
+      // Delegar de dentro de uma delegação já é barrado pela profundidade; tirar
+      // o nome daqui evita que a interseção o reintroduza.
+      .filter(name => name && name !== SUBAGENT_TOOL_NAME)
+  )]);
+  return Object.freeze({
+    assistant,                                    // perfil do pai, quando não há especialista
+    allowedToolNames,
+    sandboxOptions: Object.freeze({ ...sandboxOptions }),
+    developerContext,
+    networkEnabled: Boolean(networkEnabled),
+    pcWriteAuthorized: Boolean(pcWriteAuthorized),
+    gitWriteAuthorized: false                     // escrita no GitHub nunca se herda
+  });
+}
+
+// Interseção pai ∩ especialista. O filho monta a lista dele normalmente (perfil
+// do especialista, web, github) e ela é PODADA por esta lista. Sem isto, um
+// assistente somente-leitura que delegasse ganhava, no filho, `bash`,
+// `run_python` e `write_file` — escalada de permissão entre assistentes.
+export function intersectToolDefinitions(tools = [], allowedToolNames = null) {
+  if (!Array.isArray(allowedToolNames)) return tools;
+  const allowed = new Set(allowedToolNames);
+  return (tools || []).filter(tool => allowed.has(tool?.function?.name));
 }
 
 // Import tardio do loop: `loop.js` importa este módulo, então uma importação
@@ -196,6 +326,7 @@ export async function runSubagent({
   depth = 0,
   webSearch = false,
   delegationId = '',
+  delegation = null,
   runner = null
 }) {
   if (depth >= MAX_SUBAGENT_DEPTH) {
@@ -206,8 +337,27 @@ export async function runSubagent({
     return { result: JSON.stringify({ error: 'Descreva a subtarefa no parâmetro "tarefa".', code: 'SUBAGENT_EMPTY_TASK' }), usage: null };
   }
 
-  const assistant = await findSubagentAssistant(userId, args.especialista);
-  const label = assistant?.name || String(args.especialista || '').trim() || 'sub-agente';
+  // Especialista PEDIDO x especialista ENCONTRADO. Pedir um que não existe é
+  // erro de ferramenta, não motivo para trocar por outro em silêncio.
+  const requested = String(args.especialista_id || args.especialista || '').trim();
+  let assistant = delegation?.assistant || null;
+  if (requested) {
+    assistant = await findSubagentAssistant(userId, requested);
+    if (!assistant) {
+      const disponiveis = await listSubagentSpecialists(userId);
+      return {
+        result: JSON.stringify({
+          error: `Não existe assistente cadastrado com id ou nome "${requested}".`,
+          code: 'SUBAGENT_SPECIALIST_NOT_FOUND',
+          especialistas_validos: disponiveis.map(item => `${item.id} = ${item.name}`),
+          dica: 'Escolha um id da lista ou omita o campo para o sub-agente usar o mesmo perfil desta conversa.'
+        }),
+        usage: null
+      };
+    }
+  }
+  const label = assistant?.name || 'sub-agente';
+  const modelo = assistant?.model || model || null;
   const runAgent = runner || await loadRunAgent();
 
   onEvent({ type: 'status', content: `Delegando para ${label}...` });
@@ -217,7 +367,7 @@ export async function runSubagent({
       userId,
       conversationId,                   // mesmo workspace/sandbox do pai
       userText: buildSubagentTask(args),
-      model: assistant?.model || model,
+      model: modelo,
       assistant,
       webSearch,
       effort: subagentEffort(effort),
@@ -226,7 +376,8 @@ export async function runSubagent({
       saveUserMessage: false,
       persistReply: false,
       subagentDepth: depth + 1,
-      gitWriteAuthorization: false      // escrita no GitHub não se herda
+      gitWriteAuthorization: false,     // escrita no GitHub não se herda
+      delegation                        // permissões, sandbox e escopo do pai
     });
   } catch (err) {
     onEvent({ type: 'status', content: `O sub-agente ${label} falhou.` });
@@ -234,7 +385,7 @@ export async function runSubagent({
   }
   onEvent({ type: 'status', content: `${label} concluiu a subtarefa.` });
   return {
-    result: JSON.stringify(summarizeSubagentResult(result, { especialista: assistant?.name || null })),
+    result: JSON.stringify(summarizeSubagentResult(result, { especialista: assistant?.name || null, modelo })),
     usage: result?.usage || null,
     stopped: Boolean(result?.stopped)
   };
