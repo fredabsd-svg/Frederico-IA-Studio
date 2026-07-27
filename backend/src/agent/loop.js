@@ -28,6 +28,8 @@ import { untrustedContext, untrustedToolResult } from './promptRegistry.js';
 import { emitExecutionState, finalExecutionState } from './executionState.js';
 import { resolveSandboxNetwork, isToolCallAllowed } from './assistantPolicy.js';
 import { explicitlyAuthorizesPcWrite } from '../execGuard.js';
+import { takeSandboxRestartNotice, sandboxOpenTransaction } from '../sandbox.js';
+import { formatRestartNotice, formatOpenTransactionNotice } from '../agentEnv.js';
 import { SUBAGENT_TOOL_NAME, subagentToolDefinitionFor, listSubagentSpecialists, buildDelegationContext, intersectToolDefinitions, canLaunchDelegationsInParallel, shouldOfferSubagentTool, maxSubagentsPerRun, createSubagentLimiter, runSubagent } from './subagents.js';
 import { buildDocumentContext, DOC_PRECEDENCE_NOTE } from '../docling/context.js';
 import { doclingImageParts, visualElementsNote } from '../docling/vision.js';
@@ -348,6 +350,17 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   if (environmentNote) messages.push({ role: 'user', content: untrustedContext('verified-environment-output', environmentNote) });
   if (developerContext?.userRules) messages.push({ role: 'user', content: untrustedContext('project-rules', developerContext.userRules) });
   const callNotes = [];
+  // Reinício do sandbox entre turnos: o modelo precisa saber ANTES de agir. Sem
+  // este aviso ele continua supondo que os pacotes instalados, os processos e os
+  // arquivos temporários do turno anterior ainda existem — e retrabalha ou, pior,
+  // conclui em cima de um estado que não está mais lá.
+  const restartNotice = formatRestartNotice(takeSandboxRestartNotice(sandboxOptions.userId, conversationId));
+  if (restartNotice) callNotes.push(restartNotice);
+  // Transação de workspace aberta num turno anterior: sem este aviso, uma
+  // alteração em vários arquivos fica pela metade em silêncio — ninguém confirma
+  // nem desfaz, e o ponto de retorno vira lixo esquecido no disco.
+  const openTransaction = formatOpenTransactionNotice(sandboxOpenTransaction(sandboxOptions.userId, conversationId));
+  if (openTransaction) callNotes.push(openTransaction);
   if (forceExecution || modelPlan.requirements.required) callNotes.push(EXECUTION_CONTRACT_NOTE);
   if (MACRO_REQUEST_RE.test(String(userText || ''))) callNotes.push(MACRO_LIMITATION_NOTE);
   if (lowSignalTurn) callNotes.push(LOW_SIGNAL_TURN_NOTE);
@@ -1088,7 +1101,13 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
       } else {
         const activeTool = beginToolRequest(control);
         try {
-          result = await runTool(conversationId, name, args, sandboxOptions, { signal: activeTool.signal });
+          // Progresso ao vivo do comando: sem isto, um `pytest` de 40s é uma
+          // barra parada — o usuário não sabe se está processando ou travado, e
+          // o `tool_result` só chega no fim.
+          result = await runTool(conversationId, name, args, sandboxOptions, {
+            signal: activeTool.signal,
+            onProgress: (p) => onEvent({ type: 'tool_progress', id: call.id, ...p })
+          });
         } catch (err) {
           if (controlInterruptReason(control, activeTool) === 'stop') {
             stopped = true;

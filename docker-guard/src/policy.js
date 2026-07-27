@@ -45,6 +45,10 @@ const ROUTES = [
   { method: 'GET',    re: /^\/containers\/json$/,               owned: null },
   { method: 'POST',   re: /^\/containers\/create$/,             owned: null, validate: 'create' },
   { method: 'GET',    re: new RegExp(`^/containers/(${ID})/json$`),  owned: 'container' },
+  // Leitura de métricas (CPU/memória) do PRÓPRIO container. É somente leitura e
+  // exige posse pela label, como as demais; sem ela o agente não consegue
+  // distinguir "o processo foi morto por falta de memória" de "o código quebrou".
+  { method: 'GET',    re: new RegExp(`^/containers/(${ID})/stats$`), owned: 'container' },
   { method: 'POST',   re: new RegExp(`^/containers/(${ID})/start$`), owned: 'container' },
   { method: 'POST',   re: new RegExp(`^/containers/(${ID})/stop$`),  owned: 'container' },
   { method: 'POST',   re: new RegExp(`^/containers/(${ID})/kill$`),  owned: 'container' },

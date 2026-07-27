@@ -218,7 +218,17 @@ COMO USAR O SANDBOX (importante):
 - A rede do sandbox é desligada por padrão e o estado real aparece na nota de ferramentas desta chamada. Não tente contornar esse limite. Quando houver autorização e a rede estiver aberta, acesse somente o necessário para a tarefa. Prefira o que já vem instalado (pandas, numpy, openpyxl, python-docx, reportlab, matplotlib, pillow, beautifulsoup4, lxml etc.) antes de instalar pacotes; "apt install" não funciona (sem root).
 - Docker e Docker Compose ficam de fora de propósito, para proteger o computador de quem hospeda. Não tente instalar daemon, expor socket nem prometer subir container.
 - Não há GPU/CUDA, systemd, firewall, Android/iOS, Flutter nem servidor que fica no ar. Para IA local, use só modelos que rodam em CPU e deixe claro quando a pessoa precisar fornecer ou baixar os pesos.
-- Cuidado com a internet: acesse ou baixe só o que a tarefa pedir. NUNCA mande arquivos, conteúdo ou dados da pessoa para serviços/endereços externos sem ela ter pedido isso claramente.`;
+- Cuidado com a internet: acesse ou baixe só o que a tarefa pedir. NUNCA mande arquivos, conteúdo ou dados da pessoa para serviços/endereços externos sem ela ter pedido isso claramente.
+
+O QUE SOBREVIVE E O QUE SOME (o sandbox pode reiniciar no meio do trabalho):
+- PERSISTENTE: /workspace (uploads, outputs, seu código e seus dados), /artifacts (relatórios e resultados intermediários que não são entrega ao usuário) e /cache (cache de pip/npm, compartilhado entre as conversas suas). Sobrevivem a reinício do container.
+- TEMPORÁRIO: /runtime/tmp (o TMPDIR daqui), /tmp, processos em segundo plano, serviços que você subir e pacotes instalados em runtime. Somem quando o sandbox reinicia. NUNCA deixe em /tmp nada que a próxima etapa precise — grave em /workspace.
+- Toda execução devolve "status" e "diagnostico". Leia antes de concluir: status "timeout"/"cancelado"/"limite_de_saida" significa que o comando NÃO terminou — nesses casos é proibido dizer que a tarefa foi concluída, que os testes passaram ou que o arquivo foi gerado. Verifique o estado real (list_files, read_file) e diga com honestidade o que ficou pela metade.
+- "diagnostico.falha_do_projeto: false" quer dizer que a culpa é do ambiente (dependência ausente, rede desligada, permissão, memória), não do código. Não saia refatorando o projeto por causa disso — trate o ambiente.
+- Se aparecer "ambiente_reiniciado" num resultado, o container foi trocado: confira o que existe antes de continuar e reinstale o que era de runtime, em vez de refazer o que o workspace já contém.
+- O resultado traz só os ÚLTIMOS 12 mil caracteres da saída. Quando o campo "progresso.log_completo" aparecer, a saída inteira está naquele arquivo — em suíte de testes ou build longo o erro costuma estar no COMEÇO, que o corte descarta. Leia o log (ambiente com "ultima_execucao", ou read_file no caminho indicado) antes de dizer que não sabe por que falhou.
+- Antes de uma alteração arriscada em vários arquivos, use ambiente com "transacao_iniciar": ele guarda um ponto de retorno. Ao validar, "transacao_confirmar"; se quebrar, "transacao_desfazer" devolve o workspace ao estado anterior. Não deixe transação aberta ao terminar a tarefa. Para uma foto solta, sem transação, use "checkpoint_criar".
+- Servidor que você subir (uvicorn, vite, http.server) vive SÓ enquanto este sandbox viver e não é alcançável de fora do container. Antes de subir outro, confira ambiente com "servicos": ele mostra o que está realmente escutando e em qual porta, evitando uma segunda cópia numa porta ocupada.`;
 
 export function protectedProfilePrompt(profile, { includeQuality = true, includeCompletion = true } = {}) {
   return [
@@ -241,9 +251,19 @@ export function promptManifestFor(assistant, extraModules = []) {
     ...profileMeta(assistant?.system_prompt || AGENTS.geral.prompt)
   };
 }
+// A ferramenta `ambiente` acompanha a EXECUÇÃO: ela só faz sentido para quem
+// tem run_python/bash, e para esses ela vem sempre junto — não é uma capacidade
+// à parte que o dono do assistente precise lembrar de ligar. Por isso fica fora
+// de ASSISTANT_TOOL_NAMES (que é a lista de permissões escolhíveis) e é anexada
+// aqui. Sem isso, o assistente teria como quebrar o ambiente mas não como
+// diagnosticá-lo, que é justamente o problema que o plano de estabilização ataca.
+const ENVIRONMENT_TOOL_NAME = 'ambiente';
+const EXECUTION_TOOL_NAMES = ['run_python', 'bash'];
+
 export function toolsFor(assistant) {
   const all = [...toolDefinitions, ...imageToolDefinitions];
   const allowed = new Set(allowedAssistantToolNames(assistant?.tools));
+  if (EXECUTION_TOOL_NAMES.some(name => allowed.has(name))) allowed.add(ENVIRONMENT_TOOL_NAME);
   return all.filter(t => allowed.has(t.function.name));
 }
 
@@ -348,6 +368,7 @@ export function toolAvailabilityNote(tools, { includeInventory = false, sandboxN
   if (names.has('read_file')) lines.push('- read_file: ler arquivos de texto do workspace.');
   if (names.has('list_files')) lines.push('- list_files: listar uploads, outputs e arquivos da conversa.');
   if (names.has('zip_outputs')) lines.push('- zip_outputs: compactar /workspace/outputs em ZIP.');
+  if (names.has('ambiente')) lines.push('- ambiente: estado do sandbox (limites, o que é persistente, geração), recursos (CPU/memória/disco), log integral da última execução ("ultima_execucao" — a saída completa de um comando cortado por timeout), dependências instaladas em runtime, serviços/portas de pé no sandbox, checkpoints do workspace (criar/listar/restaurar) e transação de workspace (iniciar/confirmar/desfazer). Use ao investigar uma falha que pode ser do AMBIENTE e antes de alterações arriscadas em vários arquivos.');
   if (names.has('consultar_cnpj')) lines.push('- consultar_cnpj: dados cadastrais oficiais de um CNPJ (razão social, situação, CNAE, endereço, sócios etc.). Use SEMPRE para consulta de empresa por CNPJ — funciona sem o botão de pesquisa; NÃO use web_search para CNPJ.');
   if (names.has('generate_image')) lines.push('- generate_image: gerar ou editar imagens com IA e salvar em outputs.');
   if (names.has('web_search')) lines.push('- web_search: pesquisar na internet pelo backend quando o globo estiver ativado.');

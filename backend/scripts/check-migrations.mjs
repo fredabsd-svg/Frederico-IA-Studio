@@ -26,7 +26,8 @@ const REQUIRED_TABLES = [
   'tasks', 'schedules', 'clients', 'user_settings', 'user_ai_providers',
   'user_connectors', 'user_consents', 'execution_checkpoints',
   'model_teams', 'companion_events', 'document_processings',
-  'user_roles', 'admin_audit'
+  'user_roles', 'admin_audit',
+  'design_projects', 'design_versions', 'design_systems', 'design_messages'
 ];
 
 function fail(message) {

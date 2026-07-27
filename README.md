@@ -111,6 +111,29 @@ veja **[docs/CONFIGURACAO.md](docs/CONFIGURACAO.md)**.
 - **Retomada real** — tarefa interrompida salva o estado no banco; **Continuar de
   onde parei** retoma do ponto exato, mesmo após reiniciar o servidor.
 
+### 🎨 Modo Design
+
+Um espaço próprio para quando o resultado precisa **parecer bom**: descreva um
+site, uma apresentação ou um documento visual e veja o rascunho renderizado ao
+vivo.
+
+- **Três saídas**: página/protótipo HTML responsivo, apresentação 16:9 e
+  documento paginado em A4.
+- **Refinamento por conversa** — "deixe o cabeçalho mais escuro", "adicione uma
+  seção de perguntas frequentes". Cada pedido vira uma **versão**, e dá para
+  voltar para qualquer uma sem perder as seguintes.
+- **Edição inline** — clique num elemento da prévia e peça a mudança só dele:
+  o resto do documento sai idêntico.
+- **Ajustes na hora** — sliders de cor, tipografia, espaçamento e arredondamento
+  que mudam a prévia **sem gastar uma geração**. Os controles são derivados do
+  próprio design: aparecem os que ele expõe.
+- **Prévia isolada** — o HTML gerado roda num iframe de origem opaca, sem
+  acesso à sua sessão nem ao resto da interface.
+- **Exportação**: `.html` para site, `.pdf` e `.pptx` para apresentação, `.pdf`
+  para documento.
+- **Sua marca** — cores e fontes definidas uma vez, aplicadas em todo projeto
+  que a escolher.
+
 ### 🌱 Nino, o copiloto
 
 O personagem que acompanha o Studio — e explica o que está acontecendo.
@@ -160,7 +183,19 @@ O personagem que acompanha o Studio — e explica o que está acontecendo.
   Playwright, e APIs **REST e GraphQL** (Flask, FastAPI e strawberry-graphql).
 - **Ambiente de Trabalho da IA** — terminal, código, arquivos, pesquisa e
   navegador agrupados em **uma sessão ao vivo**, com passo a passo e miniatura
-  real das páginas abertas.
+  real das páginas abertas. Comando longo mostra a **saída em tempo real** e
+  avisa quando fica em silêncio ("sem saída há 25s"), em vez de deixar você
+  olhando uma barra parada.
+- **Ambiente que não perde o seu trabalho** — o sandbox pode ser reciclado no meio
+  de uma tarefa longa. Quando isso acontece, o assistente é avisado **do que
+  sobreviveu e do que se perdeu**, em vez de continuar achando que está tudo lá.
+  Um comando que estoura o tempo encerra só a árvore de processos dele — os
+  pacotes que ele já instalou continuam valendo. E o assistente **não diz que
+  terminou** quando a execução foi cortada: cada resultado carrega o estado real,
+  além de um diagnóstico que separa **falha do ambiente** (dependência ausente,
+  rede desligada, memória) de **erro do seu código**. Antes de mexer em vários
+  arquivos ele guarda um ponto de retorno, e sabe listar as portas e os servidores
+  que subiu. Detalhes em [`docs/AMBIENTE_EXECUCAO.md`](docs/AMBIENTE_EXECUCAO.md).
 - **Modo Desenvolvedor** — projetos com memória permanente, explorador de
   arquivos e seis modos de trabalho (Perguntar, Planejar, Implementar, Corrigir
   erro, Revisar e Agente autônomo).
@@ -275,6 +310,7 @@ chave única do servidor para uso pessoal/de equipe.
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Arquitetura real: serviços, fluxos, persistência, lacunas |
 | [docs/SECURITY.md](docs/SECURITY.md) | Modelo de ameaça, isolamento, sandbox, segredos, LGPD |
 | [docs/OPERATIONS.md](docs/OPERATIONS.md) | Runbook: monitoramento, limites, procedimentos, rollback |
+| [docs/AMBIENTE_EXECUCAO.md](docs/AMBIENTE_EXECUCAO.md) | Ambiente do agente: o que é persistente, o que é temporário, como recuperar uma tarefa e como diferenciar falha do ambiente de bug do projeto |
 | [docs/CONFIGURACAO.md](docs/CONFIGURACAO.md) | Primeira configuração, modo gratuito, Docling e acesso pelo celular |
 | [docs/BACKUP_RESTORE.md](docs/BACKUP_RESTORE.md) | Backup completo e restauração passo a passo |
 | [docs/TESTING.md](docs/TESTING.md) | Como rodar os testes, convenções e lacunas conhecidas |
@@ -282,6 +318,7 @@ chave única do servidor para uso pessoal/de equipe.
 | [docs/MULTIMODEL.md](docs/MULTIMODEL.md) | Modos multimodelo e o que ainda falta |
 | [docs/MEMORY.md](docs/MEMORY.md) | Memória semântica e recuperação de contexto |
 | [docs/DOCLING.md](docs/DOCLING.md) | Camada de compreensão documental |
+| [docs/DESIGN_STUDIO.md](docs/DESIGN_STUDIO.md) | Modo Design: tipos de saída, versionamento, isolamento da prévia e exportação |
 | [e2e/README.md](e2e/README.md) | Testes de navegador: como rodar, o provedor simulado e as armadilhas já pagas |
 | [docs/FREDERICO_COMPANION.md](docs/FREDERICO_COMPANION.md) | O copiloto Nino em detalhe |
 | [VPS-DEPLOY.md](VPS-DEPLOY.md) | Publicação em VPS com HTTPS |
