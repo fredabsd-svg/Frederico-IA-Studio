@@ -24,7 +24,7 @@ import {
 import { runGithubTool } from './connectors/github.js';
 import { createCache } from './cache.js';
 import { captureThumbnail } from './agent/pageShot.js';
-import { getUserProvider } from './userProvider.js';
+import { resolveImageProvider } from './imageProvider.js';
 import { guardCommand, guardPythonCode, PC_MOUNT_ROOT } from './execGuard.js';
 import { audit } from './companion/audit.js';
 
@@ -487,23 +487,23 @@ async function consultarCnpjUncached(digits, options = {}) {
   };
 }
 
-// Geração/edição de IMAGENS com IA — roda no backend, usando o mesmo provedor
-// (OpenRouter) e a mesma chave do chat. O modelo de imagem é configurável.
+// Geração/edição de IMAGENS com IA — roda no backend, com uma das chaves do
+// PRÓPRIO usuário. Qual delas é decidido em `imageProvider.js`: não é a mais
+// antiga da conta, é a que sabe gerar imagem (preferindo a do modelo ativo).
 export const imageToolDefinitions = [
   { type: 'function', function: { name: 'generate_image', description: 'Gera uma IMAGEM nova com IA a partir de uma descrição, ou EDITA uma imagem existente (passe input_image com o caminho, ex.: uploads/foto.png). A imagem final é salva em outputs/ e exibida ao usuário automaticamente. Descreva o prompt em detalhes (estilo, cores, composição).', parameters: { type: 'object', properties: { prompt: { type: 'string', description: 'Descrição detalhada da imagem desejada ou da edição a fazer' }, input_image: { type: 'string', description: '(opcional) caminho de uma imagem do workspace para editar, ex.: uploads/logo.png' }, file_name: { type: 'string', description: '(opcional) nome do arquivo de saída, sem extensão' } }, required: ['prompt'] } } }
 ];
 
 async function generateImage(ws, args, options = {}) {
-  const model = process.env.IMAGE_MODEL || 'google/gemini-2.5-flash-image';
-  // Usa o MESMO provedor/chave do chat deste usuário (BYOK/gratuito/servidor).
-  // Antes fixava a chave/base do .env: num deploy sem chave própria do usuário
-  // (ou usuário no modo gratuito) o header saía
-  // "Bearer undefined" → 401, e a imagem nunca era gerada mesmo com o chat OK.
-  const provider = await getUserProvider(options.userId, options.model);
-  if (!provider.hasKey) {
-    return { error: 'Nenhuma chave de API configurada para gerar imagens. Cadastre a sua chave em Configurações → Provedor de IA.', code: 'NO_API_KEY' };
-  }
-  const base = String(provider.baseURL || 'https://api.deepseek.com').replace(/\/$/, '');
+  // Escolha da credencial por CAPACIDADE (ver imageProvider.js): entre as
+  // chaves da conta vale a que tem modelo de imagem no catálogo, preferindo a
+  // do modelo ativo nesta conversa. Antes a resolução era feita com referência
+  // de modelo VAZIA, o que caía sempre no provedor mais antigo da conta.
+  const choice = await resolveImageProvider(options.userId, options.model);
+  if (choice.error) return { error: choice.error, code: choice.code };
+  const { provider, model } = choice;
+  const base = String(provider.baseURL || '').replace(/\/$/, '');
+  if (!base) return { error: 'O provedor escolhido para gerar imagem está sem URL base configurada.', code: 'IMAGE_SEM_BASE_URL' };
   const content = [];
   if (args.input_image) {
     const src = safeJoin(ws.base, args.input_image);
@@ -519,9 +519,21 @@ async function generateImage(ws, args, options = {}) {
     body: JSON.stringify({ model, messages: [{ role: 'user', content }], modalities: ['image', 'text'] })
   });
   const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(`Geração de imagem falhou (HTTP ${r.status}). Verifique se o provedor é o OpenRouter e se o modelo de imagem "${model}" está disponível.`);
+  if (!r.ok) {
+    // O corpo do provedor dizia POR QUE falhou e era descartado — o usuário
+    // recebia só "HTTP 4xx" e um palpite sobre a causa.
+    const detail = String(data?.error?.message || data?.message || '').slice(0, 200);
+    const nome = provider.providerName || provider.providerType || 'provedor';
+    if (r.status === 401 || r.status === 403) {
+      return { error: `A chave do ${nome} foi recusada ao gerar imagem (HTTP ${r.status}).${detail ? ' ' + detail : ''}`, code: 'IMAGE_CHAVE_RECUSADA' };
+    }
+    if (r.status === 402) {
+      return { error: `Créditos insuficientes no ${nome} para gerar imagem.${detail ? ' ' + detail : ''}`, code: 'IMAGE_SEM_CREDITO' };
+    }
+    return { error: `Geração de imagem falhou no ${nome} (HTTP ${r.status}) com o modelo "${model}".${detail ? ' ' + detail : ''}`, code: 'IMAGE_FALHA_PROVEDOR' };
+  }
   const images = data.choices?.[0]?.message?.images || [];
-  if (!images.length) return { error: 'O modelo não retornou imagem. Resposta: ' + String(data.choices?.[0]?.message?.content || '').slice(0, 200) };
+  if (!images.length) return { error: `O modelo "${model}" não retornou imagem. Resposta: ` + String(data.choices?.[0]?.message?.content || '').slice(0, 200) };
   const saved = [];
   images.forEach((img, i) => {
     const url = img?.image_url?.url || img?.url || '';
@@ -701,7 +713,10 @@ export async function runTool(conversationId, name, args = {}, sandboxOptions = 
   const ws = workspaceFor(conversationId, sandboxOptions.userId);
   // Pastas do PC deste usuário (isolamento multi-tenant): sem userId, nenhuma.
   const pcMounts = pcFolderMounts(sandboxOptions.userId);
-  if (name === 'generate_image') return JSON.stringify(await generateImage(ws, args, { signal, userId: sandboxOptions.userId }));
+  // `model` viaja junto: é a referência do modelo ATIVO nesta execução
+  // (`<provedor>::<modelo>`). Sem ela a credencial de imagem era resolvida com
+  // referência vazia — ou seja, sempre pelo provedor mais antigo da conta.
+  if (name === 'generate_image') return JSON.stringify(await generateImage(ws, args, { signal, userId: sandboxOptions.userId, model: sandboxOptions.model }));
   // Autorização de escrita nas Pastas do PC vale para ESTE turno e é decidida
   // pelo backend a partir do pedido do usuário (loop.js) — nunca pelo prompt.
   const guardContext = { pcWriteAuthorized: sandboxOptions.pcWriteAuthorized === true };

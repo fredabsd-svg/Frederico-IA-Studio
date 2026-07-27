@@ -75,12 +75,30 @@ export async function getUserProvider(userId, requestedRef = '') {
   if (!row && parsed.modelId) {
     row = rows.find(item => parsedModels(item).some(model => model.id === parsed.modelId));
   }
-  if (!row && !parsed.providerId) row = rows[0];
-  if (row) return providerFromRow(row, parsed.modelId);
+  // Sem provedor pedido, o padrão é o mais antigo — mas só entre os que têm
+  // chave utilizável. Uma linha órfã (chave apagada no banco, ou cifrada com
+  // outra ENCRYPTION_KEY) na frente da fila fazia a conta inteira parecer sem
+  // chave, com o chat funcionando pela credencial seguinte.
+  if (!row && !parsed.providerId) row = rows.find(item => decryptSecret(item.api_key_enc)) || rows[0];
+  if (row) {
+    const provider = providerFromRow(row, parsed.modelId);
+    // Provedor sem chave utilizável não pode ser beco sem saída: sem isto, o
+    // modo gratuito — a única credencial que ainda restaria — nunca era tentado.
+    if (provider.hasKey) return provider;
+    return (await freeProvider(userId, parsed.modelId)) || provider;
+  }
 
   // O modo gratuito é uma escolha explícita. Não há mais fallback implícito
   // para a chave compartilhada do servidor: conta nova sem chave vê zero modelos.
   return (await freeProvider(userId, parsed.modelId)) || none(requestedRef);
+}
+
+// Todas as credenciais da conta, na ordem de cadastro e já decifradas — só as
+// utilizáveis. Quem escolhe provedor por CAPACIDADE (geração de imagem) precisa
+// ver o conjunto; `getUserProvider` responde por UM modelo e não serve para isso.
+export async function listUserProviders(userId) {
+  const rows = await userRows(userId);
+  return rows.map(row => providerFromRow(row)).filter(provider => provider.hasKey);
 }
 
 export { isFreeModeOptedIn };

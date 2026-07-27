@@ -139,8 +139,20 @@ POST /chat
 | `write_file`, `read_file`, `list_files` | Backend (dentro do workspace) | — |
 | `web_search`, `web_fetch` | Backend | Sim, com bloqueio de SSRF |
 | `consultar_cnpj` | Backend (BrasilAPI/ReceitaWS) | Sim |
-| `generate_image` | Backend (provedor do usuário) | Sim |
+| `generate_image` | Backend (provedor do usuário, escolhido por capacidade) | Sim |
 | `github_*` | Backend (o token **nunca** entra no sandbox) | Sim |
+
+- **Credencial da geração de imagem (`imageProvider.js`):** o caminho implementado é o do
+  OpenRouter — `POST /chat/completions` com `modalities: ['image','text']` e a imagem em
+  `choices[0].message.images`. Um endpoint OpenAI-compatível qualquer **não** faz isso
+  (DeepSeek, Groq e Mistral só devolvem texto), então a chave não é escolhida por ordem de
+  cadastro e sim por **capacidade**: vale a chave cujo catálogo importado declare um modelo
+  com `architecture.output_modalities` contendo `image`, preferindo a do modelo ativo na
+  conversa. `IMAGE_MODEL` (env) impõe um modelo, mas só num provedor que o tenha. O **modo
+  gratuito** fica de fora salvo se o operador tiver posto um modelo de imagem em
+  `FREE_TIER_MODELS` — a chave é da plataforma, e os modelos de imagem são pagos.
+  Quando nenhuma chave serve, o erro nomeia o que falta (`IMAGE_SEM_PROVEDOR`) em vez de
+  alegar ausência de chave. Testes: `imageProvider.test.js` e `imageProvider.db.test.js`.
 
 - **Caminho:** todo acesso a arquivo passa por `safeJoin` → `insideBase` + `realInside`
   (resolve symlinks: `ln -s / /workspace/root` é bloqueado).

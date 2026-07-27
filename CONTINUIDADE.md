@@ -21,7 +21,9 @@ de testes: **o SSE integrado saiu do zero** (ver a frente abaixo), mas a retomad
 interrupção real do processo e o pipeline multimodelo retomável continuam sem teste.
 Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** a **identidade "Tinta & Latão"** nos três kits (frente abaixo):
+- **Último trabalho:** a **geração de imagem passou a escolher a chave por capacidade**
+  (frente abaixo) — o "Nenhuma chave de API configurada" aparecia com o chat respondendo
+  na mesma tela. Antes dele, a **identidade "Tinta & Latão"** nos três kits (frente abaixo):
   o redesenho visual entrou POR CIMA da grade do PR #149, com os blocos que faltavam —
   sumário, citação, linha do tempo, gráficos, assinaturas, contracapa, `confidencial=` e
   a aba-painel do Excel. Antes dele, o
@@ -43,10 +45,13 @@ Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
   (o Nino cobrindo o botão de enviar), **[#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)**
   (Playwright + suíte ponta a ponta) e **[#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)**
   (as sete falhas P0 dos sub-agentes).
-- **Última validação:** 2026-07-27 — **1087 testes** (backend 887, frontend 70, guarda
+- **Última validação:** 2026-07-27 — **1097 testes** (backend 897, frontend 70, guarda
   do Docker 49, sandbox Python 59, ponta a ponta 22). O PostgreSQL 16 subiu **neste
-  contêiner** (binários locais, sem Docker), então nada foi pulado: **backend 887/887,
-  frontend 70/70, guarda 49/49 e os 59 do sandbox**; os **22 E2E rodaram em navegador real** (`E2E_CHROMIUM_PATH` apontando o Chromium do contêiner): 22/22. A
+  contêiner** (binários locais, sem Docker), então o backend rodou **897/897 com banco
+  real** e o frontend **70/70** (lint + testes + build). Guarda do Docker, sandbox Python
+  e ponta a ponta **não foram reexecutados nesta frente** — ela não toca neles; a
+  validação anterior tinha **guarda 49/49, sandbox 59/59 e E2E 22/22** em navegador real
+  (`E2E_CHROMIUM_PATH` apontando o Chromium do contêiner). A
   contagem vem de `cd backend && npm run test:count` — não a escreva à mão.
   Sem banco, o backend passa 817 e pula 70 — o esperado.
   Repare em um job do CI: **"Artefatos (Excel real)"** roda os testes dos kits no runner
@@ -58,6 +63,49 @@ Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
   linha), então a conferência do `.docx` foi estrutural — OOXML sobre o arquivo reaberto.
   O PDF foi conferido página a página, renderizado com PyMuPDF, e com as fontes reais
   instaladas em `/usr/share/fonts/truetype/tinta-latao`.
+
+---
+
+## Geração de imagem: a chave é escolhida por capacidade (2026-07-27)
+
+Sintoma relatado com print: o assistente respondeu **"Nenhuma chave de API configurada
+para gerar imagens"** — e o chat, na mesma tela, estava funcionando normalmente. A
+mensagem mandava cadastrar o que já estava cadastrado.
+
+**Causa.** `generate_image` resolvia a credencial com a referência de modelo **vazia**:
+`runTool` tinha `sandboxOptions.model` em mãos e não repassava. Com referência vazia,
+`getUserProvider` cai no `rows[0]` — o provedor **mais antigo** da conta. Daí saíam dois
+defeitos:
+
+1. numa conta com mais de uma chave, a imagem era pedida ao provedor errado (base da
+   DeepSeek + modelo da OpenRouter = 404), enquanto o chat rodava na chave certa;
+2. se essa linha mais antiga estivesse órfã — cifra que a `ENCRYPTION_KEY` atual não abre
+   —, `providerFromRow` devolvia `none()` e a conta inteira parecia sem chave. O modo
+   gratuito, única credencial que ainda restava, nem era tentado: o `if (row)` já tinha
+   retornado.
+
+**O que mudou.** `backend/src/imageProvider.js` escolhe a credencial por **capacidade**, não
+por antiguidade: entre as chaves da conta vale a que tem, no catálogo importado do
+provedor, um modelo com `output_modalities` incluindo `image` — preferindo a chave do
+modelo ativo na conversa, para a imagem sair pela credencial que o usuário está vendo
+cobrar. `IMAGE_MODEL` continua impondo um modelo, mas só num provedor que o tenha (em
+outro seria um 404 disfarçado de configuração). O **modo gratuito não gera imagem** salvo
+se o operador tiver posto um modelo de imagem em `FREE_TIER_MODELS` — a chave é da
+plataforma e os modelos de imagem são pagos; era exatamente o que a allowlist existe para
+impedir. E `getUserProvider` deixou de morrer numa linha órfã: o padrão sem provedor
+pedido é a primeira chave **utilizável**, e um provedor sem chave cai para o modo gratuito
+antes de desistir.
+
+**Mudança visível para o usuário:** quem tem uma chave capaz e outra não passa a gerar
+imagem sem mexer em nada. Quem não tem nenhuma lê o motivo certo — "nenhuma das suas
+chaves gera imagem, você tem DeepSeek" — em vez de "nenhuma chave configurada". Erro do
+provedor também parou de virar só um HTTP nu: 401/403 dizem que a chave foi recusada, 402
+que faltou crédito, e o resto carrega a mensagem do provedor.
+
+**O que ficou de fora:** um seletor de modelo de imagem na interface (a escolha automática
++ `IMAGE_MODEL` cobre os dois casos reais) e o suporte a APIs de imagem que **não** são o
+`/chat/completions` com `modalities` — `/images/generations` da OpenAI, por exemplo, é
+outro contrato e exigiria um segundo caminho de chamada.
 
 ---
 
