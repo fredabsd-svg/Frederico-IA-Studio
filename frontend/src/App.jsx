@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Download, FileText, FileSpreadsheet, FilePenLine, Plus, ArrowUp, Upload, Trash2, Bot, Brain, X, BarChart3, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench, CalendarClock, Inbox, Palette, Gauge, SlidersHorizontal, Paperclip, MoreHorizontal, FolderOpen, Code2, ChevronRight, ShieldCheck, LogOut, KeyRound, Camera, Cable, MessageCircleQuestion, Bug, PanelRight, Lock, Unlock } from 'lucide-react';
+import { Download, FileText, FileSpreadsheet, FilePenLine, Plus, ArrowUp, Upload, Trash2, Bot, Brain, X, BarChart3, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench, CalendarClock, Inbox, Palette, Gauge, SlidersHorizontal, Paperclip, MoreHorizontal, FolderOpen, Code2, ChevronRight, ShieldCheck, LogOut, KeyRound, Camera, Cable, LayoutTemplate, MessageCircleQuestion, Bug, PanelRight, Lock, Unlock } from 'lucide-react';
 import { API, TOOL_INFO, TEMPLATES, QUICK_ACTIONS, THEMES, WORKSPACES, EFFORTS, EFFORT_DESC, ASSISTANT_ICONS, ASSISTANT_COLORS, isAssistantIcon, DEV_WORK_MODES, MAX_ASSISTANT_PROFILE_CHARS } from './constants.js';
 import { signOut } from './authClient.js';
 import { Slider, Modal, Drawer, Collapsible, useAppDialog, ModelPicker } from './components.jsx';
@@ -28,6 +28,7 @@ import { useCompanion } from './hooks/useCompanion.js';
 import { useDocling } from './hooks/useDocling.js';
 import { DoclingPanel } from './components/DoclingPanel.jsx';
 import { CopilotPanel } from './components/CopilotPanel.jsx';
+import { DesignPanel } from './components/DesignPanel.jsx';
 import { useCopilot } from './hooks/useCopilot.js';
 import { CompanionConfig } from './components/CompanionConfig.jsx';
 import { SettingsHub } from './components/SettingsHub.jsx';
@@ -253,6 +254,8 @@ export default function App({ user } = {}) {
   // Copiloto — central de diagnósticos, saúde e permissões.
   const copilot = useCopilot();
   const [copilotOpen, setCopilotOpen] = useState(false);
+  // Modo Design — espaço próprio de criação visual (tela cheia).
+  const [designOpen, setDesignOpen] = useState(false);
   const [companionConfigOpen, setCompanionConfigOpen] = useState(false);
   const [devGitBusy, setDevGitBusy] = useState(null); // null | 'clone' | 'push'
   const [settingsHubOpen, setSettingsHubOpen] = useState(false);
@@ -852,6 +855,7 @@ export default function App({ user } = {}) {
           <button className="studio toolsBtn" onClick={() => setToolsOpen(true)} title="Fluxos prontos: documentos, planilhas, OCR e dashboards"><Wrench size={16}/> Ferramentas</button>
           <button className="studio" onClick={() => setInboxOpen(true)} title="Acumule documentos por cliente e abra tudo numa conversa"><Inbox size={16}/> Caixa de entrada</button>
           <button className="studio" onClick={openTemplates}><BookMarked size={16}/> Templates</button>
+          <button className="studio" onClick={() => setDesignOpen(true)} title="Gerar site, apresentação ou documento visual e refinar conversando"><LayoutTemplate size={16}/> Modo Design</button>
         </div>
         <div className="navGroup navGroupDeveloper">
           <div className="navGroupTitle">Desenvolvimento</div>
@@ -1458,7 +1462,11 @@ export default function App({ user } = {}) {
       </div>
     </Drawer>}
     {appDialog}
-    <Companion
+    {/* O Modo Design ocupa a tela inteira e tem compositor próprio; o mascote,
+        que é `position: fixed`, pousaria em cima dele — a mesma sobreposição
+        sobre o botão de enviar que o PR #147 corrigiu no chat principal. Aqui
+        ele não teria função: os avisos proativos do Nino falam da conversa. */}
+    {!designOpen && <Companion
       companion={companion}
       busy={busy}
       statusText={statusText}
@@ -1469,8 +1477,9 @@ export default function App({ user } = {}) {
       draft={input}
       onApplyDraft={setInput}
       showToast={showToast}
-    />
+    />}
     {copilotOpen && <CopilotPanel copilot={copilot} onClose={() => setCopilotOpen(false)} />}
+    {designOpen && <DesignPanel onClose={() => setDesignOpen(false)} model={model} askConfirm={askConfirm} />}
     {companionConfigOpen && <CompanionConfig
       companion={companion}
       allModels={allModels}

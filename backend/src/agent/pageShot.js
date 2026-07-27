@@ -86,7 +86,11 @@ async function loadPlaywright() {
   }
 }
 
-function scheduleIdleClose() {
+// Exportado (junto com `getBrowser` e `guardRoute`) para o Modo Design, que
+// imprime o artefato em PDF com o MESMO navegador e a MESMA guarda de rede.
+// Duplicar essa infraestrutura significaria duplicar a defesa contra SSRF — e
+// a cópia é justamente o lugar onde a correção do redirecionamento se perderia.
+export function scheduleIdleClose() {
   if (idleTimer) clearTimeout(idleTimer);
   idleTimer = setTimeout(() => { closeBrowser(); }, IDLE_CLOSE_MS);
   if (idleTimer.unref) idleTimer.unref();
@@ -99,7 +103,7 @@ async function closeBrowser() {
   try { const b = await p; await b.close(); } catch {}
 }
 
-async function getBrowser() {
+export async function getBrowser() {
   const chromium = await loadPlaywright();
   if (!chromium || !EXECUTABLE || !fs.existsSync(EXECUTABLE)) return null;
   if (!browserPromise) {

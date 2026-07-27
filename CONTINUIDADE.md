@@ -9,9 +9,10 @@
 ## Estado atual
 
 Aplicação multiusuário com agentes de IA, memória semântica, multimodelo, execução de
-ferramentas em sandbox Docker, geração de documentos, Docling, conector GitHub e copiloto
-(Nino). Backend Node 20 + Express + PostgreSQL (pgvector); frontend React 19 + Vite;
-autenticação Better Auth (e-mail/senha, GitHub, Google).
+ferramentas em sandbox Docker, geração de documentos, Docling, conector GitHub, copiloto
+(Nino) e **Modo Design** (site, apresentação ou documento visual gerado, refinado e
+exportado num espaço próprio). Backend Node 20 + Express + PostgreSQL (pgvector);
+frontend React 19 + Vite; autenticação Better Auth (e-mail/senha, GitHub, Google).
 
 **Prontidão para produção: 🟡 amarelo — apto com restrições.**
 **Nenhum risco crítico aberto** desde o fechamento do F-04 (o backend não detém mais o
@@ -20,7 +21,12 @@ de testes: **o SSE integrado saiu do zero** (ver a frente abaixo), mas a retomad
 interrupção real do processo e o pipeline multimodelo retomável continuam sem teste.
 Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** estabilização do **ambiente de execução do agente** (frente abaixo):
+- **Último trabalho:** o **Modo Design**, v1 e v2 (frente abaixo) — espaço próprio
+  onde o usuário descreve um site, uma apresentação ou um documento visual e recebe
+  um rascunho renderizado ao vivo, refinado **por conversa, por clique no elemento
+  ou por sliders que não chamam a IA**, versionado e exportável (.html/.pdf/.pptx).
+  Antes dele, a estabilização do **ambiente de execução do agente** (frente mais
+  abaixo):
   um timeout deixou de derrubar o sandbox, toda execução devolve estado estruturado
   (ambiente × projeto), o reinício é anunciado com o que sobreviveu e o que se perdeu,
   comandos longos transmitem a saída ao vivo, e o agente ganhou a ferramenta `ambiente`
@@ -29,12 +35,123 @@ Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
   (o Nino cobrindo o botão de enviar), o **PR [#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)**
   (Playwright + suíte ponta a ponta) e o **PR [#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)**
   (as sete falhas P0 dos sub-agentes).
-- **Última validação:** 2026-07-26 — **844 testes** (backend 728, frontend 57, guarda do
-  Docker 49, sandbox Python 10). Backend e frontend passaram neste contêiner: **709
-  passaram, 0 falharam, 19 pulados** (os 19 exigem PostgreSQL, que não está de pé aqui —
-  na CI rodam). Os 10 do Python não coletam aqui por falta do `openpyxl`. Os 13 E2E não
-  entram nesta contagem porque o `e2e/` não está instalado neste contêiner. A contagem
-  vem de `cd backend && npm run test:count` — não a escreva à mão.
+- **Última validação:** 2026-07-26 — **1010 testes** (backend 859, frontend 70, guarda
+  do Docker 49, sandbox Python 10, ponta a ponta 22). Desta vez o PostgreSQL **subiu
+  neste contêiner** (binários do `postgresql-16` locais, sem Docker), então nada foi
+  pulado: **backend 859/859 e frontend 70/70**, mais os **22 E2E em navegador real**
+  (`E2E_CHROMIUM_PATH` apontando o Chromium já instalado no contêiner). Sem banco, o
+  backend passa 789 e pula 70 — o esperado. Os 10 do Python não coletam aqui por falta
+  do `openpyxl`. A contagem vem de `cd backend && npm run test:count` — não a escreva
+  à mão.
+
+---
+
+## Modo Design — v1 e v2 (2026-07-26)
+
+Um espaço próprio, ao lado do chat: o usuário descreve o que precisa e a IA
+devolve um rascunho **visual e renderizado**, não um bloco de código para montar.
+Três tipos de saída — página/protótipo `web`, apresentação `slides` e documento
+paginado `document` —, refinamento por conversa, histórico de versões navegável e
+exportação (`.html`, `.pdf`, `.pptx`).
+
+**A decisão que organiza o resto:** nada é gravado sem passar por
+`extractArtifact`. O modelo responde o que quiser; o app só aceita um documento
+HTML completo ou um JSON de slides no formato esperado. Uma geração ruim vira
+mensagem no chat do projeto — a versão boa que estava na tela continua valendo.
+Isso cobre os três modos de falhar que apareceram na prática: resposta com
+conversa em volta, resposta embrulhada em cerca de código e resposta **cortada
+por limite de tokens** (a mais traiçoeira: o HTML pela metade "parece" válido).
+
+**Slides guardam JSON, não HTML.** O mesmo JSON vira prévia, PDF e `.pptx`. Se o
+modelo devolvesse HTML de slides, montar o `.pptx` exigiria adivinhar as caixas
+de texto de volta a partir de marcação arbitrária.
+
+**Segurança — o ponto que não pode ser afrouxado.** O HTML de um design é código
+gerado por IA. Ele roda em origem OPACA, garantida em dois lugares de propósito:
+`Content-Security-Policy: sandbox allow-scripts` na resposta e
+`sandbox="allow-scripts"` no `<iframe>` — **sem `allow-same-origin` em nenhum dos
+dois**. Juntos, os dois atributos anulariam o sandbox e dariam ao código gerado a
+origem do app (cookie de sessão e DOM inclusos). A prévia é servida por uma rota
+sem sessão, com token de 32 caracteres, justamente para poder morar em outra
+origem (`DESIGN_PREVIEW_ORIGIN`) sem o cookie acompanhar o artefato. E a
+impressão em PDF **reaproveita** `guardRoute` do `agent/pageShot.js` em vez de
+abrir o próprio navegador: sem isso, uma página com
+`<img src="http://169.254.169.254/…">` usaria o navegador do backend para
+alcançar a rede interna.
+
+**Um defeito real encontrado pelo teste de navegador:** a resposta de `/generate`
+serializava a linha do projeto carregada ANTES da geração, então
+`currentVersionId` vinha velho. Na tela o efeito era duplo — o histórico marcava
+a versão errada como "em exibição" e o iframe, que recarrega quando esse id muda,
+seguia mostrando o design anterior. Parecia que o pedido não tinha feito nada.
+`projectPayload` passou a receber o id e reler a linha; a regressão está guardada
+também no nível HTTP.
+
+**Mudança visível para o usuário:** um item "Modo Design" na barra lateral
+(grupo Produção) abre uma tela cheia com prévia, chat do projeto, histórico e
+exportação. O mascote (Nino) fica escondido enquanto o modo está aberto — ele é
+`position: fixed` e pousaria sobre o compositor, a mesma sobreposição que o
+PR #147 corrigiu no chat principal.
+
+**Ficou de fora, e está escrito em `docs/DESIGN_STUDIO.md` §Limites:** sem
+imagens (o layout `image-full` entrega um painel na cor da marca, não uma foto);
+tela de compartilhamento público; e `document` **não** reaproveita o pipeline de
+Word/PDF do agente — aquele caminho roda Python numa sandbox Docker presa a uma
+CONVERSA, e um projeto de design não é uma conversa nem tem workspace. Em vez de
+esticar aquele pipeline, o `document` gera HTML paginado e imprime com o Chromium
+que a imagem já traz; quem precisa de `.docx` editável continua no chat principal.
+
+### v2: edição inline e controles de ajuste
+
+**Edição inline.** Ligue "Editar elemento", clique no que quer mudar e o pedido
+vale só para ele — o modelo recebe um bloco `ALVO` com tag, classes, caminho e o
+trecho de HTML, mais a instrução de deixar o resto idêntico.
+
+O caminho do clique é o ponto interessante. A prévia roda em ORIGEM OPACA: de
+fora, `iframe.contentDocument` é `null` e nenhum seletor alcança o documento —
+e isso é a razão de o modo ser seguro, não um obstáculo a contornar. Então o
+backend injeta na prévia (e SÓ nela) um script-ponte que realça o elemento sob o
+cursor e devolve o descritor por `postMessage`. A interface valida a mensagem
+pela JANELA (`event.source === iframe.contentWindow`): numa origem opaca,
+`event.origin` chega como "null" e comparar isso não prova nada. Em
+apresentações o alvo é o NÚMERO do slide — o modelo edita o JSON, e mandar o HTML
+do deck (que é nosso) o faria devolver HTML onde deve devolver JSON.
+
+**Controles de ajuste.** Sliders de cor, tipografia, espaçamento e arredondamento
+que mudam a prévia na hora, sem versão nova e sem chamada à IA.
+
+Isso exigiu um CONTRATO, não um truque: o system prompt passou a exigir que toda
+saída HTML declare um bloco `:root` com variáveis `--fred-*` e as use no resto do
+CSS. Sem ele, um slider de "cor primária" seria adivinhação — num HTML arbitrário
+a cor está espalhada em vinte declarações escritas de jeitos diferentes
+(`#1f3b8a`, `rgb(...)`, `bg-blue-900` do Tailwind), e reescrever por regex ora
+acertaria, ora pintaria o texto de fundo. Com as variáveis, o ajuste é uma
+sobreposição de `:root`.
+
+Três consequências que valem lembrar ao mexer nisso:
+
+- **A lista de controles é derivada do artefato**, não fixa: `detectTokens` lê o
+  HTML servido. Um design fora do contrato (gerado antes da v2) mostra ZERO
+  controles, e a tela explica o porquê em vez de oferecer sliders inertes.
+- **O ajuste é camada, não reescrita**: fica numa coluna do projeto e é aplicado
+  ao renderizar e ao exportar. É o que permite mexer no slider e depois pedir uma
+  edição no chat sem que uma coisa apague a outra. E o que você vê é o que você
+  baixa — a exportação leva os ajustes, mas NÃO leva a ponte de edição.
+- **Ajustar não cria versão.** Um arrasto de slider não é decisão de design que
+  mereça histórico; uma versão por movimento comeria a janela de poda.
+
+O deck de slides passou a usar os mesmos nomes de variável, então apresentações
+também ganham os controles de cor. `--fred-fonte-base` fica de fora ali de
+propósito: o deck escala a tipografia em `cqw`, e um valor em px não teria efeito
+— controle que não faz nada é pior que controle nenhum.
+
+Onde está: migrations `022_design_studio.sql` e `023_design_ajustes.sql`; backend
+em `src/design/` (`core.js`, `render.js`, `tokens.js` e `bridge.js` puros,
+`store.js`, `generate.js`, `pdf.js`, `pptx.js`) e `src/routes/design.js`;
+frontend em `src/components/Design*.jsx`, `src/design/designCore.js`,
+`src/hooks/useDesign.js` e `src/design.css`. Documentação em
+`docs/DESIGN_STUDIO.md` (e `docs/SECURITY.md` §6.1).
+Testes: 37 + 11 + 19 + 6 + 5 puros, 13 de banco, 38 de rota e 9 em navegador real.
 
 ---
 
@@ -255,7 +372,11 @@ Novo job `e2e` no CI, com Postgres real e Chromium. Ver `e2e/README.md`.
    `updated_at`) e retomada no boot.
 5. **F-21** — extrair de `App.jsx`, por etapas: shell → estado da conversa → estado da
    execução → drawers/configurações. `React.lazy` nos painéis pesados.
-6. **F-24/F-25 (sub-agentes, o que sobrou dos P1/P2)** — orçamento por delegação
+6. **Modo Design, o que sobrou (opcional, sem risco aberto)** — edição inline e
+   controles de ajuste estão **feitos**; falta imagens no artefato (a geração de
+   imagens já existe no app) e a tela de compartilhamento público sobre o token
+   de prévia que já existe.
+7. **F-24/F-25 (sub-agentes, o que sobrou dos P1/P2)** — orçamento por delegação
    (`SUBAGENT_TIMEOUT_MS`, `MAX_STEPS`, `MAX_TOKENS`, deadline compartilhado); diretório
    `outputs/<delegationId>/` com manifesto por filho; catálogo persistido de capacidade de
    tool calling por `provedor+modelo+endpoint` (hoje `markModelCapabilityUnsupported` só

@@ -14,6 +14,7 @@ import './nino.css';
 import './docling.css';
 import './promptcoach.css';
 import './copilot.css';
+import './design.css';
 
 // Rotas públicas dos documentos legais (LGPD) — funcionam sem login, tanto no
 // Vite (fallback de SPA) quanto no Caddy (try_files -> index.html).
