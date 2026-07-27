@@ -38,7 +38,16 @@ Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
   (o Nino cobrindo o botão de enviar), o **PR [#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)**
   (Playwright + suíte ponta a ponta) e o **PR [#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)**
   (as sete falhas P0 dos sub-agentes).
-- **Última validação:** VALIDACAO_PENDENTE
+- **Última validação:** 2026-07-26 — **1035 testes** (backend 884, frontend 70, guarda do
+  Docker 49, sandbox Python 10, ponta a ponta 22). O PostgreSQL 16 subiu **neste contêiner**
+  (binários locais, sem Docker), então nada foi pulado: **backend 884/884 e frontend 70/70**,
+  mais os **22 E2E em navegador real** (`E2E_CHROMIUM_PATH` apontando o Chromium do
+  contêiner) — verdes na íntegra; na primeira rodada o teste de troca de conversa durante o
+  streaming falhou por tempo e passou nas duas rodadas seguintes, ou seja, é flaky sob carga,
+  não regressão. `check-migrations.mjs` aplicou as 24 migrações do zero com reexecução no-op.
+  Sem banco, o backend passa 814 e pula 70 — o esperado. Os 10 do Python não coletam aqui por
+  falta do `openpyxl`. A contagem vem de `cd backend && npm run test:count` — não a escreva à
+  mão.
 ---
 
 ## O copiloto virou colega de trabalho (2026-07-26 — frente atual)
@@ -67,7 +76,7 @@ regra: **o controle é do usuário e toda leitura deixa rastro**.
    modelo de pedido, guardar na caixa de documentos ou na memória, e resumir a conversa
    num documento. Todas por clique do usuário; o modelo não dispara nada sozinho.
 
-Migração `022_copilot_context_memory.sql`. 23 testes novos (14 no núcleo do copiloto,
+Migração `024_copilot_context_memory.sql`. 23 testes novos (14 no núcleo do copiloto,
 9 na base de conhecimento). **Ficou de fora, de propósito:** dicionário de sinônimos
 externo (serviço de rede novo para ganho que a revisão de escrita já dá), o copiloto
 mexer no layout por conta própria e escrita automática na memória. Detalhes em

@@ -380,7 +380,7 @@ não executam ferramentas.
 - `companion/health.js` amostra memória/CPU; `incidents.js`, `errorDigest.js`, `bugAnalysis.js`,
   `suggestions.js`, `permissions.js` alimentam a Central de Diagnósticos.
 - Chat do copiloto isolado do chat principal (migrações 017–019). O isolamento continua
-  sendo o **padrão**; a migração 022 acrescenta a porta que só abre por fora: preferências
+  sendo o **padrão**; a migração 024 acrescenta a porta que só abre por fora: preferências
   (`copilot_prefs`), memória própria (`copilot_notes`) e a leitura AUTORIZADA das últimas
   mensagens da conversa principal, sempre registrada em `companion_audit`.
 - `copilot/core.js` é puro (prompts, blocos de contexto/memória/base, `decideContextAccess`)
@@ -428,10 +428,11 @@ juntas não corrompem `schema_migrations`), uma transação por arquivo.
 | 015–019 | Companion e copiloto (eventos, chat, documentos) |
 | **020** | **`user_roles` + `admin_audit`** (autorização administrativa persistida) |
 | 021 | memória por projeto (`dev_projects`, `project_id` nas conversas e na memória) |
-| 022 | copiloto: preferências, memória própria e contexto autorizado do chat principal |
+| 022–023 | Modo Design (projetos, versões e ajustes) |
+| 024 | copiloto: preferências, memória própria e contexto autorizado do chat principal |
 
-Verificado no CI por `backend/scripts/check-migrations.mjs`: banco vazio → 22 migrações →
-reexecução no-op → 26 tabelas essenciais → escrita/leitura/cascade.
+Verificado no CI por `backend/scripts/check-migrations.mjs`: banco vazio → 24 migrações →
+reexecução no-op → 30 tabelas essenciais → escrita/leitura/cascade.
 
 ---
 
