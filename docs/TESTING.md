@@ -27,10 +27,11 @@ npm test                 # TODOS os arquivos *.test.js de src/ (inclusive src/ho
 npm run check            # lint + test + build
 
 # sandbox (Python) — os kits de documento (docpro/xlspro/pdfpro)
-# As três dependências são obrigatórias: cada arquivo de teste se AUTO-PULA
-# quando a sua biblioteca falta, então instalar só o openpyxl faz os testes do
-# Word e do PDF sumirem em silêncio (é o mesmo conjunto que o CI instala).
-python -m pip install openpyxl==3.1.5 python-docx reportlab
+# As dependências são obrigatórias: cada arquivo de teste se AUTO-PULA quando a
+# sua biblioteca falta, então instalar só o openpyxl faz os testes do Word e do
+# PDF sumirem em silêncio. As três primeiras são o conjunto que o CI instala; o
+# matplotlib cobre só os gráficos do Word (sem ele, esse teste pula).
+python -m pip install openpyxl==3.1.5 python-docx reportlab matplotlib
 python -m unittest discover -s sandbox -p '*_test.py' -v
 
 # ponta a ponta (navegador real) — exige Postgres; ver e2e/README.md
@@ -130,6 +131,7 @@ teste — vários módulos leem essas variáveis no momento da importação.
 | `backend/src/design/store.test.js` | **Com Postgres**: numeração das versões, reverter move o ponteiro **sem apagar** o que veio depois, poda no teto que nunca remove a versão em exibição, isolamento entre contas em toda leitura e escrita, token de prévia como capacidade regenerável, marca apagada não derruba o projeto |
 | `backend/src/routes/design.http.test.js` | **Integrado**: rotas reais + Postgres + provedor de IA falso. Resposta suja vira artefato limpo; resposta sem HTML e resposta **cortada por limite de tokens** não viram versão (e o erro aparece no chat do projeto); a edição reenvia o artefato atual; a resposta da geração aponta para a versão NOVA (regressão encontrada pelo teste de navegador); projeto de outra conta é 404 em todas as rotas; a prévia sai com `CSP: sandbox` **sem** `allow-same-origin`; exportação por formato e por versão antiga |
 | `e2e/tests/design.spec.js` | **Navegador real**: o HTML gerado é de fato renderizado dentro do iframe isolado, o `sandbox` do iframe não tem `allow-same-origin`, refinar por conversa cria uma versão nova e dá para voltar atrás, e a apresentação vira deck — não JSON na tela. Da v2: **clicar num elemento da prévia leva o alvo para o compositor** (a travessia da origem opaca por `postMessage`, que nenhum teste de unidade cobre) e **o slider muda a cor dentro do iframe na hora, sem criar versão** — com o ajuste sobrevivendo a fechar e reabrir o projeto |
+| `sandbox/*_test.py` (identidade "Tinta & Latão") | Sobre os blocos que entraram DEPOIS da grade. **PDF**: o documento com linha do tempo, gráficos vetoriais e contracapa passa na **própria auditoria** do kit — é essa a prova de que os blocos novos respeitam a mesma aresta; a pizza lê a participação na legenda em pt-BR (rótulo colado na fatia cairia dentro da fatia escura e vazaria a caixa); a barra parte do zero (base automática do reportlab faz série de 4,1 a 5,8 virar barras idênticas); a marca de sigilo aparece na capa e no rodapé e some com `confidencial=False`, e nunca aparece no estilo sóbrio; a contracapa cabe na página em qualquer variação de contatos. **Word**: nenhuma tabela sem largura declarada (100% ou dxa ≤ 17 cm com a `tblGrid` coerente — é ela que resolve o layout fixo); a numeração "SEÇÃO NN" é do kit e não sai em dobro; sumário, citação, linha do tempo, assinaturas em pares e contracapa entram no arquivo; a figura do gráfico respeita a aresta do corpo; o `Sobrio` identifica o documento, assina em pares e continua 100% preto. **Excel**: o painel é a primeira aba com KPIs e carimbo, o gráfico mora no painel mas referencia a aba de dados (sem a linha de TOTAL) e as cores do tema chegam ao arquivo — o tema ficava num `try/except` mudo e a pizza saía com a paleta padrão do Excel |
 
 Scripts de apoio: `backend/scripts/run-tests.mjs` e `frontend/scripts/run-tests.mjs`
 (descoberta de testes independente da versão do Node), `backend/scripts/check-migrations.mjs`,

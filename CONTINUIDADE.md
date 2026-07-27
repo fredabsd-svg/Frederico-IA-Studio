@@ -21,7 +21,11 @@ de testes: **o SSE integrado saiu do zero** (ver a frente abaixo), mas a retomad
 interrupção real do processo e o pipeline multimodelo retomável continuam sem teste.
 Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** **PR [#149](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/149)** —
+- **Último trabalho:** a **identidade "Tinta & Latão"** nos três kits (frente abaixo):
+  o redesenho visual entrou POR CIMA da grade do PR #149, com os blocos que faltavam —
+  sumário, citação, linha do tempo, gráficos, assinaturas, contracapa, `confidencial=` e
+  a aba-painel do Excel. Antes dele, o
+  **PR [#149](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/149)** —
   a **arquitetura de formatação dos documentos** (frente abaixo): os kits Word/Excel/PDF
   passaram a ter uma grade única, o `pdfpro` audita o arquivo que gera e o prompt proíbe
   diagramar fora do kit. Antes dele, o **copiloto (Nino)** deixou de ser um chat cego —
@@ -39,15 +43,96 @@ Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
   (o Nino cobrindo o botão de enviar), **[#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)**
   (Playwright + suíte ponta a ponta) e **[#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)**
   (as sete falhas P0 dos sub-agentes).
-- **Última validação:** 2026-07-27 — **1068 testes** (backend 885, frontend 70, guarda
-  do Docker 49, sandbox Python 42, ponta a ponta 22). O PostgreSQL 16 subiu **neste
-  contêiner** (binários locais, sem Docker), então nada foi pulado: **backend 885/885,
-  frontend 70/70, guarda 49/49 e os 42 do sandbox**; os 22 E2E entram listados. A
+- **Última validação:** 2026-07-27 — **1086 testes** (backend 886, frontend 70, guarda
+  do Docker 49, sandbox Python 59, ponta a ponta 22). O PostgreSQL 16 subiu **neste
+  contêiner** (binários locais, sem Docker), então nada foi pulado: **backend 886/886,
+  frontend 70/70, guarda 49/49 e os 59 do sandbox**; os 22 E2E entram listados. A
   contagem vem de `cd backend && npm run test:count` — não a escreva à mão.
+  Sem banco, o backend passa 816 e pula 70 — o esperado.
   Repare em um job do CI: **"Artefatos (Excel real)"** roda os testes dos kits no runner
   do GitHub, que **não tem as mesmas fontes** do sandbox. Ou seja, o caminho de
   degradação do `pdfpro` (sem TrueType, caindo para as Type1 base-14) é exercitado a
-  cada push, não só na simulação local.
+  cada push, não só na simulação local. Lá só o teste de gráfico do Word pula, por falta
+  do matplotlib.
+  **O LibreOffice deste contêiner não converte nada** (falha até com um `.txt` de uma
+  linha), então a conferência do `.docx` foi estrutural — OOXML sobre o arquivo reaberto.
+  O PDF foi conferido página a página, renderizado com PyMuPDF, e com as fontes reais
+  instaladas em `/usr/share/fonts/truetype/tinta-latao`.
+
+---
+
+## Identidade "Tinta & Latão" sobre a grade do #149 (2026-07-27)
+
+O redesenho visual dos três kits chegou pronto (docpro/xlspro/pdfpro na paleta
+verde-tinta `#0C3A30` + latão `#A9812F`, Source Serif 4 sobre Source Sans 3) e
+colidiu de frente com o PR #149, que tinha acabado de reescrever os MESMOS três
+arquivos com a grade única e a auditoria do PDF. Duas implementações do mesmo
+kit, cada uma com o que a outra não tinha.
+
+**A decisão foi unir, não escolher:** o motor do #149 fica — grade de duas
+arestas (`X_CAIXA`/`X_TEXTO`), fonte TrueType embutida com saneamento de glifo,
+auditoria do arquivo pronto em `salvar()`, `lista/imagem/quebra/chave_valor/
+codigo` e a limpeza de caractere de controle — e a identidade entrou por cima.
+
+**O que a identidade trouxe:**
+
+- **paleta e tipografia** nos três kits: verde-tinta com acento em latão,
+  serifada nos títulos, na capa e nos números de destaque; sem serifa no corpo,
+  nas tabelas e no rodapé. `primaria` virou alias de `tinta`, então nenhum
+  bloco precisou ser reescrito só para trocar de nome;
+- **títulos que numeram sozinhos** ("SEÇÃO 01" em latão acima do título) — o
+  modelo não escreve mais "1." no texto; `kicker=""` desliga, `kicker="ANEXO A"`
+  substitui;
+- **blocos novos** no Word e no PDF: `sumario`, `citacao`, `etapas` (linha do
+  tempo), `grafico_barras/linhas/pizza`, `fecho`, `contracapa` e `confidencial=`
+  marcando capa e rodapés; no Word, `assinaturas(nomes, cargos=, local_data=)`
+  em pares e o rótulo "Tabela N — ..." com linha de fonte;
+- **aba-painel no Excel** (`p.painel`): a aba-resumo com KPIs e carimbo do
+  emissor vira a PRIMEIRA aba, com os gráficos ancorados nela e os dados
+  ficando na aba de origem;
+- **`Sobrio`** ganhou `identificacao(titulo, qualificação)` com filete duplo
+  registrável e assinaturas em pares — continua 100% preto, Times 12,
+  justificado de fábrica.
+
+**O que a grade impôs ao redesenho** (e por que o resultado é melhor que os dois
+sozinhos): a auditoria do `pdfpro` roda em `salvar()` e **reprova** texto fora
+da caixa útil. Então os blocos novos nasceram medidos — o gráfico é um `Drawing`
+de `LARGURA_TEXTO` dentro de `_caixa()`, a linha do tempo é uma tabela com o
+recuo da grade na coluna do número, e a contracapa é uma mancha de tinta na
+área útil, **sem sangrar até a borda do papel** (numa impressora com área não
+imprimível diferente, a sangria corta torta — é a regra do #149 e ela vale).
+
+**Três defeitos corrigidos no caminho:**
+
+1. **Barra de gráfico que não partia do zero:** com a base automática do
+   reportlab, uma série de 4,1 a 5,8 vira quatro barras quase idênticas e a
+   série menor some. O gráfico passava a mentir sobre a proporção.
+2. **Pizza ilegível:** rótulo escuro dentro da fatia escura, o da esquerda fora
+   da caixa (a auditoria reprovaria) e valor bruto no lugar da participação.
+   Virou rosca com legenda à direita, percentual em pt-BR.
+3. **Tema do gráfico do Excel nunca aplicado:** `DataPoint(graphicalProperties=…)`
+   levanta `TypeError` — o argumento do construtor é `spPr` — e o `except` mudo
+   engolia. Corrigido, e o `except` agora **avisa** em vez de silenciar.
+
+**Fontes:** o `sandbox/Dockerfile` instala os TTFs estáticos (licença OFL) em
+`/usr/share/fonts/truetype/tinta-latao`, e o `pdfpro` os coloca à frente de
+Carlito/DejaVu/Liberation na lista de preferência — o mecanismo de degradação
+do #149 continua valendo. O bloco é tolerante a falha de rede: sem as fontes o
+PDF cai nas famílias antigas e o docx/xlsx no fallback do Word/Excel; nada
+quebra, só perde a voz. **Para entrega externa, prefira o PDF** — ele embute a
+fonte; o `.docx` depende de quem abre tê-la instalada.
+
+**Prompt:** `atual.txt` é a **v12** (`docpro@12.0.0`); a v11 foi arquivada em
+`v11.txt`. Ele mantém a REGRA ZERO do #149 — o kit é a única forma de diagramar
+— e passou a ensinar os blocos novos, com o aviso de que a numeração da seção é
+do kit.
+
+**Testes:** a suíte Python do sandbox foi de 42 para **59**.
+
+**O que ficou de fora:** o gráfico do Word continua entrando como imagem em 200
+dpi (python-docx não cria gráfico nativo), e o `sumario()` do Word recebe as
+páginas de você — só o do PDF se acerta sozinho, porque lá o `multiBuild` faz a
+segunda passagem.
 
 ---
 
@@ -505,6 +590,12 @@ cd frontend && npm run check   # lint + testes + build
 # 5) Mexeu em interface, streaming ou login? Rode também os E2E (exige Postgres)
 cd e2e && npm install && npm run navegador   # só na primeira vez
 cd e2e && E2E_DATABASE_URL=$DATABASE_URL npm test
+
+# 6) Mexeu nos kits de documento (sandbox/docpro|xlspro|pdfpro)? Instale as
+#    dependências ANTES — sem elas os 59 testes se pulam sozinhos e passam vazios
+python3 -m venv .venv-kits && . .venv-kits/bin/activate
+pip install python-docx openpyxl reportlab matplotlib
+python -m unittest discover -s sandbox -p '*_test.py' -v
 ```
 
 **Convenções que valem a pena manter:**
