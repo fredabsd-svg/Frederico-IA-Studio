@@ -93,11 +93,12 @@ veja **[docs/CONFIGURACAO.md](docs/CONFIGURACAO.md)**.
 ### 💬 Conversa que produz resultado
 
 - **Arquivos reais no chat** — Excel, Word, PDF, CSV, ZIP, imagens, gráficos e OCR.
-- **Documentos com design de agência** — kits prontos e testados (capa, sumário
-  paginado, tabelas estilizadas, listas, indicadores, gráficos, callouts e rodapé
-  "Página X de Y"), com modo **sóbrio/registrável** para ata e contrato. Word,
-  Excel e PDF seguem **a mesma grade**: uma única aresta de texto na página
-  inteira, do título ao rodapé.
+- **Documentos com design de agência** — kits prontos e testados na identidade
+  **"Tinta & Latão"** (capa, sumário paginado, tabelas estilizadas com total,
+  listas, indicadores, citação, linha do tempo, gráficos, callouts, assinaturas,
+  contracapa e rodapé "Página X de Y"), com modo **sóbrio/registrável** para ata
+  e contrato. Word, Excel e PDF seguem **a mesma grade**: uma única aresta de
+  texto na página inteira, do título ao rodapé.
 - **PDF que abre igual em qualquer leitor** — fonte embutida, texto copiável e
   pesquisável. Antes de ser entregue, o arquivo passa por uma **auditoria
   automática** (margem, glifos, fonte, metadados): um PDF com defeito grave falha
@@ -348,10 +349,11 @@ Eles sobem o **build de produção** e conversam com um provedor de IA simulado,
 então não precisam de chave nem de internet.
 
 Mexeu nos kits de documento (`sandbox/docpro.py`, `xlspro.py`, `pdfpro.py`)?
-Rode `python -m unittest discover -s sandbox -p '*_test.py'`. Eles fixam o
-contrato de layout — se um bloco novo puser texto fora da grade da página, o
-teste acusa antes de o arquivo chegar ao cliente (ver
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §19).
+Instale `python-docx`, `openpyxl`, `reportlab` e `matplotlib` **antes** de rodar
+`python -m unittest discover -s sandbox -p '*_test.py'` — sem eles a suíte se
+pula sozinha e passa vazia. Ela fixa o contrato de layout: se um bloco novo
+puser texto fora da grade da página, o teste acusa antes de o arquivo chegar ao
+cliente (ver [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §19).
 
 <div align="center">
 

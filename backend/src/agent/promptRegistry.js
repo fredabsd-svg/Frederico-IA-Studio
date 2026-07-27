@@ -22,7 +22,12 @@ export const PROMPT_MODULES = Object.freeze({
   // 11.0.0: os kits ganharam uma grade única (uma só aresta de texto) e o
   // pdfpro passou a auditar o arquivo gerado. O prompt agora PROÍBE diagramar
   // fora do kit — era por aí que saía PDF com margem torta e glifo trocado.
-  docpro:       { id: 'docpro',            version: '11.0.0' }
+  // 12.0.0: a identidade "Tinta & Latão" (verde-tinta + latão, Source Serif 4
+  // sobre Source Sans 3) entrou POR CIMA dessa grade, com os blocos que
+  // faltavam — sumário, citação, linha do tempo, gráficos, assinaturas,
+  // contracapa, `confidencial=` e a aba-painel do Excel. Os títulos passaram a
+  // numerar sozinhos: o modelo não escreve mais "1." no texto.
+  docpro:       { id: 'docpro',            version: '12.0.0' }
 });
 
 export function moduleRef(name) {

@@ -1,32 +1,50 @@
-"""xlspro — kit de DESIGN profissional para planilhas Excel (.xlsx) com openpyxl.
+"""xlspro — kit de DESIGN para planilhas Excel (.xlsx) com openpyxl.
 
-Instalado no sandbox do Frederico AI Studio. Dá tabelas com cabeçalho colorido,
-zebra, bordas horizontais discretas, formatos de número (R$, %, milhar), linha
-de TOTAL, congelamento do cabeçalho, largura de coluna automática, título de
-aba, múltiplas abas e gráficos — no mesmo padrão visual do docpro.
+Instalado no sandbox do Frederico AI Studio, na mesma identidade
+**"Tinta & Latão"** do docpro/pdfpro: cabeçalho em verde-tinta com filete de
+latão, zebra, bordas horizontais discretas, formatos de número (R$, %, milhar),
+linha de TOTAL, congelamento do cabeçalho, largura de coluna pelo texto
+EXIBIDO, gráficos com as cores do tema e a **aba-painel** (KPIs + gráficos).
 
 Uso mínimo:
     from xlspro import Planilha
-    p = Planilha()
+    p = Planilha(emissor="Meu Escritório")
     ws = p.aba("Vendas")
-    p.titulo(ws, "Relatório de Vendas — 2025")
+    p.titulo(ws, "Vendas por produto — 2025")
     info = p.tabela(ws, ["Produto", "Qtd", "Preço", "Total"], linhas,
                     moeda=["Preço", "Total"], total=True)   # última linha = TOTAL
-    p.grafico_barras(ws, info, categoria="Produto", valor="Total", titulo="Total por produto")
+    painel = p.painel("Painel — Vendas 2025",
+                      kpis=[("R$ 2,41 mi", "Faturamento"), (1284, "Pedidos")],
+                      atualizado="27/07/2026")              # vira a 1ª aba
+    p.grafico_barras(painel, info, categoria="Produto", valor="Total",
+                     titulo="Total por produto", anchor="B10")
     p.salvar("/workspace/outputs/vendas.xlsx")
 """
 import re
 import unicodedata
 
+import warnings
+
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
 from openpyxl.utils import get_column_letter
 from openpyxl.chart import BarChart, LineChart, PieChart, Reference
+from openpyxl.chart.marker import DataPoint
+from openpyxl.chart.shapes import GraphicalProperties
 
+# Identidade "Tinta & Latão", a mesma do docpro/pdfpro. `primaria` continua
+# existindo como ALIAS de `tinta` para não reescrever cada bloco.
 PALETA = {
-    "primaria": "1A3C6E", "apoio": "2E75B6", "corpo": "262626",
-    "cinza": "595959", "suave": "F2F6FA", "borda": "D9E2EC", "branco": "FFFFFF",
+    "tinta": "0C3A30", "apoio": "33705C", "latao": "A9812F",
+    "latao_claro": "C9A75B", "corpo": "26241E", "cinza": "6B6459",
+    "suave": "F5F2EA", "borda": "E2DCCB", "branco": "FFFFFF",
+    "primaria": "0C3A30",
 }
+#: Serifada nos títulos e nos números de destaque; sem serifa no corpo.
+F_SERIF = "Source Serif 4"
+F_SANS = "Source Sans 3"
+#: Cores dos gráficos, na ordem das séries/fatias.
+CORES_GRAF = ["0C3A30", "A9812F", "33705C", "C9A75B"]
 MOEDA_FMT = 'R$ #,##0.00'
 PCT_FMT = '0.0%'
 MILHAR_FMT = '#,##0'
@@ -70,13 +88,15 @@ def _texto_exibido(val, kind):
 
 
 class Planilha:
-    def __init__(self, cor_marca=None):
+    def __init__(self, cor_marca=None, emissor=""):
         self.wb = Workbook()
-        self.wb.remove(self.wb.active)  # começa sem abas; use .aba()
+        self.wb.remove(self.wb.active)  # começa sem abas; use .aba() / .painel()
         self.pal = dict(PALETA)
         if cor_marca:
-            self.pal["primaria"] = str(cor_marca).lstrip("#")
-        self.fonte = "Calibri"
+            self.pal["tinta"] = self.pal["primaria"] = str(cor_marca).lstrip("#")
+        self.emissor = emissor
+        self.fonte = F_SANS
+        self.fonte_titulo = F_SERIF
 
     def aba(self, nome):
         # O Excel recusa nome de aba com : \ / ? * [ ] e limita a 31 caracteres.
@@ -87,7 +107,7 @@ class Planilha:
 
     def titulo(self, ws, texto, colspan=6, linha=1):
         c = ws.cell(row=linha, column=1, value=limpa_texto(texto))
-        c.font = Font(name=self.fonte, size=16, bold=True, color=self.pal["primaria"])
+        c.font = Font(name=self.fonte_titulo, size=15, bold=True, color=self.pal["tinta"])
         c.alignment = Alignment(horizontal="left", vertical="center")
         ws.merge_cells(start_row=linha, start_column=1, end_row=linha, end_column=max(1, colspan))
         ws.row_dimensions[linha].height = 26
@@ -112,13 +132,13 @@ class Planilha:
         ncols = len(cabecalho)
         thin = Side(style="thin", color=self.pal["borda"])
         # cabeçalho
-        head_fill = PatternFill("solid", fgColor=self.pal["primaria"])
+        head_fill = PatternFill("solid", fgColor=self.pal["tinta"])
         for j, nome in enumerate(cabecalho, start=1):
             c = ws.cell(row=r0, column=j, value=limpa_texto(nome))
-            c.font = Font(name=self.fonte, size=11, bold=True, color=self.pal["branco"])
+            c.font = Font(name=self.fonte, size=10.5, bold=True, color=self.pal["branco"])
             c.fill = head_fill
             c.alignment = Alignment(horizontal="center", vertical="center")
-            c.border = Border(bottom=Side(style="medium", color=self.pal["primaria"]))
+            c.border = Border(bottom=Side(style="medium", color=self.pal["latao"]))
         ws.row_dimensions[r0].height = 20
         # dados
         n = len(linhas)
@@ -130,11 +150,11 @@ class Planilha:
             for j, val in enumerate(linha, start=1):
                 val = limpa_texto(val)
                 c = ws.cell(row=r, column=j, value=val)
-                c.font = Font(name=self.fonte, size=11, bold=eh_total,
-                              color=self.pal["corpo"])
+                c.font = Font(name=self.fonte, size=10.5, bold=eh_total,
+                              color=self.pal["tinta"] if eh_total else self.pal["corpo"])
                 if eh_total:
                     c.fill = zebra_fill
-                    c.border = Border(top=Side(style="medium", color=self.pal["primaria"]),
+                    c.border = Border(top=Side(style="medium", color=self.pal["latao"]),
                                       bottom=thin)
                 else:
                     if zebra:
@@ -193,16 +213,109 @@ class Planilha:
                 "grafico_*: coluna '%s' não existe no cabecalho %s" % (nome, cols))
         return cols.index(nome) + 1
 
+    # ---------- aba-painel ----------
+    def painel(self, titulo, kpis=None, nome="Resumo", atualizado=None, largura_cols=12):
+        """Cria a aba-resumo na PRIMEIRA posição: título, carimbo do emissor,
+        cartões de KPI e área livre para gráficos (`grafico_*(painel, info,
+        ..., anchor="B10")`).
+
+        Existe porque quem abre a planilha cai na primeira aba: sem o painel,
+        isso é a base de dados crua. `kpis` = [(valor, rótulo), ...] — o valor
+        pode ser texto já formatado ("R$ 2,41 mi") ou número."""
+        limpo = re.sub(r"[:\\/?*\[\]]", "-", limpa_texto(str(nome))).strip() or "Resumo"
+        ws = self.wb.create_sheet(title=limpo[:31], index=0)
+        ws.sheet_view.showGridLines = False
+        ws.column_dimensions["A"].width = 2.5
+        ncols = max(8, largura_cols)
+        for j in range(2, ncols + 2):
+            ws.column_dimensions[get_column_letter(j)].width = 12
+        c = ws.cell(row=2, column=2, value=limpa_texto(titulo))
+        c.font = Font(name=self.fonte_titulo, size=17, bold=True, color=self.pal["tinta"])
+        c.alignment = Alignment(horizontal="left", vertical="center")
+        ws.merge_cells(start_row=2, start_column=2, end_row=2, end_column=ncols + 1)
+        ws.row_dimensions[2].height = 30
+        carimbo = " · ".join(x for x in (
+            (self.emissor or "").upper(),
+            ("ATUALIZADO EM " + str(atualizado)) if atualizado else "") if x)
+        if carimbo:
+            c3 = ws.cell(row=3, column=2, value=carimbo)
+            c3.font = Font(name=self.fonte, size=8, bold=True, color=self.pal["latao"])
+            ws.merge_cells(start_row=3, start_column=2, end_row=3, end_column=ncols + 1)
+        filete = Side(style="medium", color=self.pal["tinta"])
+        for j in range(2, ncols + 2):
+            ws.cell(row=3, column=j).border = Border(bottom=filete)
+        if kpis:
+            r0, col = 5, 2
+            fill = PatternFill("solid", fgColor=self.pal["suave"])
+            topo = Side(style="thick", color=self.pal["latao"])
+            for valor, rotulo in kpis:
+                c0, c1 = col, col + 2
+                for rr in range(r0, r0 + 3):
+                    for cc in range(c0, c1 + 1):
+                        cel = ws.cell(row=rr, column=cc)
+                        cel.fill = fill
+                        if rr == r0:
+                            cel.border = Border(top=topo)
+                ws.merge_cells(start_row=r0, start_column=c0, end_row=r0 + 1, end_column=c1)
+                cv = ws.cell(row=r0, column=c0, value=limpa_texto(valor))
+                cv.font = Font(name=self.fonte_titulo, size=16, bold=True, color=self.pal["tinta"])
+                cv.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+                ws.merge_cells(start_row=r0 + 2, start_column=c0, end_row=r0 + 2, end_column=c1)
+                cr = ws.cell(row=r0 + 2, column=c0, value=limpa_texto(str(rotulo)).upper())
+                cr.font = Font(name=self.fonte, size=7.5, bold=True, color=self.pal["cinza"])
+                cr.alignment = Alignment(horizontal="left", vertical="top", indent=1)
+                col = c1 + 2  # uma coluna de respiro entre cartões
+            ws.row_dimensions[r0].height = 20
+            ws.row_dimensions[r0 + 1].height = 16
+            ws.row_dimensions[r0 + 2].height = 16
+        return ws
+
+    # ---------- gráficos ----------
     def grafico_barras(self, ws, info, categoria, valor, titulo="", anchor=None):
-        self._grafico(BarChart(), ws, info, categoria, valor, titulo, anchor)
+        return self._grafico(BarChart(), ws, info, categoria, valor, titulo, anchor)
 
     def grafico_linhas(self, ws, info, categoria, valor, titulo="", anchor=None):
-        self._grafico(LineChart(), ws, info, categoria, valor, titulo, anchor)
+        return self._grafico(LineChart(), ws, info, categoria, valor, titulo, anchor)
 
     def grafico_pizza(self, ws, info, categoria, valor, titulo="", anchor=None):
-        self._grafico(PieChart(), ws, info, categoria, valor, titulo, anchor)
+        return self._grafico(PieChart(), ws, info, categoria, valor, titulo, anchor)
+
+    def _tema(self, chart, npontos):
+        """Pinta o gráfico com as cores da identidade.
+
+        `DataPoint(graphicalProperties=...)` levanta TypeError — o argumento do
+        construtor é `spPr`; `graphicalProperties` só existe como alias de
+        LEITURA. Com o erro engolido em silêncio, a pizza saía com a paleta
+        padrão do Excel e ninguém percebia."""
+        try:
+            if isinstance(chart, PieChart):
+                pontos = []
+                for i in range(max(0, npontos)):
+                    gp = GraphicalProperties(solidFill=CORES_GRAF[i % len(CORES_GRAF)])
+                    gp.line.solidFill = "FFFFFF"
+                    pontos.append(DataPoint(idx=i, spPr=gp))
+                if chart.series:
+                    chart.series[0].data_points = pontos
+            elif isinstance(chart, LineChart):
+                for i, s in enumerate(chart.series):
+                    s.graphicalProperties = GraphicalProperties()
+                    s.graphicalProperties.line.solidFill = CORES_GRAF[i % len(CORES_GRAF)]
+                    s.graphicalProperties.line.width = 28575  # ~2,25 pt
+                    s.smooth = False
+            else:
+                for i, s in enumerate(chart.series):
+                    s.graphicalProperties = GraphicalProperties(
+                        solidFill=CORES_GRAF[i % len(CORES_GRAF)])
+                if hasattr(chart, "gapWidth"):
+                    chart.gapWidth = 60
+        except Exception as e:
+            # O estilo nunca derruba a geração do arquivo — mas o silêncio
+            # total já escondeu um gráfico saindo com a cor padrão. Avisa.
+            warnings.warn("xlspro: tema do gráfico não aplicado (%r)" % (e,))
 
     def _grafico(self, chart, ws, info, categoria, valor, titulo, anchor):
+        """`ws` é a aba de DESTINO (pode ser o painel); os dados vêm sempre de
+        `info["ws"]`, a aba onde a tabela foi escrita."""
         cat_c = self._idx(info, categoria)
         val_c = self._idx(info, valor)
         # Exclui a linha de TOTAL do gráfico: senão ela vira uma fatia/barra
@@ -218,6 +331,7 @@ class Planilha:
         chart.title = titulo or valor
         chart.height = 8
         chart.width = 16
+        self._tema(chart, last - info["r0"])
         if not anchor:
             anchor = get_column_letter(info["c1"] + 2) + str(info["r0"])
         ws.add_chart(chart, anchor)

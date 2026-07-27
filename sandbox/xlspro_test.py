@@ -3,11 +3,17 @@ import tempfile
 import unittest
 import zipfile
 
-from openpyxl import load_workbook
+try:
+    from openpyxl import load_workbook
 
-from xlspro import MOEDA_FMT, Planilha
+    from xlspro import CORES_GRAF, MOEDA_FMT, Planilha
+
+    TEM_OPENPYXL = True
+except Exception:  # openpyxl ausente no ambiente — o CI e o sandbox o instalam
+    TEM_OPENPYXL = False
 
 
+@unittest.skipUnless(TEM_OPENPYXL, "openpyxl não instalado")
 class XlsProArtifactTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="frederico-xlsx-")
@@ -142,6 +148,75 @@ class XlsProArtifactTests(unittest.TestCase):
         self.assertNotIn("/", ws.title)
         self.assertNotIn(":", ws.title)
         self.assertLessEqual(len(ws.title), 31)
+
+    # ---------- aba-painel e identidade "Tinta & Latão" ----------
+    def test_painel_vira_a_primeira_aba_com_os_kpis_e_o_carimbo(self):
+        """Quem abre a planilha cai na PRIMEIRA aba: sem o painel, isso é a
+        base de dados crua."""
+        p = Planilha(emissor="Frederico Assessoria Contábil")
+        ws = p.aba("Vendas")
+        p.tabela(ws, ["Produto", "Total"], [["Malha", 5400.0], ["Oxford", 6000.0]],
+                 moeda=["Total"])
+        p.painel("Painel — Vendas 2025",
+                 kpis=[("R$ 11,4 mil", "Faturamento"), (2, "Produtos")],
+                 atualizado="27/07/2026")
+        p.salvar(self.path)
+        wb = load_workbook(self.path)
+        self.assertEqual(wb.sheetnames[0], "Resumo")
+        textos = [c.value for row in wb["Resumo"].iter_rows()
+                  for c in row if c.value is not None]
+        self.assertIn("Painel — Vendas 2025", textos)
+        self.assertIn("R$ 11,4 mil", textos)
+        self.assertIn("FATURAMENTO", textos)
+        carimbo = [t for t in textos if isinstance(t, str) and "ATUALIZADO EM" in t]
+        self.assertEqual(len(carimbo), 1)
+        self.assertIn("FREDERICO ASSESSORIA CONTÁBIL", carimbo[0])
+
+    def test_grafico_no_painel_le_os_dados_da_aba_de_origem(self):
+        """O gráfico mora no painel, mas as células referenciadas têm de ser as
+        da aba de dados — senão sai vazio."""
+        p = Planilha()
+        ws = p.aba("Vendas")
+        info = p.tabela(ws, ["Produto", "Total"],
+                        [["Malha", 5400.0], ["Oxford", 6000.0], ["TOTAL", 11400.0]],
+                        moeda=["Total"], total=True)
+        painel = p.painel("Painel", kpis=[("R$ 11,4 mil", "Faturamento")])
+        p.grafico_barras(painel, info, "Produto", "Total", "Total por produto",
+                         anchor="B10")
+        p.salvar(self.path)
+        wb = load_workbook(self.path)
+        self.assertEqual(len(wb["Resumo"]._charts), 1)
+        self.assertEqual(len(wb["Vendas"]._charts), 0)
+        ref = str(wb["Resumo"]._charts[0].series[0].val.numRef.f)
+        self.assertIn("Vendas", ref)
+        # a linha de TOTAL fica FORA do gráfico (senão achata as outras barras)
+        self.assertTrue(ref.endswith("$3"), ref)
+
+    def test_graficos_saem_com_as_cores_do_tema(self):
+        """Regressão silenciosa: `DataPoint(graphicalProperties=...)` levanta
+        TypeError (o argumento é `spPr`) e, com o erro engolido, a pizza saía
+        com a paleta padrão do Excel."""
+        p = Planilha()
+        ws = p.aba("Vendas")
+        info = p.tabela(ws, ["Produto", "Total"],
+                        [["Malha", 5400.0], ["Oxford", 6000.0], ["Linho", 4700.0]],
+                        moeda=["Total"])
+        p.grafico_pizza(ws, info, "Produto", "Total", "Participação", anchor="E2")
+        p.grafico_barras(ws, info, "Produto", "Total", "Total", anchor="E20")
+        p.salvar(self.path)
+        wb = load_workbook(self.path)
+        pizza, barras = wb["Vendas"]._charts[0], wb["Vendas"]._charts[1]
+
+        def cor(spPr):  # openpyxl devolve str ou ColorChoice conforme o caminho
+            fill = spPr.solidFill
+            if not isinstance(fill, str):
+                fill = fill.srgbClr
+            return fill if isinstance(fill, str) else fill.value
+
+        pontos = pizza.series[0].data_points
+        self.assertEqual(len(pontos), 3)
+        self.assertEqual([cor(d.graphicalProperties) for d in pontos], CORES_GRAF[:3])
+        self.assertEqual(cor(barras.series[0].graphicalProperties), CORES_GRAF[0])
 
 
 if __name__ == "__main__":

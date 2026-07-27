@@ -30,7 +30,9 @@ não empurra o texto nem invade a margem.
 
 ## Tipografia
 
-Uma escala fechada (`ESCALA`) e uma família só. A fonte é EMBUTIDA (TrueType),
+Uma escala fechada (`ESCALA`) e a identidade **"Tinta & Latão"**: Source Serif 4
+nos títulos, na capa e nos números de destaque; Source Sans 3 no corpo, nas
+tabelas e no rodapé. A fonte é EMBUTIDA (TrueType),
 o que resolve de uma vez: cobertura de acentos e símbolos, texto copiável e
 pesquisável (o reportlab emite `/ToUnicode` para TTF) e renderização igual em
 qualquer leitor. Se nenhuma TTF existir na máquina, cai para as Type1 base-14 —
@@ -109,23 +111,36 @@ ESCALA = {
 }
 ENTRELINHA = 1.42
 
+# Identidade "Tinta & Latão": verde-tinta profundo com acento em latão. A chave
+# `primaria` continua existindo como ALIAS de `tinta` — o motor inteiro a usa, e
+# manter as duas evita reescrever cada bloco só para trocar de nome.
 PALETA = {
-    "primaria": colors.HexColor("#1A3C6E"), "apoio": colors.HexColor("#2E75B6"),
-    "corpo": colors.HexColor("#262626"), "cinza": colors.HexColor("#595959"),
-    "suave": colors.HexColor("#F2F6FA"), "borda": colors.HexColor("#D9E2EC"),
-    "branco": colors.white,
-    "alerta_bg": colors.HexColor("#FEF6E7"), "alerta_bd": colors.HexColor("#D97706"),
-    "critico_bg": colors.HexColor("#FDECEC"), "critico_bd": colors.HexColor("#C0392B"),
-    "sucesso_bg": colors.HexColor("#EAF7EF"), "sucesso_bd": colors.HexColor("#1E7A46"),
+    "tinta": colors.HexColor("#0C3A30"), "apoio": colors.HexColor("#33705C"),
+    "latao": colors.HexColor("#A9812F"), "latao_claro": colors.HexColor("#C9A75B"),
+    "corpo": colors.HexColor("#26241E"), "cinza": colors.HexColor("#6B6459"),
+    "suave": colors.HexColor("#F5F2EA"), "borda": colors.HexColor("#E2DCCB"),
+    "borda_leve": colors.HexColor("#F0EBDD"), "branco": colors.white,
+    "creme": colors.HexColor("#C9C2AE"),
+    "alerta_bg": colors.HexColor("#FBF3DE"), "alerta_bd": colors.HexColor("#A97614"),
+    "critico_bg": colors.HexColor("#F9ECE7"), "critico_bd": colors.HexColor("#9C3D24"),
+    "sucesso_bg": colors.HexColor("#EAF3EC"), "sucesso_bd": colors.HexColor("#1E7A46"),
+    "primaria": colors.HexColor("#0C3A30"),
 }
+
+#: Cores dos gráficos, na ordem das séries/fatias.
+CORES_GRAF = [colors.HexColor("#0C3A30"), colors.HexColor("#A9812F"),
+              colors.HexColor("#33705C"), colors.HexColor("#C9A75B")]
 
 #: Paleta do documento SÓBRIO/registrável: zero cor (só preto e cinzas), para
 #: ata, contrato e alteração contratual — o mesmo critério do `docpro.Sobrio`.
 PALETA_SOBRIA = {
-    "primaria": colors.black, "apoio": colors.HexColor("#333333"),
+    "tinta": colors.black, "primaria": colors.black,
+    "apoio": colors.HexColor("#333333"),
+    "latao": colors.HexColor("#333333"), "latao_claro": colors.HexColor("#666666"),
     "corpo": colors.black, "cinza": colors.HexColor("#444444"),
     "suave": colors.HexColor("#F4F4F4"), "borda": colors.HexColor("#BBBBBB"),
-    "branco": colors.white,
+    "borda_leve": colors.HexColor("#DDDDDD"), "branco": colors.white,
+    "creme": colors.HexColor("#DDDDDD"),
     "alerta_bg": colors.HexColor("#F4F4F4"), "alerta_bd": colors.HexColor("#333333"),
     "critico_bg": colors.HexColor("#F4F4F4"), "critico_bd": colors.black,
     "sucesso_bg": colors.HexColor("#F4F4F4"), "sucesso_bd": colors.HexColor("#333333"),
@@ -136,11 +151,20 @@ PALETA_SOBRIA = {
 # 2. FONTES — TrueType embutida, com degradação previsível
 # ---------------------------------------------------------------------------
 
-# Ordem de preferência. Carlito tem as métricas do Calibri (mesma cara do kit
-# Word), DejaVu tem a cobertura de glifos mais ampla e Liberation existe em
-# praticamente toda imagem Debian. A base-14 do PDF é o último recurso: ela
-# não embute nada e limita o texto ao WinAnsi.
+# Ordem de preferência. Source Sans 3 / Source Serif 4 são a VOZ da identidade
+# "Tinta & Latão" e o Dockerfile do sandbox as instala em
+# /usr/share/fonts/truetype/tinta-latao. Como o download pode falhar (o bloco é
+# tolerante a rede, de propósito), as demais continuam abaixo: Carlito tem as
+# métricas do Calibri, DejaVu tem a cobertura de glifos mais ampla e Liberation
+# existe em praticamente toda imagem Debian. A base-14 do PDF é o último
+# recurso: ela não embute nada e limita o texto ao WinAnsi.
+#
+# O negrito da família é o SEMIBOLD, não o Bold: no corpo de um relatório o Bold
+# do Source pesa demais e "grita" ao lado do verde-tinta.
+_TL = "/usr/share/fonts/truetype/tinta-latao/"
 _FAMILIAS = (
+    ("SourceSans3", _TL + "SourceSans3-{}.ttf",
+     {"": "Regular", "-Bold": "Semibold", "-Italico": "It", "-BoldItalico": "SemiboldIt"}),
     ("Carlito", "/usr/share/fonts/truetype/crosextra/Carlito-{}.ttf",
      {"": "Regular", "-Bold": "Bold", "-Italico": "Italic", "-BoldItalico": "BoldItalic"}),
     ("DejaVuSans", "/usr/share/fonts/truetype/dejavu/DejaVuSans{}.ttf",
@@ -149,6 +173,8 @@ _FAMILIAS = (
      {"": "Regular", "-Bold": "Bold", "-Italico": "Italic", "-BoldItalico": "BoldItalic"}),
 )
 _SERIFADAS = (
+    ("SourceSerif4", _TL + "SourceSerif4-{}.ttf",
+     {"": "Regular", "-Bold": "Semibold", "-Italico": "It", "-BoldItalico": "SemiboldIt"}),
     ("LiberationSerif", "/usr/share/fonts/truetype/liberation/LiberationSerif-{}.ttf",
      {"": "Regular", "-Bold": "Bold", "-Italico": "Italic", "-BoldItalico": "BoldItalic"}),
     ("DejaVuSerif", "/usr/share/fonts/truetype/dejavu/DejaVuSerif{}.ttf",
@@ -361,6 +387,8 @@ class _CanvasNumerado(_canvas.Canvas):
     titulo_doc = ""
     pal = PALETA
     fonte = FONTE
+    fonte_bold = FONTE_BOLD
+    confidencial = False
 
     def __init__(self, *a, **k):
         super().__init__(*a, **k)
@@ -384,13 +412,23 @@ class _CanvasNumerado(_canvas.Canvas):
         self.setStrokeColor(self.pal["borda"])
         self.setLineWidth(0.5)
         self.line(X_CAIXA, Y_REGUA_RODAPE, direita, Y_REGUA_RODAPE)
+        centro = X_CAIXA + LARGURA_CAIXA / 2.0
+        # A marca de sigilo vai no CENTRO e é desenhada antes de cortar o
+        # emissor: é ela que define quanto espaço sobra à esquerda.
+        limite = LARGURA_TEXTO - 3.2 * cm
+        if self.confidencial:
+            self.setFont(self.fonte_bold, ESCALA["rodape"] - 0.5)
+            self.setFillColor(self.pal["latao"])
+            marca = "CONFIDENCIAL"
+            meia = pdfmetrics.stringWidth(marca, self.fonte_bold, ESCALA["rodape"] - 0.5) / 2.0
+            self.drawCentredString(centro, Y_RODAPE, marca)
+            limite = min(limite, centro - meia - 0.6 * cm - X_TEXTO)
         self.setFont(self.fonte, ESCALA["rodape"])
         self.setFillColor(self.pal["cinza"])
         esquerda = self.emissor or self.titulo_doc
-        if esquerda:
+        if esquerda and limite > 0:
             # Corta pelo espaço REAL disponível (nunca por número de letras):
-            # o rodapé não pode encostar na numeração à direita.
-            limite = LARGURA_TEXTO - 3.2 * cm
+            # o rodapé não pode encostar na marca do centro nem na numeração.
             texto = _plano(esquerda)
             while texto and pdfmetrics.stringWidth(texto, self.fonte, ESCALA["rodape"]) > limite:
                 texto = texto[:-1]
@@ -423,7 +461,7 @@ class RelatorioPDF:
 
     def __init__(self, caminho, titulo="Documento", cliente="", emissor="",
                  subtitulo="", tipo="RELATÓRIO", data_str=None, cor_marca=None,
-                 estilo="relatorio", assunto=""):
+                 estilo="relatorio", assunto="", confidencial=True):
         self.caminho = caminho
         self.titulo_doc = titulo
         self.cliente = cliente
@@ -434,16 +472,26 @@ class RelatorioPDF:
         self.data_str = data_str or date.today().strftime("%d/%m/%Y")
         self.estilo = "sobrio" if str(estilo).lower().startswith("sobri") else "relatorio"
         self.sobrio = self.estilo == "sobrio"
+        # Documento sóbrio/registrável não carrega marca de sigilo: ata e
+        # contrato vão a registro público.
+        self.confidencial = bool(confidencial) and not self.sobrio
         self.pal = dict(PALETA_SOBRIA if self.sobrio else PALETA)
         if cor_marca and not self.sobrio:
-            self.pal["primaria"] = colors.HexColor("#" + str(cor_marca).lstrip("#"))
+            cor = colors.HexColor("#" + str(cor_marca).lstrip("#"))
+            self.pal["tinta"] = self.pal["primaria"] = cor
         if self.sobrio:
             self.fonte, self.fonte_bold = FONTE_SERIF, FONTE_SERIF_BOLD
+            self.display, self.display_bold = FONTE_SERIF, FONTE_SERIF_BOLD
         else:
+            # A voz da identidade: serifada nos títulos e nos números de
+            # destaque, sem serifa no corpo e nas tabelas.
             self.fonte, self.fonte_bold = FONTE, FONTE_BOLD
+            self.display, self.display_bold = FONTE_SERIF, FONTE_SERIF_BOLD
         self.story = []
         self._toc = None
         self._niveis_vistos = set()
+        self._secao = 0    # numeração automática de "SEÇÃO NN"
+        self._fig = 0
         self._construir_estilos()
 
     # ---------- estilos ----------
@@ -489,12 +537,21 @@ class RelatorioPDF:
         chave = {1: "h1", 2: "h2", 3: "h3"}.get(nivel, "h3")
         tam = ESCALA[chave]
         return ParagraphStyle(
-            "titulo%d" % nivel, fontName=self.fonte_bold, fontSize=tam,
-            leading=round(tam * 1.25, 1), textColor=self.pal["primaria"],
+            "titulo%d" % nivel, fontName=self.display_bold, fontSize=tam,
+            leading=round(tam * 1.25, 1), textColor=self.pal["tinta"],
             spaceBefore=0, spaceAfter=0, alignment=TA_LEFT,
             # keepWithNext impede título órfão no pé da página — o defeito de
             # hierarquia mais comum em documento gerado por modelo.
             keepWithNext=1)
+
+    def _kicker(self):
+        """Estilo do rótulo curto em latão acima do título — a assinatura
+        visual da identidade. Vive na mesma caixa do título, então respeita a
+        grade."""
+        return ParagraphStyle("kicker", fontName=self.fonte_bold,
+                              fontSize=ESCALA["pequeno"], leading=11,
+                              textColor=self.pal["latao"], spaceAfter=2,
+                              alignment=TA_LEFT)
 
     # ---------- primitivas de grade ----------
     def _caixa(self, conteudo, cor_barra=None, fundo=None, pad_v=3, pad_extra_dir=0):
@@ -556,28 +613,28 @@ class RelatorioPDF:
                                     textColor=p["cinza"], leftIndent=RECUO)
         st_tipo = ParagraphStyle("cp_tipo", fontName=self.fonte_bold,
                                  fontSize=ESCALA["capa_tipo"], leading=14,
-                                 textColor=p["apoio"], leftIndent=RECUO)
-        st_titulo = ParagraphStyle("cp_tit", fontName=self.fonte_bold,
+                                 textColor=p["latao"], leftIndent=RECUO)
+        st_titulo = ParagraphStyle("cp_tit", fontName=self.display_bold,
                                    fontSize=ESCALA["capa_titulo"],
                                    leading=round(ESCALA["capa_titulo"] * 1.18, 1),
-                                   textColor=p["primaria"], leftIndent=RECUO,
+                                   textColor=p["tinta"], leftIndent=RECUO,
                                    rightIndent=RECUO, spaceBefore=4)
-        st_sub = ParagraphStyle("cp_sub", fontName=self.fonte, fontSize=ESCALA["capa_sub"],
+        st_sub = ParagraphStyle("cp_sub", fontName=self.display, fontSize=ESCALA["capa_sub"],
                                 leading=round(ESCALA["capa_sub"] * 1.35, 1),
                                 textColor=p["cinza"], leftIndent=RECUO, rightIndent=RECUO,
                                 spaceBefore=6)
         if self.emissor:
             self.story.append(Paragraph(texto_seguro(self.emissor, self.fonte), st_emissor))
         self.story.append(Spacer(1, 5.4 * cm))
-        self.story.append(self._regua(p["primaria"], 3))
+        self.story.append(self._regua(p["tinta"], 3))
         self.story.append(Spacer(1, 0.35 * cm))
         if self.tipo:
             self.story.append(Paragraph(_plano(self.tipo).upper(), st_tipo))
-        self.story.append(Paragraph(texto_seguro(self.titulo_doc, self.fonte), st_titulo))
+        self.story.append(Paragraph(texto_seguro(self.titulo_doc, self.display), st_titulo))
         if self.subtitulo:
-            self.story.append(Paragraph(texto_seguro(self.subtitulo, self.fonte), st_sub))
+            self.story.append(Paragraph(texto_seguro(self.subtitulo, self.display), st_sub))
         self.story.append(Spacer(1, 0.35 * cm))
-        self.story.append(self._regua(p["apoio"], 1.2))
+        self.story.append(self._regua(p["latao"], 1.2))
         self.story.append(Spacer(1, 4.6 * cm))
         for rotulo, valor in (("Cliente", self.cliente), ("Data", self.data_str),
                               ("Emitido por", self.emissor)):
@@ -585,6 +642,12 @@ class RelatorioPDF:
                 self.story.append(Paragraph(
                     "<b>%s:</b> %s" % (_plano(rotulo), texto_seguro(valor, self.fonte)),
                     self.s_pequeno))
+        if self.confidencial:
+            st_conf = ParagraphStyle("cp_conf", fontName=self.fonte_bold,
+                                     fontSize=ESCALA["pequeno"], leading=11,
+                                     textColor=p["latao"], leftIndent=RECUO,
+                                     spaceBefore=10)
+            self.story.append(Paragraph("CONFIDENCIAL", st_conf))
         self.story.append(PageBreak())
         return self
 
@@ -592,11 +655,12 @@ class RelatorioPDF:
         """Sumário automático a partir dos `titulo()` seguintes. Os números de
         página se acertam sozinhos porque `salvar()` faz multiBuild quando há
         sumário."""
-        self.titulo(titulo, nivel=1, indexar=False)
+        # Sem kicker: "SUMÁRIO" acima de "Sumário" é a mesma palavra duas vezes.
+        self.titulo(titulo, nivel=1, indexar=False, kicker="")
         toc = TableOfContents()
         toc.levelStyles = [
-            ParagraphStyle("toc1", fontName=self.fonte_bold, fontSize=ESCALA["corpo"],
-                           leading=18, textColor=self.pal["primaria"],
+            ParagraphStyle("toc1", fontName=self.display_bold, fontSize=ESCALA["corpo"],
+                           leading=18, textColor=self.pal["tinta"],
                            leftIndent=RECUO, rightIndent=RECUO, firstLineIndent=-0),
             ParagraphStyle("toc2", fontName=self.fonte, fontSize=ESCALA["apoio"],
                            leading=15, textColor=self.pal["corpo"],
@@ -614,11 +678,21 @@ class RelatorioPDF:
         self.story.append(PageBreak())
         return self
 
-    def titulo(self, texto, nivel=1, indexar=True):
+    def titulo(self, texto, nivel=1, indexar=True, kicker=None):
+        """Título de seção. No nível 1 o kit numera sozinho ("SEÇÃO 01") — o
+        texto recebe só o nome da seção. `kicker=""` desliga a numeração;
+        `kicker="ANEXO A"` a substitui."""
         nivel = 1 if nivel not in (1, 2, 3) else nivel
-        par = Paragraph(texto_seguro(texto, self.fonte), self._h(nivel))
-        cor = None if self.sobrio and nivel > 1 else self.pal["primaria"]
-        bloco = self._caixa(par, cor_barra=cor if nivel == 1 else None,
+        dentro = []
+        if nivel == 1 and kicker != "":
+            if kicker is None:
+                self._secao += 1
+                kicker = "SEÇÃO %02d" % self._secao
+            dentro.append(Paragraph(_plano(kicker).upper(), self._kicker()))
+        dentro.append(Paragraph(texto_seguro(texto, self.display), self._h(nivel)))
+        cor = None if self.sobrio and nivel > 1 else self.pal["tinta"]
+        bloco = self._caixa(dentro if len(dentro) > 1 else dentro[0],
+                            cor_barra=cor if nivel == 1 else None,
                             pad_v=2 if nivel == 1 else 1)
         if indexar:
             bloco._toc = (nivel - 1, _plano(texto))
@@ -681,7 +755,7 @@ class RelatorioPDF:
 
         t = Table(dados, colWidths=larguras, repeatRows=1, hAlign="LEFT")
         n = len(linhas)
-        cor_cab = p["primaria"]
+        cor_cab = p["tinta"]
         estilo = [
             ("BACKGROUND", (0, 0), (-1, 0), cor_cab),
             ("LINEBELOW", (0, 0), (-1, 0), 1.0, cor_cab),
@@ -701,7 +775,9 @@ class RelatorioPDF:
         if total and n:
             estilo += [
                 ("BACKGROUND", (0, n), (-1, n), p["suave"]),
-                ("LINEABOVE", (0, n), (-1, n), 1.0, cor_cab),
+                # Filete de latão: é o acento da identidade e o que separa o
+                # TOTAL do corpo da tabela sem repetir a cor do cabeçalho.
+                ("LINEABOVE", (0, n), (-1, n), 1.2, p["latao"]),
                 ("FONTNAME", (0, n), (-1, n), self.fonte_bold),
             ]
         t.setStyle(TableStyle(estilo))
@@ -761,7 +837,7 @@ class RelatorioPDF:
         p = self.pal
         fundos = {"info": p["suave"], "alerta": p["alerta_bg"],
                   "critico": p["critico_bg"], "sucesso": p["sucesso_bg"]}
-        bordas = {"info": p["primaria"], "alerta": p["alerta_bd"],
+        bordas = {"info": p["tinta"], "alerta": p["alerta_bd"],
                   "critico": p["critico_bd"], "sucesso": p["sucesso_bd"]}
         tipo = tipo if tipo in fundos else "info"
         st_rotulo = ParagraphStyle("cal_rot", fontName=self.fonte_bold,
@@ -788,9 +864,9 @@ class RelatorioPDF:
         if not itens:
             return self
         p = self.pal
-        st_valor = ParagraphStyle("kpi_v", fontName=self.fonte_bold, fontSize=ESCALA["kpi"],
+        st_valor = ParagraphStyle("kpi_v", fontName=self.display_bold, fontSize=ESCALA["kpi"],
                                   leading=round(ESCALA["kpi"] * 1.15, 1),
-                                  textColor=p["primaria"], alignment=TA_CENTER)
+                                  textColor=p["tinta"], alignment=TA_CENTER)
         st_rot = ParagraphStyle("kpi_r", fontName=self.fonte, fontSize=ESCALA["kpi_rotulo"],
                                 leading=11, textColor=p["cinza"], alignment=TA_CENTER)
         n = len(itens)
@@ -802,7 +878,7 @@ class RelatorioPDF:
         t = Table([valores, rotulos], colWidths=[largura] * n, hAlign="LEFT")
         t.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, -1), p["suave"]),
-            ("LINEABOVE", (0, 0), (-1, 0), 2, p["primaria"]),
+            ("LINEABOVE", (0, 0), (-1, 0), 2, p["latao"]),
             ("LINEAFTER", (0, 0), (-2, -1), 6, p["branco"]),
             ("TOPPADDING", (0, 0), (-1, 0), 10), ("BOTTOMPADDING", (0, 0), (-1, 0), 2),
             ("TOPPADDING", (0, 1), (-1, 1), 0), ("BOTTOMPADDING", (0, 1), (-1, 1), 10),
@@ -835,11 +911,14 @@ class RelatorioPDF:
         return self
 
     def citacao(self, texto, autor=""):
-        dentro = [Paragraph("<i>%s</i>" % texto_seguro(texto, self.fonte), self.s_bloco)]
+        st = ParagraphStyle("cit", parent=self.s_bloco, fontName=self.display,
+                            fontSize=ESCALA["h3"] + 1,
+                            leading=round((ESCALA["h3"] + 1) * 1.35, 1),
+                            textColor=self.pal["tinta"], alignment=TA_LEFT)
+        dentro = [Paragraph("<i>%s</i>" % texto_seguro(texto, self.display), st)]
         if autor:
-            dentro.append(Paragraph(texto_seguro("— " + str(autor), self.fonte),
-                                    self.s_bloco_pequeno))
-        self.story.append(self._caixa(dentro, cor_barra=self.pal["borda"], pad_v=6))
+            dentro.append(Paragraph(_plano(autor).upper(), self.s_bloco_pequeno))
+        self.story.append(self._caixa(dentro, cor_barra=self.pal["latao"], pad_v=6))
         self.story.append(Spacer(1, 0.3 * cm))
         return self
 
@@ -921,6 +1000,223 @@ class RelatorioPDF:
             self.story.append(Spacer(1, 1.0 * cm))
         return self
 
+    def etapas(self, itens, titulo=None):
+        """Linha do tempo vertical — `[(etapa, quando/descrição), ...]`.
+
+        Uma tabela de duas colunas: o número em latão na coluna estreita e o
+        texto na larga. A coluna do número usa o RECUO da grade, então o "01"
+        pousa em X_TEXTO como qualquer outro texto da página."""
+        itens = list(itens)
+        if not itens:
+            return self
+        if titulo:
+            self.titulo(titulo, nivel=2)
+        p = self.pal
+        st_num = ParagraphStyle("et_num", fontName=self.display_bold,
+                                fontSize=ESCALA["h3"] + 2, leading=16,
+                                textColor=p["latao"], alignment=TA_LEFT)
+        st_tit = ParagraphStyle("et_tit", fontName=self.fonte_bold,
+                                fontSize=ESCALA["corpo"], leading=14,
+                                textColor=p["corpo"], alignment=TA_LEFT)
+        st_desc = ParagraphStyle("et_desc", fontName=self.fonte,
+                                 fontSize=ESCALA["apoio"], leading=13,
+                                 textColor=p["cinza"], alignment=TA_LEFT)
+        col_num = 1.3 * cm
+        dados, estilo = [], [
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (0, -1), RECUO),
+            ("LEFTPADDING", (1, 0), (1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), RECUO),
+            ("TOPPADDING", (0, 0), (-1, -1), 8),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ]
+        for i, item in enumerate(itens):
+            etapa, quando = (list(item) + [""])[:2]
+            bloco = [Paragraph(texto_seguro(etapa, self.fonte), st_tit)]
+            if quando:
+                bloco.append(Paragraph(texto_seguro(quando, self.fonte), st_desc))
+            dados.append([Paragraph("%02d" % (i + 1), st_num), bloco])
+            if i < len(itens) - 1:
+                estilo.append(("LINEBELOW", (0, i), (-1, i), 0.5, p["borda_leve"]))
+        t = Table(dados, colWidths=[col_num, LARGURA_CAIXA - col_num], hAlign="LEFT")
+        t.setStyle(TableStyle(estilo))
+        self.story.append(t)
+        self.story.append(Spacer(1, 0.35 * cm))
+        return self
+
+    def fecho(self, local_data):
+        """Local e data antes das assinaturas."""
+        self.story.append(Spacer(1, 0.6 * cm))
+        self.story.append(Paragraph(texto_seguro(local_data, self.fonte), self.s_apoio))
+        return self
+
+    def contracapa(self, contatos=None, nota=None):
+        """Página final de fecho, em tinta, com os contatos do emissor.
+
+        Ocupa a área ÚTIL, não a folha inteira: sangrar até a borda do papel é
+        justamente o que a grade deste motor recusa — numa impressora com área
+        não imprimível diferente a mancha corta torta. Chame só quando houver
+        contato REAL; sem contato ela não tem função."""
+        p = self.pal
+        st_nome = ParagraphStyle("cc_nome", fontName=self.display_bold, fontSize=20,
+                                 leading=26, textColor=p["suave"], alignment=TA_CENTER)
+        st_rot = ParagraphStyle("cc_rot", fontName=self.fonte_bold,
+                                fontSize=ESCALA["pequeno"], leading=12,
+                                textColor=p["latao_claro"], alignment=TA_CENTER)
+        st_con = ParagraphStyle("cc_con", fontName=self.fonte, fontSize=ESCALA["corpo"],
+                                leading=16, textColor=p["creme"], alignment=TA_CENTER)
+        st_nota = ParagraphStyle("cc_nota", fontName=self.fonte,
+                                 fontSize=ESCALA["pequeno"], leading=12,
+                                 textColor=p["creme"], alignment=TA_CENTER)
+        dentro = [Spacer(1, 6.4 * cm),
+                  Paragraph(texto_seguro(self.emissor or self.titulo_doc, self.display), st_nome),
+                  Spacer(1, 0.5 * cm)]
+        if contatos:
+            dentro.append(Paragraph("CONTATO", st_rot))
+            dentro.append(Spacer(1, 0.25 * cm))
+            for linha in contatos:
+                dentro.append(Paragraph(texto_seguro(linha, self.fonte), st_con))
+        if nota is None and self.confidencial:
+            nota = ("Este documento é confidencial e destina-se exclusivamente "
+                    "ao cliente identificado na capa.")
+        if nota:
+            dentro.append(Spacer(1, 2.2 * cm))
+            dentro.append(Paragraph(texto_seguro(nota, self.fonte), st_nota))
+        # Fecha perto do rodapé sem alcançá-lo: a mancha tem de caber na página
+        # (um centímetro a mais cria uma 7ª página em branco de tinta).
+        dentro.append(Spacer(1, 8.6 * cm))
+        self.story.append(PageBreak())
+        self.story.append(self._regua(p["latao"], 3))
+        self.story.append(self._caixa(dentro, fundo=p["tinta"], pad_v=0))
+        return self
+
+    # ---------- gráficos vetoriais nativos ----------
+    def _drawing(self, altura_cm):
+        from reportlab.graphics.shapes import Drawing
+        # A largura é a da CAIXA menos o recuo dos dois lados: o desenho entra
+        # dentro de _caixa(), e é a caixa que o põe na grade. Sem descontar, o
+        # eixo Y do gráfico começaria à esquerda de X_TEXTO e a auditoria
+        # acusaria texto fora da área útil.
+        return Drawing(LARGURA_TEXTO, altura_cm * cm)
+
+    def _fecha_grafico(self, d, titulo):
+        bloco = [d]
+        if titulo:
+            self._fig += 1
+            st = ParagraphStyle("gr_rot", fontName=self.display_bold,
+                                fontSize=ESCALA["pequeno"], leading=12,
+                                textColor=self.pal["tinta"], spaceAfter=4)
+            bloco.insert(0, Paragraph("Gráfico %d — %s" % (self._fig, _plano(titulo)), st))
+        self.story.append(KeepTogether(self._caixa(bloco, pad_v=4)))
+        self.story.append(Spacer(1, 0.35 * cm))
+        return d
+
+    def _eixos(self, ch, categorias):
+        p = self.pal
+        ch.categoryAxis.categoryNames = [_plano(c) for c in categorias]
+        ch.categoryAxis.labels.fontName = self.fonte
+        ch.categoryAxis.labels.fontSize = ESCALA["pequeno"]
+        ch.categoryAxis.labels.fillColor = p["cinza"]
+        ch.categoryAxis.strokeColor = p["borda"]
+        ch.valueAxis.labels.fontName = self.fonte
+        ch.valueAxis.labels.fontSize = ESCALA["pequeno"]
+        ch.valueAxis.labels.fillColor = p["cinza"]
+        ch.valueAxis.strokeColor = colors.transparent
+        ch.valueAxis.visibleGrid = True
+        ch.valueAxis.gridStrokeColor = p["borda"]
+        ch.valueAxis.gridStrokeWidth = 0.5
+
+    def _legenda(self, d, nomes, x, y, colunas=1):
+        from reportlab.graphics.charts.legends import Legend
+        nomes = [n for n in nomes if n]
+        if not nomes:
+            return
+        lg = Legend()
+        lg.x, lg.y = x, y
+        lg.fontName = self.fonte
+        lg.fontSize = ESCALA["pequeno"]
+        lg.fillColor = self.pal["corpo"]
+        lg.alignment = "right"
+        lg.columnMaximum = colunas
+        lg.deltay = 13
+        lg.dxTextSpace = 6
+        lg.colorNamePairs = [(CORES_GRAF[i % len(CORES_GRAF)], _plano(n))
+                             for i, n in enumerate(nomes)]
+        d.add(lg)
+
+    def grafico_barras(self, categorias, series, titulo="", altura_cm=6.5):
+        """`series` = {"Nome": [valores]} ou uma lista simples de valores."""
+        from reportlab.graphics.charts.barcharts import VerticalBarChart
+        if not isinstance(series, dict):
+            series = {"": list(series)}
+        d = self._drawing(altura_cm)
+        ch = VerticalBarChart()
+        ch.x, ch.y = 34, 26
+        ch.width, ch.height = d.width - 44, altura_cm * cm - 46
+        ch.data = [list(v) for v in series.values()]
+        self._eixos(ch, categorias)
+        # Barra SEMPRE parte do zero: com a base automática do reportlab, uma
+        # série de 4,1 a 5,8 vira quatro barras quase idênticas e a série menor
+        # some — o gráfico passa a mentir sobre a proporção.
+        ch.valueAxis.valueMin = min(0, min(min(v) for v in ch.data if v) if ch.data else 0)
+        ch.bars.strokeColor = colors.transparent
+        for i in range(len(series)):
+            ch.bars[i].fillColor = CORES_GRAF[i % len(CORES_GRAF)]
+        ch.groupSpacing = 12
+        ch.barSpacing = 2
+        d.add(ch)
+        self._legenda(d, list(series.keys()), 34, altura_cm * cm - 10,
+                      colunas=max(1, len(series)))
+        return self._fecha_grafico(d, titulo)
+
+    def grafico_linhas(self, categorias, series, titulo="", altura_cm=6.5):
+        from reportlab.graphics.charts.linecharts import HorizontalLineChart
+        if not isinstance(series, dict):
+            series = {"": list(series)}
+        d = self._drawing(altura_cm)
+        ch = HorizontalLineChart()
+        ch.x, ch.y = 34, 26
+        ch.width, ch.height = d.width - 44, altura_cm * cm - 46
+        ch.data = [list(v) for v in series.values()]
+        self._eixos(ch, categorias)
+        for i in range(len(series)):
+            ch.lines[i].strokeColor = CORES_GRAF[i % len(CORES_GRAF)]
+            ch.lines[i].strokeWidth = 2.2
+        d.add(ch)
+        self._legenda(d, list(series.keys()), 34, altura_cm * cm - 10,
+                      colunas=max(1, len(series)))
+        return self._fecha_grafico(d, titulo)
+
+    def grafico_pizza(self, rotulos, valores, titulo="", altura_cm=6.5):
+        """Rosca à esquerda, participação na legenda à direita.
+
+        Rótulo colado na fatia não cabe: o texto escuro cai dentro da fatia
+        escura e o rótulo da esquerda sai da caixa (a auditoria reprovaria).
+        A leitura de um gráfico de participação é o PERCENTUAL — ele vai na
+        legenda, com vírgula decimal."""
+        from reportlab.graphics.charts.piecharts import Pie
+        valores = [float(v) for v in valores]
+        soma = sum(valores) or 1.0
+        d = self._drawing(altura_cm)
+        lado = min(altura_cm * cm - 24, d.width * 0.44)
+        ch = Pie()
+        ch.x = 8
+        ch.y = (altura_cm * cm - lado) / 2
+        ch.width = ch.height = lado
+        ch.data = valores
+        ch.labels = None
+        ch.slices.strokeColor = colors.white
+        ch.slices.strokeWidth = 1.2
+        for i in range(len(valores)):
+            ch.slices[i].fillColor = CORES_GRAF[i % len(CORES_GRAF)]
+        d.add(ch)
+        nomes = ["%s — %s%%" % (_plano(r), ("%.1f" % (100.0 * v / soma)).replace(".", ","))
+                 for r, v in zip(rotulos, valores)]
+        self._legenda(d, nomes, lado + 28,
+                      altura_cm * cm / 2 + (len(valores) - 1) * 6.5,
+                      colunas=max(1, len(valores)))
+        return self._fecha_grafico(d, titulo)
+
     def divisor(self):
         self.story.append(Spacer(1, 0.35 * cm))
         self.story.append(self._regua(self.pal["borda"], 0.6))
@@ -959,6 +1255,8 @@ class RelatorioPDF:
         _CanvasNumerado.titulo_doc = _plano(self.titulo_doc)
         _CanvasNumerado.pal = self.pal
         _CanvasNumerado.fonte = self.fonte
+        _CanvasNumerado.fonte_bold = self.fonte_bold
+        _CanvasNumerado.confidencial = self.confidencial
         if self._toc is not None:
             # multiBuild: o sumário só sabe as páginas na 2ª passagem.
             doc.multiBuild(self.story, canvasmaker=_CanvasNumerado)

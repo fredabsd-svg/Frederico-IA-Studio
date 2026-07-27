@@ -118,3 +118,37 @@ test('DOCPRO_PROMPT proíbe diagramar fora do kit e exige a verificação do PDF
   assert.match(prompt, /nivel=2/, 'deve ensinar a hierarquia de títulos do kit');
   assert.match(prompt, /estilo="sobrio"/, 'deve oferecer o PDF sóbrio/registrável');
 });
+
+// DOC-KIT-0: o prompt semeado tem de CABER no campo que o próprio app valida.
+// Passar de MAX_ASSISTANT_PROFILE_CHARS não quebra a semeadura (ela escreve
+// direto no banco) — quebra na primeira vez que alguém SALVA o assistente pela
+// interface, com um 400 que não explica de onde veio. Foi assim que a suíte
+// ponta a ponta pegou o prompt v12 com 12 512 caracteres: 19 testes falharam
+// em `criarConta`, longe da causa.
+test('DOCPRO_PROMPT cabe no limite do campo de instruções', async () => {
+  const { DOCPRO_PROMPT: prompt } = await import('./seed.js');
+  const { MAX_ASSISTANT_PROFILE_CHARS: teto } = await import('./agent/assistantPolicy.js');
+  assert.ok(prompt.length <= teto,
+    `o prompt tem ${prompt.length} caracteres e o campo aceita ${teto}`);
+});
+
+// DOC-KIT-3: a identidade "Tinta & Latão" trouxe blocos que só existem no
+// documento se o prompt os ensinar — kit redesenhado com prompt antigo entrega
+// menos do que o kit sabe fazer.
+test('DOCPRO_PROMPT ensina os blocos da identidade "Tinta & Latão"', async () => {
+  const { DOCPRO_PROMPT: prompt } = await import('./seed.js');
+  assert.match(prompt, /Tinta & Latão/, 'deve nomear a identidade dos três kits');
+  assert.match(prompt, /r\.sumario\(/, 'deve ensinar o sumário');
+  assert.match(prompt, /r\.kpis\(/, 'deve ensinar os cartões de KPI');
+  assert.match(prompt, /r\.citacao\(/, 'deve ensinar a citação');
+  assert.match(prompt, /r\.etapas\(/, 'deve ensinar a linha do tempo');
+  assert.match(prompt, /r\.contracapa\(/, 'deve ensinar a contracapa');
+  assert.match(prompt, /grafico_barras/, 'deve ensinar os gráficos');
+  assert.match(prompt, /confidencial=/, 'deve ensinar a marca de sigilo');
+  assert.match(prompt, /p\.painel\(/, 'deve ensinar a aba-painel do Excel');
+  assert.match(prompt, /a\.identificacao\(/, 'sóbrio deve usar o bloco de identificação registrável');
+  // A numeração passou a ser do KIT: se o prompt não avisar, o modelo escreve
+  // "1." no texto e o documento sai com "SEÇÃO 01  1. Escopo".
+  assert.match(prompt, /NÃO escreva "1\." no texto|numera "SEÇÃO 01" sozinho/,
+    'deve avisar que a numeração da seção é do kit');
+});

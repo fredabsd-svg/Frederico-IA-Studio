@@ -85,7 +85,7 @@ O registro em `backend/src/agent/promptRegistry.js` identifica a release `freder
 | `artifact-workflow` | 1.0.0 | `promptRegistry.js` | inspeção, correção e validação sequencial |
 | `resume-protocol` | 2.0.0 | `agent/checkpoint.js`, `provider.js` | continuidade após pausa/falha |
 | `memory-context` | 2.0.0 | `memory/contextBuilder.js`, `persistence.js` | memória e resumos |
-| `docpro` | 10.0.0 | `backend/prompts/docpro/atual.txt` | documentos profissionais |
+| `docpro` | 12.0.0 | `backend/prompts/docpro/atual.txt` | documentos profissionais (kits "Tinta & Latão") |
 
 O evento `prompt_meta` expõe somente release, módulos, caracteres e estimativa de tokens. Conteúdo privado do prompt não é registrado nesse evento.
 

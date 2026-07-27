@@ -18,6 +18,10 @@ npm-debug.log*
 .DS_Store
 __pycache__/
 
+# Virtualenv para rodar a suíte Python dos kits de documento localmente
+# (ver CONTINUIDADE.md, "Como retomar o desenvolvimento", passo 6)
+.venv-kits/
+
 # Artefatos gerados ao rodar os testes (workspaces temporários)
 .test-workspaces/
 backend/.test-workspaces/

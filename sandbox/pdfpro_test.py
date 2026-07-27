@@ -36,6 +36,29 @@ def _por_pagina(caminho):
     return [pdfpro.posicoes_de_texto(c) for c in pdfpro._conteudos(bruto)]
 
 
+def _textos(flowables):
+    """Texto de todo Paragraph da story, entrando nas tabelas (o título e os
+    blocos de caixa são Tables com Paragraphs dentro).
+
+    Ler o texto do PDF PRONTO não serve aqui: com a fonte TrueType embutida os
+    bytes do stream são índices do subconjunto, não letras."""
+    saida = []
+    pilha = list(flowables)
+    while pilha:
+        f = pilha.pop(0)
+        if isinstance(f, (list, tuple)):
+            pilha = list(f) + pilha
+            continue
+        texto = getattr(f, "text", None)
+        if isinstance(texto, str):
+            saida.append(re.sub(r"<[^>]+>", "", texto))
+        for atributo in ("_content", "_cellvalues"):
+            filhos = getattr(f, atributo, None)
+            if filhos:
+                pilha = list(filhos) + pilha
+    return "\n".join(saida)
+
+
 @unittest.skipUnless(TEM_REPORTLAB, "reportlab não instalado")
 class PdfProTests(unittest.TestCase):
     def setUp(self):
@@ -371,6 +394,100 @@ class PdfProTests(unittest.TestCase):
         r.paragrafo("ok")
         r.salvar()
         self.assertTrue(pdfpro.verificar_pdf(self.path))
+
+    # ---------- identidade "Tinta & Latão" e blocos editoriais ----------
+    def test_blocos_novos_passam_na_propria_auditoria(self):
+        """Linha do tempo, gráficos e contracapa entraram DEPOIS da grade —
+        a prova de que respeitam a mesma aresta é a auditoria do próprio kit
+        não achar nada de grave no arquivo pronto."""
+        r = self._novo(cliente="ACME LTDA", emissor="Escritório",
+                       subtitulo="Exercício 2025", tipo="RELATÓRIO GERENCIAL")
+        r.capa()
+        r.titulo("Indicadores")
+        r.kpis([("R$ 5,84 mi", "Receita"), ("18,4%", "Margem")])
+        r.citacao("Frase-chave do documento.", "Sumário executivo")
+        r.etapas([("Diagnóstico", "ago/2026"), ("Implantação", "out/2026")])
+        r.grafico_barras(["2024", "2025"], {"Receita": [5.2, 5.8]}, titulo="Receita")
+        r.grafico_linhas(["Jan", "Fev"], {"Saldo": [1.2, 1.4]}, titulo="Saldo")
+        r.grafico_pizza(["Serviços", "Produtos"], [62, 38], titulo="Participação")
+        r.fecho("Palmas/TO, 27 de julho de 2026.")
+        r.assinaturas(["Frederico Barros"], subtitulos=["Contador"])
+        r.contracapa(contatos=["contato@empresa.com.br", "+55 63 3000-0000"])
+        r.salvar()   # levanta se a auditoria achar algo grave
+        self.assertEqual(self._graves(), [])
+
+    def test_titulo_numera_a_secao_sozinho(self):
+        r = self._novo()
+        r.titulo("Escopo")
+        r.titulo("Investimento")
+        r.titulo("Detalhe", nivel=2)
+        r.titulo("Anexo", kicker="ANEXO A")
+        texto = _textos(r.story)
+        self.assertIn("SEÇÃO 01", texto)
+        self.assertIn("SEÇÃO 02", texto)
+        self.assertIn("ANEXO A", texto)
+        self.assertNotIn("SEÇÃO 03", texto)  # nível 2 não consome numeração
+
+    def test_pizza_le_a_participacao_na_legenda_em_pt_br(self):
+        """Rótulo colado na fatia cai dentro da fatia escura e vaza a caixa (a
+        auditoria reprovaria). A leitura vai para a legenda, em percentual com
+        vírgula decimal — o valor bruto não substitui a participação."""
+        from reportlab.graphics.charts.legends import Legend
+        r = self._novo()
+        d = r.grafico_pizza(["Contabilidade", "Fiscal", "Pessoal"], [1900, 1000, 500])
+        legendas = [c for c in d.contents if isinstance(c, Legend)]
+        self.assertEqual(len(legendas), 1)
+        self.assertEqual([n for _, n in legendas[0].colorNamePairs],
+                         ["Contabilidade — 55,9%", "Fiscal — 29,4%", "Pessoal — 14,7%"])
+
+    def test_barra_parte_do_zero(self):
+        """Com a base automática do reportlab, uma série de 4,1 a 5,8 vira
+        quatro barras quase idênticas e a série menor some — o gráfico passa a
+        mentir sobre a proporção."""
+        from reportlab.graphics.charts.barcharts import VerticalBarChart
+        r = self._novo()
+        d = r.grafico_barras(["2023", "2024"], {"Receita": [4.1, 5.8]})
+        ch = next(c for c in d.contents if isinstance(c, VerticalBarChart))
+        self.assertEqual(ch.valueAxis.valueMin, 0)
+
+    def test_confidencial_marca_a_capa_e_o_rodape_e_pode_ser_desligado(self):
+        desenhos = {}
+        for confidencial in (True, False):
+            r = self._novo(emissor="Escritório", confidencial=confidencial)
+            r.capa()
+            r.titulo("Escopo")
+            r.paragrafo("texto")
+            na_capa = "CONFIDENCIAL" in _textos(r.story)
+            self.assertEqual(na_capa, confidencial)
+            r.salvar()
+            self.assertEqual(self._graves(), [])
+            # O rodapé é desenhado no canvas, fora da story: a marca aparece
+            # como UM trecho de texto a mais em cada página de conteúdo.
+            desenhos[confidencial] = len(_por_pagina(self.path)[1])
+        self.assertEqual(desenhos[True], desenhos[False] + 1)
+
+    def test_documento_sobrio_nao_recebe_marca_de_sigilo(self):
+        """Ata e contrato vão a registro público: `estilo="sobrio"` desliga a
+        marca mesmo com `confidencial=True`."""
+        r = self._novo(estilo="sobrio", confidencial=True, emissor="Escritório")
+        self.assertFalse(r.confidencial)
+        r.titulo("CLÁUSULA PRIMEIRA")
+        r.paragrafo("texto")
+        r.salvar()
+        self.assertEqual(self._graves(), [])
+
+    def test_contracapa_cabe_na_pagina_em_qualquer_variacao(self):
+        """A mancha de tinta fecha perto do rodapé sem alcançá-lo: um
+        centímetro a mais criaria uma página extra em branco."""
+        for kw in ({}, {"contatos": ["a@b.c"]},
+                   {"contatos": ["a@b.c", "x", "y", "z"], "nota": "nota curta"}):
+            r = self._novo(emissor="Escritório", confidencial=False)
+            r.titulo("Escopo")
+            r.paragrafo("texto")
+            r.contracapa(**kw)
+            r.salvar()
+            self.assertEqual(len(_por_pagina(self.path)), 2, kw)
+            self.assertEqual(self._graves(), [])
 
 
 if __name__ == "__main__":
