@@ -452,3 +452,88 @@ reexecução no-op → 30 tabelas essenciais → escrita/leitura/cascade.
 
 Não medidos nesta auditoria: tempo de carregamento inicial no navegador, tempo para abrir
 uma conversa longa, consultas lentas do Postgres, RAM do backend sob carga. Ver F-22.
+
+---
+
+## 19. Kits de documento (`sandbox/docpro.py`, `xlspro.py`, `pdfpro.py`)
+
+Os três kits são copiados para dentro da imagem do sandbox
+(`sandbox/Dockerfile`) e importados pelo modelo em `run_python`:
+`from docpro import Relatorio` (Word), `from xlspro import Planilha` (Excel) e
+`from pdfpro import RelatorioPDF` (PDF). O prompt do assistente "Documentos
+profissionais" (`backend/prompts/docpro/atual.txt`, versionado em
+`agent/promptRegistry.js`) **proíbe** diagramar por fora deles.
+
+### 19.1 O contrato de grade
+
+O defeito que motivou a reescrita de 2026-07-26 não era de conteúdo: era o
+texto começar em coordenadas diferentes conforme o bloco. No PDF entregue
+havia **seis arestas esquerdas na mesma página** (54,7 / 56,7 / 62,7 / 67,7 /
+70,7 / 72,7 pt). Os kits passaram a ter uma grade única:
+
+| Aresta | Onde | PDF | Word |
+| --- | --- | --- | --- |
+| Caixa | fundo de callout, faixa de cabeçalho de tabela, régua do rodapé | `X_CAIXA` = margem | margem da seção |
+| Texto | **todo** texto: corpo, título, 1ª coluna da tabela, marcador de lista, rodapé | `X_TEXTO` = `X_CAIXA + RECUO` | `RECUO_PT` (recuo de parágrafo / `tcMar`) |
+
+`RECUO` (PDF) e `RECUO_PT` (Word) valem 10 pt e são a única distância do
+sistema. A barra de destaque à esquerda de títulos e callouts é uma **coluna**
+da tabela, não um `LINEBEFORE`: assim ela fica inteira dentro da caixa e não
+empurra o texto nem invade a margem. Nenhum bloco aceita recuo próprio ou
+largura literal em centímetros.
+
+### 19.2 Tipografia e compatibilidade (PDF)
+
+- **Fonte embutida.** O `pdfpro` registra a primeira família TrueType que
+  encontrar (Carlito → DejaVu Sans → Liberation Sans) e cai para as Type1
+  base-14 só se não houver nenhuma. Embutir resolve de uma vez cobertura de
+  acentos, `/ToUnicode` (texto copiável e pesquisável) e renderização igual em
+  qualquer leitor.
+- **Saneamento de glifo.** `texto_seguro()` remove caracteres de controle e
+  troca por equivalentes o que a fonte não desenha. A checagem pergunta ao
+  próprio reportlab (`unicode2T1`), porque a resposta intuitiva está errada:
+  `"•".encode("cp1252")` funciona, mas o reportlab codifica o bullet em
+  Helvetica como `\x7f` (DEL) — que o leitor mostra como quadrado ou nada. Era
+  a origem dos **320 marcadores quebrados** do relatório entregue. Símbolo que
+  ele não acha na fonte do texto ele redesenha com Symbol/ZapfDingbats, o que
+  também conta como não coberto.
+- **Marcação.** Todo texto é escapado preservando as tags que o `Paragraph`
+  entende (`<b>`, `<i>`, `<br/>`…). Sem isso um "Silva & Cia" ou um "a < b"
+  vindo de dado do usuário derruba a geração.
+- **Rodapé.** "Página X de Y" sai por `drawRightString`. Com `drawString` a
+  borda direita anda ao passar de 9 para 10 páginas — foi o que aconteceu no
+  arquivo entregue (507,89 pt até a página 9; 503,45 daí em diante).
+
+### 19.3 Auditoria do arquivo gerado
+
+`RelatorioPDF.salvar()` chama `auditar_pdf()` no arquivo **pronto** e levanta
+erro se sobrar achado grave. O modelo também pode rodar
+`from pdfpro import verificar_pdf` a qualquer momento. O auditor descomprime
+os streams de conteúdo **das páginas** (não das fontes embutidas), refaz a
+pilha de matrizes `q`/`Q`/`cm` e acompanha `Tm`/`Td` para saber onde cada
+trecho de texto realmente começa.
+
+| Código | Gravidade | O que pega |
+| --- | --- | --- |
+| `texto-fora-da-grade` | grave | texto começando fora da caixa útil |
+| `glifo-invalido` | grave | `\x7f` ou fonte Symbol de último recurso no meio do texto |
+| `sem-tounicode` | grave | fonte embutida sem mapa Unicode (texto não copiável) |
+| `pagina-irregular` | grave | páginas de tamanhos diferentes |
+| `fonte-nao-embutida` | aviso | nenhuma TTF disponível no ambiente |
+| `metadado-vazio` | aviso | sem `/Title` ou `/Author` |
+
+Aplicado ao PDF que motivou a reescrita, o auditor devolve: 203 trechos fora da
+grade, 342 glifos trocados e nenhuma fonte embutida.
+
+### 19.4 Robustez comum aos três kits
+
+Caractere de controle é ilegal em XML 1.0: no `.docx` produz arquivo que o Word
+recusa ("conteúdo ilegível") e no `.xlsx` o openpyxl levanta
+`IllegalCharacterError`. Os três kits limpam o texto antes de escrever. Linha
+com número de colunas diferente do cabeçalho é normalizada em vez de derrubar a
+geração, e o nome de aba do Excel é saneado (`: \ / ? * [ ]`, 31 caracteres).
+
+Testes: `sandbox/*_test.py` (rodam na CI com `python -m unittest discover -s
+sandbox`). Os do `pdfpro` cobrem o contrato de grade bloco a bloco, a aresta
+direita da numeração, o saneamento de glifo nos dois caminhos de fonte e a
+própria auditoria (que precisa **reprovar** um PDF ruim).

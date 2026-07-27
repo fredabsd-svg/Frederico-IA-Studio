@@ -1,23 +1,53 @@
+"""Testes do pdfpro.
+
+O que estes testes protegem não é "o arquivo saiu": é o CONTRATO DE LAYOUT. O
+relatório que motivou a reescrita do módulo tinha conteúdo certo e construção
+errada — seis arestas de texto diferentes na mesma página, 320 marcadores de
+lista sem glifo, numeração de página que andava ao passar de 9 para 10 e fonte
+não embutida. Cada um desses defeitos tem um teste aqui.
+"""
 import os
+import re
 import tempfile
 import unittest
 
 try:
     import pdfpro
+    from reportlab.pdfbase import pdfmetrics
 
-    HAS_REPORTLAB = True
+    TEM_REPORTLAB = True
 except Exception:  # reportlab ausente no ambiente
-    HAS_REPORTLAB = False
+    TEM_REPORTLAB = False
 
 
-@unittest.skipUnless(HAS_REPORTLAB, "reportlab não instalado")
+def _posicoes(caminho):
+    """Todas as posições (x, y) de texto desenhado no arquivo."""
+    with open(caminho, "rb") as f:
+        bruto = f.read()
+    saida = []
+    for conteudo in pdfpro._conteudos(bruto):
+        saida.extend(pdfpro.posicoes_de_texto(conteudo))
+    return saida
+
+
+def _por_pagina(caminho):
+    with open(caminho, "rb") as f:
+        bruto = f.read()
+    return [pdfpro.posicoes_de_texto(c) for c in pdfpro._conteudos(bruto)]
+
+
+@unittest.skipUnless(TEM_REPORTLAB, "reportlab não instalado")
 class PdfProTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="frederico-pdf-")
-        self.path = os.path.join(self.tmp.name, "proposta.pdf")
+        self.path = os.path.join(self.tmp.name, "doc.pdf")
 
     def tearDown(self):
         self.tmp.cleanup()
+
+    def _novo(self, **kw):
+        kw.setdefault("titulo", "Documento de Teste")
+        return pdfpro.RelatorioPDF(self.path, **kw)
 
     def _assert_pdf(self, minimo=1200):
         self.assertTrue(os.path.exists(self.path))
@@ -25,33 +55,322 @@ class PdfProTests(unittest.TestCase):
             self.assertEqual(f.read(5), b"%PDF-")
         self.assertGreater(os.path.getsize(self.path), minimo)
 
-    def test_gera_pdf_com_capa_tabela_e_callout(self):
-        r = pdfpro.RelatorioPDF(self.path, titulo="Proposta Comercial",
-                                cliente="ACME LTDA", emissor="Escritório",
-                                subtitulo="Serviços contábeis", tipo="PROPOSTA")
+    def _graves(self):
+        return [a for a in pdfpro.auditar_pdf(self.path) if a["gravidade"] == "grave"]
+
+    def _bruto(self):
+        with open(self.path, "rb") as f:
+            return f.read()
+
+    # ------------------------------------------------------------------
+    # Documento completo
+    # ------------------------------------------------------------------
+    def test_documento_completo_passa_na_propria_auditoria(self):
+        r = self._novo(titulo="Proposta Comercial", cliente="ACME LTDA",
+                       emissor="Escritório", subtitulo="Serviços contábeis",
+                       tipo="PROPOSTA")
         r.capa()
         r.titulo("1. Escopo")
         r.paragrafo("Texto de escopo do trabalho a ser realizado.")
+        r.lista(["primeiro item", "segundo item"])
+        r.kpis([("R$ 5M", "capital"), ("ATIVA", "situação")])
         r.tabela(["Serviço", "Descrição longa do que será entregue", "Valor"],
                  [["A", "Escrituração completa mensal", "R$ 1.200,00"],
                   ["TOTAL", "", "R$ 1.200,00"]], total=True)
         r.callout("OBSERVAÇÃO", "Proposta válida por 30 dias.")
+        r.chave_valor([("CNPJ", "00.000.000/0001-00")])
+        r.citacao("Uma citação qualquer.", autor="fulano")
+        r.codigo("def f(x):\n    return x")
+        r.assinaturas(["João da Silva"], subtitulos=["Sócio"])
+        r.salvar()                     # salvar() audita por padrão
+        self._assert_pdf()
+        # "fonte-nao-embutida" é AVISO e só aparece em ambiente sem TTF
+        # (a CI enxuta): o que nunca pode sobrar é achado grave.
+        self.assertEqual([a for a in r.auditoria if a["gravidade"] == "grave"], [])
+
+    # ------------------------------------------------------------------
+    # O contrato de grade: TODO texto alinhado à esquerda começa em X_TEXTO
+    # ------------------------------------------------------------------
+    def test_cada_bloco_poe_o_texto_na_mesma_aresta(self):
+        """O defeito original: título, parágrafo, célula e callout começavam em
+        coordenadas diferentes (54,7 / 56,7 / 62,7 / 67,7 / 70,7 / 72,7 pt na
+        mesma página). Aqui cada bloco é gerado sozinho e a aresta esquerda do
+        seu texto tem de ser exatamente X_TEXTO."""
+        blocos = {
+            "titulo": lambda r: r.titulo("1. Um título"),
+            "titulo_n2": lambda r: r.titulo("1.1 Subtítulo", nivel=2),
+            "paragrafo": lambda r: r.paragrafo("Um parágrafo qualquer do corpo."),
+            "lista": lambda r: r.lista(["item um", "item dois"]),
+            "callout": lambda r: r.callout("NOTA", "Um aviso."),
+            "tabela": lambda r: r.tabela(["Coluna", "Outra"], [["a", "b"]]),
+            "chave_valor": lambda r: r.chave_valor([("CNPJ", "00.000.000/0001-00")]),
+            "citacao": lambda r: r.citacao("Citada.", autor="alguém"),
+            "codigo": lambda r: r.codigo("x = 1"),
+        }
+        for nome, montar in blocos.items():
+            with self.subTest(bloco=nome):
+                r = self._novo()
+                montar(r)
+                r.salvar()
+                xs = [round(x, 2) for x, _ in _posicoes(self.path)]
+                self.assertTrue(xs, "o bloco %s não desenhou texto" % nome)
+                self.assertAlmostEqual(
+                    min(xs), round(pdfpro.X_TEXTO, 2), places=1,
+                    msg="o bloco %s começa em %s; a grade manda começar em %.2f"
+                        % (nome, min(xs), pdfpro.X_TEXTO))
+
+    def test_capa_e_rodape_usam_a_mesma_aresta_do_corpo(self):
+        r = self._novo(titulo="Relatório", cliente="ACME", emissor="Escritório",
+                       subtitulo="assunto", tipo="RELATÓRIO")
+        r.capa()
+        r.paragrafo("corpo")
+        r.salvar()
+        paginas = _por_pagina(self.path)
+        self.assertGreaterEqual(len(paginas), 2)
+        capa = [round(x, 2) for x, _ in paginas[0]]
+        self.assertAlmostEqual(min(capa), round(pdfpro.X_TEXTO, 2), places=1)
+        # rodapé: o texto da faixa inferior também nasce em X_TEXTO
+        rodape = [round(x, 2) for x, y in paginas[1] if y < pdfpro.MARGEM["inf"]]
+        self.assertTrue(rodape, "a página 2 deveria ter rodapé")
+        self.assertAlmostEqual(min(rodape), round(pdfpro.X_TEXTO, 2), places=1)
+
+    def test_numeracao_de_pagina_fecha_sempre_na_mesma_aresta_direita(self):
+        """"Página 9 de 12" e "Página 10 de 12" têm larguras diferentes. Com
+        `drawString` a borda direita anda — foi o que aconteceu no relatório
+        entregue (507,89 pt até a página 9, 503,45 daí em diante)."""
+        r = self._novo()
+        for i in range(12):
+            r.titulo("Seção %d" % (i + 1))
+            r.paragrafo("conteúdo")
+            r.quebra()
+        r.salvar()
+        direita_esperada = pdfpro.X_CAIXA + pdfpro.LARGURA_CAIXA - pdfpro.RECUO
+        bordas = set()
+        for pagina, posicoes in enumerate(_por_pagina(self.path), start=1):
+            if pagina == 1:
+                continue
+            rodape = [x for x, y in posicoes if y < pdfpro.MARGEM["inf"]]
+            self.assertTrue(rodape, "página %d sem rodapé" % pagina)
+            texto = "Página %d de %d" % (pagina, len(_por_pagina(self.path)))
+            largura = pdfmetrics.stringWidth(texto, pdfpro.FONTE, pdfpro.ESCALA["rodape"])
+            bordas.add(round(max(rodape) + largura, 1))
+        self.assertEqual(len(bordas), 1,
+                         "a borda direita da numeração variou: %s" % sorted(bordas))
+        self.assertAlmostEqual(bordas.pop(), round(direita_esperada, 1), places=0)
+
+    # ------------------------------------------------------------------
+    # Tipografia: nenhum caractere sem glifo
+    # ------------------------------------------------------------------
+    def test_simbolo_fora_da_fonte_nunca_vira_glifo_invalido(self):
+        """O relatório entregue tinha 320 marcadores emitidos como `\\177`
+        (DEL) — quadrado preto ou vazio conforme o leitor."""
+        r = self._novo()
+        r.paragrafo("Internet → app · SVG ← PDF · ✓ pronto · 10 ≥ 5 · a ≠ b · 3 × 4")
+        r.lista(["item com ▪ marcador exótico", "outro com ✅ emoji"])
+        r.salvar()
+        bruto = self._bruto()
+        for conteudo in pdfpro._conteudos(bruto):
+            for literal in pdfpro._LITERAL.findall(conteudo):
+                self.assertNotIn(b"\\177", literal,
+                                 "caractere sem glifo chegou ao PDF")
+
+    def test_texto_seguro_troca_o_que_a_fonte_nao_tem(self):
+        saida = pdfpro.texto_seguro("a → b")
+        self.assertNotIn("\x7f", saida)
+        # com fonte embutida a seta passa inteira; sem ela, vira "->".
+        # sem fonte embutida a seta vira "->", e o ">" sai escapado como &gt;
+        self.assertTrue("→" in saida or "-&gt;" in saida, saida)
+        self.assertEqual(pdfpro.texto_seguro("linha1\nlinha2"), "linha1<br/>linha2")
+
+    def test_base14_nao_recebe_caractere_que_o_reportlab_trocaria(self):
+        """A checagem ingênua ("cabe em cp1252?") diria que Helvetica desenha o
+        bullet — e o reportlab o codifica como \\x7f (DEL), que foi o defeito
+        original. Quem responde é o próprio reportlab."""
+        self.assertFalse(pdfpro._cobre("Helvetica", "\u2022"),
+                         "o bullet em Helvetica sai como DEL")
+        self.assertFalse(pdfpro._cobre("Helvetica", "\u2192"),
+                         "a seta em Helvetica é redesenhada com ZapfDingbats")
+        self.assertTrue(pdfpro._cobre("Helvetica", "\u00e7"))
+        self.assertEqual(pdfpro._glifos("\u2022 item \u2192 fim", "Helvetica"),
+                         "- item -> fim")
+
+    def test_familia_so_com_regular_e_negrito_ainda_e_aceita(self):
+        """fonts-dejavu-core não traz as variantes inclinadas. Exigir as quatro
+        descartaria uma fonte utilizável e cairia para a base-14 sem
+        necessidade."""
+        candidata = [("LiberationSans",
+                      "/usr/share/fonts/truetype/liberation/LiberationSans-{}.ttf",
+                      {"": "Regular", "-Bold": "Bold"})]
+        if not os.path.exists(candidata[0][1].format("Regular")):
+            self.skipTest("Liberation Sans ausente neste ambiente")
+        normal, negrito, italico = pdfpro._registra_familia(candidata, ("X", "Y", "Z"))
+        self.assertEqual(normal, "LiberationSans")
+        self.assertEqual(italico, negrito, "sem itálico, o negrito faz as vezes")
+
+    def test_controle_e_marcacao_do_usuario_nao_derrubam_a_geracao(self):
+        r = self._novo()
+        r.paragrafo("Silva & Cia <precisa> de 3 < 5 & pronto\x07")
+        r.tabela(["A & B", "<C>"], [["x & y", "1 < 2"]])
+        r.callout("ATENÇÃO & CIA", "Dado com <tag> solta & e-comercial")
         r.salvar()
         self._assert_pdf()
 
-    def test_larguras_proporcionais_nao_crasham_com_colunas_desiguais(self):
-        r = pdfpro.RelatorioPDF(self.path, titulo="T")
-        r.tabela(["Curto", "Coluna com um texto bem mais longo que as outras", "X"],
-                 [["a", "conteúdo extenso para pesar a coluna do meio", "1"],
-                  ["b", "outra linha comprida com bastante texto aqui", "2"]])
-        r.salvar()
-        self._assert_pdf(minimo=1000)
+    def test_marcacao_valida_continua_funcionando(self):
+        self.assertIn("<b>", pdfpro.texto_seguro("um <b>negrito</b> aqui"))
+        self.assertIn("&amp;", pdfpro.texto_seguro("Silva & Cia"))
+        self.assertIn("&lt;", pdfpro.texto_seguro("a < b"))
+        # entidade já escrita pelo modelo não pode ser escapada duas vezes
+        self.assertEqual(pdfpro.texto_seguro("Silva &amp; Cia").count("amp"), 1)
 
-    def test_linha_com_menos_valores_que_o_cabecalho_nao_derruba(self):
-        r = pdfpro.RelatorioPDF(self.path, titulo="T")
-        r.tabela(["A", "B", "C"], [["só um"], ["um", "dois"]])
+    # ------------------------------------------------------------------
+    # Fonte e metadados: compatibilidade em qualquer leitor
+    # ------------------------------------------------------------------
+    def test_fonte_embutida_com_tounicode_e_metadados(self):
+        r = self._novo(titulo="Relatório", emissor="Escritório", assunto="teste")
+        r.paragrafo("Ação, çedilha e acentuação.")
+        r.salvar()
+        bruto = self._bruto()
+        if pdfpro.FONTE_EMBUTIDA:
+            self.assertIn(b"/FontFile2", bruto, "a fonte deveria estar embutida")
+            self.assertIn(b"/ToUnicode", bruto, "sem /ToUnicode não dá para copiar o texto")
+        self.assertIn(b"/Title", bruto)
+        self.assertIn(b"/Author", bruto)
+
+    # ------------------------------------------------------------------
+    # Tabela
+    # ------------------------------------------------------------------
+    def test_larguras_somam_exatamente_a_largura_util(self):
+        r = self._novo()
+        larguras = r._larguras(["Nº", "Descrição bem mais longa que as outras", "Valor"],
+                               [["1", "conteúdo extenso para pesar a coluna", "R$ 1,00"],
+                                ["2", "outra linha comprida", "R$ 2,00"]])
+        self.assertAlmostEqual(sum(larguras), pdfpro.LARGURA_CAIXA, places=6)
+        self.assertTrue(all(w > 0 for w in larguras))
+
+    def test_cabecalho_curto_nao_quebra_no_meio_da_palavra(self):
+        """A largura de uma coluna é a do texto MAIS o seu recuo. Ignorando o
+        recuo, "Formato" quebrava em "Format/o" mesmo com espaço sobrando."""
+        r = self._novo()
+        cabecalho = ["Formato", "O que o kit entrega", "Extensão", "Peso"]
+        larguras = r._larguras(cabecalho, [["Word", "Capa e tabelas", ".docx", "180 KB"]])
+        recheios = r._recheios(len(cabecalho))
+        for j, titulo in enumerate(cabecalho):
+            texto = pdfmetrics.stringWidth(titulo, r.fonte_bold, pdfpro.ESCALA["corpo"])
+            self.assertGreaterEqual(
+                larguras[j] - recheios[j], texto,
+                "a coluna %r não cabe seu próprio cabeçalho" % titulo)
+
+    def test_kpis_tem_todos_os_cartoes_da_mesma_altura(self):
+        """Cartões como tabelas separadas ficavam com alturas diferentes quando
+        um valor era mais curto — ou sumia no saneamento."""
+        r = self._novo()
+        r.kpis([("806", "testes"), ("", "vazio"), ("R$ 5.000.000,00", "capital")])
+        # o bloco vai embrulhado em KeepTogether (não parte entre páginas)
+        planos = [g for f in r.story for g in getattr(f, "_content", [f])]
+        tabela = [f for f in planos if hasattr(f, "_cellvalues")][0]
+        self.assertEqual(len(tabela._cellvalues), 2, "os KPIs são UMA tabela de 2 linhas")
+        self.assertEqual(len(set(tabela._colWidths)), 1, "as colunas têm a mesma largura")
+        vazio = tabela._cellvalues[0][1].getPlainText().strip()
+        self.assertTrue(vazio, "valor vazio deve virar travessão, não cartão em branco")
+
+    def test_coluna_numerica_decidida_pela_maioria_nao_pela_primeira_linha(self):
+        r = self._novo()
+        # 1ª linha "-" (não numérica) e as demais numéricas: a coluna ainda é
+        # de números e tem de ir para a direita.
+        r.tabela(["Item", "Valor"], [["a", "-"], ["b", "10"], ["c", "20"], ["d", "30"]])
+        r.salvar()
+        self._assert_pdf()
+
+    def test_linha_com_numero_de_colunas_diferente_nao_derruba(self):
+        r = self._novo()
+        r.tabela(["A", "B", "C"], [["só um"], ["um", "dois"], ["um", "dois", "três", "extra"]])
         r.salvar()
         self._assert_pdf(minimo=800)
+
+    def test_tabela_longa_nao_estoura_a_margem(self):
+        r = self._novo()
+        linhas = [["Item %d" % i, "Descrição razoavelmente longa da linha %d" % i,
+                   "R$ %d.000,00" % i] for i in range(40)]
+        r.tabela(["Item", "Descrição", "Valor"], linhas)
+        r.salvar()
+        self.assertEqual(self._graves(), [])
+
+    # ------------------------------------------------------------------
+    # Sumário, estilo sóbrio e imagem
+    # ------------------------------------------------------------------
+    def test_sumario_lista_os_titulos_com_pagina(self):
+        r = self._novo()
+        r.capa()
+        r.sumario()
+        for i in range(3):
+            r.titulo("%d. Seção" % (i + 1))
+            r.paragrafo("conteúdo da seção")
+            r.titulo("%d.1 Subseção" % (i + 1), nivel=2)
+            r.paragrafo("mais conteúdo")
+        r.salvar()
+        self._assert_pdf()
+        self.assertEqual(self._graves(), [])
+
+    def test_estilo_sobrio_nao_usa_cor(self):
+        r = self._novo(estilo="sobrio", titulo="ATA DE REUNIÃO")
+        r.titulo("ATA DE REUNIÃO DE SÓCIOS")
+        r.paragrafo("Aos vinte e cinco dias do mês de outubro ...")
+        r.assinaturas(["João da Silva"])
+        r.salvar()
+        for conteudo in pdfpro._conteudos(self._bruto()):
+            for r_, g_, b_ in re.findall(rb"([\d.]+) ([\d.]+) ([\d.]+) rg", conteudo):
+                self.assertEqual({float(r_), float(g_), float(b_)}.__len__(), 1,
+                                 "documento sóbrio não pode ter cor")
+
+    def test_codigo_preserva_linhas_e_recuo(self):
+        """`_plano` troca quebra de linha por espaço (existe para medir texto):
+        aplicá-lo antes de dividir colapsava o bloco inteiro numa linha."""
+        r = self._novo()
+        r.codigo("def somar(a, b):\n    resultado = a + b\n    return resultado")
+        planos = [g for f in r.story for g in getattr(f, "_content", [f])]
+        tabela = [f for f in planos if hasattr(f, "_cellvalues")][0]
+        paragrafos = tabela._cellvalues[0][-1]
+        self.assertEqual(len(paragrafos), 3, "cada linha do código é um parágrafo")
+        self.assertIn("&nbsp;&nbsp;&nbsp;&nbsp;", paragrafos[1].text,
+                      "o recuo do código tem de sobreviver")
+        self.assertIn("return", paragrafos[2].text)
+
+    def test_imagem_inexistente_avisa_com_clareza(self):
+        r = self._novo()
+        with self.assertRaises(ValueError):
+            r.imagem("/caminho/que/nao/existe.png")
+
+    # ------------------------------------------------------------------
+    # A auditoria precisa REPROVAR o que é ruim
+    # ------------------------------------------------------------------
+    def test_auditoria_acusa_texto_fora_da_grade(self):
+        from reportlab.pdfgen import canvas as _c
+        c = _c.Canvas(self.path, pagesize=pdfpro.PAGINA)
+        c.setFont("Helvetica", 10)
+        c.drawString(10, 700, "texto colado na borda do papel")
+        c.save()
+        codigos = [a["codigo"] for a in pdfpro.auditar_pdf(self.path)]
+        self.assertIn("texto-fora-da-grade", codigos)
+
+    def test_auditoria_acusa_glifo_invalido_em_fonte_base14(self):
+        from reportlab.pdfgen import canvas as _c
+        c = _c.Canvas(self.path, pagesize=pdfpro.PAGINA)
+        c.setFont("Helvetica", 10)
+        c.drawString(pdfpro.X_TEXTO, 700, "marcador \x7f quebrado")
+        c.save()
+        codigos = [a["codigo"] for a in pdfpro.auditar_pdf(self.path)]
+        self.assertIn("glifo-invalido", codigos)
+
+    def test_auditoria_acusa_arquivo_que_nao_e_pdf(self):
+        with open(self.path, "wb") as f:
+            f.write(b"nao sou um pdf")
+        self.assertEqual([a["codigo"] for a in pdfpro.auditar_pdf(self.path)], ["nao-e-pdf"])
+
+    def test_verificar_pdf_devolve_verdadeiro_para_documento_do_kit(self):
+        r = self._novo()
+        r.paragrafo("ok")
+        r.salvar()
+        self.assertTrue(pdfpro.verificar_pdf(self.path))
 
 
 if __name__ == "__main__":

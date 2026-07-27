@@ -19,7 +19,10 @@ export const PROMPT_MODULES = Object.freeze({
   artifact:     { id: 'artifact-workflow', version: '1.0.0' },
   resume:       { id: 'resume-protocol',   version: '2.0.0' },
   memory:       { id: 'memory-context',    version: '2.0.0' },
-  docpro:       { id: 'docpro',            version: '10.0.0' }
+  // 11.0.0: os kits ganharam uma grade única (uma só aresta de texto) e o
+  // pdfpro passou a auditar o arquivo gerado. O prompt agora PROÍBE diagramar
+  // fora do kit — era por aí que saía PDF com margem torta e glifo trocado.
+  docpro:       { id: 'docpro',            version: '11.0.0' }
 });
 
 export function moduleRef(name) {

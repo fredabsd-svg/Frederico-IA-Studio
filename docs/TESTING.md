@@ -26,8 +26,11 @@ cd frontend
 npm test                 # TODOS os arquivos *.test.js de src/ (inclusive src/hooks/)
 npm run check            # lint + test + build
 
-# sandbox (Python)
-python -m pip install openpyxl==3.1.5
+# sandbox (Python) — os kits de documento (docpro/xlspro/pdfpro)
+# As três dependências são obrigatórias: cada arquivo de teste se AUTO-PULA
+# quando a sua biblioteca falta, então instalar só o openpyxl faz os testes do
+# Word e do PDF sumirem em silêncio (é o mesmo conjunto que o CI instala).
+python -m pip install openpyxl==3.1.5 python-docx reportlab
 python -m unittest discover -s sandbox -p '*_test.py' -v
 
 # ponta a ponta (navegador real) — exige Postgres; ver e2e/README.md
@@ -60,7 +63,7 @@ semântica, e testar com Postgres puro esconderia diferenças de comportamento.
 | Job | Cobre |
 | --- | --- |
 | `lint` | `node --check` em todo `.js`/`.mjs` do backend e do frontend |
-| `artifacts` | Testes Python do gerador de Excel (openpyxl real) |
+| `artifacts` | Testes Python dos **três kits de documento** — Excel (openpyxl real), Word (python-docx) e PDF (reportlab). O nome do job é herdado de quando ele só cobria o Excel. Vale como teste de portabilidade: o runner do GitHub **não tem as mesmas fontes** do sandbox, então é aqui que o caminho de degradação do `pdfpro` (sem TrueType, caindo para as Type1 base-14) é exercitado |
 | `docker-guard` | Política do guarda + proxy real contra um daemon Docker falso, em Node 20 e 22 |
 | `backend-unit` | Suíte do backend **sem** banco, em Node 20 e Node 22 |
 | `backend-integration` | Postgres real: migrações do zero + idempotência + tabelas + cascade; suíte completa **sem skips**; boot real do backend + `/api/health`; portão de autenticação (9 rotas → 401) |

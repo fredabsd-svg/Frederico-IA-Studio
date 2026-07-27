@@ -21,36 +21,94 @@ de testes: **o SSE integrado saiu do zero** (ver a frente abaixo), mas a retomad
 interrupção real do processo e o pipeline multimodelo retomável continuam sem teste.
 Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** o copiloto (Nino) deixou de ser um chat cego — passou a levar o
-  contexto do chat principal **por padrão** (auditado, e dispensável por mensagem),
-  ganhou memória própria, preferências com efeito real, base de conhecimento do Studio
-  e ações dentro do app. Detalhe abaixo. Antes dele, o **Modo Design**, v1 e v2 (frente abaixo) — espaço próprio
-  onde o usuário descreve um site, uma apresentação ou um documento visual e recebe
-  um rascunho renderizado ao vivo, refinado **por conversa, por clique no elemento
-  ou por sliders que não chamam a IA**, versionado e exportável (.html/.pdf/.pptx).
-  Antes dele, a estabilização do **ambiente de execução do agente** (frente mais
-  abaixo):
+- **Último trabalho:** **PR [#149](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/149)** —
+  a **arquitetura de formatação dos documentos** (frente abaixo): os kits Word/Excel/PDF
+  passaram a ter uma grade única, o `pdfpro` audita o arquivo que gera e o prompt proíbe
+  diagramar fora do kit. Antes dele, o **copiloto (Nino)** deixou de ser um chat cego —
+  passou a levar o contexto do chat principal **por padrão** (auditado, e dispensável por
+  mensagem), ganhou memória própria, preferências com efeito real, base de conhecimento do
+  Studio e ações dentro do app. Antes dele, o **Modo Design**, v1 e v2 — espaço próprio
+  onde o usuário descreve um site, uma apresentação ou um documento visual e recebe um
+  rascunho renderizado ao vivo, refinado **por conversa, por clique no elemento ou por
+  sliders que não chamam a IA**, versionado e exportável (.html/.pdf/.pptx). Antes dele, a
+  estabilização do **ambiente de execução do agente**:
   um timeout deixou de derrubar o sandbox, toda execução devolve estado estruturado
   (ambiente × projeto), o reinício é anunciado com o que sobreviveu e o que se perdeu,
-  comandos longos transmitem a saída ao vivo, e o agente ganhou a ferramenta `ambiente`
-  (status, recursos, última execução, dependências, serviços/portas, checkpoints e
-  transação de workspace). Antes dele, o **PR [#147](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/147)**
-  (o Nino cobrindo o botão de enviar), o **PR [#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)**
-  (Playwright + suíte ponta a ponta) e o **PR [#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)**
+  comandos longos transmitem a saída ao vivo, e o agente ganhou a ferramenta `ambiente`.
+  Antes deles, os **PR [#147](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/147)**
+  (o Nino cobrindo o botão de enviar), **[#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)**
+  (Playwright + suíte ponta a ponta) e **[#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)**
   (as sete falhas P0 dos sub-agentes).
-- **Última validação:** 2026-07-26 — **1035 testes** (backend 884, frontend 70, guarda do
-  Docker 49, sandbox Python 10, ponta a ponta 22). O PostgreSQL 16 subiu **neste contêiner**
-  (binários locais, sem Docker), então nada foi pulado: **backend 884/884 e frontend 70/70**,
-  mais os **22 E2E em navegador real** (`E2E_CHROMIUM_PATH` apontando o Chromium do
-  contêiner) — verdes na íntegra; na primeira rodada o teste de troca de conversa durante o
-  streaming falhou por tempo e passou nas duas rodadas seguintes, ou seja, é flaky sob carga,
-  não regressão. `check-migrations.mjs` aplicou as 24 migrações do zero com reexecução no-op.
-  Sem banco, o backend passa 814 e pula 70 — o esperado. Os 10 do Python não coletam aqui por
-  falta do `openpyxl`. A contagem vem de `cd backend && npm run test:count` — não a escreva à
-  mão.
+- **Última validação:** 2026-07-27 — **1068 testes** (backend 885, frontend 70, guarda
+  do Docker 49, sandbox Python 42, ponta a ponta 22). O PostgreSQL 16 subiu **neste
+  contêiner** (binários locais, sem Docker), então nada foi pulado: **backend 885/885,
+  frontend 70/70, guarda 49/49 e os 42 do sandbox**; os 22 E2E entram listados. A
+  contagem vem de `cd backend && npm run test:count` — não a escreva à mão.
+  Repare em um job do CI: **"Artefatos (Excel real)"** roda os testes dos kits no runner
+  do GitHub, que **não tem as mesmas fontes** do sandbox. Ou seja, o caminho de
+  degradação do `pdfpro` (sem TrueType, caindo para as Type1 base-14) é exercitado a
+  cada push, não só na simulação local.
+
 ---
 
-## O copiloto virou colega de trabalho (2026-07-26 — frente atual)
+## Formatação dos documentos: uma grade só, e o PDF se audita (2026-07-26 — PR #149)
+
+Um relatório entregue em PDF veio com o conteúdo certo e a construção errada. Medindo o
+arquivo (não olhando: medindo), o diagnóstico foi objetivo:
+
+| Defeito | Medida no arquivo entregue |
+| --- | --- |
+| Arestas esquerdas de texto na mesma página | **seis** (54,7 / 56,7 / 62,7 / 67,7 / 70,7 / 72,7 pt) |
+| Marcadores de lista sem glifo (`\x7f` = DEL) | **320** |
+| Trechos redesenhados com a fonte Symbol | 22 |
+| Tamanhos de fonte diferentes, sem escala | 10 |
+| Borda direita da numeração de página | anda ao passar de 9 para 10 (507,89 → 503,45 pt) |
+| Fonte embutida / `/ToUnicode` / `/Lang` | nenhum — texto não copiável e dependente do leitor |
+| Título nos metadados | `Frederico IA Studio \204 Relatório…` (travessão corrompido) |
+
+**Causa raiz.** O arquivo não saiu do kit: a paleta dele era `#5B21B6`, e a do `pdfpro` é
+`#1A3C6E`. O modelo montou reportlab na mão. E fez isso por um motivo legítimo — o kit não
+tinha lista, KPI, sumário, imagem nem quebra de página, então, para um relatório de
+verdade, sair do kit era a única saída. O prompt pedia "use o kit"; a arquitetura obrigava
+a abandoná-lo.
+
+**O que mudou.**
+
+1. `sandbox/pdfpro.py` reescrito como motor de layout com **duas arestas e só duas**:
+   `X_CAIXA` (fundo de callout, faixa de cabeçalho, régua do rodapé) e
+   `X_TEXTO = X_CAIXA + RECUO`, onde começa *todo* texto — corpo, título, primeira coluna
+   da tabela, marcador de lista, rodapé, capa. A barra de destaque virou uma **coluna** da
+   tabela em vez de um `LINEBEFORE`, então ela não empurra o texto nem invade a margem.
+2. Fonte **TrueType embutida** (Carlito → DejaVu → Liberation, base-14 só se não houver
+   nenhuma): resolve acentuação, `/ToUnicode` (texto copiável e pesquisável) e
+   renderização igual em qualquer leitor.
+3. Saneamento de glifo que pergunta ao **próprio reportlab** (`unicode2T1`) se a fonte
+   desenha o caractere. A pergunta intuitiva mente: `"•".encode("cp1252")` funciona, e
+   mesmo assim o reportlab codifica o bullet em Helvetica como `\x7f`. Era exatamente a
+   origem dos 320 marcadores quebrados.
+4. Os blocos que faltavam: `lista`, `kpis`, `sumario` (com numeração de página real),
+   `chave_valor`, `citacao`, `codigo`, `imagem`, `divisor`, `assinaturas`, `quebra` e o
+   estilo `sobrio` para documento registrável. Agora sair do kit não é mais necessário.
+5. **`salvar()` audita o arquivo pronto** e falha se sobrar achado grave (texto fora da
+   grade, glifo trocado, fonte sem mapa Unicode, página irregular). O modelo também tem
+   `verificar_pdf(caminho)`. Rodado no PDF que originou tudo isto, o auditor acusa 203
+   trechos fora da grade e 342 glifos trocados.
+6. Word e Excel receberam o mesmo tratamento: `docpro` ganhou a grade (`RECUO_PT`) — antes
+   o título nascia 10 pt à direita do corpo e a célula 6 pt à esquerda dele — mais
+   `r.lista()`; e os três kits limpam caractere de controle, que é ilegal em XML 1.0 e
+   fazia o Word recusar o `.docx` e o openpyxl derrubar a planilha.
+7. O prompt do assistente (`backend/prompts/docpro/atual.txt`, `docpro@11.0.0`) abre com
+   uma **regra zero**: o kit é a única forma de diagramar, e diagramar por fora
+   (`reportlab.pdfgen.canvas`, `SimpleDocTemplate`, `fpdf`, `weasyprint`, célula
+   estilizada na mão) está proibido.
+
+Detalhes em `docs/ARCHITECTURE.md` §19. Os testes do `pdfpro` verificam o contrato bloco a
+bloco, a aresta direita da numeração, os dois caminhos de fonte e a própria auditoria — que
+precisa **reprovar** um PDF ruim, senão não serve para nada.
+
+---
+
+## O copiloto virou colega de trabalho (2026-07-26 — PR #142)
 
 O Nino conversava num painel 100% isolado: nada do chat principal entrava ali. Correto
 do ponto de vista de privacidade e **caro** no uso diário — ou o usuário copiava e

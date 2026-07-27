@@ -15,6 +15,9 @@ Uso mínimo:
     p.grafico_barras(ws, info, categoria="Produto", valor="Total", titulo="Total por produto")
     p.salvar("/workspace/outputs/vendas.xlsx")
 """
+import re
+import unicodedata
+
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
 from openpyxl.utils import get_column_letter
@@ -27,6 +30,20 @@ PALETA = {
 MOEDA_FMT = 'R$ #,##0.00'
 PCT_FMT = '0.0%'
 MILHAR_FMT = '#,##0'
+
+
+# O openpyxl LEVANTA IllegalCharacterError ao gravar caractere de controle
+# (ilegal em XML 1.0). Uma única célula com \x07 vinda de um PDF ou de um CSV
+# sujo derrubava a geração inteira da planilha.
+_CONTROLES = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
+
+
+def limpa_texto(valor):
+    """Normaliza texto e remove o que o Excel não aceita. Números, datas e
+    fórmulas passam intactos — só o texto é tratado."""
+    if not isinstance(valor, str):
+        return valor
+    return _CONTROLES.sub("", unicodedata.normalize("NFC", valor)).replace("\t", " ")
 
 
 def _num(v):
@@ -62,12 +79,14 @@ class Planilha:
         self.fonte = "Calibri"
 
     def aba(self, nome):
-        ws = self.wb.create_sheet(title=str(nome)[:31])
+        # O Excel recusa nome de aba com : \ / ? * [ ] e limita a 31 caracteres.
+        limpo = re.sub(r"[:\\/?*\[\]]", "-", limpa_texto(str(nome))).strip() or "Planilha"
+        ws = self.wb.create_sheet(title=limpo[:31])
         ws.sheet_view.showGridLines = False
         return ws
 
     def titulo(self, ws, texto, colspan=6, linha=1):
-        c = ws.cell(row=linha, column=1, value=texto)
+        c = ws.cell(row=linha, column=1, value=limpa_texto(texto))
         c.font = Font(name=self.fonte, size=16, bold=True, color=self.pal["primaria"])
         c.alignment = Alignment(horizontal="left", vertical="center")
         ws.merge_cells(start_row=linha, start_column=1, end_row=linha, end_column=max(1, colspan))
@@ -95,7 +114,7 @@ class Planilha:
         # cabeçalho
         head_fill = PatternFill("solid", fgColor=self.pal["primaria"])
         for j, nome in enumerate(cabecalho, start=1):
-            c = ws.cell(row=r0, column=j, value=nome)
+            c = ws.cell(row=r0, column=j, value=limpa_texto(nome))
             c.font = Font(name=self.fonte, size=11, bold=True, color=self.pal["branco"])
             c.fill = head_fill
             c.alignment = Alignment(horizontal="center", vertical="center")
@@ -109,6 +128,7 @@ class Planilha:
             eh_total = total and i == n - 1
             zebra = (not eh_total) and n >= 6 and (i % 2 == 1)
             for j, val in enumerate(linha, start=1):
+                val = limpa_texto(val)
                 c = ws.cell(row=r, column=j, value=val)
                 c.font = Font(name=self.fonte, size=11, bold=eh_total,
                               color=self.pal["corpo"])

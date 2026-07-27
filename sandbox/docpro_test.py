@@ -85,6 +85,49 @@ class DocProTests(unittest.TestCase):
         r.salvar(self.path, pdf=False)
         self.assertTrue(zipfile.is_zipfile(self.path))
 
+    def test_corpo_titulo_e_tabela_usam_a_mesma_aresta_esquerda(self):
+        """O mesmo contrato do pdfpro, agora no Word: título com barra, corpo,
+        lista e primeira coluna da tabela começam todos em RECUO_PT. Antes o
+        título nascia 10 pt à direita do corpo (que não tinha recuo) e a célula
+        6 pt à esquerda dele — três arestas na mesma página."""
+        r = docpro.Relatorio("T")
+        r.titulo("1. Seção")
+        r.paragrafo("Um parágrafo do corpo.")
+        r.lista(["item um", "item dois"])
+        r.tabela(["Campo", "Valor"], [["CNPJ", "00.000.000/0001-00"]])
+        r.callout("NOTA", "Um aviso.")
+        r.salvar(self.path, pdf=False)
+        doc = Document(self.path)
+
+        esperado = docpro.RECUO_PT
+        titulo, corpo, item = doc.paragraphs[0], doc.paragraphs[1], doc.paragraphs[2]
+        self.assertEqual(titulo.paragraph_format.left_indent.pt, esperado)
+        self.assertEqual(corpo.paragraph_format.left_indent.pt, esperado)
+        # a lista pendura o marcador: recuo + 14, primeira linha -14 => RECUO_PT
+        self.assertEqual(item.paragraph_format.left_indent.pt
+                         + item.paragraph_format.first_line_indent.pt, esperado)
+
+        def margem_esquerda(cell):
+            mar = cell._tc.tcPr.find(qn("w:tcMar"))
+            return int(mar.find(qn("w:start")).get(qn("w:w"))) / 20.0
+
+        tabela = doc.tables[0]
+        self.assertEqual(margem_esquerda(tabela.rows[0].cells[0]), esperado)
+        self.assertEqual(margem_esquerda(tabela.rows[1].cells[0]), esperado)
+        callout = doc.tables[1]
+        self.assertEqual(margem_esquerda(callout.rows[0].cells[0]), esperado)
+
+    def test_caractere_de_controle_nao_corrompe_o_arquivo(self):
+        """Caractere de controle é ilegal em XML 1.0: gravado cru, o Word
+        recusa o arquivo. O kit remove antes de criar o run."""
+        r = docpro.Relatorio("T")
+        r.paragrafo("texto com \x07 sinal e \x00 nulo")
+        r.tabela(["A"], [["valor \x1f estranho"]])
+        r.salvar(self.path, pdf=False)
+        doc = Document(self.path)  # reabre: prova que o XML é válido
+        self.assertNotIn("\x07", doc.paragraphs[0].text)
+        self.assertIn("texto com", doc.paragraphs[0].text)
+
     def test_sobrio_nasce_justificado_e_sem_cor(self):
         a = docpro.Sobrio()
         a.titulo("ATA DE REUNIÃO DE SÓCIOS")

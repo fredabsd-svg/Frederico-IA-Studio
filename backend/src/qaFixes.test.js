@@ -101,3 +101,20 @@ test('DOCPRO_PROMPT ensina docpro, xlspro e pdfpro', async () => {
   assert.match(prompt, /Cidade\/Estado|preenchimento GEOGRÁFICO/, 'deve proibir placeholder geográfico genérico');
   assert.match(prompt, /from docpro import Sobrio/, 'documento sóbrio deve usar o helper Sobrio (justificado de fábrica)');
 });
+
+// DOC-KIT-2: o PDF entregue em 2026-07-26 saiu com seis arestas de texto na
+// mesma página, 320 marcadores sem glifo e paginação que "andava" — porque o
+// modelo montou reportlab na mão em vez de usar o pdfpro. O prompt tem de
+// FECHAR essa porta, não só sugerir o kit.
+test('DOCPRO_PROMPT proíbe diagramar fora do kit e exige a verificação do PDF', async () => {
+  const { DOCPRO_PROMPT: prompt } = await import('./seed.js');
+  assert.match(prompt, /REGRA ZERO/, 'a regra do kit obrigatório deve vir antes de tudo');
+  assert.match(prompt, /reportlab\.pdfgen\.canvas|SimpleDocTemplate/,
+    'deve nomear o que está proibido importar para diagramar');
+  assert.match(prompt, /fpdf|weasyprint/, 'deve proibir também os outros geradores de PDF');
+  assert.match(prompt, /verificar_pdf/, 'deve mandar auditar o PDF antes de entregar');
+  assert.match(prompt, /r\.lista\(/, 'deve ensinar o bloco de lista (em vez de hífen no parágrafo)');
+  assert.match(prompt, /r\.chave_valor\(|chave_valor/, 'deve ensinar a ficha Campo|Valor do PDF');
+  assert.match(prompt, /nivel=2/, 'deve ensinar a hierarquia de títulos do kit');
+  assert.match(prompt, /estilo="sobrio"/, 'deve oferecer o PDF sóbrio/registrável');
+});
