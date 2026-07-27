@@ -557,3 +557,93 @@ body:not(.dark) .companionPanel {
   .cmpAvatarWrap { width: 74px; height: 88px; }
   .cmpBubble { bottom: 98px; }
 }
+
+/* ============================================================================
+   Copiloto — contexto autorizado, ações e memória (aba Memória).
+   ============================================================================ */
+
+/* A bolha do assistente agora carrega selos e ações abaixo dela: o wrapper
+   segura os três empilhados sem quebrar o max-width original. */
+.cwBubbleWrap { display: flex; flex-direction: column; align-items: flex-start; max-width: 84%; min-width: 0; }
+.cwBubbleWrap .cwBubble { max-width: 100%; }
+
+/* Selos do que foi realmente usado na resposta */
+.cwUsedRow { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.cwUsed {
+  display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; line-height: 1;
+  padding: 4px 7px; border-radius: 999px; color: #8b96af;
+  background: rgba(255, 255, 255, .05); border: 1px solid rgba(255, 255, 255, .08);
+}
+.cwUsed.ctx { color: #9dbcff; background: rgba(79, 140, 255, .12); border-color: rgba(79, 140, 255, .3); }
+
+/* Ações sobre a mensagem (copiar, levar ao chat, salvar…) */
+.cwMsgActions { display: flex; gap: 2px; margin-top: 4px; opacity: 0; transition: opacity .15s ease; }
+.cwMsg:hover .cwMsgActions, .cwMsgActions:focus-within { opacity: 1; }
+.cwMsgActions button {
+  width: 26px; height: 26px; border-radius: 7px; border: none; background: transparent;
+  color: #8b96af; cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+}
+.cwMsgActions button:hover { background: rgba(255, 255, 255, .08); color: #eef2fb; }
+
+/* Aviso de contexto ligado, logo acima do compositor */
+.cwContextOn {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  font-size: 11.5px; color: #9dbcff; padding: 7px 9px; margin-bottom: 6px;
+  background: rgba(79, 140, 255, .1); border: 1px solid rgba(79, 140, 255, .28); border-radius: 10px;
+}
+.cwToolBtn:disabled { opacity: .4; cursor: not-allowed; }
+.cwChatFoot { display: flex; gap: 14px; flex-wrap: wrap; }
+.cwEmptyHint { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; color: #8b96af; }
+
+/* ---- Aba Memória ---- */
+.cwMemory { display: flex; flex-direction: column; gap: 18px; }
+.cwMemory h4 { margin: 0 0 8px; font-size: 12.5px; color: #eef2fb; font-weight: 700; }
+.cwPrefs, .cwNotes { display: flex; flex-direction: column; }
+.cwPrefLabel { font-size: 11.5px; color: #8b96af; margin: 10px 0 4px; }
+.cwPrefHint { font-size: 11px; color: #8b96af; line-height: 1.5; margin: 6px 0 0; }
+.cwMemory select, .cwNoteNew input {
+  background: rgba(255, 255, 255, .05); border: 1px solid rgba(255, 255, 255, .1);
+  color: #eef2fb; border-radius: 9px; padding: 8px 10px; font-size: 12.5px; width: 100%;
+}
+.cwMemory input[type="range"] { width: 100%; accent-color: #4f8cff; }
+.cwSwitch { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; color: #b9c2d6; margin-top: 10px; line-height: 1.4; }
+.cwSwitch input { margin-top: 2px; accent-color: #4f8cff; }
+.cwDim { color: #8b96af; font-weight: 400; }
+
+.cwNoteNew { display: flex; gap: 6px; margin-bottom: 10px; }
+.cwNoteNew select { width: auto; flex: 0 0 auto; }
+.cwNoteNew button {
+  flex: 0 0 auto; width: 36px; border-radius: 9px; border: none; background: #4f8cff; color: #fff;
+  cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+}
+.cwNoteNew button:disabled { opacity: .4; cursor: not-allowed; }
+.cwNote {
+  display: flex; align-items: flex-start; gap: 8px; padding: 9px 10px; border-radius: 11px;
+  background: rgba(255, 255, 255, .04); border: 1px solid rgba(255, 255, 255, .06); margin-bottom: 7px;
+}
+.cwNote.pinned { border-color: rgba(79, 140, 255, .4); background: rgba(79, 140, 255, .08); }
+.cwNoteKind { flex: 0 0 auto; font-size: 10.5px; color: #9dbcff; background: rgba(79, 140, 255, .16); border-radius: 6px; padding: 2px 6px; }
+.cwNoteText { flex: 1; min-width: 0; font-size: 12.5px; color: #eef2fb; line-height: 1.45; word-break: break-word; }
+.cwNoteActions { display: flex; gap: 2px; }
+.cwNoteActions button {
+  width: 26px; height: 26px; border-radius: 7px; border: none; background: transparent;
+  color: #8b96af; cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+}
+.cwNoteActions button:hover { background: rgba(255, 255, 255, .08); color: #eef2fb; }
+
+/* Tema claro */
+.app.theme-light .cwMemory select,
+.app.theme-light .cwNoteNew input { background: rgba(0, 0, 0, .04); color: #1e293b; border-color: rgba(0, 0, 0, .12); }
+.app.theme-light .cwMemory h4, .app.theme-light .cwNoteText { color: #0f172a; }
+.app.theme-light .cwNote { background: rgba(0, 0, 0, .03); border-color: rgba(0, 0, 0, .08); }
+.app.theme-light .cwMsgActions button:hover, .app.theme-light .cwNoteActions button:hover { background: rgba(0, 0, 0, .06); color: #0f172a; }
+.app.theme-light .cwUsed { background: rgba(0, 0, 0, .04); border-color: rgba(0, 0, 0, .08); }
+
+/* Contexto dispensado nesta mensagem — o contraponto neutro do .cwContextOn */
+.cwContextOff {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  font-size: 11.5px; color: #8b96af; padding: 7px 9px; margin-bottom: 6px;
+  background: rgba(255, 255, 255, .04); border: 1px solid rgba(255, 255, 255, .08); border-radius: 10px;
+}
+.cwContextOn .cwLink, .cwContextOff .cwLink { margin-left: auto; }
+.app.theme-light .cwContextOff { background: rgba(0, 0, 0, .03); border-color: rgba(0, 0, 0, .08); }

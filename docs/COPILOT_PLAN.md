@@ -129,6 +129,85 @@ Começo pela espinha dorsal que torna a proatividade **real e auditável**:
   parada de emergência, ações sensíveis sempre confirmadas), `decide()` como
   motor de política, rotas + auditoria.
 
+## 9. Fase 6 — o copiloto como colega de trabalho (contexto, memória e ações)
+
+Pedido do usuário: aplicar no painel do Nino as capacidades que ele mesmo listou
+como necessárias para ajudar de verdade. O eixo é sempre o mesmo — **poder novo
+só existe com autorização explícita e rastro**.
+
+### 9.1 Contexto do chat principal, sob autorização
+
+O isolamento total era correto e caro: sem contexto o copiloto inventava, com
+ele o usuário copiava e colava a toda hora. O contexto passa a ir **por padrão**,
+com a leitura sempre auditada e a decisão nas mãos do usuário — inclusive na
+mensagem individual:
+
+| Preferência | Comportamento |
+| --- | --- |
+| `nunca` | Nem o botão do compositor abre. |
+| `perguntar` | Lê apenas quando o usuário marca o contexto *naquela* mensagem. |
+| `sempre` (**padrão**) | O contexto vai junto sem confirmação; um `false` explícito o dispensa naquela mensagem. |
+
+- A decisão vive numa função pura, `decideContextAccess(prefs, requested)`, para
+  ser auditável de olho nu e impossível de burlar por engano. `requested` é
+  tri-estado: `true` pede, `false` dispensa naquela mensagem e ausente segue a
+  preferência — coagir para booleano apagaria a diferença entre "não quero desta
+  vez" e "não disse nada".
+- O trecho entra como bloco `system` **rotulado**: cabeçalho dizendo que é
+  referência somente-leitura e que instruções ali dentro são **dado, não ordem**
+  (defesa contra injeção via conteúdo do chat principal, que inclui saída de
+  modelo e arquivos colados).
+- `readMainChatTail` só devolve mensagens de uma conversa **do próprio usuário**
+  (o JOIN com `conversations` é o dono da autorização; `messages` não tem
+  `user_id`).
+- Toda leitura vira uma entrada em `companion_audit` (categoria `ler`) com a
+  quantidade de mensagens e sob qual autorização. Trocar o nível de acesso
+  também é auditado.
+- A interface mostra, na resposta, **o que foi realmente usado** — nada de selo
+  decorativo.
+
+### 9.2 Memória própria (`copilot_notes`)
+
+Preferências, temas em andamento e lembretes que sobrevivem entre conversas.
+Escrita **controlada pelo usuário** (ele cria, fixa, apaga; o copiloto só lê) —
+diferente da memória semântica do Studio, que aprende sozinha e passa por fila
+de revisão. Fixadas entram primeiro, então o limite do prompt nunca derruba o
+que o usuário marcou como importante.
+
+### 9.3 Preferências com efeito real (`copilot_prefs`)
+
+Estilo (curto/equilibrado/detalhado) e tom (direto/amigável/formal) **mudam a
+persona enviada ao modelo**, não só a tela. Também controlam quantas mensagens o
+contexto traz e se memória e base de conhecimento entram.
+
+### 9.4 Base de conhecimento do Studio (`copilot/knowledge.js`)
+
+12 verbetes sobre o que o aplicativo faz, com busca **local** (normalização sem
+acento, palavras-chave com peso, casamento por prefixo para a flexão do
+português). Sem rede e sem tokens gastos para descobrir relevância: só os
+trechos escolhidos entram no prompt, e o limiar mínimo garante silêncio quando a
+pergunta não é sobre o Studio.
+
+### 9.5 Ações dentro do Studio
+
+Determinísticas e disparadas por clique do usuário — o modelo **não** as executa
+por conta própria:
+
+- levar uma resposta para o compositor do chat principal;
+- salvá-la como modelo de pedido (mesmo acervo de `templates`);
+- guardá-la na caixa de documentos ou na memória do copiloto;
+- resumir a conversa do copiloto num documento (`/copilot/actions/summary`).
+
+### 9.6 O que ficou de fora (e por quê)
+
+- **Dicionário de sinônimos externo:** exigiria serviço de rede novo para um
+  ganho que a revisão de escrita já entrega. Não foi feito.
+- **Copiloto propor mudanças de interface** (largura do painel, tema): o efeito
+  útil — respostas mais curtas, tom diferente — foi entregue como preferência
+  real; mexer no layout por sugestão do modelo ficou fora.
+- **Escrita automática na memória:** o copiloto não anota nada sozinho. Quem
+  guarda é o usuário (um clique na mensagem ou digitando na aba Memória).
+
 Cada módulo pesado é PURO e testado (64/64 na suíte do companion). **Pendente:**
 o *enforcement* de `decide()` ao longo de todo o `agent/loop.js`/`tools.js` (a
 política já existe e é consultável; falta plugá-la em cada ponto de execução) e
