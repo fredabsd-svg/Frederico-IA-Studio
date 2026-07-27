@@ -43,12 +43,12 @@ Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
   (o Nino cobrindo o botão de enviar), **[#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)**
   (Playwright + suíte ponta a ponta) e **[#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)**
   (as sete falhas P0 dos sub-agentes).
-- **Última validação:** 2026-07-27 — **1086 testes** (backend 886, frontend 70, guarda
+- **Última validação:** 2026-07-27 — **1087 testes** (backend 887, frontend 70, guarda
   do Docker 49, sandbox Python 59, ponta a ponta 22). O PostgreSQL 16 subiu **neste
-  contêiner** (binários locais, sem Docker), então nada foi pulado: **backend 886/886,
-  frontend 70/70, guarda 49/49 e os 59 do sandbox**; os 22 E2E entram listados. A
+  contêiner** (binários locais, sem Docker), então nada foi pulado: **backend 887/887,
+  frontend 70/70, guarda 49/49 e os 59 do sandbox**; os **22 E2E rodaram em navegador real** (`E2E_CHROMIUM_PATH` apontando o Chromium do contêiner): 22/22. A
   contagem vem de `cd backend && npm run test:count` — não a escreva à mão.
-  Sem banco, o backend passa 816 e pula 70 — o esperado.
+  Sem banco, o backend passa 817 e pula 70 — o esperado.
   Repare em um job do CI: **"Artefatos (Excel real)"** roda os testes dos kits no runner
   do GitHub, que **não tem as mesmas fontes** do sandbox. Ou seja, o caminho de
   degradação do `pdfpro` (sem TrueType, caindo para as Type1 base-14) é exercitado a
@@ -127,7 +127,13 @@ fonte; o `.docx` depende de quem abre tê-la instalada.
 — e passou a ensinar os blocos novos, com o aviso de que a numeração da seção é
 do kit.
 
-**Testes:** a suíte Python do sandbox foi de 42 para **59**.
+**Testes:** a suíte Python do sandbox foi de 42 para **59**. E um teste de
+backend novo trava o **tamanho do prompt**: o `system_prompt` é validado em
+12 000 caracteres e a v12 nasceu com 12 158. Isso não quebra a semeadura (ela
+escreve direto no banco) — quebra na primeira vez que alguém SALVA o assistente
+pela interface. Quem pegou foi a suíte ponta a ponta, com 19 testes falhando em
+`criarConta`, longe da causa; agora um teste de segundos falha primeiro, e o
+prompt foi reduzido a 11 659 caracteres.
 
 **O que ficou de fora:** o gráfico do Word continua entrando como imagem em 200
 dpi (python-docx não cria gráfico nativo), e o `sumario()` do Word recebe as

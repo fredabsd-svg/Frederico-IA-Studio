@@ -119,6 +119,19 @@ test('DOCPRO_PROMPT proíbe diagramar fora do kit e exige a verificação do PDF
   assert.match(prompt, /estilo="sobrio"/, 'deve oferecer o PDF sóbrio/registrável');
 });
 
+// DOC-KIT-0: o prompt semeado tem de CABER no campo que o próprio app valida.
+// Passar de MAX_ASSISTANT_PROFILE_CHARS não quebra a semeadura (ela escreve
+// direto no banco) — quebra na primeira vez que alguém SALVA o assistente pela
+// interface, com um 400 que não explica de onde veio. Foi assim que a suíte
+// ponta a ponta pegou o prompt v12 com 12 512 caracteres: 19 testes falharam
+// em `criarConta`, longe da causa.
+test('DOCPRO_PROMPT cabe no limite do campo de instruções', async () => {
+  const { DOCPRO_PROMPT: prompt } = await import('./seed.js');
+  const { MAX_ASSISTANT_PROFILE_CHARS: teto } = await import('./agent/assistantPolicy.js');
+  assert.ok(prompt.length <= teto,
+    `o prompt tem ${prompt.length} caracteres e o campo aceita ${teto}`);
+});
+
 // DOC-KIT-3: a identidade "Tinta & Latão" trouxe blocos que só existem no
 // documento se o prompt os ensinar — kit redesenhado com prompt antigo entrega
 // menos do que o kit sabe fazer.
