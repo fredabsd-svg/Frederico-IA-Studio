@@ -30,8 +30,12 @@ Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 - **Última validação:** 2026-07-26 — **839 testes** (backend 678, frontend 57, guarda do
   Docker 49, sandbox Python 42, ponta a ponta 13). Backend, frontend, guarda e Python
   rodaram neste contêiner com PostgreSQL real: **826 passaram, 0 falharam, 0 pulados**.
-  Os 13 E2E entram como listados (quem os executa é o job do CI). A contagem vem de
-  `cd backend && npm run test:count` — não a escreva à mão.
+  A CI do PR #149 fechou **verde nos 11 jobs**, com os 13 E2E executados de verdade. A
+  contagem vem de `cd backend && npm run test:count` — não a escreva à mão.
+  Vale reparar em um job: **"Artefatos (Excel real)"** roda os testes dos kits no runner
+  do GitHub, que **não tem as mesmas fontes** do sandbox. Ou seja, o caminho de
+  degradação do `pdfpro` (sem TrueType, caindo para as Type1 base-14) é exercitado a cada
+  push, não só na simulação local.
 
 ---
 
