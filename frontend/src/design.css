@@ -164,6 +164,17 @@
   flex: 1; min-width: 0; border: 1px solid var(--accent); background: var(--panel2); color: var(--text);
   border-radius: var(--r-sm); padding: 7px 10px; font: inherit; font-size: var(--fs-lg); outline: none;
 }
+/* Seletor de modelo na barra do editor. O ModelPicker abre um painel
+   `position: absolute` — o contêiner precisa ser o ponto de referência e não
+   pode encolher o botão até o nome do modelo sumir. */
+.dsModel { flex: none; position: relative; min-width: 0; }
+.dsModel .mpBtn { max-width: 230px; }
+.dsModel .mpName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Na tela de criação o seletor ocupa a linha inteira, como os demais campos. */
+.dsModelBlock { align-self: stretch; }
+.dsModelBlock .mpicker, .dsModelBlock .mpBtn { width: 100%; max-width: none; }
+.dsModelBlock .mpPanel { left: 0; right: auto; width: min(420px, 100%); }
+
 .dsExports { display: flex; gap: 8px; flex-wrap: wrap; }
 .dsExports .dsGhost { padding: 8px 12px; min-height: 38px; }
 
@@ -374,6 +385,8 @@
   .dsEditorBar { padding: 10px 14px; }
   .dsExports { width: 100%; }
   .dsExports .dsGhost { flex: 1; }
+  .dsModel { width: 100%; }
+  .dsModel .mpicker, .dsModel .mpBtn { width: 100%; max-width: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

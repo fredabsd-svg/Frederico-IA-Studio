@@ -30,6 +30,7 @@ export function serializeProject(row, extra = {}) {
     previewToken: row.preview_token,
     currentVersionId: row.current_version_id || null,
     adjustments: parseAdjustments(row.adjustments),
+    modelRef: row.model_ref || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     ...extra,
@@ -77,13 +78,13 @@ export function serializeMessage(row) {
 
 // ---- Projetos ---------------------------------------------------------------
 
-export async function createProject(userId, { title, outputType, designSystemId = null }) {
+export async function createProject(userId, { title, outputType, designSystemId = null, modelRef = null }) {
   const id = nanoid();
   const t = now();
   await db.prepare(
-    `INSERT INTO design_projects (id,user_id,title,output_type,design_system_id,preview_token,created_at,updated_at)
-     VALUES (?,?,?,?,?,?,?,?)`
-  ).run(id, userId, title, outputType, designSystemId, newPreviewToken(), t, t);
+    `INSERT INTO design_projects (id,user_id,title,output_type,design_system_id,preview_token,model_ref,created_at,updated_at)
+     VALUES (?,?,?,?,?,?,?,?,?)`
+  ).run(id, userId, title, outputType, designSystemId, newPreviewToken(), modelRef || null, t, t);
   return getProject(userId, id);
 }
 
@@ -115,10 +116,12 @@ export async function listProjects(userId) {
   }));
 }
 
-export async function updateProject(userId, id, { title, designSystemId }) {
+export async function updateProject(userId, id, { title, designSystemId, modelRef }) {
   const sets = [], params = [];
   if (title !== undefined) { sets.push('title=?'); params.push(title); }
   if (designSystemId !== undefined) { sets.push('design_system_id=?'); params.push(designSystemId || null); }
+  // Modelo vazio LIMPA a fixação: o projeto volta a seguir o modelo do app.
+  if (modelRef !== undefined) { sets.push('model_ref=?'); params.push(modelRef || null); }
   if (!sets.length) return getProject(userId, id);
   sets.push('updated_at=?'); params.push(now(), id, userId);
   await db.prepare(`UPDATE design_projects SET ${sets.join(',')} WHERE id=? AND user_id=?`).run(...params);

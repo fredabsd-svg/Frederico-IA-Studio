@@ -1481,7 +1481,7 @@ export default function App({ user } = {}) {
       showToast={showToast}
     />}
     {copilotOpen && <CopilotPanel copilot={copilot} onClose={() => setCopilotOpen(false)} />}
-    {designOpen && <DesignPanel onClose={() => setDesignOpen(false)} model={model} askConfirm={askConfirm} />}
+    {designOpen && <DesignPanel onClose={() => setDesignOpen(false)} model={model} allModels={allModels} askConfirm={askConfirm} />}
     {companionConfigOpen && <CompanionConfig
       companion={companion}
       allModels={allModels}

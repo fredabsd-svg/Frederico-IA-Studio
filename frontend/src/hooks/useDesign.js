@@ -189,6 +189,29 @@ export function useDesign() {
     } catch { return false; }
   }, [loadProjects]);
 
+  // Fixa (ou solta, com string vazia) o modelo do projeto. Reusa o PATCH que já
+  // renomeia — é a mesma linha do banco, e uma rota própria só para isto seria
+  // superfície nova sem ganho.
+  const saveModel = useCallback(async (projectId, modelRef) => {
+    setProject(prev => (prev?.id === projectId ? { ...prev, modelRef: modelRef || null } : prev));
+    try {
+      const r = await fetch(`${API}/api/design/projects/${encodeURIComponent(projectId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: modelRef || '' }),
+      });
+      if (!r.ok) { setError(await readError(r, 'Não consegui trocar o modelo.')); return false; }
+      const data = await r.json();
+      setProject(prev => (prev?.id === projectId
+        ? { ...prev, ...data, messages: prev.messages, versions: prev.versions }
+        : prev));
+      return true;
+    } catch {
+      setError('Não consegui trocar o modelo.');
+      return false;
+    }
+  }, []);
+
   const saveSystem = useCallback(async (input, id = '') => {
     try {
       const r = await fetch(`${API}/api/design/systems${id ? `/${encodeURIComponent(id)}` : ''}`, {
@@ -218,6 +241,6 @@ export function useDesign() {
     projects, systems, project, loading, busy, error,
     setError, loadProjects, loadSystems, openProject, closeProject,
     createProject, generate, revert, removeProject, renameProject,
-    saveAdjustments, saveSystem, removeSystem,
+    saveAdjustments, saveModel, saveSystem, removeSystem,
   };
 }

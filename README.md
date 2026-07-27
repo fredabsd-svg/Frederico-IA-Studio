@@ -128,6 +128,8 @@ vivo.
 - **Ajustes na hora** — sliders de cor, tipografia, espaçamento e arredondamento
   que mudam a prévia **sem gastar uma geração**. Os controles são derivados do
   próprio design: aparecem os que ele expõe.
+- **Modelo por projeto** — escolha o modelo de IA na própria tela do Design; ele
+  fica gravado no projeto, então voltar nele meses depois usa o mesmo modelo.
 - **Prévia isolada** — o HTML gerado roda num iframe de origem opaca, sem
   acesso à sua sessão nem ao resto da interface.
 - **Exportação**: `.html` para site, `.pdf` e `.pptx` para apresentação, `.pdf`

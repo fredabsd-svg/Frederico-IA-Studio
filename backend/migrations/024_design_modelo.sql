@@ -1,0 +1,25 @@
+-- Modo Design — modelo de IA por projeto.
+--
+-- Antes desta coluna, toda geração usava o modelo selecionado no chat
+-- principal, lido do estado do app no momento da requisição. Dois problemas
+-- práticos com isso:
+--
+-- 1) O Modo Design ocupa a tela inteira, e o seletor do chat fica ATRÁS dele.
+--    Trocar de modelo exigia fechar o modo, trocar e reabrir.
+-- 2) A escolha não pertencia a nada. Um projeto criado com um modelo bom era
+--    refinado semanas depois pelo modelo que estivesse selecionado naquele
+--    momento — que, depois de recarregar a página, é simplesmente o primeiro da
+--    lista com suporte a ferramentas. A "proposta do cliente X" saía diferente
+--    sem ninguém ter pedido.
+--
+-- Guarda a referência COMPLETA ("<provedor>::<modelo>"), não o id cru: é a
+-- forma que `getUserProvider` resolve sem ambiguidade. Um id sem prefixo faz o
+-- resolvedor cair no provedor mais antigo do usuário (o `rows[0]`) — a
+-- causa-raiz que CONTINUIDADE.md lista como aberta, e que não vale a pena
+-- reproduzir numa coluna nova.
+--
+-- NULL é um estado legítimo e esperado: são os projetos criados antes desta
+-- migration. Para eles a geração continua usando o modelo atual do app, até que
+-- o usuário escolha um pelo seletor da barra do editor.
+
+ALTER TABLE design_projects ADD COLUMN IF NOT EXISTS model_ref TEXT;

@@ -21,7 +21,10 @@ de testes: **o SSE integrado saiu do zero** (ver a frente abaixo), mas a retomad
 interrupção real do processo e o pipeline multimodelo retomável continuam sem teste.
 Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** a **identidade "Tinta & Latão"** nos três kits (frente abaixo):
+- **Último trabalho:** o **modelo de IA por projeto no Modo Design** (frente abaixo):
+  o seletor saiu de trás do painel e passou a morar na barra do editor, e a escolha
+  virou coluna do projeto em vez de estado do app. Antes dele, a
+  **identidade "Tinta & Latão"** nos três kits (frente abaixo):
   o redesenho visual entrou POR CIMA da grade do PR #149, com os blocos que faltavam —
   sumário, citação, linha do tempo, gráficos, assinaturas, contracapa, `confidencial=` e
   a aba-painel do Excel. Antes dele, o
@@ -43,12 +46,13 @@ Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
   (o Nino cobrindo o botão de enviar), **[#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)**
   (Playwright + suíte ponta a ponta) e **[#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)**
   (as sete falhas P0 dos sub-agentes).
-- **Última validação:** 2026-07-27 — **1087 testes** (backend 887, frontend 70, guarda
-  do Docker 49, sandbox Python 59, ponta a ponta 22). O PostgreSQL 16 subiu **neste
-  contêiner** (binários locais, sem Docker), então nada foi pulado: **backend 887/887,
-  frontend 70/70, guarda 49/49 e os 59 do sandbox**; os **22 E2E rodaram em navegador real** (`E2E_CHROMIUM_PATH` apontando o Chromium do contêiner): 22/22. A
+- **Última validação:** 2026-07-27 — **1099 testes** (backend 897, frontend 71, guarda
+  do Docker 49, sandbox Python 59, ponta a ponta 23). O PostgreSQL 16 subiu **neste
+  contêiner** (binários locais, sem Docker), então nada foi pulado no backend:
+  **897/897**, mais **frontend 71/71** e os **23 E2E em navegador real**
+  (`E2E_CHROMIUM_PATH` apontando o Chromium do contêiner): 23/23. A
   contagem vem de `cd backend && npm run test:count` — não a escreva à mão.
-  Sem banco, o backend passa 817 e pula 70 — o esperado.
+  Sem banco, o backend passa 818 e pula 79 — o esperado.
   Repare em um job do CI: **"Artefatos (Excel real)"** roda os testes dos kits no runner
   do GitHub, que **não tem as mesmas fontes** do sandbox. Ou seja, o caminho de
   degradação do `pdfpro` (sem TrueType, caindo para as Type1 base-14) é exercitado a
@@ -58,6 +62,51 @@ Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
   linha), então a conferência do `.docx` foi estrutural — OOXML sobre o arquivo reaberto.
   O PDF foi conferido página a página, renderizado com PyMuPDF, e com as fontes reais
   instaladas em `/usr/share/fonts/truetype/tinta-latao`.
+
+---
+
+## Modelo de IA por projeto no Modo Design (2026-07-27)
+
+Uma lacuna de uso que só apareceu quando o usuário perguntou "como eu troco o
+modelo no design?": **não dava**. O modelo vinha do estado do app (o seletor do
+chat principal), e o Modo Design ocupa a tela inteira — ou seja, o seletor ficava
+ATRÁS do painel. Trocar exigia fechar o modo, trocar e reabrir.
+
+Pior que o atrito: a escolha não pertencia a nada. O app não guarda o modelo
+selecionado entre recarregamentos (cai no primeiro da lista com suporte a
+ferramentas), então um projeto criado com um modelo bom era refinado semanas
+depois por outro qualquer — a proposta saía diferente sem ninguém ter pedido.
+
+O que mudou:
+
+- **Seletor na barra do editor**, reusando o `ModelPicker` do app. Também na tela
+  de criação, para o projeto já nascer com o modelo certo.
+- **`design_projects.model_ref`**: a escolha é do PROJETO. A precedência mora num
+  lugar só de cada lado (`modelForProject` no backend, `effectiveModel` no
+  frontend, com teste espelhando um no outro): o modelo do projeto manda; o do
+  app é só o padrão dos projetos criados antes da coluna existir (`NULL`).
+  Deixar o seletor em branco solta a fixação e devolve o projeto a esse padrão.
+- Guarda-se a referência COMPLETA (`<provedor>::<modelo>`). Um id sem prefixo faz
+  `getUserProvider` cair no `rows[0]` — a causa-raiz que ainda está aberta nos
+  próximos passos, e que não valia a pena reproduzir numa coluna nova.
+
+**Um defeito que o teste de navegador pegou, causado por esta própria mudança:**
+`Esc` com o seletor aberto fechava o Modo Design inteiro, em vez de só a lista. A
+correção precisa acontecer na fase de **captura** do evento, e a razão é sutil: o
+ModelPicker escuta no `document` (bolha), que roda antes de um ouvinte de
+`window`, e o React trata `keydown` como evento discreto — o estado é descarregado
+na hora. Quando o ouvinte do modo rodava, o painel do seletor já tinha saído do
+DOM e qualquer checagem "tem menu aberto?" via nada.
+
+**Mudança visível para o usuário:** dá para trocar o modelo sem sair do Modo
+Design, e o modelo escolhido acompanha o projeto. O rodapé do chat diz qual está
+valendo e avisa quando ele ainda vem do chat (projeto antigo, sem fixação).
+
+Onde está: migration `024_design_modelo.sql`; `modelForProject` em
+`backend/src/routes/design.js`; `effectiveModel` em
+`frontend/src/design/designCore.js`; seletor em `DesignEditor.jsx` e
+`DesignNewProject.jsx`. Testes: 6 de rota, 2 de banco, 1 puro no frontend e 1 em
+navegador real (que é o que guarda o `Esc`).
 
 ---
 

@@ -3,7 +3,7 @@ import test from 'node:test';
 import {
   DESIGN_OUTPUT_TYPES, outputTypeMeta, exportFormatsFor, formatWhen,
   versionLabel, canSubmit, exportUrl, modelLabel,
-  PREVIEW_MESSAGES, isPreviewMessage, targetLabel, tokenValue, liveOverrideCss,
+  PREVIEW_MESSAGES, isPreviewMessage, targetLabel, tokenValue, liveOverrideCss, effectiveModel,
 } from './designCore.js';
 
 // A lista de formatos aqui espelha EXPORT_FORMATS do backend
@@ -121,4 +121,13 @@ test('o CSS ao vivo cobre só os tokens do design, com unidade', () => {
   assert.match(css, /--fred-raio: 12px !important;/);
   assert.equal(liveOverrideCss([], {}), '');
   assert.equal(liveOverrideCss(null, {}), '');
+});
+
+test('o modelo do projeto vence o do app (espelho de modelForProject)', () => {
+  // As duas pontas precisam concordar: se a tela mostrar um modelo e o backend
+  // usar outro, o usuário troca o seletor e o resultado sai pelo modelo antigo.
+  assert.equal(effectiveModel({ modelRef: 'prov::fixo' }, 'prov::do-chat'), 'prov::fixo');
+  assert.equal(effectiveModel({ modelRef: null }, 'prov::do-chat'), 'prov::do-chat');
+  assert.equal(effectiveModel(null, 'prov::do-chat'), 'prov::do-chat');
+  assert.equal(effectiveModel({ modelRef: null }, ''), '');
 });
