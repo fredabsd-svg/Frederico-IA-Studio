@@ -2,7 +2,7 @@
 // documentos. Toda leitura/escrita é escopada por user_id (multi-tenant).
 import { nanoid } from 'nanoid';
 import { db, now } from '../db.js';
-import { sanitizeDocInput } from './core.js';
+import { sanitizeDocInput, sanitizeNoteInput, sanitizePrefs } from './core.js';
 
 // ---- Chat isolado -----------------------------------------------------------
 
@@ -91,4 +91,96 @@ export async function getDocument(userId, id, { withContent = true } = {}) {
 export async function deleteDocument(userId, id) {
   const r = await db.prepare('DELETE FROM copilot_documents WHERE id=? AND user_id=?').run(id, userId);
   return r.changes > 0;
+}
+
+// ---- Preferências do painel -------------------------------------------------
+
+export async function readPrefs(userId) {
+  const row = await db.prepare('SELECT prefs FROM copilot_prefs WHERE user_id=?').get(userId);
+  if (!row) return sanitizePrefs({});
+  let parsed = {};
+  try { parsed = JSON.parse(row.prefs); } catch { parsed = {}; }
+  return sanitizePrefs(parsed);
+}
+
+export async function savePrefs(userId, input) {
+  const prefs = sanitizePrefs(input);
+  await db.prepare(
+    `INSERT INTO copilot_prefs (user_id, prefs, updated_at) VALUES (?,?,?)
+     ON CONFLICT (user_id) DO UPDATE SET prefs=excluded.prefs, updated_at=excluded.updated_at`
+  ).run(userId, JSON.stringify(prefs), now());
+  return prefs;
+}
+
+// ---- Memória própria (notas) ------------------------------------------------
+
+export function serializeNote(n) {
+  return {
+    id: n.id, kind: n.kind, content: n.content, source: n.source,
+    pinned: !!n.pinned, createdAt: n.created_at, updatedAt: n.updated_at,
+  };
+}
+
+// Fixadas primeiro, depois as mais recentes — é essa a ordem que entra no
+// prompt, então o que o usuário fixou nunca cai fora pelo limite.
+export async function listNotes(userId, { limit = 100 } = {}) {
+  const rows = await db.prepare(
+    'SELECT * FROM copilot_notes WHERE user_id=? ORDER BY pinned DESC, updated_at DESC LIMIT ?'
+  ).all(userId, Math.min(200, limit));
+  return rows.map(serializeNote);
+}
+
+export async function createNote(userId, input) {
+  const note = sanitizeNoteInput(input);
+  if (!note.content) return null;
+  const id = nanoid();
+  const t = now();
+  await db.prepare(
+    'INSERT INTO copilot_notes (id,user_id,kind,content,source,pinned,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)'
+  ).run(id, userId, note.kind, note.content, note.source, note.pinned ? 1 : 0, t, t);
+  return serializeNote({ id, kind: note.kind, content: note.content, source: note.source, pinned: note.pinned, created_at: t, updated_at: t });
+}
+
+// Atualização parcial: só os campos presentes no patch mudam.
+export async function updateNote(userId, id, patch = {}) {
+  const row = await db.prepare('SELECT * FROM copilot_notes WHERE id=? AND user_id=?').get(id, userId);
+  if (!row) return null;
+  const merged = sanitizeNoteInput({
+    kind: patch.kind ?? row.kind,
+    content: patch.content ?? row.content,
+    source: row.source,
+    pinned: patch.pinned == null ? !!row.pinned : patch.pinned,
+  });
+  if (!merged.content) return null;
+  const t = now();
+  await db.prepare('UPDATE copilot_notes SET kind=?, content=?, pinned=?, updated_at=? WHERE id=? AND user_id=?')
+    .run(merged.kind, merged.content, merged.pinned ? 1 : 0, t, id, userId);
+  return serializeNote({ ...row, ...merged, pinned: merged.pinned, updated_at: t });
+}
+
+export async function deleteNote(userId, id) {
+  const r = await db.prepare('DELETE FROM copilot_notes WHERE id=? AND user_id=?').run(id, userId);
+  return r.changes > 0;
+}
+
+// ---- Leitura AUTORIZADA do chat principal -----------------------------------
+
+// Devolve as últimas mensagens de UMA conversa do chat principal — e só se ela
+// pertencer a quem pediu (o JOIN com conversations é o dono da autorização;
+// messages não tem user_id, herda o dono da conversa).
+// Nunca é chamada sem autorização explícita: quem decide é routes/copilot.js.
+export async function readMainChatTail(userId, conversationId, limit = 6) {
+  if (!conversationId) return { conversation: null, messages: [] };
+  const conv = await db.prepare('SELECT id, title FROM conversations WHERE id=? AND user_id=?').get(conversationId, userId);
+  if (!conv) return { conversation: null, messages: [] };
+  const rows = await db.prepare(
+    `SELECT m.role, m.content FROM messages m
+     WHERE m.conversation_id=?
+     ORDER BY m.created_at DESC, m.seq DESC
+     LIMIT ?`
+  ).all(conversationId, Math.min(40, Math.max(1, limit)));
+  return {
+    conversation: { id: conv.id, title: conv.title },
+    messages: rows.reverse().map(r => ({ role: r.role, content: r.content })),
+  };
 }

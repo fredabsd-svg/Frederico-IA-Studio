@@ -4,16 +4,22 @@
 //   * uma caixa de documentos independente dos anexos das conversas.
 // A inteligência vem do provedor de IA já configurado pelo usuário — aqui só
 // orquestramos o estado próprio do copiloto e a chamada isolada ao modelo.
+import { nanoid } from 'nanoid';
 import { makeRouter, safeParse } from './helpers.js';
-import { db } from '../db.js';
+import { db, now } from '../db.js';
 import { getUserProvider } from '../userProvider.js';
 import { sanitizeSettings } from './companion.js';
+import { audit } from '../companion/audit.js';
 import {
-  buildChatMessages, buildReviseMessages, estimateTokens,
+  buildChatMessages, buildReviseMessages, buildSummaryMessages, estimateTokens,
+  buildContextBlock, buildNotesBlock, buildKnowledgeBlock, decideContextAccess,
+  CONTEXT_ACCESS, RESPONSE_STYLES, TONES, NOTE_KINDS,
 } from '../copilot/core.js';
+import { findKnowledge } from '../copilot/knowledge.js';
 import {
   ensureCopilotConversation, listCopilotMessages, appendCopilotMessage, clearCopilotConversation,
   createDocument, listDocuments, getDocument, deleteDocument,
+  readPrefs, savePrefs, listNotes, createNote, updateNote, deleteNote, readMainChatTail,
 } from '../copilot/store.js';
 
 const router = makeRouter();
@@ -48,9 +54,61 @@ router.get('/copilot/chat', async (req, res) => {
   res.json({ conversationId: conv.id, messages });
 });
 
-// Envia uma mensagem ao copiloto e recebe a resposta. As mensagens enviadas ao
-// modelo são montadas SÓ com o histórico do copiloto (isolamento garantido em
-// buildChatMessages) + a persona dedicada.
+// Reúne o que o copiloto pode ver ALÉM do próprio histórico, sempre por
+// autorização: a memória que o usuário guardou, os verbetes do Studio que
+// batem com a pergunta e — só quando permitido — o trecho do chat principal.
+// Devolve também o que foi usado, para a interface poder mostrar sem mentir.
+async function gatherContext(req, { prefs, text }) {
+  const used = { notes: 0, knowledge: [], context: null };
+  let notesBlock = null;
+  let knowledgeBlock = null;
+  let contextBlock = null;
+
+  if (prefs.useNotes) {
+    const notes = await listNotes(req.userId, { limit: 30 });
+    notesBlock = buildNotesBlock(notes);
+    if (notesBlock) used.notes = notes.length;
+  }
+
+  if (prefs.useKnowledge) {
+    const hits = findKnowledge(text);
+    knowledgeBlock = buildKnowledgeBlock(hits);
+    if (knowledgeBlock) used.knowledge = hits.map(h => h.title);
+  }
+
+  // Tri-estado: true pede o contexto, false dispensa nesta mensagem e ausente
+  // segue a preferência. Coagir para booleano aqui apagaria a diferença entre
+  // "não quero desta vez" e "não disse nada".
+  const raw = req.body?.shareContext;
+  const requested = typeof raw === 'boolean' ? raw : undefined;
+  const decision = decideContextAccess(prefs, requested);
+  const conversationId = String(req.body?.conversationId || '').trim();
+  if (decision.allowed && conversationId) {
+    const tail = await readMainChatTail(req.userId, conversationId, prefs.contextMessages);
+    const block = buildContextBlock(tail.messages, { maxMessages: prefs.contextMessages });
+    if (block) {
+      contextBlock = block.text;
+      used.context = { messages: block.used, conversationTitle: tail.conversation?.title || null, truncated: block.truncated };
+      // Ler a conversa principal é justamente o poder novo do copiloto: fica
+      // registrado, com quantas mensagens e sob qual autorização.
+      await audit(req.userId, {
+        actor: 'copiloto',
+        category: 'ler',
+        action: 'contexto do chat principal',
+        target: conversationId,
+        authorized: true,
+        detail: `${block.used} mensagem(ns) — autorização: ${decision.reason}`,
+      });
+    }
+  }
+  return { notesBlock, knowledgeBlock, contextBlock, used, decision };
+}
+
+// Envia uma mensagem ao copiloto e recebe a resposta.
+//
+// O isolamento continua sendo o padrão: sem `shareContext` (ou com o acesso em
+// "nunca"), nada da conversa principal entra aqui. Quando o usuário autoriza,
+// o trecho entra como bloco de REFERÊNCIA marcado — nunca como instrução.
 router.post('/copilot/chat', async (req, res) => {
   const text = String(req.body?.text || '').trim();
   if (!text) return res.status(400).json({ error: 'Mensagem vazia.' });
@@ -58,9 +116,13 @@ router.post('/copilot/chat', async (req, res) => {
   const provider = await resolveProvider(req.userId);
   if (!provider.hasKey || !provider.client) return res.status(400).json({ error: NO_KEY_MSG });
 
+  const prefs = await readPrefs(req.userId);
   const conv = await ensureCopilotConversation(req.userId);
   const history = await listCopilotMessages(req.userId, conv.id);
-  const messages = buildChatMessages(history, text);
+  const { notesBlock, knowledgeBlock, contextBlock, used } = await gatherContext(req, { prefs, text });
+  const messages = buildChatMessages(history, text, {
+    prefs, notes: notesBlock, knowledge: knowledgeBlock, context: contextBlock,
+  });
 
   let answer = '';
   try {
@@ -79,7 +141,7 @@ router.post('/copilot/chat', async (req, res) => {
   // Só persiste depois de uma resposta válida (evita mensagens órfãs).
   const userMsg = await appendCopilotMessage(req.userId, conv.id, 'user', text);
   const botMsg = await appendCopilotMessage(req.userId, conv.id, 'assistant', answer);
-  res.json({ conversationId: conv.id, userMessage: userMsg, message: botMsg });
+  res.json({ conversationId: conv.id, userMessage: userMsg, message: botMsg, used });
 });
 
 // Limpa o histórico do copiloto (recomeçar).
@@ -87,6 +149,108 @@ router.delete('/copilot/chat', async (req, res) => {
   const conv = await ensureCopilotConversation(req.userId);
   await clearCopilotConversation(req.userId, conv.id);
   res.json({ ok: true, conversationId: conv.id });
+});
+
+// ---- Preferências do painel -------------------------------------------------
+
+// O front não precisa duplicar as listas de opções — elas vêm daqui.
+router.get('/copilot/prefs', async (req, res) => {
+  res.json({
+    prefs: await readPrefs(req.userId),
+    options: { contextAccess: CONTEXT_ACCESS, responseStyles: RESPONSE_STYLES, tones: TONES, noteKinds: NOTE_KINDS },
+  });
+});
+
+router.put('/copilot/prefs', async (req, res) => {
+  const before = await readPrefs(req.userId);
+  const prefs = await savePrefs(req.userId, req.body || {});
+  // Mudar quem pode ler a conversa principal é decisão de privacidade: fica no
+  // log mesmo quando o resultado é "fechar a porta".
+  if (before.contextAccess !== prefs.contextAccess) {
+    await audit(req.userId, {
+      actor: 'usuario', category: 'alterar', action: 'acesso do copiloto ao chat principal',
+      authorized: true, level: prefs.contextAccess === 'sempre' ? 'aviso' : 'info',
+      detail: `${before.contextAccess} → ${prefs.contextAccess}`,
+    });
+  }
+  res.json({ prefs });
+});
+
+// ---- Memória própria do copiloto --------------------------------------------
+
+router.get('/copilot/notes', async (req, res) => {
+  res.json(await listNotes(req.userId));
+});
+
+router.post('/copilot/notes', async (req, res) => {
+  const note = await createNote(req.userId, req.body || {});
+  if (!note) return res.status(400).json({ error: 'Escreva o conteúdo da nota.' });
+  res.json(note);
+});
+
+router.patch('/copilot/notes/:id', async (req, res) => {
+  const note = await updateNote(req.userId, req.params.id, req.body || {});
+  if (!note) return res.status(404).json({ error: 'Não encontrado' });
+  res.json(note);
+});
+
+router.delete('/copilot/notes/:id', async (req, res) => {
+  const ok = await deleteNote(req.userId, req.params.id);
+  if (!ok) return res.status(404).json({ error: 'Não encontrado' });
+  res.json({ ok: true });
+});
+
+// ---- Ações do copiloto dentro do Studio -------------------------------------
+// São ações DETERMINÍSTICAS, disparadas por um clique do usuário sobre um
+// conteúdo que ele está vendo — o modelo não as executa por conta própria.
+
+// Salva um texto como template de pedido (o mesmo acervo do compositor do chat
+// principal): é assim que uma sugestão do copiloto vira ferramenta reutilizável.
+router.post('/copilot/actions/template', async (req, res) => {
+  const content = String(req.body?.content || '').trim();
+  const name = String(req.body?.name || '').trim().slice(0, 120) || 'Modelo do copiloto';
+  if (!content) return res.status(400).json({ error: 'Nada para salvar.' });
+  const id = nanoid();
+  await db.prepare('INSERT INTO templates (id,user_id,name,content,created_at) VALUES (?,?,?,?,?)')
+    .run(id, req.userId, name, content.slice(0, 20_000), now());
+  await audit(req.userId, {
+    actor: 'copiloto', category: 'alterar', action: 'salvar modelo de pedido',
+    target: name, authorized: true, result: 'criado',
+  });
+  res.json({ id, name, content });
+});
+
+// Resume a conversa do copiloto e guarda o resultado na caixa de documentos.
+router.post('/copilot/actions/summary', async (req, res) => {
+  const provider = await resolveProvider(req.userId);
+  if (!provider.hasKey || !provider.client) return res.status(400).json({ error: NO_KEY_MSG });
+
+  const conv = await ensureCopilotConversation(req.userId);
+  const history = await listCopilotMessages(req.userId, conv.id);
+  if (history.length < 2) return res.status(400).json({ error: 'A conversa ainda é curta demais para resumir.' });
+
+  let summary = '';
+  try {
+    const completion = await provider.client.chat.completions.create({
+      model: provider.model,
+      messages: buildSummaryMessages(history),
+      temperature: 0.2,
+    });
+    summary = replyText(completion);
+  } catch (err) {
+    console.error('[copilot] falha no resumo:', err?.message);
+    return res.status(502).json({ error: CALL_FAIL_MSG });
+  }
+  if (!summary) return res.status(502).json({ error: CALL_FAIL_MSG });
+
+  const document = await createDocument(req.userId, {
+    kind: 'relatorio',
+    name: `Resumo da conversa — ${new Date().toLocaleString('pt-BR')}`,
+    mime: 'text/markdown',
+    content: summary,
+    meta: { origem: 'acao_resumo', mensagens: history.length },
+  });
+  res.json({ summary, document });
 });
 
 // ---- Revisão de escrita (balão proativo do avatar) --------------------------

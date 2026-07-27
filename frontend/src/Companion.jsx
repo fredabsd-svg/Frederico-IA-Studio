@@ -159,6 +159,7 @@ export function Companion({
   busy, statusText, listening,
   model, allModels = [], assistants = [],
   draft = '', onApplyDraft,
+  conversationId = null, conversationTitle = '',
   showToast,
 }) {
   const { settings, persona, events } = companion;
@@ -299,9 +300,21 @@ export function Companion({
         )}
       </div>
 
-      {/* Painel do copiloto (abas Chat e Documentos) — aberto pelo avatar. */}
+      {/* Painel do copiloto (Conversa, Memória e Documentos) — aberto pelo
+          avatar. Recebe a conversa principal aberta para poder levá-la como
+          contexto QUANDO o usuário autorizar, e o compositor para devolver
+          texto ao chat principal. */}
       {open && !minimized && (
-        <CopilotWorkspace copilot={copilot} companion={companion} state={state} onClose={() => setOpen(false)} />
+        <CopilotWorkspace
+          copilot={copilot}
+          companion={companion}
+          state={state}
+          conversationId={conversationId}
+          conversationTitle={conversationTitle}
+          onApplyDraft={onApplyDraft}
+          showToast={showToast}
+          onClose={() => setOpen(false)}
+        />
       )}
     </>
   );

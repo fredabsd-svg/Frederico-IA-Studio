@@ -318,6 +318,20 @@ execução. Testes em `agent/subagents.test.js`.
 (interseção, congelamento, igualdade da chave de política). Falta o teste de ponta a ponta
 do `runAgent` com um provedor simulado — depende do F-13.
 
+### Contexto do chat principal levado ao copiloto
+
+O painel do copiloto (Nino) passou a receber, por padrão, as últimas mensagens da conversa
+principal aberta — material de terceiros pelos mesmos motivos de sempre: inclui resposta de
+modelo e arquivos colados pelo usuário. O trecho entra como bloco `system` delimitado, com
+cabeçalho declarando que é **referência somente-leitura** e que instruções ali dentro são
+**dado, não ordem**.
+
+A leitura é governada por `decideContextAccess` (`backend/src/copilot/core.js`): `nunca`
+bloqueia sempre; `perguntar` exige o pedido explícito daquela mensagem; `sempre` — o padrão
+— leva o contexto, e um `false` explícito o dispensa numa mensagem pontual. É escopada pelo
+dono da conversa (o JOIN com `conversations` é a autorização; `messages` não tem `user_id`)
+e cada acesso vira entrada em `companion_audit`. Testes: `backend/src/copilot/core.test.js`.
+
 ---
 
 ## 9. LGPD
