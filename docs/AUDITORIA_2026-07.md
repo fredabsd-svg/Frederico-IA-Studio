@@ -65,7 +65,7 @@ auditoria: 452 no backend (2 pulados), 34 no frontend — dos quais o CI executa
 | F-14 | Sem teste de retomada após interrupção real do processo | 🟠 Alta | ⚠️ Aberto |
 | F-15 | Pipeline multimodelo sem coordenador durável | 🟠 Alta | ⚠️ Aberto |
 | F-16 | Sem suíte de relevância de memória com casos negativos | 🟡 Média | ⚠️ Aberto |
-| F-17 | Sem bateria adversarial de injeção de prompt | 🟠 Alta | ⚠️ Aberto |
+| F-17 | Sem bateria adversarial de injeção de prompt | 🟠 Alta | ✅ Fechado — 33 casos em `promptInjection.adversarial.test.js`; 2 falhas reais corrigidas (ver `docs/SECURITY.md` §8) |
 | F-18 | Docling não exercitado com corpus documental real | 🟡 Média | ⚠️ Aberto |
 | F-19 | Fluxo GitHub sem teste com git local | 🟡 Média | ⚠️ Aberto |
 | F-20 | `App.jsx` com 62 `useState`; sem code splitting (932 KB, 1 chunk) | 🟡 Média | ⚠️ Aberto (catraca no CI) |

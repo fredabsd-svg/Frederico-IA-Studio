@@ -6,6 +6,35 @@ import { PassThrough } from 'stream';
 import { nanoid } from 'nanoid';
 import { db } from './db.js';
 import { healthMetrics } from './healthMetrics.js';
+import {
+  EXEC_STATUS,
+  TERMINATION_REASONS,
+  classifyExecOutcome,
+  fingerprintWorkspace,
+  fingerprintChanged,
+  noteSandboxCreated,
+  noteSandboxTerminated,
+  takeRestartNotice,
+  peekSandboxLifecycle,
+  recordRuntimeInstall,
+  listRuntimeInstalls,
+  clearRuntimeInstalls,
+  directoryUsage,
+  environmentManifest,
+  createProgressReporter,
+  openExecLog,
+  readExecLog,
+  recordServiceStart,
+  listRecordedServices,
+  parseListeningPorts,
+  reconcileServices,
+  readTransaction,
+  writeTransaction,
+  clearTransaction,
+  createCheckpoint,
+  listCheckpoints,
+  restoreCheckpoint
+} from './agentEnv.js';
 
 // Conexão com o Docker. Em produção o backend NÃO enxerga /var/run/docker.sock:
 // ele fala com o GUARDA (docker-guard), que detém o socket e valida cada
@@ -114,6 +143,7 @@ export async function destroySandboxesForUser(userId) {
   for (const [key, entry] of [...sessions]) {
     if (String(entry.userId || '') !== scope) continue;
     sessions.delete(key);
+    noteSandboxTerminated(key, TERMINATION_REASONS.PC_FOLDERS);
     try { await entry.container.remove({ force: true }); destroyed++; } catch {}
   }
   // As pastas do PC podem ter mudado; atualiza o cache para os novos mounts
@@ -128,6 +158,7 @@ export async function destroySandboxesForUser(userId) {
 export async function destroyAllSandboxes() {
   for (const [id, entry] of [...sessions]) {
     sessions.delete(id);
+    noteSandboxTerminated(id, TERMINATION_REASONS.SHUTDOWN);
     try { await entry.container.remove({ force: true }); } catch {}
   }
   await loadPcFolders();
@@ -207,6 +238,7 @@ setInterval(async () => {
   for (const [id, entry] of [...sessions]) {
     if (entry.lastUsed < cutoff) {
       sessions.delete(id);
+      noteSandboxTerminated(id, TERMINATION_REASONS.IDLE);
       try { await entry.container.remove({ force: true }); } catch {}
     }
   }
@@ -239,12 +271,16 @@ function allConversationBases() {
         const userRoot = path.join(usersRoot, user.name);
         try {
           for (const conv of fs.readdirSync(userRoot, { withFileTypes: true })) {
-            if (conv.isDirectory()) bases.push(path.join(userRoot, conv.name));
+            // `.cache` do usuário não é conversa: a varredura de disco não deve
+            // aparar arquivos lá dentro (é justamente o que faz a reinstalação
+            // de dependências ser barata depois de um reinício).
+            if (conv.isDirectory() && !conv.name.startsWith('.')) bases.push(path.join(userRoot, conv.name));
           }
         } catch {}
       }
       continue;
     }
+    if (entry.name.startsWith('.')) continue; // `.checkpoints` e afins
     bases.push(path.join(root, entry.name)); // legado (pré-migração)
   }
   return bases;
@@ -342,15 +378,56 @@ export function workspaceFor(id, userId) {
   migrateLegacyWorkspace(conversationId, base);
   const uploads = path.join(base, 'uploads');
   const outputs = path.join(base, 'outputs');
+  // Camadas do plano de estabilização, ambas PERSISTENTES (estão dentro do
+  // workspace, que é bind do host): `.artifacts` guarda relatórios/patches que
+  // não são entrega ao usuário (outputs vira cartão de download; isto não), e
+  // `.agent-env` guarda os metadados da sessão — hoje, o manifesto das
+  // dependências instaladas em runtime.
+  const artifacts = path.join(base, '.artifacts');
+  const agentEnv = path.join(base, '.agent-env');
   fs.mkdirSync(uploads, { recursive: true });
   fs.mkdirSync(outputs, { recursive: true });
+  fs.mkdirSync(artifacts, { recursive: true });
+  fs.mkdirSync(agentEnv, { recursive: true });
   // O exec no sandbox roda como uid 1000 ('sandbox'); o backend cria os
   // diretórios como root. Sem chown, todo write em /workspace falha.
-  for (const dir of [base, uploads, outputs]) {
+  for (const dir of [base, uploads, outputs, artifacts, agentEnv]) {
     try { fs.chownSync(dir, 1000, 1000); }
     catch { try { fs.chmodSync(dir, 0o777); } catch {} }
   }
-  return { base, uploads, outputs };
+  return { base, uploads, outputs, artifacts, agentEnv };
+}
+
+// Cache de pacotes do USUÁRIO (pip/npm), compartilhado entre as conversas dele
+// e montado em /cache. É o que faz `pip install` sobreviver à morte do
+// container: o pacote não fica só na camada temporária da imagem — o wheel
+// baixado continua no host e a reinstalação é local e instantânea.
+// Fica ao lado dos diretórios de conversa; um id de conversa nunca começa com
+// ponto (CONVERSATION_ID_RE), então não há colisão possível.
+export const USER_CACHE_DIR = '.cache';
+
+export function userCacheDir(userId) {
+  const dir = path.join(root, WORKSPACE_USERS_DIR, userDirName(userId), USER_CACHE_DIR);
+  for (const sub of ['pip', 'npm', 'uv', 'poetry', 'yarn', 'pnpm']) {
+    try { fs.mkdirSync(path.join(dir, sub), { recursive: true }); } catch {}
+  }
+  try { fs.chownSync(dir, 1000, 1000); } catch { try { fs.chmodSync(dir, 0o777); } catch {} }
+  for (const sub of ['pip', 'npm', 'uv', 'poetry', 'yarn', 'pnpm']) {
+    try { fs.chownSync(path.join(dir, sub), 1000, 1000); } catch {}
+  }
+  return dir;
+}
+
+// Checkpoints ficam FORA da árvore da conversa: se morassem dentro, o snapshot
+// seguinte copiaria o anterior (crescimento quadrático) e o próprio sandbox
+// poderia apagá-los. `.checkpoints` não é um id de conversa válido, então a
+// varredura de workspaces legados o ignora.
+export const CHECKPOINTS_DIR = '.checkpoints';
+
+export function checkpointsDirFor(userId, conversationId) {
+  const dir = path.join(root, CHECKPOINTS_DIR, userDirName(userId), assertConversationId(conversationId));
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
 }
 
 async function imageExists() {
@@ -380,10 +457,11 @@ export function sandboxPolicy(options = {}) {
   };
 }
 
-async function dropSession(key) {
+async function dropSession(key, reason = TERMINATION_REASONS.POLICY) {
   const entry = sessions.get(key);
   if (!entry) return;
   sessions.delete(key);
+  noteSandboxTerminated(key, reason);
   try { await entry.container.remove({ force: true }); } catch {}
 }
 
@@ -437,7 +515,7 @@ async function enforceUserSandboxCap(userId) {
   const excess = mine.length - MAX_SANDBOXES_PER_USER + 1; // abrir espaço para o novo
   for (let i = 0; i < excess; i++) {
     const [id] = mine[i];
-    await dropSession(id);
+    await dropSession(id, TERMINATION_REASONS.USER_CAP);
   }
 }
 
@@ -459,6 +537,12 @@ async function createContainer(conversationId, policy, userId) {
     Target: m.target,
     ReadOnly: policy.readOnlyPc || !m.writable || (policy.writablePcFolderId !== null && m.id !== policy.writablePcFolderId)
   }));
+  // Cache de pacotes do usuário em /cache: fica no HOST, então um `pip install`
+  // feito nesta conversa continua valendo depois de o container morrer — e
+  // vale também para as outras conversas do MESMO usuário (nunca de outro:
+  // o caminho é escopado por userDirName, como o workspace).
+  userCacheDir(userId);
+  const hostCache = path.join(hostRoot, WORKSPACE_USERS_DIR, scope, USER_CACHE_DIR);
   const container = await docker.createContainer({
     Image: image,
     name,
@@ -480,7 +564,7 @@ async function createContainer(conversationId, policy, userId) {
     // a política e recria o container, evitando que a permissão vaze entre turnos.
     NetworkDisabled: !policy.networkEnabled,
     HostConfig: {
-      Binds: [`${hostBase}:/workspace`],
+      Binds: [`${hostBase}:/workspace`, `${hostCache}:/cache`],
       Mounts: mounts,
       Memory: parseMemory(memory),
       NanoCpus: Math.floor(cpus * 1e9),
@@ -492,13 +576,20 @@ async function createContainer(conversationId, policy, userId) {
     }
   });
   await container.start();
-  sessions.set(sessionKey(userId, conversationId), {
+  const key = sessionKey(userId, conversationId);
+  // Registra a GERAÇÃO do sandbox. Se já houve um container antes para esta
+  // chave, isto é um reinício e um aviso estruturado fica pendente — o modelo
+  // será informado do que sobreviveu e do que se perdeu (ver agentEnv.js).
+  const { generation } = noteSandboxCreated(key, container.id);
+  sessions.set(key, {
     container,
     containerId: container.id,
     lastUsed: Date.now(),
     policyKey: policy.key,
     userId,
-    conversationId
+    conversationId,
+    generation,
+    startedAt: Date.now()
   });
   healthMetrics.sandboxesActive = sessions.size;
   return container;
@@ -582,22 +673,121 @@ function parseMemory(value) {
 }
 
 const MAX_OUTPUT_BYTES = Number(process.env.SANDBOX_MAX_OUTPUT_BYTES || 8 * 1024 * 1024);
+// Carência entre matar a ÁRVORE de processos do comando e derrubar o container
+// inteiro. Ver killExecTree(): derrubar o container é o último recurso.
+const PROCESS_KILL_GRACE_MS = Math.max(200, Number(process.env.SANDBOX_KILL_GRACE_MS || 2500));
+
+// Ambiente de TODA execução. As três primeiras variáveis são o que separa, na
+// prática, o que sobrevive do que é descartável:
+//   * TMPDIR aponta para /runtime/tmp — temporário POR DESIGN, e o agente é
+//     instruído a nunca guardar ali nada que precise do comando seguinte;
+//   * PIP_CACHE_DIR/npm_config_cache apontam para /cache, que é bind do host —
+//     é o que faz uma reinstalação depois de um reinício ser local e barata.
+function execEnvironment(execId) {
+  return [
+    'TMPDIR=/runtime/tmp',
+    'TMP=/runtime/tmp',
+    'PIP_CACHE_DIR=/cache/pip',
+    'npm_config_cache=/cache/npm',
+    'YARN_CACHE_FOLDER=/cache/yarn',
+    'UV_CACHE_DIR=/cache/uv',
+    'POETRY_CACHE_DIR=/cache/poetry',
+    `FREDERICO_EXEC_ID=${execId}`
+  ];
+}
+
+// Encerra o comando e TODA a descendência dele sem derrubar o container.
+//
+// Antes, um timeout matava o container inteiro: os processos filhos morriam
+// junto (correto), mas levavam embora os pacotes instalados no turno, os
+// serviços de apoio e qualquer estado fora do workspace — e o agente ficava
+// sem saber. Como o `FREDERICO_EXEC_ID` é HERDADO por todo processo filho,
+// varrer /proc por essa variável encontra netos e bisnetos, inclusive os que
+// trocaram de nome ou de grupo de processos.
+async function killExecTree(container, execId) {
+  const script = [
+    'for p in /proc/[0-9]*; do',
+    `  grep -qz "FREDERICO_EXEC_ID=${execId}" "$p/environ" 2>/dev/null && kill -TERM "${'${p#/proc/}'}" 2>/dev/null;`,
+    'done',
+    'sleep 1',
+    'for p in /proc/[0-9]*; do',
+    `  grep -qz "FREDERICO_EXEC_ID=${execId}" "$p/environ" 2>/dev/null && kill -KILL "${'${p#/proc/}'}" 2>/dev/null;`,
+    'done',
+    'true'
+  ].join('\n');
+  const exec = await container.exec({ Cmd: ['bash', '-lc', script], AttachStdout: false, AttachStderr: false, WorkingDir: '/workspace', User: 'sandbox' });
+  await exec.start({ hijack: true, stdin: false });
+  return true;
+}
 
 export async function execInSandbox(conversationId, cmd, timeoutMs = Number(process.env.TOOL_TIMEOUT_MS || 45000), options = {}) {
   conversationId = assertConversationId(conversationId);
-  const { signal, ...sandboxOptions } = options || {};
+  const { signal, onProgress, ...sandboxOptions } = options || {};
   // Chave composta: toda remocao/troca de sessao abaixo mira SO o sandbox
   // (usuario, conversa) deste run — nunca o de outro usuario.
-  const key = sessionKey(requireUserScope(sandboxOptions.userId), conversationId);
-  const canceledResult = () => ({ exitCode: 130, output: '[INTERROMPIDO: comando cancelado pelo usuario]' });
+  const userId = requireUserScope(sandboxOptions.userId);
+  const key = sessionKey(userId, conversationId);
+  const startedAt = Date.now();
+  const execId = nanoid(16);
+  // Impressão digital ANTES do comando: é o que permite dizer, depois de uma
+  // interrupção, se ele chegou a mexer em arquivos. Sem isso o agente só pode
+  // supor — e supor "não mexeu" já causou retrabalho e sobrescrita.
+  let workspaceBase = null;
+  let agentEnvDir = null;
+  let before = null;
+  try {
+    const ws = workspaceFor(conversationId, userId);
+    workspaceBase = ws.base;
+    agentEnvDir = ws.agentEnv;
+    before = fingerprintWorkspace(workspaceBase);
+  } catch {}
+  // Progresso ao vivo (para o usuário, via SSE) e log integral em disco (para o
+  // agente, depois de uma interrupção): o resultado é aparado nos últimos 12 mil
+  // caracteres, mas o erro de uma suíte longa costuma estar no começo.
+  const progress = createProgressReporter(onProgress);
+  const execLog = agentEnvDir ? openExecLog(agentEnvDir) : null;
+  const decorate = (result, status) => {
+    const after = workspaceBase ? fingerprintWorkspace(workspaceBase) : null;
+    const diagnostico = classifyExecOutcome({ exitCode: result.exitCode, output: result.output, status });
+    const notice = takeRestartNotice(key);
+    const medida = progress.snapshot();
+    const interrompido = status !== EXEC_STATUS.OK;
+    return {
+      ...result,
+      status,
+      sucesso: status === EXEC_STATUS.OK && result.exitCode === 0,
+      duracao_ms: Date.now() - startedAt,
+      processo_encerrado: interrompido,
+      saida_parcial: interrompido && !!result.output,
+      arquivos_alterados: fingerprintChanged(before, after),
+      diagnostico,
+      // Só quando ajuda: num comando curto e bem-sucedido, estes campos seriam
+      // ruído em todo resultado de ferramenta.
+      ...(interrompido || medida.linhas > 200 ? {
+        progresso: {
+          linhas: medida.linhas,
+          bytes: medida.bytes,
+          sem_saida_ha_ms: medida.sem_saida_ha_ms,
+          ...(execLog ? { log_completo: execLog.caminho } : {})
+        }
+      } : {}),
+      ...(notice ? { ambiente_reiniciado: notice } : {})
+    };
+  };
+  const canceledResult = () => {
+    progress.stop();
+    execLog?.close({ comando: String(cmd).slice(0, 500), status: EXEC_STATUS.CANCELED, exit_code: 130, iniciado_em: new Date(startedAt).toISOString() });
+    return decorate({ exitCode: 130, output: '[INTERROMPIDO: comando cancelado pelo usuario]' }, EXEC_STATUS.CANCELED);
+  };
   if (signal?.aborted) return canceledResult();
   let container = await getContainer(conversationId, sandboxOptions);
   if (signal?.aborted) {
     sessions.delete(key);
+    noteSandboxTerminated(key, TERMINATION_REASONS.CANCELED);
     void container.kill().catch(() => {});
     return canceledResult();
   }
-  const makeExec = (c) => c.exec({ Cmd: ['bash', '-lc', cmd], AttachStdout: true, AttachStderr: true, WorkingDir: '/workspace', User: 'sandbox' });
+  const makeExec = (c) => c.exec({ Cmd: ['bash', '-lc', cmd], Env: execEnvironment(execId), AttachStdout: true, AttachStderr: true, WorkingDir: '/workspace', User: 'sandbox' });
   let exec;
   try {
     exec = await makeExec(container);
@@ -610,10 +800,28 @@ export async function execInSandbox(conversationId, cmd, timeoutMs = Number(proc
   }
   let interrupted = false;
   let finishExecution = null;
+  let sandboxDestroyed = false;
+  let timedOut = false, tooBig = false, settled = false;
+  // Encerra o comando preservando o sandbox. Só derruba o container se a
+  // árvore de processos não morrer dentro da carência — assim um timeout deixa
+  // de custar as dependências instaladas e o estado do ambiente.
+  const stopCommand = async (reason) => {
+    try {
+      await killExecTree(container, execId);
+      await new Promise(r => setTimeout(r, PROCESS_KILL_GRACE_MS));
+      if (settled) return;
+    } catch {}
+    sandboxDestroyed = true;
+    sessions.delete(key);
+    noteSandboxTerminated(key, reason);
+    try { await container.kill(); } catch {}
+    void finishExecution?.();
+  };
   const interrupt = () => {
     interrupted = true;
-    sessions.delete(key);
-    void container.kill().catch(() => {});
+    void stopCommand(TERMINATION_REASONS.CANCELED);
+    // O cancelamento é do usuário e precisa responder na hora: não espera a
+    // carência da árvore de processos para devolver o resultado.
     void finishExecution?.();
   };
   if (signal?.aborted) interrupt();
@@ -632,41 +840,66 @@ export async function execInSandbox(conversationId, cmd, timeoutMs = Number(proc
   }
   let output = '';
   let bytes = 0;
-  let timedOut = false, tooBig = false, settled = false;
   // Desmultiplexa o protocolo de frames do Docker (Tty:false) em stdout/stderr,
   // em vez de tentar remover os cabeçalhos "na mão" (que corrompia a saída).
   const stdout = new PassThrough(), stderr = new PassThrough();
   try { container.modem.demuxStream(stream, stdout, stderr); } catch {}
+  progress.start();
   const onData = (chunk) => {
     bytes += chunk.length;
-    if (!tooBig) output += chunk.toString('utf8');
+    const texto = chunk.toString('utf8');
+    progress.push(texto);
+    execLog?.write(texto);
+    if (!tooBig) output += texto;
     // Limita a saída acumulada no BACKEND (o limite de memória é do container,
     // não do Node): evita OOM com `yes`/prints gigantes.
     if (bytes > MAX_OUTPUT_BYTES && !tooBig) {
       tooBig = true;
-      sessions.delete(key);
-      void container.kill().catch(() => {});
+      void stopCommand(TERMINATION_REASONS.OUTPUT_LIMIT);
     }
   };
   stdout.on('data', onData);
   stderr.on('data', onData);
   const timer = setTimeout(() => {
     timedOut = true;
-    sessions.delete(key); // referência ficaria morta após o kill
-    void container.kill().catch(() => {});
+    void stopCommand(TERMINATION_REASONS.TIMEOUT);
   }, timeoutMs);
   return await new Promise((resolve) => {
     const finish = async () => {
       if (settled) return; // 'end', 'close' e 'error' podem disparar juntos
       settled = true;
       clearTimeout(timer);
+      progress.stop();
       signal?.removeEventListener('abort', interrupt);
       const info = await exec.inspect().catch(() => ({ ExitCode: -1 }));
       let clean = output.replace(/[\x00-\x08\x0E-\x1F]/g, '');
-      if (timedOut) clean += `\n[TIMEOUT: comando excedeu ${timeoutMs / 1000}s — sandbox reiniciado]`;
+      if (timedOut) clean += `\n[TIMEOUT: comando excedeu ${timeoutMs / 1000}s e foi encerrado${sandboxDestroyed ? ' — o sandbox precisou ser reiniciado' : ' (o sandbox continua de pé)'}. A execução NÃO terminou: não trate o resultado como concluído.]`;
       if (tooBig) clean += `\n[SAÍDA MUITO GRANDE: cortada e execução interrompida]`;
       if (interrupted) clean += '\n[INTERROMPIDO: comando cancelado pelo usuario]';
-      resolve({ exitCode: interrupted ? 130 : (timedOut ? 124 : (tooBig ? 137 : info.ExitCode)), output: clean.slice(-12000) });
+      const status = interrupted ? EXEC_STATUS.CANCELED
+        : timedOut ? EXEC_STATUS.TIMEOUT
+        : tooBig ? EXEC_STATUS.OUTPUT_LIMIT
+        : EXEC_STATUS.OK;
+      const exitCode = interrupted ? 130 : (timedOut ? 124 : (tooBig ? 137 : info.ExitCode));
+      // Só registra a instalação quando ela REALMENTE terminou bem: um `pip
+      // install` cortado por timeout deixaria o manifesto mentindo.
+      // Instalações e serviços só entram no registro quando o comando REALMENTE
+      // terminou bem: um `pip install` ou um `uvicorn` cortado por timeout
+      // deixaria os manifestos mentindo (e a árvore de processos foi morta).
+      if (status === EXEC_STATUS.OK && exitCode === 0 && agentEnvDir) {
+        try { recordRuntimeInstall(agentEnvDir, cmd); } catch {}
+        try { recordServiceStart(agentEnvDir, cmd, { generation: sessions.get(key)?.generation || 0 }); } catch {}
+      }
+      const medida = progress.snapshot();
+      execLog?.close({
+        comando: String(cmd).slice(0, 500),
+        status,
+        exit_code: exitCode,
+        iniciado_em: new Date(startedAt).toISOString(),
+        duracao_ms: medida.decorrido_ms,
+        linhas: medida.linhas
+      });
+      resolve(decorate({ exitCode, output: clean.slice(-12000) }, status));
     };
     finishExecution = finish;
     if (interrupted) { void finish(); return; }
@@ -720,6 +953,246 @@ export async function execInActiveSandbox(userId, conversationId, cmd, timeoutMs
   }
 }
 
+// ---- Observabilidade e continuidade do ambiente -----------------------------
+// Estas funções são a face do plano de estabilização para o agente (ferramenta
+// `ambiente`) e para o operador. Todas exigem escopo de usuário: um relatório
+// de ambiente sem dono vazaria estado de uma conversa para outra.
+
+// Consome o aviso de reinício pendente (se houver). Chamado pelo preâmbulo do
+// turno: o modelo precisa saber do reinício ANTES de agir, não depois de uma
+// falha confusa.
+export function takeSandboxRestartNotice(userId, conversationId) {
+  try { return takeRestartNotice(sessionKey(userId, conversationId)); }
+  catch { return null; }
+}
+
+const SANDBOX_LIMITS = () => ({
+  memoryMb: Math.round(parseMemory(memory) / 1024 / 1024),
+  cpus,
+  pids: 256,
+  commandTimeoutMs: Number(process.env.TOOL_TIMEOUT_MS || 45000),
+  maxOutputBytes: MAX_OUTPUT_BYTES,
+  idleTtlMs: IDLE_TTL_MS,
+  maxSandboxesPerUser: MAX_SANDBOXES_PER_USER
+});
+
+// Manifesto + estado: o que existe, o que é persistente, quais são os limites,
+// em que geração o sandbox está e o que se perdeu no último encerramento.
+export function sandboxEnvironmentStatus(userId, conversationId, { networkEnabled = false } = {}) {
+  const scope = requireUserScope(userId);
+  const key = sessionKey(scope, conversationId);
+  const ws = workspaceFor(conversationId, scope);
+  const uso = directoryUsage(ws.base);
+  const ciclo = peekSandboxLifecycle(key);
+  const ativo = sessions.get(key);
+  return {
+    ...environmentManifest({
+      instanceId: SANDBOX_INSTANCE_ID,
+      sessionKey: key,
+      generation: ciclo.geracao,
+      limits: SANDBOX_LIMITS(),
+      network: networkEnabled,
+      workspace: { base: '/workspace', arquivos: fingerprintWorkspace(ws.base).arquivos, bytes: uso.bytes }
+    }),
+    sandbox: {
+      ativo: !!ativo,
+      criado_em: ativo?.startedAt ? new Date(ativo.startedAt).toISOString() : null,
+      ultimo_encerramento: ciclo.ultimo_encerramento
+    },
+    dependencias_instaladas_em_runtime: listRuntimeInstalls(ws.agentEnv).length,
+    checkpoints: listCheckpoints(checkpointsDirFor(scope, conversationId)).length,
+    servicos_registrados: listRecordedServices(ws.agentEnv).length,
+    transacao_aberta: readTransaction(ws.agentEnv)
+  };
+}
+
+// CPU, memória, disco e processos. As métricas do container vêm do daemon
+// (rota /stats, liberada no guarda); quando não há sandbox ativo, o relatório
+// ainda entrega o disco — que é a parte persistente e a que costuma estourar.
+export async function sandboxResources(userId, conversationId) {
+  const scope = requireUserScope(userId);
+  const key = sessionKey(scope, conversationId);
+  const ws = workspaceFor(conversationId, scope);
+  const uso = directoryUsage(ws.base);
+  const quotaMb = Math.max(0, Number(process.env.WORKSPACE_QUOTA_MB || 0));
+  const relatorio = {
+    disco: {
+      workspace_bytes: uso.bytes,
+      cota_mb: quotaMb || null,
+      uso_da_cota_pct: quotaMb ? Math.round((uso.bytes / (quotaMb * 1024 * 1024)) * 100) : null,
+      maiores_diretorios: uso.maiores
+    },
+    memoria: null,
+    cpu: null,
+    processos: null,
+    sandbox_ativo: sessions.has(key)
+  };
+  if (relatorio.disco.uso_da_cota_pct !== null && relatorio.disco.uso_da_cota_pct >= 85) {
+    relatorio.aviso = `O workspace já usa ${relatorio.disco.uso_da_cota_pct}% da cota. Libere espaço antes de gerar mais arquivos.`;
+  }
+  const entry = sessions.get(key);
+  if (!entry) return relatorio;
+  try {
+    const stats = await entry.container.stats({ stream: false });
+    const mem = stats?.memory_stats || {};
+    if (mem.usage) {
+      relatorio.memoria = {
+        usada_mb: Math.round(mem.usage / 1024 / 1024),
+        limite_mb: mem.limit ? Math.round(mem.limit / 1024 / 1024) : null,
+        pct: mem.limit ? Math.round((mem.usage / mem.limit) * 100) : null
+      };
+    }
+    // O Docker entrega contadores acumulados; o percentual é a variação entre a
+    // leitura atual e a anterior, normalizada pelo número de CPUs.
+    const cpuDelta = (stats?.cpu_stats?.cpu_usage?.total_usage || 0) - (stats?.precpu_stats?.cpu_usage?.total_usage || 0);
+    const sysDelta = (stats?.cpu_stats?.system_cpu_usage || 0) - (stats?.precpu_stats?.system_cpu_usage || 0);
+    const online = stats?.cpu_stats?.online_cpus || cpus;
+    if (cpuDelta > 0 && sysDelta > 0) relatorio.cpu = { pct: Math.round((cpuDelta / sysDelta) * online * 100) };
+  } catch (e) {
+    relatorio.metricas_indisponiveis = String(e?.message || e).slice(0, 160);
+  }
+  const ps = await execInActiveSandbox(scope, conversationId, 'ps -eo pid,rss,comm --sort=-rss | head -n 8', 10000).catch(() => null);
+  if (ps?.output) relatorio.processos = ps.output.trim().slice(0, 1200);
+  return relatorio;
+}
+
+// Checkpoints: cópia integral do workspace fora da árvore da conversa. Não
+// commitam nada e nunca saem do servidor — são rede de segurança, não entrega.
+export function sandboxCheckpointCreate(userId, conversationId, { label = '', reason = 'manual' } = {}) {
+  const scope = requireUserScope(userId);
+  const ws = workspaceFor(conversationId, scope);
+  return createCheckpoint(ws.base, checkpointsDirFor(scope, conversationId), { label, reason });
+}
+
+export function sandboxCheckpointList(userId, conversationId) {
+  const scope = requireUserScope(userId);
+  return listCheckpoints(checkpointsDirFor(scope, conversationId));
+}
+
+// Restaurar é destrutivo por natureza (repõe o passado por cima do presente),
+// então o estado atual vira um checkpoint automático antes — sem isso, um
+// rollback errado não teria volta.
+export function sandboxCheckpointRestore(userId, conversationId, id) {
+  const scope = requireUserScope(userId);
+  const ws = workspaceFor(conversationId, scope);
+  const dir = checkpointsDirFor(scope, conversationId);
+  let seguranca = null;
+  try { seguranca = createCheckpoint(ws.base, dir, { label: 'antes da restauração', reason: 'automatico' }); } catch {}
+  return { ...restoreCheckpoint(ws.base, dir, id), checkpoint_de_seguranca: seguranca?.id || null };
+}
+
+// Log integral da última execução. É o que dá substância ao "saída parcial
+// disponível": depois de um timeout, o agente lê o começo da saída — onde o
+// erro costuma estar — em vez de só os últimos 12 mil caracteres.
+export function sandboxLastExecutionLog(userId, conversationId) {
+  const scope = requireUserScope(userId);
+  return readExecLog(workspaceFor(conversationId, scope).agentEnv);
+}
+
+// Serviços e portas: cruza o que o agente iniciou com o que está REALMENTE
+// escutando dentro do container agora. Usa execInActiveSandbox de propósito —
+// observar não pode materializar container nem prolongar a vida do sandbox.
+export async function sandboxServices(userId, conversationId) {
+  const scope = requireUserScope(userId);
+  const key = sessionKey(scope, conversationId);
+  const ws = workspaceFor(conversationId, scope);
+  const registrados = listRecordedServices(ws.agentEnv);
+  const geracao = peekSandboxLifecycle(key).geracao;
+  if (!sessions.has(key)) {
+    return {
+      sandbox_ativo: false,
+      observacao: 'Não há sandbox ativo: qualquer serviço iniciado antes já foi encerrado com o container. Suba de novo se precisar.',
+      servicos: registrados.map(r => ({ ...r, estado: 'perdido_no_reinicio' })),
+      portas_sem_registro: []
+    };
+  }
+  // `ss` é o caminho normal; `netstat` é a reserva. O parser aceita os dois.
+  const sonda = await execInActiveSandbox(scope, conversationId,
+    'ss -ltnpH 2>/dev/null || netstat -ltnp 2>/dev/null || true', 10000).catch(() => null);
+  const escutando = parseListeningPorts(sonda?.output || '');
+  return {
+    sandbox_ativo: true,
+    geracao_do_sandbox: geracao,
+    ...reconcileServices(registrados, escutando, { generation: geracao }),
+    observacao: 'Serviços vivem só enquanto este sandbox viver: eles NÃO sobrevivem a reinício nem à reciclagem por ociosidade, e não são alcançáveis de fora do container.'
+  };
+}
+
+// ---- Transação de workspace -------------------------------------------------
+// Açúcar sobre checkpoints, com um ganho real: a transação aberta é anunciada no
+// preâmbulo do turno seguinte, então uma alteração em vários arquivos não fica
+// pela metade em silêncio.
+export function sandboxTransactionBegin(userId, conversationId, { label = '' } = {}) {
+  const scope = requireUserScope(userId);
+  const ws = workspaceFor(conversationId, scope);
+  const aberta = readTransaction(ws.agentEnv);
+  if (aberta) {
+    return { ja_aberta: true, ...aberta, observacao: 'Já existe uma transação aberta. Confirme ou desfaça antes de abrir outra.' };
+  }
+  const cp = createCheckpoint(ws.base, checkpointsDirFor(scope, conversationId), { label: label || 'transação', reason: 'transacao' });
+  const dados = { checkpoint: cp.id, rotulo: String(label || '').slice(0, 120), aberta_em: new Date().toISOString(), arquivos: cp.arquivos };
+  writeTransaction(ws.agentEnv, dados);
+  return { ...dados, observacao: 'Ponto de retorno salvo. Ao validar a alteração, use transacao_confirmar; se der errado, transacao_desfazer.' };
+}
+
+export function sandboxTransactionCommit(userId, conversationId) {
+  const scope = requireUserScope(userId);
+  const ws = workspaceFor(conversationId, scope);
+  const aberta = readTransaction(ws.agentEnv);
+  if (!aberta) return { aberta: false, observacao: 'Não havia transação aberta.' };
+  clearTransaction(ws.agentEnv);
+  // O checkpoint continua na lista: confirmar não apaga o ponto de retorno,
+  // só encerra a transação (dá para voltar depois, se algo aparecer).
+  return { confirmada: true, checkpoint_preservado: aberta.checkpoint, rotulo: aberta.rotulo };
+}
+
+export function sandboxTransactionRollback(userId, conversationId) {
+  const scope = requireUserScope(userId);
+  const ws = workspaceFor(conversationId, scope);
+  const aberta = readTransaction(ws.agentEnv);
+  if (!aberta) return { aberta: false, observacao: 'Não havia transação aberta. Para voltar a um ponto anterior, use checkpoint_listar e checkpoint_restaurar.' };
+  const r = sandboxCheckpointRestore(scope, conversationId, aberta.checkpoint);
+  clearTransaction(ws.agentEnv);
+  return { desfeita: true, ...r, rotulo: aberta.rotulo };
+}
+
+// Consumido pelo preâmbulo do turno: uma transação aberta precisa reaparecer,
+// senão a alteração pela metade some do radar entre um turno e outro.
+export function sandboxOpenTransaction(userId, conversationId) {
+  try { return readTransaction(workspaceFor(conversationId, requireUserScope(userId)).agentEnv); }
+  catch { return null; }
+}
+
+export function sandboxRuntimeDependencies(userId, conversationId) {
+  const scope = requireUserScope(userId);
+  return listRuntimeInstalls(workspaceFor(conversationId, scope).agentEnv);
+}
+
+export function sandboxForgetRuntimeDependencies(userId, conversationId) {
+  const scope = requireUserScope(userId);
+  return clearRuntimeInstalls(workspaceFor(conversationId, scope).agentEnv);
+}
+
+// Limpeza segura: só o que é descartável por definição. Nunca toca em uploads,
+// outputs, artefatos ou checkpoints.
+export async function cleanSandboxTemporary(userId, conversationId) {
+  const scope = requireUserScope(userId);
+  const ws = workspaceFor(conversationId, scope);
+  let scripts = 0;
+  try {
+    for (const name of fs.readdirSync(ws.base)) {
+      if (!/^\.tmp_.*\.py$/.test(name)) continue;
+      try { fs.rmSync(path.join(ws.base, name), { force: true }); scripts++; } catch {}
+    }
+  } catch {}
+  const runtime = await execInActiveSandbox(scope, conversationId, 'rm -rf /runtime/tmp/* 2>/dev/null; du -sh /runtime/tmp 2>/dev/null || true', 15000).catch(() => null);
+  return {
+    scripts_temporarios_removidos: scripts,
+    runtime_tmp_limpo: !!runtime,
+    preservado: 'uploads, outputs, artefatos, cache de pacotes e checkpoints'
+  };
+}
+
 // Remove o sandbox e o diretório de workspace de uma conversa (usado ao apagar)
 export async function destroyConversation(conversationId, userId) {
   conversationId = assertConversationId(conversationId);
@@ -728,6 +1201,7 @@ export async function destroyConversation(conversationId, userId) {
   const entry = sessions.get(key);
   if (entry) {
     sessions.delete(key);
+    noteSandboxTerminated(key, TERMINATION_REASONS.CONVERSATION_REMOVED);
     try { await entry.container.remove({ force: true }); } catch {}
     healthMetrics.sandboxesActive = sessions.size;
   }
@@ -735,6 +1209,9 @@ export async function destroyConversation(conversationId, userId) {
   // de layout e nunca reaberta) — apagar a conversa não pode deixar rastro.
   try { fs.rmSync(path.join(root, WORKSPACE_USERS_DIR, userDirName(scope), conversationId), { recursive: true, force: true }); } catch {}
   try { fs.rmSync(path.join(root, conversationId), { recursive: true, force: true }); } catch {}
+  // Os checkpoints moram fora da árvore da conversa; sem isto, apagar a
+  // conversa deixaria cópias íntegras dos arquivos dela no disco.
+  try { fs.rmSync(path.join(root, CHECKPOINTS_DIR, userDirName(scope), conversationId), { recursive: true, force: true }); } catch {}
 }
 
 // Verifica se `target` está DENTRO de `base` (comparação com separador,

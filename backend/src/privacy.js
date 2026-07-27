@@ -93,6 +93,23 @@ export async function exportUserData(userId, user = {}) {
     conv.files = await db.prepare('SELECT kind, name, size, created_at FROM files WHERE conversation_id=? ORDER BY created_at ASC').all(conv.id);
   }
   const settings = await db.prepare('SELECT base_url, model, prefs, created_at, updated_at FROM user_settings WHERE user_id=?').get(userId);
+  // Modo Design: o artefato é conteúdo do usuário e precisa sair na
+  // portabilidade. Só o conteúdo da versão ATUAL vai junto — o histórico entra
+  // como metadado (número, pedido, data). Um projeto muito conversado tem
+  // dezenas de versões de centenas de KB cada; exportar todas transformaria um
+  // JSON de portabilidade em um arquivo que o navegador não abre, sem
+  // acrescentar nada que o usuário não possa exportar pelo próprio painel.
+  const designProjects = await db.prepare(
+    `SELECT p.id, p.title, p.output_type, p.created_at, p.updated_at, v.content AS current_content
+       FROM design_projects p
+       LEFT JOIN design_versions v ON v.id = p.current_version_id
+      WHERE p.user_id=? ORDER BY p.created_at ASC`
+  ).all(userId);
+  for (const project of designProjects) {
+    project.versoes = await db.prepare(
+      'SELECT version_number, prompt_used, created_at FROM design_versions WHERE project_id=? ORDER BY version_number ASC'
+    ).all(project.id);
+  }
   return {
     formato: 'frederico-ia-studio/export-v1',
     exportado_em: now(),
@@ -112,6 +129,8 @@ export async function exportUserData(userId, user = {}) {
     memorias: await db.prepare('SELECT scope, content, type, importance, pinned, tags, created_at FROM memory WHERE user_id=? ORDER BY created_at ASC').all(userId),
     rotinas: await db.prepare('SELECT title, prompt, cadence, day, hour, enabled, created_at FROM schedules WHERE user_id=? ORDER BY created_at ASC').all(userId),
     uso: await db.prepare('SELECT model, kind, prompt_tokens, completion_tokens, total_tokens, created_at FROM usage WHERE user_id=? ORDER BY created_at ASC').all(userId),
+    design_systems: await db.prepare('SELECT name, primary_color, secondary_color, font_heading, font_body, notes, created_at FROM design_systems WHERE user_id=? ORDER BY created_at ASC').all(userId),
+    projetos_design: designProjects,
     conversas: conversations,
   };
 }

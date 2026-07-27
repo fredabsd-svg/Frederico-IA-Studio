@@ -1,0 +1,16 @@
+{
+  "name": "frederico-ai-studio-e2e",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Testes ponta a ponta (navegador real) do Frederico AI Studio.",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "relatorio": "playwright show-report",
+    "navegador": "playwright install --with-deps chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.0"
+  }
+}

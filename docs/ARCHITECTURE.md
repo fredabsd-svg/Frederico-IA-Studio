@@ -177,7 +177,28 @@ execInSandbox(conversationId, cmd, timeout, { userId, ...política })
 - **Invalidação direcionada** (novo): mudar pastas do PC descarta só os sandboxes **daquele** usuário.
 - **Observação sem efeito colateral:** `execInActiveSandbox(userId, conversationId, ...)` —
   não cria, não troca, não mata; usado pelo monitor do copiloto.
-- **Testes:** `src/sandbox.isolation.test.js` (11 casos), `src/sandbox.id.test.js`.
+- **Timeout NÃO derruba mais o container** (novo): o comando leva
+  `FREDERICO_EXEC_ID` no ambiente, e o encerramento varre `/proc/*/environ` para
+  matar a árvore inteira (filhos, netos). O sandbox só cai se a árvore
+  sobreviver à carência — antes, um `pytest` travado custava as dependências da
+  sessão.
+- **Saída ao vivo** (novo): `execInSandbox` aceita `onProgress`; o loop repassa
+  como evento SSE `tool_progress` e a interface mostra um terminal ao vivo, com
+  aviso de silêncio ("sem saída há Xs"). A saída INTEGRAL vai para
+  `/workspace/.agent-env/ultima-execucao.log` — o resultado é aparado nos últimos
+  12 mil caracteres e o erro de uma suíte longa costuma estar no começo.
+- **Serviços e transação de workspace** (novo): `ambiente` → `servicos` cruza o
+  que o agente subiu (uvicorn, vite, http.server…) com o que está realmente
+  escutando (`ss`/`netstat`), marcando o que morreu no reinício;
+  `transacao_iniciar/confirmar/desfazer` dá ponto de retorno a uma edição em
+  vários arquivos, e a transação ABERTA reaparece no preâmbulo do turno seguinte.
+- **Estado estruturado + aviso de reinício** (novo): toda execução devolve
+  `status`, `diagnostico` (ambiente × projeto), `arquivos_alterados` e, quando o
+  container foi trocado, `ambiente_reiniciado` com o que sobreviveu e o que se
+  perdeu. Camadas: `/workspace` e `/cache` persistentes, `/runtime/tmp`
+  descartável. Ver **`docs/AMBIENTE_EXECUCAO.md`**.
+- **Testes:** `src/sandbox.isolation.test.js` (11 casos), `src/sandbox.id.test.js`,
+  `src/sandbox.stability.test.js`, `src/agentEnv.test.js`.
 
 ---
 
@@ -307,6 +328,32 @@ ferramenta que vaze como texto (`sanitizeToolProtocolText`), na exibição **e**
 - **Testes:** `agent/checkpoint.test.js`, `agent/executionState.test.js`, `agent.control.test.js`.
 - **Lacuna:** não há teste de retomada após **interrupção real do processo** (matar o Node no
   meio e continuar). Ver F-14.
+
+---
+
+## 13.1 Sub-agentes (`agent/subagents.js`)
+
+Delegação em **tempo de execução**: o próprio agente principal decide, no meio do trabalho,
+mandar uma subtarefa para um `runAgent` completo com ferramentas de verdade. Diferente do
+Modo Equipe (`orchestrator.js`), onde os especialistas são escolhidos antes pela interface e
+não executam ferramentas.
+
+| Peça | Comportamento |
+| --- | --- |
+| Oferta da ferramenta | `shouldOfferSubagentTool` — desliga em turno social, modo gratuito, sem ferramentas, dentro de outro sub-agente e com `SUBAGENTS_ENABLED=false`. |
+| Escolha do especialista | `especialista_id` com **`enum` dos ids reais** da conta (`listSubagentSpecialists`). Id inexistente devolve `SUBAGENT_SPECIALIST_NOT_FOUND` — não há fallback silencioso. Sem especialista, o filho usa o perfil do pai. |
+| Autorização | `DelegationContext` congelado (ver `SECURITY.md` §8.1). Nada é recalculado a partir da subtarefa. |
+| Contexto | Janela isolada: sem memória e sem histórico. O filho vê o prompt protegido, a subtarefa e o manifesto de uploads/documentos da conversa. |
+| Paralelismo | `createSubagentLimiter` — semáforo com contador e fila FIFO. Lote **só** de delegações corre em paralelo; lote misto (`write_file` + delegação) volta a correr em série, na ordem pedida. |
+| Cancelamento | `control.activeTools` é um `Set`: o Parar aborta todas as ferramentas em voo, não só a última registrada. |
+| Custo | `usage` do filho soma na do pai; esforço limitado a `alto`; tetos `SUBAGENT_MAX_PER_RUN` (4, máx. 10) e `SUBAGENT_MAX_PARALLEL` (2, máx. 4). |
+| O que volta ao pai | Só o JSON de `summarizeSubagentResult`: resultado, arquivos, especialista e modelo REAIS. O texto corrido do filho nunca entra na resposta do pai (`FORWARDED_EVENTS`). |
+
+- **Testes:** `agent/subagents.test.js`, `agent.control.test.js`.
+- **Lacuna:** sem teste de ponta a ponta do `loop.js` com delegação real simulada (F-13);
+  sem orçamento próprio de tempo/tokens por delegação; arquivos de dois filhos paralelos
+  ainda compartilham `outputs/` (a atribuição por filho pode se cruzar — o conjunto que o
+  usuário recebe está correto porque o pai também faz o diff).
 
 ---
 

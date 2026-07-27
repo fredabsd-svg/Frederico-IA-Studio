@@ -211,6 +211,50 @@ jobs:
             exit 1
           fi
 
+  e2e:
+    name: Ponta a ponta (navegador real)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: studio
+          POSTGRES_PASSWORD: studio
+          POSTGRES_DB: studio
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U studio -d studio"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      E2E_DATABASE_URL: postgres://studio:studio@localhost:5432/studio
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      # O backend e o frontend sobem de verdade (o playwright.config.js cuida
+      # disso), então as duas árvores de dependências precisam existir.
+      - run: cd backend && npm ci --ignore-scripts
+      - run: cd frontend && npm ci --ignore-scripts
+      - run: cd e2e && npm ci
+      # Só o Chromium: o app é usado no navegador do escritório e manter três
+      # navegadores no CI não se paga.
+      - run: cd e2e && npx playwright install --with-deps chromium
+      - run: cd e2e && npm test
+      # Rastro, vídeo e captura dos que falharem — sem isso, "falhou no CI"
+      # vira adivinhação.
+      - name: Guardar o relatório quando falhar
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-relatorio
+          path: |
+            e2e/playwright-report/
+            e2e/test-results/
+          retention-days: 7
+
   compose:
     name: Docker Compose (validação)
     runs-on: ubuntu-latest

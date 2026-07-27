@@ -104,6 +104,29 @@ veja **[docs/CONFIGURACAO.md](docs/CONFIGURACAO.md)**.
 - **Retomada real** — tarefa interrompida salva o estado no banco; **Continuar de
   onde parei** retoma do ponto exato, mesmo após reiniciar o servidor.
 
+### 🎨 Modo Design
+
+Um espaço próprio para quando o resultado precisa **parecer bom**: descreva um
+site, uma apresentação ou um documento visual e veja o rascunho renderizado ao
+vivo.
+
+- **Três saídas**: página/protótipo HTML responsivo, apresentação 16:9 e
+  documento paginado em A4.
+- **Refinamento por conversa** — "deixe o cabeçalho mais escuro", "adicione uma
+  seção de perguntas frequentes". Cada pedido vira uma **versão**, e dá para
+  voltar para qualquer uma sem perder as seguintes.
+- **Edição inline** — clique num elemento da prévia e peça a mudança só dele:
+  o resto do documento sai idêntico.
+- **Ajustes na hora** — sliders de cor, tipografia, espaçamento e arredondamento
+  que mudam a prévia **sem gastar uma geração**. Os controles são derivados do
+  próprio design: aparecem os que ele expõe.
+- **Prévia isolada** — o HTML gerado roda num iframe de origem opaca, sem
+  acesso à sua sessão nem ao resto da interface.
+- **Exportação**: `.html` para site, `.pdf` e `.pptx` para apresentação, `.pdf`
+  para documento.
+- **Sua marca** — cores e fontes definidas uma vez, aplicadas em todo projeto
+  que a escolher.
+
 ### 🌱 Nino, o copiloto
 
 O personagem que acompanha o Studio — e explica o que está acontecendo.
@@ -158,18 +181,36 @@ O personagem que acompanha o Studio — e explica o que está acontecendo.
 ### 💻 Desenvolvimento e automação
 
 - **Sandbox Docker** — um container por conversa para Python, Bash e geração de
-  arquivos.
+  arquivos, com a caixa de ferramentas já montada: planilhas e dados (pandas,
+  polars, duckdb), documentos e PDF (python-docx, reportlab, PyMuPDF, OCR),
+  compiladores (C/C++, Go, Rust, Java, C#, Kotlin), Node e Chromium headless com
+  Playwright, e APIs **REST e GraphQL** (Flask, FastAPI e strawberry-graphql).
 - **Ambiente de Trabalho da IA** — terminal, código, arquivos, pesquisa e
   navegador agrupados em **uma sessão ao vivo**, com passo a passo e miniatura
-  real das páginas abertas.
+  real das páginas abertas. Comando longo mostra a **saída em tempo real** e
+  avisa quando fica em silêncio ("sem saída há 25s"), em vez de deixar você
+  olhando uma barra parada.
+- **Ambiente que não perde o seu trabalho** — o sandbox pode ser reciclado no meio
+  de uma tarefa longa. Quando isso acontece, o assistente é avisado **do que
+  sobreviveu e do que se perdeu**, em vez de continuar achando que está tudo lá.
+  Um comando que estoura o tempo encerra só a árvore de processos dele — os
+  pacotes que ele já instalou continuam valendo. E o assistente **não diz que
+  terminou** quando a execução foi cortada: cada resultado carrega o estado real,
+  além de um diagnóstico que separa **falha do ambiente** (dependência ausente,
+  rede desligada, memória) de **erro do seu código**. Antes de mexer em vários
+  arquivos ele guarda um ponto de retorno, e sabe listar as portas e os servidores
+  que subiu. Detalhes em [`docs/AMBIENTE_EXECUCAO.md`](docs/AMBIENTE_EXECUCAO.md).
 - **Modo Desenvolvedor** — projetos com memória permanente, explorador de
   arquivos e seis modos de trabalho (Perguntar, Planejar, Implementar, Corrigir
   erro, Revisar e Agente autônomo).
 - **Conector GitHub** — clone, alteração e **push ou Pull Request em 1 clique**;
   o token fica cifrado e nunca entra no sandbox.
 - **Sub-agentes** — o próprio agente delega uma subtarefa a um `runAgent` completo,
-  com ferramentas e janela de contexto própria e descartável; os arquivos gerados
-  aparecem normalmente em `outputs/`.
+  com ferramentas e uma janela de contexto **própria e descartável** (sem histórico
+  nem memória da conversa); os arquivos gerados aparecem normalmente em `outputs/`.
+  Delegar **não amplia acesso**: o sub-agente nunca recebe mais ferramentas, rede ou
+  escrita do que o agente que o chamou. Você escolhe o especialista entre os
+  assistentes que já cadastrou — e vê no cartão quem executou e com qual modelo.
 - **Rotinas** — tarefas que rodam sozinhas em horários marcados.
 - **Tarefas em segundo plano**, caixa de entrada por cliente e templates de pedido.
 
@@ -210,8 +251,10 @@ chave única do servidor para uso pessoal/de equipe.
 | 🐳 **Backend sem o socket do Docker** | Quem o detém é o serviço `docker-guard`, que valida cada requisição ao daemon (allowlist de rotas, inspeção do corpo de `/containers/create`, posse por label) |
 | 🛡️ **Antivírus honesto nos uploads** | Todo arquivo é escaneado (ClamAV) antes de ser salvo, e a resposta diz se foi `verificado`, `degradado` ou `sem-antivirus` — **nada é apresentado como verificado sem ter sido analisado** |
 | 🧱 **Camada HTTP endurecida** | `helmet`, CORS restrito à própria origem, rate limiting por IP e validação `zod` |
-| 🛰️ **Anti-SSRF no `web_fetch`** | Bloqueia IPs internos e **resolve o DNS validando cada IP** antes de conectar, revalidando a cada redirect |
+| 🛰️ **Anti-SSRF no `web_fetch`** | Bloqueia IPs internos e **resolve o DNS validando cada IP** antes de conectar, revalidando a cada redirect. O navegador headless que gera a miniatura da página segue a mesma regra: **cada salto de redirecionamento é validado antes de ser seguido**, inclusive nos recursos que a página carrega |
 | 🖥️ **Guarda de execução** | `bash` e `run_python` passam pela mesma validação; alterar arquivos reais do PC exige pedido explícito e fica registrado em auditoria |
+| 📄 **Conteúdo externo é dado, não ordem** | Página lida, README de repositório, documento, memória, saída de ferramenta e resposta de outro modelo entram marcados como **dado não confiável** — e a marcação estrutural é neutralizada, para que texto de terceiro não consiga se passar por instrução do aplicativo nem virar chamada de ferramenta. Coberto por uma **bateria adversarial de 33 casos** |
+| 🤝 **Delegação não escala privilégio** | O sub-agente herda um contrato **congelado** do agente que o chamou — ferramentas (interseção com o especialista), rede, escrita nas Pastas do PC e política do sandbox. Nada disso é recalculado a partir da subtarefa, que é texto escrito pelo próprio modelo |
 | 🩺 **Healthcheck com métricas** | `GET /api/health` expõe uptime, política do antivírus, sandboxes ativos/órfãos e os limites de upload vigentes |
 | 📋 **LGPD embutida** | Consentimento registrado (art. 8º), exportar tudo em JSON, apagar histórico e excluir conta — **hard delete** |
 
@@ -271,6 +314,7 @@ chave única do servidor para uso pessoal/de equipe.
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Arquitetura real: serviços, fluxos, persistência, lacunas |
 | [docs/SECURITY.md](docs/SECURITY.md) | Modelo de ameaça, isolamento, sandbox, segredos, LGPD |
 | [docs/OPERATIONS.md](docs/OPERATIONS.md) | Runbook: monitoramento, limites, procedimentos, rollback |
+| [docs/AMBIENTE_EXECUCAO.md](docs/AMBIENTE_EXECUCAO.md) | Ambiente do agente: o que é persistente, o que é temporário, como recuperar uma tarefa e como diferenciar falha do ambiente de bug do projeto |
 | [docs/CONFIGURACAO.md](docs/CONFIGURACAO.md) | Primeira configuração, modo gratuito, Docling e acesso pelo celular |
 | [docs/BACKUP_RESTORE.md](docs/BACKUP_RESTORE.md) | Backup completo e restauração passo a passo |
 | [docs/TESTING.md](docs/TESTING.md) | Como rodar os testes, convenções e lacunas conhecidas |
@@ -278,19 +322,23 @@ chave única do servidor para uso pessoal/de equipe.
 | [docs/MULTIMODEL.md](docs/MULTIMODEL.md) | Modos multimodelo e o que ainda falta |
 | [docs/MEMORY.md](docs/MEMORY.md) | Memória semântica e recuperação de contexto |
 | [docs/DOCLING.md](docs/DOCLING.md) | Camada de compreensão documental |
+| [docs/DESIGN_STUDIO.md](docs/DESIGN_STUDIO.md) | Modo Design: tipos de saída, versionamento, isolamento da prévia e exportação |
+| [e2e/README.md](e2e/README.md) | Testes de navegador: como rodar, o provedor simulado e as armadilhas já pagas |
+| [docs/FREDERICO_COMPANION.md](docs/FREDERICO_COMPANION.md) | O copiloto Nino em detalhe |
 | [VPS-DEPLOY.md](VPS-DEPLOY.md) | Publicação em VPS com HTTPS |
 | [NOTEBOOK-SERVIDOR.md](NOTEBOOK-SERVIDOR.md) | Acesso remoto com notebook e Tailscale |
 | [docs/CHANGELOG_HISTORY.md](docs/CHANGELOG_HISTORY.md) | Histórico completo do projeto |
-| [VPS-DEPLOY.md](VPS-DEPLOY.md) | Publicação em VPS com HTTPS |
-| [NOTEBOOK-SERVIDOR.md](NOTEBOOK-SERVIDOR.md) | Acesso remoto com notebook e Tailscale |
-| [docs/DOCLING.md](docs/DOCLING.md) | Camada de compreensão documental |
-| [docs/FREDERICO_COMPANION.md](docs/FREDERICO_COMPANION.md) | O copiloto Nino em detalhe |
 
 ## 🤝 Contribuir
 
 Toda mudança relevante precisa: atualizar o `CONTINUIDADE.md` (que é **curto** — o
 histórico vai para `docs/CHANGELOG_HISTORY.md`), passar por `npm run check` nos dois
 lados, receber um commit descritivo em português e ser enviada ao GitHub na mesma sessão.
+
+Mexeu em interface, streaming ou login? Rode também os testes de navegador
+(`cd e2e && npm test` — exige PostgreSQL; ver [e2e/README.md](e2e/README.md)).
+Eles sobem o **build de produção** e conversam com um provedor de IA simulado,
+então não precisam de chave nem de internet.
 
 <div align="center">
 

@@ -29,6 +29,12 @@ npm run check            # lint + test + build
 # sandbox (Python)
 python -m pip install openpyxl==3.1.5
 python -m unittest discover -s sandbox -p '*_test.py' -v
+
+# ponta a ponta (navegador real) — exige Postgres; ver e2e/README.md
+cd e2e
+npm install
+npm run navegador        # baixa o Chromium do Playwright (uma vez)
+E2E_DATABASE_URL=postgres://studio:studio@127.0.0.1:5432/studio npm test
 ```
 
 Com Postgres disponível, **nenhum** teste do backend deve ser pulado — o CI falha se
@@ -59,8 +65,9 @@ semântica, e testar com Postgres puro esconderia diferenças de comportamento.
 | `backend-unit` | Suíte do backend **sem** banco, em Node 20 e Node 22 |
 | `backend-integration` | Postgres real: migrações do zero + idempotência + tabelas + cascade; suíte completa **sem skips**; boot real do backend + `/api/health`; portão de autenticação (9 rotas → 401) |
 | `frontend` | Todos os 7 arquivos de teste + build + catraca de bundle (≤ 1.000 KB) |
+| `e2e` | **Navegador real** (Chromium) contra o build de produção do frontend, backend real e Postgres real; o provedor de IA é simulado (`e2e/fixtures/provedorFalso.mjs`). Cobre streaming, troca de conversa no meio da resposta, reconexão e o portão de consentimento |
 | `compose` | `docker compose config` dos dois arquivos + build das imagens do backend e do guarda + **checagem de que só o `docker-guard` monta o socket** (regressão do F-04) |
-| `contagem` | Executa tudo e publica a contagem no resumo |
+| `contagem` | Executa tudo e publica a contagem no resumo (os E2E entram **listados**, não executados — quem os roda é o job `e2e`) |
 
 Node 20 = o da imagem de produção; Node 22 = a linha LTS atual. O que roda na VPS é testado.
 
@@ -109,6 +116,17 @@ teste — vários módulos leem essas variáveis no momento da importação.
 | `docker-guard/src/policy.test.js` | Cada fuga conhecida é barrada: container privilegiado, bind de `/`, bind do próprio `docker.sock`, `/etc`/`/proc`/`/root`, travessia com `..`, prefixo parecido (`/ws-outro` não é `/ws`), `CapAdd`, GPU, `PidMode`/`UsernsMode` do host, rede do host, outra imagem, volume nomeado; endurecimento e cotas obrigatórios; rotas perigosas (`build`, `images/create`, `archive`, `update`, `swarm`…) recusadas |
 | `docker-guard/src/server.test.js` | **Proxy real** contra um daemon Docker falso num socket unix: cada bloqueio verifica que a requisição **não chegou** ao daemon; posse por label impede derrubar o Postgres do compose; o `hijack` do exec faz o túnel de bytes e é recusado em container de terceiro |
 | `backend/src/sandbox.dockerAccess.test.js` | O backend reporta em `/api/health` se está atrás do guarda ou com o socket na mão |
+| `backend/src/agent/pageShot.test.js` | Guarda de rede da miniatura de página: host interno/loopback/metadados barrado, esquema não-http recusado, URL ilegível **negada** (falha fechada) e — o que a troca do puppeteer pelo Playwright poderia ter quebrado — **redirecionamento de página pública para a rede interna abortado antes de chegar ao navegador** |
+| `e2e/tests/*.spec.js` | Navegador real contra o build de produção: streaming chega aos poucos, resposta persiste, troca de conversa no meio do stream não mistura respostas, reconexão depois de recarregar, indicador de "processando" na barra lateral, portão de consentimento (LGPD) e a mensagem de chave inválida nomeando o provedor certo (regressão do PR #140) |
+| `backend/src/agentEnv.test.js` | Estabilidade do ambiente, sem daemon: falha de **ambiente** não é confundida com bug do projeto (e a precedência importa — `pip install` sem rede é erro de REDE, e `ModuleNotFoundError` **não** pode casar com `ENOTFOUND`); timeout e cancelamento nunca saem como sucesso; a impressão digital do workspace ignora a escrituração interna; o aviso de reinício sai **uma única vez** com o que sobreviveu e o que se perdeu; checkpoint copia o workspace **sem segredos**, restaura por hash e **não apaga** o que não guardou; workspace grande é recusado antes de gravar nada; repórter de progresso agrega, apara o pedaço e mede o silêncio; log com teto entrega as duas pontas; serviço é reconhecido sem confundir `build` com servidor; parser de `ss` **e** de `netstat` |
+| `backend/src/sandbox.stability.test.js` | **Execução ponta a ponta com daemon Docker falso**: um timeout mata a árvore de processos e **preserva** o sandbox (só derruba o container se a árvore sobreviver), e a execução seguinte carrega o aviso de reinício — uma vez só; o container nasce com `/cache` do usuário e `TMPDIR` descartável; instalação cortada por timeout **não** entra no manifesto; a saída chega em pedaços **antes** do fim do comando e o log guarda o começo que o corte de 12 000 caracteres descarta; gravar o log não conta como "o comando mexeu em arquivos"; serviços cruzados com a porta real (e perdidos, não fantasmas, sem sandbox ativo); transação desfaz, confirma sem reverter e recusa a segunda abertura |
+| `e2e/tests/layout.spec.js` | **Nada pode cobrir o botão de enviar**: sobreposição zero em oito larguras (1920 → 390px), compositor alto não empurra o personagem de volta, **clique real** no botão no desktop e no celular, e um guarda contra o exagero (o personagem tem de continuar visível na janela). Nasceu de um defeito real que a suíte encontrou — o avatar do copiloto cobria o botão em 1280px e em todas as larguras abaixo |
+
+| `backend/src/design/tokens.test.js`, `bridge.test.js` | **Modo Design v2**: o catálogo e o system prompt não podem divergir (senão o modelo declara um nome e a interface procura outro); os controles são derivados do artefato, e um design fora do contrato devolve lista vazia; cor com carga (`#fff;background-image:url(...)`) é descartada inteira; a sobreposição entra no fim do `<head>` **sem** alterar o artefato; a ponte compila, é constante e nunca toca o DOM de fora |
+| `backend/src/design/*.test.js` | Modo Design, camada pura: a resposta do modelo é limpa antes de virar versão (cerca de código que envolve tudo é desembrulhada, cerca **no meio** do HTML não corta o documento, chave dentro de string não desbalanceia o JSON de slides); layout inventado vira `content`; conteúdo é conferido contra o `output_type`; cor livre e nome de fonte com aspas são recusados (os dois entram em CSS); o deck escapa o texto do modelo e não usa CDN; o `.pptx` sai abrível (assinatura ZIP + partes do OOXML) |
+| `backend/src/design/store.test.js` | **Com Postgres**: numeração das versões, reverter move o ponteiro **sem apagar** o que veio depois, poda no teto que nunca remove a versão em exibição, isolamento entre contas em toda leitura e escrita, token de prévia como capacidade regenerável, marca apagada não derruba o projeto |
+| `backend/src/routes/design.http.test.js` | **Integrado**: rotas reais + Postgres + provedor de IA falso. Resposta suja vira artefato limpo; resposta sem HTML e resposta **cortada por limite de tokens** não viram versão (e o erro aparece no chat do projeto); a edição reenvia o artefato atual; a resposta da geração aponta para a versão NOVA (regressão encontrada pelo teste de navegador); projeto de outra conta é 404 em todas as rotas; a prévia sai com `CSP: sandbox` **sem** `allow-same-origin`; exportação por formato e por versão antiga |
+| `e2e/tests/design.spec.js` | **Navegador real**: o HTML gerado é de fato renderizado dentro do iframe isolado, o `sandbox` do iframe não tem `allow-same-origin`, refinar por conversa cria uma versão nova e dá para voltar atrás, e a apresentação vira deck — não JSON na tela. Da v2: **clicar num elemento da prévia leva o alvo para o compositor** (a travessia da origem opaca por `postMessage`, que nenhum teste de unidade cobre) e **o slider muda a cor dentro do iframe na hora, sem criar versão** — com o ajuste sobrevivendo a fechar e reabrir o projeto |
 
 Scripts de apoio: `backend/scripts/run-tests.mjs` e `frontend/scripts/run-tests.mjs`
 (descoberta de testes independente da versão do Node), `backend/scripts/check-migrations.mjs`,
@@ -120,15 +138,14 @@ Scripts de apoio: `backend/scripts/run-tests.mjs` e `frontend/scripts/run-tests.
 
 Reconhecidas, priorizadas e **não** cobertas até aqui — ver `docs/AUDITORIA_2026-07.md`:
 
-| ID | Lacuna |
-| --- | --- |
-| F-12 | SSE integrado: duas conversas simultâneas, troca rápida, reconexão com `fromSeq` |
-| F-13 | Provedor HTTP simulado completo (streaming, tool calls, erros, timeout) |
-| F-14 | Retomada após **interrupção real do processo** (matar o Node no meio) |
-| F-15 | Pipeline multimodelo retomável após reinício |
-| F-16 | Suíte de relevância de memória com casos **negativos** |
-| F-17 | Bateria adversarial de injeção de prompt |
-| F-18 | Corpus documental do Docling (escaneado, DRE, PGFN, células mescladas…) |
-| F-19 | Git local para clone/commit/push do modo desenvolvedor |
-| F-20 | E2E de navegador (Playwright já está disponível na imagem do sandbox) |
-| F-23 | Validação de artefato: XLSX com `#REF!`, DOCX vazio, PDF com página em branco |
+| ID | Lacuna | Situação |
+| --- | --- | --- |
+| F-12 | SSE integrado: duas conversas simultâneas, troca rápida, reconexão | **Coberta em parte** por `e2e/tests/multiconversa.spec.js`: duas conversas, troca no meio do streaming sem mistura, e reconexão depois de recarregar a página. **Falta** o caso específico de `fromSeq` (reconectar o `/stream` sem duplicar eventos) exercitado de forma isolada |
+| F-13 | Provedor HTTP simulado completo (streaming, tool calls, erros, timeout) | **Coberta em parte** por `e2e/fixtures/provedorFalso.mjs`: streaming com ritmo controlado, catálogo e erro 401. **Falta** tool calls e timeout |
+| F-14 | Retomada após **interrupção real do processo** (matar o Node no meio) | Aberta |
+| F-15 | Pipeline multimodelo retomável após reinício | Aberta |
+| F-16 | Suíte de relevância de memória com casos **negativos** | Aberta |
+| F-18 | Corpus documental do Docling (escaneado, DRE, PGFN, células mescladas…) | Aberta |
+| F-19 | Git local para clone/commit/push do modo desenvolvedor | Aberta |
+| F-20 | E2E de navegador | **Fechada** — `e2e/`, Chromium real contra o build de produção, no CI |
+| F-23 | Validação de artefato: XLSX com `#REF!`, DOCX vazio, PDF com página em branco | Aberta |

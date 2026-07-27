@@ -205,6 +205,33 @@ ou inserir a linha do novo administrador diretamente.
 Resta a janela TOCTOU entre resolver e conectar — mitigação padrão do ecossistema.
 Testes: `backend/src/tools.ssrf.test.js`.
 
+O **navegador headless** do backend (miniatura de página do `web_fetch` e
+impressão em PDF do Modo Design) passa pela mesma guarda: `guardRoute` em
+`agent/pageShot.js`, reaproveitada por `design/pdf.js` em vez de duplicada. Ali
+os redirecionamentos são seguidos À MÃO (`route.fetch({maxRedirects:0})`), porque
+o `page.route()` do Playwright **não** é chamado no destino de um
+redirecionamento — uma porta ingênua reabriria SSRF por 302 para
+`169.254.169.254`. Testes: `backend/src/agent/pageShot.test.js`.
+
+---
+
+## 6.1 Modo Design — HTML gerado por IA no navegador
+
+O artefato de um projeto de design é código não confiável, e roda em dois
+navegadores. As defesas, em resumo (detalhe em `docs/DESIGN_STUDIO.md`):
+
+| Onde | Controle |
+| --- | --- |
+| Prévia no navegador do usuário | `Content-Security-Policy: sandbox allow-scripts` na resposta **e** `sandbox="allow-scripts"` no `<iframe>` — sem `allow-same-origin` em nenhum dos dois, o que põe o documento em ORIGEM OPACA (sem cookie de sessão, sem `localStorage`, sem o DOM do app) |
+| URL da prévia | capacidade de 32 caracteres aleatórios, na única rota de API sem sessão; regenerável por `POST /api/design/projects/:id/preview-token` |
+| Impressão em PDF | Chromium do backend com a guarda de rede do §6; o conteúdo entra por `setContent` (about:blank, origem opaca), sem navegação de topo |
+| Antes de renderizar | `contentMatchesType` confere que o conteúdo salvo bate com o `output_type` |
+| Marca e ajustes do usuário | cor só em hex, nome de fonte sem aspas/`;`, medida dentro da faixa do token — todos entram dentro de CSS |
+| Ponte de edição (v2) | injetada **só na prévia**, nunca na exportação; é constante (nada interpolado); o descritor do elemento que ela envia passa por `sanitizeTarget` antes de virar prompt. A interface valida a mensagem pela JANELA (`event.source === iframe.contentWindow`) — numa origem opaca, `event.origin` chega como "null" e não prova nada |
+
+Regressões guardadas em `backend/src/routes/design.http.test.js` (cabeçalhos) e
+`e2e/tests/design.spec.js` (atributo do iframe, no navegador de verdade).
+
 ---
 
 ## 7. Uploads e antivírus
@@ -231,17 +258,79 @@ como instrução. O prompt personalizado do usuário passa por `protectedProfile
 amplia permissões: as ferramentas oferecidas ao modelo saem de `assistantPolicy.js`, não do
 texto do prompt.
 
-O mesmo vale para o **contexto do chat principal levado ao copiloto** (migração 022): o
-trecho entra como bloco `system` delimitado, com cabeçalho declarando que é referência
-somente-leitura e que instruções ali dentro são **dado, não ordem** — importante porque
-esse material inclui resposta de modelo e arquivos colados pelo usuário. A leitura só
-acontece sob autorização (`decideContextAccess`: `nunca` bloqueia sempre; `perguntar` exige
-o pedido explícito daquela mensagem; `sempre` — o padrão — leva o contexto, e um `false`
-explícito o dispensa numa mensagem pontual), é escopada pelo dono da conversa e fica
-registrada em `companion_audit`. Testes: `backend/src/copilot/core.test.js`.
+### 8.1 O que o wrapper garante
 
-**Lacuna:** não existe bateria adversarial automatizada (README malicioso, delimitador
-fechado à força, memória envenenada). **Risco aberto F-17.**
+`untrustedContext()` (em `backend/src/agent/promptRegistry.js`) neutraliza, no conteúdo e
+nos atributos do cabeçalho, a marcação que o modelo poderia ler como **estrutura do
+aplicativo**:
+
+| Marcação | Por que importa |
+| --- | --- |
+| `<untrusted-context>` (abertura **e** fechamento, em qualquer forma tolerante: `</untrusted-context foo="1">`, `</ …>`, `< /…>`, sem `>`) | Fechar o delimitador faz o dado fingir que acabou e que quem volta a falar é o aplicativo. Abrir um bloco falso tem o efeito espelhado: o fechamento legítimo encerra o bloco forjado e o resto do payload parece estar fora da caixa. |
+| `<trusted-instruction>` | O marcador oposto: forjá-lo promove dado a ordem. |
+| `<tool_call>`, `<function=…>`, `<function name=…>` | `loop.js` converte protocolo **textual** de ferramenta achado no texto do modelo em chamada **nativa**. Sem neutralizar na entrada, bastava o modelo repetir um trecho da página lida para o comando do atacante virar execução real no sandbox. |
+
+O casamento é limitado a esses nomes de propósito: escapar marcação genérica mutilaria HTML,
+XML e código legítimos — e num domínio contábil/fiscal o conteúdo **é** o dado.
+
+### 8.2 Bateria adversarial (F-17 — FECHADO)
+
+`backend/src/agent/promptInjection.adversarial.test.js` — 33 casos escritos do ponto de
+vista do atacante, cobrindo os quatro vetores previstos no F-17: README malicioso no
+repositório, memória envenenada em turno anterior, delimitador fechado à força e resposta
+maliciosa de outro modelo no pipeline multimodelo. Inclui a **cadeia completa** (página lida
+→ eco do modelo → execução) e os casos de não-regressão que provam que dado legítimo
+atravessa o wrapper sem perda.
+
+Rodada contra o código anterior à correção, a bateria acusa **15 falhas**. Duas eram reais e
+foram corrigidas nesta frente:
+
+1. O escape do delimitador só cobria a forma canônica `</untrusted-context>`; qualquer
+   variação tolerante escapava da caixa.
+2. **Resultado de ferramenta ia CRU para o contexto** (`role: 'tool'`), sem wrapper nenhum —
+   apesar de esta seção já afirmar o contrário. Era o maior canal de texto de terceiros do
+   app (`web_fetch`, `read_file`, `bash`, `github_clone`) e a cadeia mais curta até execução.
+
+### 8.1 Delegação a sub-agentes — a fronteira de autorização
+
+Um sub-agente (`agent/subagents.js`) roda um `runAgent` COMPLETO, com ferramentas de
+verdade, a partir de um texto que **o modelo principal escreveu**. Isso faz da delegação um
+caso especial de conteúdo não confiável: se qualquer permissão for derivada desse texto, o
+modelo passa a ser a fonte da própria autorização.
+
+Controles:
+
+| Superfície | Regra |
+| --- | --- |
+| Ferramentas | `allowedTools = ferramentas efetivas do pai ∩ ferramentas do especialista`. A poda é feita no `loop.js` com `intersectToolDefinitions`. Um assistente com apenas `read_file` não ganha `bash`/`write_file` ao delegar. |
+| Rede do sandbox | Herdada do pai. O filho **não** chama `resolveSandboxNetwork` sobre a subtarefa. |
+| Escrita nas Pastas do PC | Herdada do pai. O filho **não** chama `explicitlyAuthorizesPcWrite` sobre a subtarefa. |
+| Política de sandbox | O filho recebe o `sandboxOptions` do pai verbatim → mesma `sandboxPolicy().key` → mesmo container. |
+| Escrita no GitHub | Nunca se herda (`gitWriteAuthorized: false`). |
+| Profundidade | `MAX_SUBAGENT_DEPTH = 1` — sub-agente não delega. O nome da ferramenta é removido da herança. |
+| Contexto | Janela isolada: sem memória de longo prazo e sem histórico da conversa (o prompt do filho afirma isso, e agora é verdade). |
+
+Tudo isso viaja num objeto **congelado** (`buildDelegationContext`), montado uma única vez
+pelo pai a partir do pedido real do usuário, e é o mesmo para todas as delegações da
+execução. Testes em `agent/subagents.test.js`.
+
+**Lacuna conhecida:** a herança é garantida por construção e por teste unitário do contrato
+(interseção, congelamento, igualdade da chave de política). Falta o teste de ponta a ponta
+do `runAgent` com um provedor simulado — depende do F-13.
+
+### Contexto do chat principal levado ao copiloto
+
+O painel do copiloto (Nino) passou a receber, por padrão, as últimas mensagens da conversa
+principal aberta — material de terceiros pelos mesmos motivos de sempre: inclui resposta de
+modelo e arquivos colados pelo usuário. O trecho entra como bloco `system` delimitado, com
+cabeçalho declarando que é **referência somente-leitura** e que instruções ali dentro são
+**dado, não ordem**.
+
+A leitura é governada por `decideContextAccess` (`backend/src/copilot/core.js`): `nunca`
+bloqueia sempre; `perguntar` exige o pedido explícito daquela mensagem; `sempre` — o padrão
+— leva o contexto, e um `false` explícito o dispensa numa mensagem pontual. É escopada pelo
+dono da conversa (o JOIN com `conversations` é a autorização; `messages` não tem `user_id`)
+e cada acesso vira entrada em `companion_audit`. Testes: `backend/src/copilot/core.test.js`.
 
 ---
 

@@ -24,11 +24,13 @@ import { guardStreamStall, PROVIDER_CONNECT_TIMEOUT_MS } from './streamGuard.js'
 import { acquireConversationControl, releaseConversationControl, beginProviderRequest, releaseProviderRequest, beginToolRequest, releaseToolRequest, controlInterruptReason, gate } from './control.js';
 import { clientScopeFor, memoryNote, saveMessage, persistAssistantReply } from './persistence.js';
 import { saveCheckpoint, clearCheckpoint, isResumableReason, buildResumeMessages, leadingSystemCount, trimCheckpointMessages, AUTO_CONTINUE_NOTE } from './checkpoint.js';
-import { untrustedContext } from './promptRegistry.js';
+import { untrustedContext, untrustedToolResult } from './promptRegistry.js';
 import { emitExecutionState, finalExecutionState } from './executionState.js';
 import { resolveSandboxNetwork, isToolCallAllowed } from './assistantPolicy.js';
 import { explicitlyAuthorizesPcWrite } from '../execGuard.js';
-import { SUBAGENT_TOOL_NAME, subagentToolDefinition, shouldOfferSubagentTool, maxSubagentsPerRun, createSubagentLimiter, runSubagent } from './subagents.js';
+import { takeSandboxRestartNotice, sandboxOpenTransaction } from '../sandbox.js';
+import { formatRestartNotice, formatOpenTransactionNotice } from '../agentEnv.js';
+import { SUBAGENT_TOOL_NAME, subagentToolDefinitionFor, listSubagentSpecialists, buildDelegationContext, intersectToolDefinitions, canLaunchDelegationsInParallel, shouldOfferSubagentTool, maxSubagentsPerRun, createSubagentLimiter, runSubagent } from './subagents.js';
 import { buildDocumentContext, DOC_PRECEDENCE_NOTE } from '../docling/context.js';
 import { doclingImageParts, visualElementsNote } from '../docling/vision.js';
 
@@ -66,11 +68,15 @@ export function buildOutputBaseline(files = [], { acceptAll = false, continuatio
 // um run interrompido — array de mensagens do agente, modelo ativo, cadeia de
 // failover já tentada e o objetivo. Com ele, o loop CONTINUA de onde parou (com
 // orçamento de ciclos NOVO), em vez de recomeçar do zero. Ver checkpoint.js.
-export async function runAgent({ userId, conversationId, userText, model, assistant, webSearch, effort, developer, onEvent, saveUserMessage = true, existingUserMessageId = null, executionBriefing = null, forceExecution = false, control: inheritedControl = null, resume = null, gitWriteAuthorization = null, persistReply = true, continuationOutputPaths = [], subagentDepth = 0 }) {
+export async function runAgent({ userId, conversationId, userText, model, assistant, webSearch, effort, developer, onEvent, saveUserMessage = true, existingUserMessageId = null, executionBriefing = null, forceExecution = false, control: inheritedControl = null, resume = null, gitWriteAuthorization = null, persistReply = true, continuationOutputPaths = [], subagentDepth = 0, delegation = null }) {
   // Execução DELEGADA (sub-agente): compartilha a conversa e o workspace com o
   // pai, mas não é dona da conversa — não grava mensagem, não grava checkpoint
   // e não delega de novo. Quem responde ao usuário e é retomável é o pai.
   const isSubagent = subagentDepth > 0;
+  // Contexto de delegação: presente SÓ no filho. Enquanto ele existe, nada de
+  // permissão é derivado do `userText` — que, aqui, é texto escrito pelo modelo
+  // principal, não pelo usuário.
+  const inherited = isSubagent && delegation ? delegation : null;
   const requestedModel = resume?.model || model || assistant?.model || '';
   const provider = await getUserProvider(userId, requestedModel); // chave dona do modelo
   const client = provider.client;                          // sombreia o cliente global
@@ -117,7 +123,13 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   const gitWriteAuthorized = gitWriteAuthorization == null
     ? explicitlyAuthorizesGitWrite(userText)
     : Boolean(gitWriteAuthorization);
-  const developerContext = developerContextFor(developer, userId, { githubConnected, gitWriteAuthorized });
+  // O filho herda o contexto do Modo Desenvolvedor do pai INTEIRO (modo,
+  // projeto, repositório, escopo de escrita). Sem isso, o pai rodava com
+  // política `write:<projeto>` e o filho com `read-only`/`default`: na primeira
+  // ferramenta o filho derrubava o container do pai e criava outro, o pai
+  // devolvia o favor na ferramenta seguinte, e o resultado era comando morto no
+  // meio, arquivo pela metade e falha impossível de reproduzir.
+  const developerContext = inherited ? inherited.developerContext : developerContextFor(developer, userId, { githubConnected, gitWriteAuthorized });
   // Projeto do Modo Desenvolvedor: espelha o projeto do navegador no servidor e
   // carimba a conversa. Sem este vínculo, o Context Builder não consegue
   // priorizar "as últimas conversas deste projeto" num chat novo — que é o que
@@ -143,9 +155,13 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   // A política persistente (Configurações → Sandbox e rede) decide o padrão:
   // automático (só quando o pedido pede), sempre ligada ou sempre desligada.
   // Não toca nas chamadas dos modelos — essas saem do backend.
-  const sandboxNetworkEnabled = !lowSignalTurn && (resume
-    ? Boolean(resume?.meta?.sandboxNetworkEnabled)
-    : resolveSandboxNetwork(getSettings().sandbox_network_policy, userText));
+  // No filho a rede vem do pai, nunca do texto da subtarefa: um "acesse a API"
+  // que o próprio modelo escreveu não pode abrir a rede do container.
+  const sandboxNetworkEnabled = inherited
+    ? inherited.networkEnabled
+    : (!lowSignalTurn && (resume
+      ? Boolean(resume?.meta?.sandboxNetworkEnabled)
+      : resolveSandboxNetwork(getSettings().sandbox_network_policy, userText)));
   const promptManifest = promptManifestFor(assistant, developerContext ? ['developer'] : []);
   // ESCRITA nas Pastas do PC (arquivos REAIS e insubstituíveis do usuário).
   // No Modo Desenvolvedor, escolher um projeto gravável + um modo de escrita JÁ
@@ -153,18 +169,28 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   // do backend a partir do pedido DESTE turno — igual à rede do sandbox. Sem
   // pedido explícito, as pastas são montadas somente-leitura (garantia do
   // Docker, não só do prompt).
-  const pcWriteAuthorized = !lowSignalTurn && (developerContext
-    ? !developerContext.readOnlyProject
-    : explicitlyAuthorizesPcWrite(userText));
+  // Mesma regra da rede: no filho, a escrita em arquivos REAIS do usuário é a
+  // que o pai já tinha. `explicitlyAuthorizesPcWrite` lê o pedido do turno — e
+  // o "pedido" do filho é texto de IA.
+  const pcWriteAuthorized = inherited
+    ? inherited.pcWriteAuthorized
+    : (!lowSignalTurn && (developerContext
+      ? !developerContext.readOnlyProject
+      : explicitlyAuthorizesPcWrite(userText)));
   // userId viaja junto: o sandbox monta só as pastas do PC DESTE usuário
   // (isolamento multi-tenant) e aplica o limite de sandboxes por usuário.
-  const sandboxOptions = {
-    ...(developerContext?.sandboxOptions || { readOnlyPc: !pcWriteAuthorized }),
-    userId,
-    model: chosenModel,
-    networkEnabled: sandboxNetworkEnabled,
-    pcWriteAuthorized
-  };
+  // No filho, as opções são as MESMAS do pai (só o modelo muda, e ele não entra
+  // na chave da política) — assim os dois caem no mesmo container, sem a troca
+  // de política que reciclava o sandbox no meio da execução.
+  const sandboxOptions = inherited
+    ? { ...inherited.sandboxOptions, model: chosenModel }
+    : {
+      ...(developerContext?.sandboxOptions || { readOnlyPc: !pcWriteAuthorized }),
+      userId,
+      model: chosenModel,
+      networkEnabled: sandboxNetworkEnabled,
+      pcWriteAuthorized
+    };
   const webSearchActive = Boolean(webSearch && !lowSignalTurn);
   let requestedTools = toolsFor(assistant);
   if (developerContext?.readOnlyProject) requestedTools = requestedTools.filter(tool => !['write_file', 'zip_outputs', 'generate_image'].includes(tool.function.name));
@@ -181,6 +207,12 @@ export async function runAgent({ userId, conversationId, userText, model, assist
     requestedTools = [...requestedTools, ...githubTools];
   }
   if (lowSignalTurn) requestedTools = [];
+  // TETO DO PAI. O filho monta a lista dele a partir do perfil do especialista;
+  // aqui ela é podada pelas ferramentas que o PAI de fato tinha. Sem esta poda,
+  // um assistente com apenas `read_file` delegava e o filho recebia o conjunto
+  // padrão inteiro — `bash`, `run_python`, `write_file` — ou seja, delegar
+  // virava um jeito de contornar a configuração do assistente.
+  if (inherited) requestedTools = intersectToolDefinitions(requestedTools, inherited.allowedToolNames);
   // SUB-AGENTES: a ferramenta de delegação só é oferecida quando delegar faz
   // sentido — há ferramentas na mesa, não é um turno social, não estamos já
   // dentro de um sub-agente e a conta não está no modo gratuito (ver os
@@ -191,11 +223,27 @@ export async function runAgent({ userId, conversationId, userText, model, assist
     providerSource: provider.source,
     hasTools: requestedTools.length > 0
   });
-  if (subagentsOffered) requestedTools = [...requestedTools, subagentToolDefinition];
+  if (subagentsOffered) {
+    // A definição vai com o INVENTÁRIO real de assistentes desta conta: o modelo
+    // escolhe um id que existe em vez de inventar "Fiscal" ou "Revisor".
+    requestedTools = [...requestedTools, subagentToolDefinitionFor(await listSubagentSpecialists(userId))];
+  }
   const subagentBudget = maxSubagentsPerRun();
   // Teto de delegações SIMULTÂNEAS (as do mesmo lote correm em paralelo).
   const delegationSlot = createSubagentLimiter();
   let subagentRuns = 0;
+  // Fronteira de autorização da árvore: montada UMA vez, a partir do pedido real
+  // do usuário, e entregue igual a toda delegação desta execução.
+  const delegationContext = subagentsOffered
+    ? buildDelegationContext({
+      assistant,
+      toolNames: requestedTools.map(tool => tool.function.name),
+      sandboxOptions,
+      developerContext,
+      networkEnabled: sandboxNetworkEnabled,
+      pcWriteAuthorized
+    })
+    : null;
 
   const uploadNoteForRun = !lowSignalTurn ? uploadsNote(userId, conversationId) : null;
   // Docling: quando ligado e houver documentos já processados nesta conversa,
@@ -302,6 +350,17 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   if (environmentNote) messages.push({ role: 'user', content: untrustedContext('verified-environment-output', environmentNote) });
   if (developerContext?.userRules) messages.push({ role: 'user', content: untrustedContext('project-rules', developerContext.userRules) });
   const callNotes = [];
+  // Reinício do sandbox entre turnos: o modelo precisa saber ANTES de agir. Sem
+  // este aviso ele continua supondo que os pacotes instalados, os processos e os
+  // arquivos temporários do turno anterior ainda existem — e retrabalha ou, pior,
+  // conclui em cima de um estado que não está mais lá.
+  const restartNotice = formatRestartNotice(takeSandboxRestartNotice(sandboxOptions.userId, conversationId));
+  if (restartNotice) callNotes.push(restartNotice);
+  // Transação de workspace aberta num turno anterior: sem este aviso, uma
+  // alteração em vários arquivos fica pela metade em silêncio — ninguém confirma
+  // nem desfaz, e o ponto de retorno vira lixo esquecido no disco.
+  const openTransaction = formatOpenTransactionNotice(sandboxOpenTransaction(sandboxOptions.userId, conversationId));
+  if (openTransaction) callNotes.push(openTransaction);
   if (forceExecution || modelPlan.requirements.required) callNotes.push(EXECUTION_CONTRACT_NOTE);
   if (MACRO_REQUEST_RE.test(String(userText || ''))) callNotes.push(MACRO_LIMITATION_NOTE);
   if (lowSignalTurn) callNotes.push(LOW_SIGNAL_TURN_NOTE);
@@ -329,25 +388,37 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
   // para o breakpoint de prompt caching.
   const staticPrefixEnd = messages.length;
   let memoryMeta = null;
-  // Memória de longo prazo: perfil, notas, resumos e recuperação semântica
-  try {
-    // developerDomain: estar em modo desenvolvedor (com projeto/repositório) é
-    // um fato estrutural sobre o assunto da conversa. Sem ele, um pedido curto
-    // como "vamos continuar o projeto" não tem domínio nenhum e o crivo de
-    // memória se desliga, trazendo o perfil contábil inteiro para dentro de uma
-    // conversa de software.
-    const contextPlan = await buildContext({ userId, conversationId, assistantId: assistant?.id, clientScope: await clientScopeFor(userId, conversationId), userText, historyLimit, model: chosenModel, developerDomain: developerContext ? 'software' : null, projectId: activeProjectId });
-    const ctxBlocks = contextPlan.blocks || [];
-    memoryMeta = contextPlan.meta || null;
-    for (const b of ctxBlocks) {
-      const clean = sanitizeToolProtocolText(b);
-      if (clean) messages.push({ role: 'user', content: untrustedContext('memory', clean) });
+  // JANELA ISOLADA DO SUB-AGENTE. O prompt dele diz, em letras garrafais, "você
+  // não vê o histórico desta conversa" — mas o filho roda com o MESMO
+  // conversationId, então memória de longo prazo e histórico entravam do mesmo
+  // jeito. Além de contradizer a instrução (o modelo lia ordens antigas e sem
+  // relação com a subtarefa), isso anulava o motivo de delegar: a janela do
+  // filho vinha tão cheia quanto a do pai. Aqui ele recebe só o prompt
+  // protegido, a subtarefa e o manifesto de arquivos/uploads da conversa — o
+  // que o pai quiser que ele saiba tem de estar ESCRITO na subtarefa.
+  if (isSubagent) {
+    onEvent({ type: 'memory_context', memory: { isolated: true, reason: 'subagent' } });
+  } else {
+    // Memória de longo prazo: perfil, notas, resumos e recuperação semântica
+    try {
+      // developerDomain: estar em modo desenvolvedor (com projeto/repositório) é
+      // um fato estrutural sobre o assunto da conversa. Sem ele, um pedido curto
+      // como "vamos continuar o projeto" não tem domínio nenhum e o crivo de
+      // memória se desliga, trazendo o perfil contábil inteiro para dentro de uma
+      // conversa de software.
+      const contextPlan = await buildContext({ userId, conversationId, assistantId: assistant?.id, clientScope: await clientScopeFor(userId, conversationId), userText, historyLimit, model: chosenModel, developerDomain: developerContext ? 'software' : null, projectId: activeProjectId });
+      const ctxBlocks = contextPlan.blocks || [];
+      memoryMeta = contextPlan.meta || null;
+      for (const b of ctxBlocks) {
+        const clean = sanitizeToolProtocolText(b);
+        if (clean) messages.push({ role: 'user', content: untrustedContext('memory', clean) });
+      }
+    } catch (err) {
+      console.error('[memória] contexto indisponível nesta resposta:', err.message);
+      const memory = await memoryNote(userId, assistant?.id, await clientScopeFor(userId, conversationId));
+      const cleanMemory = sanitizeToolProtocolText(memory);
+      if (cleanMemory) messages.push({ role: 'user', content: untrustedContext('memory-fallback', cleanMemory) });
     }
-  } catch (err) {
-    console.error('[memória] contexto indisponível nesta resposta:', err.message);
-    const memory = await memoryNote(userId, assistant?.id, await clientScopeFor(userId, conversationId));
-    const cleanMemory = sanitizeToolProtocolText(memory);
-    if (cleanMemory) messages.push({ role: 'user', content: untrustedContext('memory-fallback', cleanMemory) });
   }
   if (uploadNoteForRun) messages.push({ role: 'system', content: uploadNoteForRun });
   if (docContext?.note) {
@@ -366,11 +437,14 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
   }
   const pcNote = pcFoldersNote(sandboxOptions);
   if (pcNote) messages.push({ role: 'system', content: pcNote });
-  const historyPlan = await selectHistoryForContext({
-    conversationId,
-    limit: historyLimit,
-    budgetTokens: historyBudgetForModel(chosenModel, memoryMeta?.budget)
-  });
+  // Histórico da conversa: o sub-agente não recebe nenhum (ver acima).
+  const historyPlan = isSubagent
+    ? { rows: [], meta: null }
+    : await selectHistoryForContext({
+      conversationId,
+      limit: historyLimit,
+      budgetTokens: historyBudgetForModel(chosenModel, memoryMeta?.budget)
+    });
   if (memoryMeta) {
     memoryMeta = { ...memoryMeta, history: historyPlan.meta };
     onEvent({ type: 'memory_context', memory: memoryMeta });
@@ -909,32 +983,42 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
       break;
     }
     // DELEGAÇÕES EM PARALELO: as chamadas de sub-agente deste lote são lançadas
-    // ANTES do laço, todas de uma vez (respeitando o teto de simultâneas). As
-    // demais ferramentas continuam em série, e o laço abaixo apenas AGUARDA a
-    // delegação quando chega a vez dela — assim os resultados entram na ordem
-    // das tool_calls (o array de mensagens exige esse pareamento), mas o tempo
-    // de parede é o da delegação mais lenta, não a soma de todas.
+    // ANTES do laço, todas de uma vez (respeitando o teto de simultâneas). O
+    // laço abaixo apenas AGUARDA a delegação quando chega a vez dela — assim os
+    // resultados entram na ordem das tool_calls (o array de mensagens exige
+    // esse pareamento), mas o tempo de parede é o da delegação mais lenta, não
+    // a soma de todas.
+    //
+    // SÓ QUE ISSO É SEGURO APENAS EM LOTE HOMOGÊNEO. Num lote misto — um
+    // `write_file` criando o arquivo e um `delegar_subagente` mandando revisá-lo
+    // — o filho começava ANTES da escrita e concluía que o arquivo não existe,
+    // ou lia a versão anterior; duas execuções idênticas davam resultados
+    // diferentes. Com ferramenta de escrita no meio, tudo volta a correr em
+    // série, na ordem em que o modelo pediu.
+    const startDelegation = (call, delegationArgs) => runSubagent({
+      userId,
+      conversationId,
+      args: delegationArgs,
+      model: chosenModel,
+      effort,
+      control,
+      onEvent,
+      depth: subagentDepth,
+      webSearch: webSearchActive,
+      delegationId: call.id,
+      delegation: delegationContext   // permissões, sandbox e escopo herdados
+    });
     const delegations = new Map();
-    for (const call of stepToolCalls) {
-      if (call.function.name !== SUBAGENT_TOOL_NAME) continue;
-      if (!isToolCallAllowed(SUBAGENT_TOOL_NAME, tools) || subagentRuns >= subagentBudget) break;
-      subagentRuns += 1;
-      let delegationArgs = {};
-      try { delegationArgs = JSON.parse(call.function.arguments || '{}'); } catch {}
-      onEvent({ type: 'tool_start', id: call.id, name: SUBAGENT_TOOL_NAME, preview: String(delegationArgs.tarefa || '').slice(0, 400) });
-      emitExecutionState(onEvent, 'tool_running', SUBAGENT_TOOL_NAME, { runId, step, tool: SUBAGENT_TOOL_NAME });
-      delegations.set(call.id, delegationSlot(() => runSubagent({
-        userId,
-        conversationId,
-        args: delegationArgs,
-        model: chosenModel,
-        effort,
-        control,
-        onEvent,
-        depth: subagentDepth,
-        webSearch: webSearchActive,
-        delegationId: call.id
-      })));
+    if (canLaunchDelegationsInParallel(stepToolCalls.map(call => call.function.name))) {
+      for (const call of stepToolCalls) {
+        if (!isToolCallAllowed(SUBAGENT_TOOL_NAME, tools) || subagentRuns >= subagentBudget) break;
+        subagentRuns += 1;
+        let delegationArgs = {};
+        try { delegationArgs = JSON.parse(call.function.arguments || '{}'); } catch {}
+        onEvent({ type: 'tool_start', id: call.id, name: SUBAGENT_TOOL_NAME, preview: String(delegationArgs.tarefa || '').slice(0, 400) });
+        emitExecutionState(onEvent, 'tool_running', SUBAGENT_TOOL_NAME, { runId, step, tool: SUBAGENT_TOOL_NAME });
+        delegations.set(call.id, delegationSlot(() => startDelegation(call, delegationArgs)));
+      }
     }
     for (let callIdx = 0; callIdx < stepToolCalls.length; callIdx++) {
       const call = stepToolCalls[callIdx];
@@ -994,13 +1078,21 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
         result = JSON.stringify({ error: 'Esta URL já foi consultada nesta tarefa. Use uma fonte nova ou conclua com as evidências obtidas.', code: 'DUPLICATE_WEB_FETCH', url: args.url });
       } else if (name === SUBAGENT_TOOL_NAME) {
         // Delegação: NÃO passa pelo runTool (o sub-agente não roda no sandbox —
-        // ele é outro runAgent). Sem promessa lançada, a chamada ficou fora do
-        // teto desta execução: devolve erro e o modelo segue sem delegar, no
-        // estilo dos demais freios do loop.
-        if (!pendingDelegation) {
-          result = JSON.stringify({ error: `O limite de ${subagentBudget} delegações desta tarefa foi alcançado. Conclua a subtarefa você mesmo.`, code: 'SUBAGENT_LIMIT' });
-        } else {
-          const delegation = await pendingDelegation;
+        // ele é outro runAgent). Sem promessa já em voo, ou o lote é misto (e a
+        // delegação roda AQUI, depois das ferramentas que vieram antes dela), ou
+        // o teto desta execução foi alcançado — nesse caso devolve erro e o
+        // modelo segue sem delegar, no estilo dos demais freios do loop.
+        let delegationPromise = pendingDelegation;
+        if (!delegationPromise) {
+          if (subagentRuns >= subagentBudget) {
+            result = JSON.stringify({ error: `O limite de ${subagentBudget} delegações desta tarefa foi alcançado. Conclua a subtarefa você mesmo.`, code: 'SUBAGENT_LIMIT' });
+          } else {
+            subagentRuns += 1;
+            delegationPromise = startDelegation(call, args);
+          }
+        }
+        if (delegationPromise) {
+          const delegation = await delegationPromise;
           // A usage do filho entra na do pai — o custo real nunca some do painel.
           if (delegation.usage) addUsage(usage, delegation.usage);
           if (delegation.stopped) stopped = true;
@@ -1009,7 +1101,13 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
       } else {
         const activeTool = beginToolRequest(control);
         try {
-          result = await runTool(conversationId, name, args, sandboxOptions, { signal: activeTool.signal });
+          // Progresso ao vivo do comando: sem isto, um `pytest` de 40s é uma
+          // barra parada — o usuário não sabe se está processando ou travado, e
+          // o `tool_result` só chega no fim.
+          result = await runTool(conversationId, name, args, sandboxOptions, {
+            signal: activeTool.signal,
+            onProgress: (p) => onEvent({ type: 'tool_progress', id: call.id, ...p })
+          });
         } catch (err) {
           if (controlInterruptReason(control, activeTool) === 'stop') {
             stopped = true;
@@ -1028,7 +1126,13 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
       if (name === 'web_fetch') { try { thumb = JSON.parse(result).thumb || ''; } catch {} }
       onEvent({ type: 'tool_result', id: call.id, name, content: result.slice(0, 2000), ...(thumb ? { thumb } : {}) });
       emitExecutionState(onEvent, 'processing_result', name, { runId, step, tool: name });
-      messages.push({ role: 'tool', tool_call_id: call.id, content: result });
+      // O `result` CRU segue para a interface e para a classificação de falha —
+      // quem precisa dele intacto. Para o MODELO ele vai embrulhado: é texto de
+      // terceiro (página, arquivo, README, saída de comando) e, sem a marca de
+      // dado, era a entrada de injeção mais curta do app. O embrulho também
+      // neutraliza protocolo textual de ferramenta escondido no resultado, que
+      // o próprio loop converteria em execução real caso o modelo o repetisse.
+      messages.push({ role: 'tool', tool_call_id: call.id, content: untrustedToolResult(name, result) });
       // Freio de loop: conta falhas consecutivas das ferramentas
       const outcome = classifyToolOutcome(name, result);
       consecutiveFailures = outcome.failed && !outcome.recoverable ? consecutiveFailures + 1 : 0;

@@ -1022,6 +1022,7 @@ input[type=checkbox]:focus-visible,input[type=radio]:focus-visible{outline-offse
 .esStepWho{font-size:var(--fs-2xs);color:var(--accent);opacity:.9}
 .esDelegation{display:flex;flex-direction:column;gap:8px}
 .esDelegWho{display:flex;align-items:center;gap:6px;font-size:var(--fs-xs);color:var(--accent)}
+.esDelegModel{color:var(--muted);font-variant-numeric:tabular-nums}
 .esNext{display:flex;align-items:center;gap:8px;padding:9px 11px;color:var(--muted);font-size:var(--fs-xs);opacity:.8}
 .esNext svg{animation:spin 1.6s linear infinite}
 
@@ -1034,6 +1035,13 @@ input[type=checkbox]:focus-visible,input[type=radio]:focus-visible{outline-offse
 .esInput,.esOutput{margin:0;background:var(--code-bg);border:1px solid var(--code-line);border-radius:var(--r-md);padding:12px 14px;font-family:ui-monospace,Consolas,monospace;font-size:var(--fs-2xs);line-height:1.55;color:#dbe6f6;white-space:pre-wrap;word-break:break-word;overflow-x:auto}
 .esOutput{max-height:340px;overflow-y:auto;color:#b9c6dd}
 .esOutput.err{border-color:rgba(239,68,68,.4);color:#ffb4b4}
+/* Saída ao vivo: um terminal enquanto a etapa roda. A borda de acento e o
+   cursor piscando dizem, sem texto, que aquilo ainda está chegando. */
+.esOutput.esLive{border-color:rgba(99,179,237,.35);min-height:120px}
+.esOutput.esLive::after{content:'▌';color:var(--accent);animation:esBlink 1.1s step-end infinite}
+@keyframes esBlink{50%{opacity:0}}
+.esLiveMeta{color:var(--muted);text-transform:none;letter-spacing:0}
+.esStall{display:flex;align-items:center;gap:7px;font-size:var(--fs-2xs);color:#f5c26b}
 .esWaiting{display:flex;align-items:center;gap:8px;color:var(--accent);font-size:var(--fs-xs)}
 .esEmpty{color:var(--muted);font-size:var(--fs-xs);margin:auto}
 

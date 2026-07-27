@@ -252,6 +252,21 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
           blocks: (m.blocks || []).filter(block => block.type !== 'text')
         }));
         if (ev.type === 'tool_start') { patchRun(convId, { status: `Executando ${ev.name}...` }); update(m => ({ ...m, blocks: [...(m.blocks || []), { type: 'tool', id: ev.id, name: ev.name, preview: ev.preview, detail: ev.detail || '', subagent: ev.subagent || null, parentId: ev.parentId || null, status: 'running', started: Date.now() }] })); }
+        // Saída do comando ENQUANTO ele roda (streaming do sandbox). Chega em
+        // pedaços e é acumulada na etapa; `parado_ha_ms` avisa que o comando
+        // ficou mudo — é o que distingue "processando" de "travado".
+        if (ev.type === 'tool_progress') update(m => ({
+          ...m,
+          blocks: (m.blocks || []).map(b => (b.type === 'tool' && b.id === ev.id && b.status === 'running')
+            ? { ...b, progress: {
+                texto: ((b.progress?.texto || '') + (ev.trecho || '')).slice(-8000),
+                linhas: ev.linhas ?? b.progress?.linhas ?? 0,
+                bytes: ev.bytes ?? b.progress?.bytes ?? 0,
+                decorrido: ev.decorrido_ms ?? b.progress?.decorrido ?? 0,
+                parado: ev.parado_ha_ms || 0
+              } }
+            : b)
+        }));
         // O resultado é casado pelo `id` da chamada. O "último em execução" só
         // vale como reserva (stream antigo, sem id): com delegações a
         // sub-agentes rodando EM PARALELO, várias ferramentas ficam em execução

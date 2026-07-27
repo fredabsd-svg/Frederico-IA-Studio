@@ -120,6 +120,16 @@ RUN mkdir -p "$DOTNET_ROOT" && \
     ln -s /opt/dotnet/dotnet /usr/local/bin/dotnet && \
     rm -f /tmp/dotnet-install.sh
 
+# GraphQL: strawberry-graphql define o schema por type hints do Python (o módulo
+# importável é `strawberry`, não `strawberry_graphql`). O extra [fastapi] traz o
+# GraphQLRouter, que pluga no FastAPI já instalado acima, e o [cli] traz o comando
+# `strawberry server`, que sobe um GraphiQL local para testar o schema sem escrever
+# aplicação nenhuma. Fica NESTA camada final, e não junto de flask/fastapi, pelo
+# mesmo motivo do bloco acima: acrescentar pacote no meio do arquivo invalidaria as
+# camadas seguintes — dotnet, Kotlin, Chromium e Playwright seriam rebaixados a cada
+# atualização, o que pesa demais numa VPS pequena.
+RUN pip install --no-cache-dir "strawberry-graphql[fastapi,cli]"
+
 # Kits de DESIGN profissional prontos (mesma paleta): Word (docpro), Excel
 # (xlspro) e PDF (pdfpro). Importáveis como `from docpro import Relatorio`,
 # `from xlspro import Planilha`, `from pdfpro import RelatorioPDF`. Dão capa,
@@ -130,6 +140,21 @@ COPY docpro.py xlspro.py pdfpro.py /usr/local/lib/python3.12/site-packages/
 # Compatibilidade com modelos que tentam salvar arquivos no caminho usado por
 # outros sandboxes. Aqui ele aponta para o workspace real da conversa.
 RUN mkdir -p /mnt && ln -sfnT /workspace /mnt/user-data
+
+# CAMADAS DE PERSISTÊNCIA (plano de estabilização do ambiente).
+# O container é efêmero; o que separa o trabalho preservado do descartável é
+# ONDE o arquivo está:
+#   /cache      → bind do host, por usuário. Cache de pip/npm/uv/poetry. É o que
+#                 faz uma reinstalação depois de um reinício ser local e barata.
+#   /artifacts  → aponta para /workspace/.artifacts (bind da conversa): relatórios,
+#                 patches e resultados intermediários que sobrevivem ao container
+#                 sem virar cartão de download (isso é papel de /workspace/outputs).
+#   /runtime/tmp→ TEMPORÁRIO por design, é o TMPDIR de toda execução. Some junto
+#                 com o container — nada essencial pode morar só aqui.
+RUN mkdir -p /cache /runtime/tmp && \
+    chown -R 1000:1000 /cache /runtime && \
+    chmod 1777 /runtime/tmp && \
+    ln -sfnT /workspace/.artifacts /artifacts
 
 RUN useradd -m -u 1000 sandbox
 USER sandbox

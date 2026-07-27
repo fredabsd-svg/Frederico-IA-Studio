@@ -12,15 +12,21 @@ WORKDIR /app
 # git é usado pelo conector GitHub (clone/pull/push rodam no backend, para o
 # token do usuário nunca entrar no sandbox);
 # chromium + fontes são o navegador headless usado para a MINIATURA de página
-# do web_fetch (puppeteer-core aponta para CHROMIUM_PATH; o pacote apt já traz
+# do web_fetch (playwright-core aponta para CHROMIUM_PATH; o pacote apt já traz
 # as libs de que o Chromium precisa).
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates postgresql-client git chromium fonts-liberation \
     && update-ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-# Caminho do Chromium do sistema para o puppeteer-core (não baixa navegador).
+# Caminho do Chromium do SISTEMA para o playwright-core. Usamos o chromium do
+# apt em vez de `playwright install` de propósito: o download traria ~150 MB de
+# navegador para a imagem de produção quando o apt já instalou um, com as libs
+# resolvidas pelo gerenciador de pacotes. Em troca, a combinação
+# playwright + chromium do Debian não é a testada oficialmente pelo projeto —
+# aceitável porque a miniatura é BEST-EFFORT: se o navegador não subir, o
+# web_fetch segue com o texto (ver src/agent/pageShot.js).
 ENV CHROMIUM_PATH=/usr/bin/chromium
-ENV PUPPETEER_SKIP_DOWNLOAD=1
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 COPY backend/package*.json ./backend/
 RUN cd backend && npm install --omit=dev
 COPY backend ./backend

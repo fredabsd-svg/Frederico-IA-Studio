@@ -126,7 +126,13 @@ function ResultView({ step, conversationId }) {
   // falha E o que deu tempo de apurar), e esconder o parcial não ajuda ninguém.
   if (step.name === SUBAGENT_TOOL && (parsed?.resultado != null || parsed?.arquivos)) {
     return <div className="esDelegation">
-      {parsed.especialista && <div className="esDelegWho"><Users size={13} /> {parsed.especialista}</div>}
+      {/* Quem REALMENTE executou. Antes, um especialista inexistente caía no
+          assistente padrão em silêncio e este rótulo mostrava o nome pedido —
+          o modelo entra junto para a substituição nunca passar despercebida. */}
+      {(parsed.especialista || parsed.modelo) && <div className="esDelegWho">
+        <Users size={13} /> {parsed.especialista || 'sub-agente'}
+        {parsed.modelo && <span className="esDelegModel"> · {parsed.modelo}</span>}
+      </div>}
       {parsed.error && <pre className="esOutput err">{parsed.error}</pre>}
       <pre className="esOutput">{parsed.resultado || '(o sub-agente não devolveu texto)'}</pre>
       {Array.isArray(parsed.arquivos) && parsed.arquivos.length > 0 && <>
@@ -332,10 +338,14 @@ function WorkspaceOverlay({ steps, live, sum, conversationId, onClose }) {
                     <pre className="esOutput">{active.detail}</pre>
                   </div>
                 )}
-                <div className="esBlock">
-                  <span className="esBlockLabel">Resultado</span>
-                  <ResultView step={active} conversationId={conversationId} />
-                </div>
+                {active.status === 'running' && active.progress
+                  ? <LiveOutput progress={active.progress} />
+                  : (
+                    <div className="esBlock">
+                      <span className="esBlockLabel">Resultado</span>
+                      <ResultView step={active} conversationId={conversationId} />
+                    </div>
+                  )}
               </>
             ) : (
               <div className="esEmpty">Selecione uma etapa para ver os detalhes.</div>
@@ -343,6 +353,42 @@ function WorkspaceOverlay({ steps, live, sum, conversationId, onClose }) {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── Saída ao vivo do comando ───────────────────────────────────────────────
+// Enquanto a etapa roda, a saída do sandbox chega em pedaços (evento
+// tool_progress). Antes disso, um comando de 40 segundos era uma barra parada:
+// não dava para saber se estava processando ou travado.
+function LiveOutput({ progress }) {
+  const ref = useRef(null);
+  // Rola sozinho para o fim, como um terminal — a não ser que a pessoa tenha
+  // subido para ler algo, aí respeita a posição dela.
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const noFim = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    if (noFim) el.scrollTop = el.scrollHeight;
+  }, [progress.texto]);
+
+  const segundos = Math.round((progress.decorrido || 0) / 1000);
+  const parado = Math.round((progress.parado || 0) / 1000);
+  return (
+    <div className="esBlock">
+      <span className="esBlockLabel">
+        Saída ao vivo
+        <small className="esLiveMeta">
+          {progress.linhas ? ` · ${progress.linhas} ${progress.linhas === 1 ? 'linha' : 'linhas'}` : ''}
+          {segundos ? ` · ${segundos}s` : ''}
+        </small>
+      </span>
+      {parado >= 5 && (
+        <div className="esStall">
+          <AlertCircle size={13} /> Sem saída há {parado}s — o comando pode estar processando em silêncio ou travado.
+        </div>
+      )}
+      <pre className="esOutput esLive" ref={ref}>{progress.texto || 'Aguardando a primeira saída…'}</pre>
     </div>
   );
 }
@@ -369,8 +415,15 @@ function ExecutionSessionInner({ steps, live, conversationId }) {
   const hasError = sum.errors > 0;
 
   const title = live ? 'IA trabalhando no projeto' : (hasError ? 'Tarefa concluída com avisos' : 'Tarefa concluída');
+  // Com saída ao vivo, o cartão fechado já mostra que algo está acontecendo —
+  // e avisa quando o comando emudece, sem precisar abrir o ambiente de trabalho.
+  const parado = Math.round((running?.progress?.parado || 0) / 1000);
   const subtitle = live
-    ? (runningInfo ? runningInfo.label : summaryPhrase(sum))
+    ? (runningInfo
+        ? (parado >= 5
+            ? `${runningInfo.label} · sem saída há ${parado}s`
+            : (running?.progress?.linhas ? `${runningInfo.label} · ${running.progress.linhas} linhas` : runningInfo.label))
+        : summaryPhrase(sum))
     : summaryPhrase(sum);
 
   const chips = [];
@@ -416,7 +469,9 @@ function sameSteps(a, b) {
   if (a === b) return true;
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
-    if (a[i].status !== b[i].status || a[i].ended !== b[i].ended || a[i].result !== b[i].result) return false;
+    // `progress` entra na comparação: é um objeto novo a cada pedaço de saída
+    // que chega, e sem ele a saída ao vivo ficaria congelada na tela.
+    if (a[i].status !== b[i].status || a[i].ended !== b[i].ended || a[i].result !== b[i].result || a[i].progress !== b[i].progress) return false;
   }
   return true;
 }
