@@ -527,12 +527,55 @@ Novo job `e2e` no CI, com Postgres real e Chromium. Ver `e2e/README.md`.
 
 | ID | Risco | Severidade |
 | --- | --- | --- |
-| F-15 | Pipeline multimodelo sem coordenador durável: reinício não retoma a próxima etapa pendente. | 🟠 Alta |
 | F-05b | Sandbox com rede habilitada não tem allowlist de egress. | 🟡 Média |
 | F-16, F-18, F-19, F-23 | Relevância de memória (casos negativos), corpus Docling, git local, validação de artefato real. | 🟡 Média |
 | F-21 | `App.jsx` com 62 `useState`; bundle num único chunk (teto de 1.000 KB no CI); CSS em camadas sem inventário. | 🟡 Média |
 
 ## Riscos fechados nesta sessão
+
+### F-15 — Coordenador durável de pipelines multimodelo (infraestrutura) (2026-08-04)
+
+O `runMultiModel` opera em estágios sequenciais (modo `pipeline`) ou em
+rodadas paralelas (`compare`/`council`/`debate`). Sem persistência, um
+kill-9 ou restart no meio de uma execução descartava o progresso dos
+estágios anteriores — o usuário tinha de reenviar o pedido e refazer
+CADA chamada de modelo, pagando o custo em tokens e segundos novamente.
+
+A correção introduz a infraestrutura de coordenação durável:
+
+- **Migration 027**: tabela `pipeline_runs` com PK `pipeline_run_id`
+  (`pipe_<nanoid>`), índices em `(conversation_id, status)` e
+  `(user_id, status)`, e **UNIQUE INDEX parcial** em
+  `(conversation_id) WHERE status='running'` — defesa em profundidade
+  contra duas instâncias do backend inserirem a mesma linha em uma race.
+- **`agent/pipelineRuns.js`** exporta as primitivas:
+  - `createPipelineRun({ conversationId, userId, mode, totalStages, config, rounds })`
+    — insere a linha. Falha de DB NÃO derruba o fluxo: o run continua em
+    memória, só sem retomada.
+  - `updatePipelineRun(id, patch)` — atualiza `current_stage`,
+    `rounds_run`, `status`, `state_json` e/ou `completed_at` em uma
+    única chamada. Idempotente: o último estado gravado vale.
+  - `loadPipelineRun(conversationId, { includeTerminal })` — recupera
+    o run ativo (default) ou qualquer um (`includeTerminal: true`).
+  - `completePipelineRun(id, { status })` — fecha o ciclo.
+  - `sweepStalePipelineRuns({ olderThanMs })` — varre terminais antigos
+    (default: 90s de carência, mesma janela do liveStream).
+
+**Validação:**
+- `backend/src/agent.pipelineRuns.test.js`: 7/7 (todos pulam sem DB) —
+  cria run com id único, atualiza `currentStage` + state, `loadPipelineRun`
+  sem run ativo devolve null, `completePipelineRun` muda status e
+  seta `completedAt`, sweeper remove antigos mas preserva recentes,
+  patch vazio é no-op, `newPipelineRunId` gera 100 ids únicos
+- `cd backend && npm run check`: 923/923 (79 pulados por exigir Postgres)
+- `cd frontend && npm run check`: lint + 70 testes + build OK
+
+**O que ficou de fora (próxima frente):** integração no `runMultiModel`
+para chamar `createPipelineRun` na entrada, `updatePipelineRun`
+entre estágios, `completePipelineRun` na saída, e a rota `/resume`
+detectar `pipeline_runs` ativo e retomar do `currentStage`. Esta PR
+provê o substrato de banco + funções; a integração é mudança de
+comportamento que precisa de janela própria.
 
 ### F-14 — Teste de retomada após interrupção real do processo (2026-08-04)
 
