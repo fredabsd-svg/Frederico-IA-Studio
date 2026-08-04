@@ -527,11 +527,66 @@ Novo job `e2e` no CI, com Postgres real e Chromium. Ver `e2e/README.md`.
 
 | ID | Risco | Severidade |
 | --- | --- | --- |
-| F-05b | Sandbox com rede habilitada não tem allowlist de egress. | 🟡 Média |
 | F-16, F-18, F-19, F-23 | Relevância de memória (casos negativos), corpus Docling, git local, validação de artefato real. | 🟡 Média |
 | F-21 | `App.jsx` com 62 `useState`; bundle num único chunk (teto de 1.000 KB no CI); CSS em camadas sem inventário. | 🟡 Média |
 
 ## Riscos fechados nesta sessão
+
+### F-05b — Allowlist de egress no sandbox (2026-08-04)
+
+Quando o sandbox tinha `networkEnabled=true`, o container conseguia
+falar com QUALQUER destino: metadados de nuvem (`169.254.169.254`),
+outros containers na mesma rede Docker, serviços internos do host. Era
+o vetor de risco mais sério restante na fronteira do container.
+
+A correção adiciona allowlist de egress no nível do comando — a
+defesa real continua sendo o Docker/network, mas esta camada é o que
+o usuário vê quando tenta acessar um destino proibido (a tentativa
+aparece como "Comando bloqueado" no log do run).
+
+- **`SANDBOX_NETWORK_ALLOWLIST`** (env, vírgula separa): lista de
+  destinos permitidos. Aceita:
+  - Domínio exato: `api.openai.com`
+  - Domínio com sufixo (subdomínios): `.openai.com`
+  - IP literal (com porta opcional): `192.168.1.5` ou `8.8.8.8:53`
+  - CIDR: `10.0.0.0/8`
+- **Default fail-closed**: allowlist vazia = NADA de rede passa. Sem
+  opt-in explícito, o sandbox é tão fechado quanto antes do
+  `networkEnabled=true` — só que agora o caminho para abrir é
+  explícito (definir a env) em vez de implícito (assumir "tudo aberto").
+- **`compileNetworkAllowlist` / `parseAllowlistEntry`** transformam
+  string/array/objeto em regras estruturadas (`{kind, value, port?}`).
+  IPv6 fica para uma frente posterior (a sintaxe é diferente e o volume
+  de teste real é baixo).
+- **`hostMatchesAllowlist`** aplica as regras — e a semântica de porta
+  é conservadora: regra COM porta só casa com a mesma porta na
+  chamada (sem fallback para "porta padrão"). Quem abriu 443 não
+  aceitou 80 por tabela.
+- **`extractHostCandidates`** varre `curl`/`wget`/`ping`/`nc`/`ssh`/`nslookup`/etc.
+  com regex e devolve `{host, port}[]`. Cobre o uso real, não tenta
+  ser exaustivo (defesa em profundidade).
+- **`guardNetworkEgress`** itera os hosts extraídos e bloqueia o
+  comando se ALGUM não casa. `pipe`-chains (`curl A | curl B`) são
+  cobertos: se B não está na allowlist, A também não roda.
+- **`guardCommand`** chama `guardNetworkEgress` quando recebe
+  `networkAllowlist` no context — integração direta com `runTool`'s
+  `bash` e `run_python`. Com rede desligada (`networkEnabled=false`),
+  a allowlist fica vazia e o gate não dispara (sem custo extra).
+
+**Limite honesto:** a análise é textual. O modelo que monta o host via
+variável, ofusca com `${HOST}`, ou usa uma ferramenta própria escapa.
+A defesa em camadas continua: Docker network + `CapDrop: ALL` +
+`no-new-privileges`. Esta camada reduz a superfície e é o que aparece
+no log — é melhor que nada, mas não é "à prova de modelo".
+
+**Validação:**
+- `backend/src/execGuard.networkAllowlist.test.js`: 23/23 — parsing
+  (domínio/IP/CIDR/sufixo/porta), matching (case-insensitive, sufixo,
+  IP, CIDR, porta), extração (`curl` URL, `curl` IP+porta, `ping`,
+  `wget`, comando sem rede), fail-closed, IP proibido (metadados),
+  integração via `guardCommand`
+- `cd backend && npm run check`: 946/946 (79 pulados por Postgres)
+- `cd frontend && npm run check`: lint + 70 testes + build OK
 
 ### F-15 — Coordenador durável de pipelines multimodelo (infraestrutura) (2026-08-04)
 

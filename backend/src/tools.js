@@ -25,7 +25,7 @@ import { runGithubTool } from './connectors/github.js';
 import { createCache } from './cache.js';
 import { captureThumbnail } from './agent/pageShot.js';
 import { getUserProvider } from './userProvider.js';
-import { guardCommand, guardPythonCode, PC_MOUNT_ROOT } from './execGuard.js';
+import { guardCommand, guardPythonCode, PC_MOUNT_ROOT, networkAllowlistFromEnv } from './execGuard.js';
 import { audit } from './companion/audit.js';
 
 // Cache de chamadas EXTERNAS caras/repetidas. Desligável com TOOL_CACHE=0
@@ -720,7 +720,15 @@ export async function runTool(conversationId, name, args = {}, sandboxOptions = 
   if (name === 'generate_image') return JSON.stringify(await generateImage(ws, args, { signal, userId: sandboxOptions.userId }));
   // Autorização de escrita nas Pastas do PC vale para ESTE turno e é decidida
   // pelo backend a partir do pedido do usuário (loop.js) — nunca pelo prompt.
-  const guardContext = { pcWriteAuthorized: sandboxOptions.pcWriteAuthorized === true };
+  // F-05b: a rede é opt-in (turno autorizou networkEnabled) e, quando aberta,
+  // só permite falar com destinos em SANDBOX_NETWORK_ALLOWLIST. Lista vazia
+  // = fail-closed: nada de rede. Aqui a allowlist vem da env UMA vez por
+  // processo — o `networkAllowlist` passado para guardCommand é derivado.
+  const networkAllowlist = sandboxOptions.networkEnabled ? networkAllowlistFromEnv() : [];
+  const guardContext = {
+    pcWriteAuthorized: sandboxOptions.pcWriteAuthorized === true,
+    networkAllowlist
+  };
   if (name === 'run_python') {
     guardPythonCode(args.code || '', guardContext);
     await auditExecution(sandboxOptions, { tool: 'run_python', payload: args.code, guardContext, pcMounts });
