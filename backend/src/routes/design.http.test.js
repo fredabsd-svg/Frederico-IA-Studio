@@ -572,3 +572,98 @@ test('slides: o alvo é o número do slide, sem o HTML do deck', { skip: needsDb
   assert.match(enviado, /APENAS esse slide/);
   assert.ok(!enviado.includes('<h2>Escopo</h2>'), 'o HTML do deck confundiria o modelo, que devolve JSON');
 });
+
+// ---- Modelo de IA por projeto ------------------------------------------------
+
+test('a precedência do modelo é pura e testável sem banco', { skip: needsDb }, async () => {
+  const { modelForProject } = await import('./design.js');
+  // O do PROJETO manda. Inverter faria a escolha no seletor do editor ser
+  // ignorada sempre que o chat estivesse em outro modelo.
+  assert.equal(modelForProject({ model_ref: 'prov::fixo' }, 'prov::do-chat'), 'prov::fixo');
+  // Projeto antigo (coluna nula): cai no modelo atual do app.
+  assert.equal(modelForProject({ model_ref: null }, 'prov::do-chat'), 'prov::do-chat');
+  assert.equal(modelForProject({}, ''), '');
+});
+
+test('criar fixa o modelo escolhido no projeto', { skip: needsDb }, async () => {
+  // Sem prompt não há geração, então o teste isola o que interessa: a coluna.
+  const r = await call('POST', '/api/design/projects', {
+    outputType: 'web', title: 'Com modelo', model: 'prov-x::modelo-bom',
+  });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.modelRef, 'prov-x::modelo-bom');
+});
+
+test('modelo fixado que o provedor não conhece falha CLARO, e o projeto fica de pé', { skip: needsDb }, async () => {
+  // Trocar o modelo é a única coisa que o usuário faz aqui e que pode apontar
+  // para uma credencial que não existe mais (provedor removido, catálogo
+  // mudado). O erro precisa dizer isso — e não descartar o projeto.
+  nextReply = HTML;
+  const r = await call('POST', '/api/design/projects', {
+    outputType: 'web', prompt: 'landing', model: 'provedor-que-sumiu::modelo',
+  });
+  assert.equal(r.status, 502);
+  assert.match(r.json.error, /provedor de IA/i);
+  assert.equal(r.json.project.modelRef, 'provedor-que-sumiu::modelo');
+  // O projeto existe: dá para trocar o modelo pelo seletor e tentar de novo.
+  const aberto = await call('GET', `/api/design/projects/${r.json.project.id}`);
+  assert.equal(aberto.status, 200);
+});
+
+test('o modelo do projeto vence o do chat na geração', { skip: needsDb }, async () => {
+  // O provedor falso só conhece `fake-model`; um ref inválido faria a chamada
+  // falhar. O que este teste prova é a PRECEDÊNCIA, então o modelo fixado é o
+  // válido e o do corpo é o que deve ser ignorado.
+  nextReply = HTML;
+  const criado = await call('POST', '/api/design/projects', {
+    outputType: 'web', prompt: 'landing', model: 'fake-model',
+  });
+  assert.equal(criado.json.modelRef, 'fake-model');
+
+  nextReply = HTML;
+  const gerado = await call('POST', `/api/design/projects/${criado.json.id}/generate`, {
+    prompt: 'mude a cor', model: 'outro-modelo-do-chat',
+  });
+  assert.equal(gerado.status, 200, gerado.text);
+  assert.equal(lastRequest.model, 'fake-model', 'o modelo fixado no projeto é o que vai ao provedor');
+});
+
+test('projeto sem modelo fixado usa o do chat (compatibilidade)', { skip: needsDb }, async () => {
+  const project = await newProject();
+  // Simula um projeto criado antes da coluna existir.
+  await db.prepare('UPDATE design_projects SET model_ref=NULL WHERE id=?').run(project.id);
+  nextReply = HTML;
+  const r = await call('POST', `/api/design/projects/${project.id}/generate`, {
+    prompt: 'mude a cor', model: 'fake-model',
+  });
+  assert.equal(r.status, 200);
+  assert.equal(lastRequest.model, 'fake-model');
+  assert.equal(r.json.modelRef, null, 'usar o modelo do chat não fixa nada por tabela');
+});
+
+test('trocar o modelo pelo PATCH grava, e string vazia solta a fixação', { skip: needsDb }, async () => {
+  const project = await newProject();
+  const trocado = await call('PATCH', `/api/design/projects/${project.id}`, { model: 'prov::outro' });
+  assert.equal(trocado.status, 200);
+  assert.equal(trocado.json.modelRef, 'prov::outro');
+
+  const solto = await call('PATCH', `/api/design/projects/${project.id}`, { model: '' });
+  assert.equal(solto.json.modelRef, null);
+
+  // Renomear sem mandar `model` não pode mexer no modelo.
+  await call('PATCH', `/api/design/projects/${project.id}`, { model: 'prov::terceiro' });
+  const renomeado = await call('PATCH', `/api/design/projects/${project.id}`, { title: 'Outro nome' });
+  assert.equal(renomeado.json.modelRef, 'prov::terceiro');
+  assert.equal(renomeado.json.title, 'Outro nome');
+});
+
+test('trocar o modelo de projeto alheio é 404', { skip: needsDb }, async () => {
+  const project = await newProject();
+  currentUser = USER_B;
+  try {
+    const r = await call('PATCH', `/api/design/projects/${project.id}`, { model: 'prov::invasor' });
+    assert.equal(r.status, 404);
+  } finally {
+    currentUser = USER_A;
+  }
+});

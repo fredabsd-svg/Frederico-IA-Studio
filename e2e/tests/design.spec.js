@@ -192,3 +192,41 @@ test('o ajuste é gravado e sobrevive a reabrir o projeto', async ({ page, reque
   await expect.poll(async () => frame2.locator('#titulo-e2e').evaluate(el => getComputedStyle(el).color), { timeout: 30_000 })
     .toBe('rgb(10, 125, 85)');
 });
+
+// ---- Modelo de IA por projeto ------------------------------------------------
+
+test('o seletor de modelo fica DENTRO do editor e o modelo é fixado no projeto', async ({ page, request }) => {
+  await abrirModoDesign(page, request, 'design-web');
+  await gerarPrimeiroProjeto(page, 'Site ou protótipo', 'uma landing com modelo fixado');
+  const frame = page.frameLocator('iframe[title="Prévia do design"]');
+  await expect(frame.locator('#titulo-e2e')).toBeVisible({ timeout: 60_000 });
+
+  // A lacuna que este teste guarda: o Modo Design ocupa a tela inteira, então o
+  // seletor do chat fica atrás dele. Se o seletor sair da barra do editor,
+  // trocar de modelo volta a exigir fechar e reabrir a tela.
+  const seletor = page.locator('.dsModel .mpBtn');
+  await expect(seletor).toBeVisible();
+  await expect(seletor).toContainText('design-web');
+
+  // Abrir e fechar o painel funciona por cima do overlay (z-index correto) — e
+  // o Esc que fecha a LISTA não pode fechar o Modo Design junto. Foi este teste
+  // que pegou isso: o seletor entrou no editor e passou a disputar a mesma
+  // tecla com o atalho de sair da tela.
+  await seletor.click();
+  await expect(page.locator('.dsModel .mpPanel')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.dsModel .mpPanel')).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: 'Modo Design' })).toBeVisible();
+
+  // O modelo ficou GRAVADO no projeto — não é mais o "modelo atual do app".
+  // (A troca em si tem teste de rota; aqui a conta enxerga um modelo só, que é
+  // o que torna o resto da suíte determinístico.)
+  const lista = await request.get('/api/design/projects');
+  const projeto = (await lista.json())[0];
+  expect(projeto.modelRef).toContain('design-web');
+
+  // E sobrevive a fechar e reabrir o projeto.
+  await page.getByRole('button', { name: 'Projetos' }).click();
+  await page.getByText('uma landing com modelo fixado').click();
+  await expect(page.locator('.dsModel .mpBtn')).toContainText('design-web');
+});

@@ -198,3 +198,26 @@ test('projeto aponta para um design system apagado sem quebrar', { skip: needsDb
   const reloaded = await store.getProject(OWNER, project.id);
   assert.equal(reloaded.design_system_id, null);
 });
+
+test('o modelo fica gravado no projeto e pode ser trocado ou solto', { skip: needsDb }, async () => {
+  const fixo = await store.createProject(OWNER, { title: 'Com modelo', outputType: 'web', modelRef: 'prov1::gpt-4o' });
+  assert.equal(fixo.model_ref, 'prov1::gpt-4o');
+
+  await store.updateProject(OWNER, fixo.id, { modelRef: 'prov2::claude' });
+  assert.equal((await store.getProject(OWNER, fixo.id)).model_ref, 'prov2::claude');
+
+  // String vazia SOLTA a fixação — o projeto volta a seguir o modelo do app.
+  await store.updateProject(OWNER, fixo.id, { modelRef: '' });
+  assert.equal((await store.getProject(OWNER, fixo.id)).model_ref, null);
+});
+
+test('projeto sem modelo nasce com NULL, e renomear não o inventa', { skip: needsDb }, async () => {
+  // NULL é o estado dos projetos criados antes da coluna existir. Um PATCH que
+  // só mexe no título não pode fixar modelo nenhum por tabela.
+  const solto = await store.createProject(OWNER, { title: 'Sem modelo', outputType: 'web' });
+  assert.equal(solto.model_ref, null);
+  await store.updateProject(OWNER, solto.id, { title: 'Outro nome' });
+  const reloaded = await store.getProject(OWNER, solto.id);
+  assert.equal(reloaded.model_ref, null);
+  assert.equal(reloaded.title, 'Outro nome');
+});

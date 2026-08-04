@@ -183,6 +183,10 @@ export const schemas = {
   designProjectUpdate: z.looseObject({
     title: z.string().trim().min(1, 'Dê um nome ao projeto.').max(DESIGN_MAX_TITLE_CHARS).optional(),
     designSystemId: id.nullish(),
+    // `model` aceita string vazia de propósito: é como a interface SOLTA a
+    // fixação do modelo e devolve o projeto ao modelo atual do app. Por isso
+    // não usa `modelId` (que exige min 1 implícito no uso), e sim o tipo cru.
+    model: z.string().trim().max(360).nullish(),
   }),
 
   designGenerate: z.looseObject({

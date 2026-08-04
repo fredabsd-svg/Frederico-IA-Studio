@@ -115,7 +115,10 @@ router.post('/design/projects', validate(schemas.designProjectCreate), async (re
     return res.status(400).json({ error: 'Design system não encontrado.' });
   }
 
-  const project = await createProject(req.userId, input);
+  // O modelo escolhido na tela de criação é FIXADO no projeto. Sem isso, voltar
+  // nele semanas depois refinaria com o modelo que estivesse selecionado no chat
+  // naquele momento — e a proposta sairia diferente sem ninguém ter pedido.
+  const project = await createProject(req.userId, { ...input, modelRef: String(req.body?.model || '').trim() || null });
   if (!prompt) return res.json(await projectPayload(req.userId, project.id));
 
   const generated = await runGeneration(req, project, prompt);
@@ -150,6 +153,10 @@ router.patch('/design/projects/:id', validate(schemas.designProjectUpdate), asyn
   await updateProject(req.userId, project.id, {
     title: req.body.title,
     designSystemId: designSystemId === undefined ? undefined : (designSystemId || null),
+    // String vazia é um valor com significado: solta a fixação e devolve o
+    // projeto ao modelo atual do app. Por isso a distinção entre `undefined`
+    // (não mexeu) e `''` (limpou) precisa sobreviver até o store.
+    modelRef: req.body.model === undefined ? undefined : String(req.body.model || '').trim(),
   });
   res.json(await projectPayload(req.userId, project.id));
 });
@@ -187,6 +194,17 @@ router.put('/design/projects/:id/adjustments', validate(schemas.designAdjustment
 // Caminho único de geração: monta o contexto, chama o modelo, valida o artefato,
 // grava a versão e registra as duas falas no chat do projeto. Usado tanto pela
 // criação com prompt quanto pelo /generate.
+// Qual modelo usar nesta geração.
+//
+// O do PROJETO manda. O do corpo da requisição — o modelo selecionado no chat
+// principal — é só o padrão para projetos criados antes de existir a coluna
+// `model_ref`, que ficam com NULL. Inverter essa ordem faria a escolha do
+// usuário no seletor do editor ser ignorada sempre que o chat estivesse em
+// outro modelo.
+export function modelForProject(project, fallback) {
+  return String(project?.model_ref || fallback || '').trim();
+}
+
 // Rótulo curto do alvo, para o histórico do chat.
 function targetLabel(target) {
   if (target.slide) return `slide ${target.slide}`;
@@ -215,7 +233,7 @@ async function runGeneration(req, project, prompt) {
     designSystem,
     history,
     target,
-    model: String(req.body?.model || ''),
+    model: modelForProject(project, req.body?.model),
   });
 
   // A fala do usuário é registrada mesmo quando a geração falha: sem ela, o

@@ -136,6 +136,39 @@ Enquanto o controle está sendo arrastado, o CSS é aplicado direto no iframe po
 gravado — e o servidor revalida tudo: cor só em hex, medida dentro da faixa,
 chave fora do catálogo descartada.
 
+## O modelo de IA é do projeto
+
+O seletor de modelo fica **na barra do editor**, junto do título — e não no chat
+principal. O motivo é físico: o Modo Design ocupa a tela inteira, então o seletor
+do chat fica atrás dele. Trocar de modelo não pode exigir fechar a tela.
+
+A escolha é **gravada no projeto** (`design_projects.model_ref`). Isso importa
+mais do que parece: sem a coluna, cada geração usava o modelo selecionado no chat
+naquele instante, e como o app não guarda essa seleção entre recarregamentos, um
+projeto criado com um modelo bom era refinado meses depois pelo primeiro modelo
+da lista. A proposta saía diferente sem ninguém ter pedido.
+
+A precedência tem um lugar só, dos dois lados (`modelForProject` no backend,
+`effectiveModel` no frontend):
+
+| Situação | Modelo usado |
+| --- | --- |
+| Projeto com `model_ref` | o do projeto — sempre |
+| Projeto com `model_ref` nulo (criado antes desta versão) | o selecionado no chat, como antes |
+| Seletor deixado em branco | solta a fixação e volta ao caso acima |
+
+A referência gravada é a **completa** (`<provedor>::<modelo>`), não o id cru: um
+id sem prefixo faz `getUserProvider` cair no provedor mais antigo do usuário.
+
+Se o modelo fixado apontar para um provedor que não existe mais (chave removida,
+catálogo trocado), a geração falha com a mensagem do provedor e **o projeto
+continua de pé** — basta escolher outro modelo no seletor e pedir de novo.
+
+> Detalhe de implementação que vale lembrar: `Esc` com o seletor aberto fecha só
+> a lista, não o Modo Design. A checagem acontece na fase de **captura** do
+> evento, porque o React trata `keydown` como discreto e descarrega o estado na
+> hora — quando o ouvinte do modo roda, o painel do seletor já saiu do DOM.
+
 ## Segurança
 
 O HTML de um projeto de design é **código gerado por IA a partir de um pedido em
@@ -250,6 +283,8 @@ e todas as tabelas de domínio já usam `id TEXT PRIMARY KEY` + `created_at TEXT
 *reverter* ser mover o ponteiro em vez de apagar o que veio depois: dá para
 voltar para a v5, olhar, e seguir dali — a v6 e a v7 continuam no histórico.
 
+**`model_ref` guarda o modelo de IA do projeto** (nulo = segue o modelo do app).
+
 **`adjustments` é uma coluna do projeto**, não uma versão. Guarda um JSON
 pequeno com as variáveis que o usuário mexeu (`{"corPrimaria":"#0a7d55"}`). É por
 projeto, e não por versão, porque é assim que o usuário pensa nele — "a cor da
@@ -280,6 +315,7 @@ token.
 | `GET` | `/design/projects/:id/preview` | HTML da versão atual (pela sessão) |
 | `GET` | `/design/preview/:token` | **sem sessão** — é o que o `<iframe>` carrega |
 | `PUT` | `/design/projects/:id/adjustments` | grava os ajustes finos (não chama a IA, não cria versão) |
+| `PATCH` | `/design/projects/:id` | renomeia, troca a marca e **fixa/solta o modelo** (`model`; string vazia solta) |
 | `POST` | `/design/projects/:id/preview-token` | invalida a URL da prévia e emite outra |
 | `GET` | `/design/projects/:id/export?format=&versionId=` | baixa o artefato |
 | `GET`/`POST` | `/design/systems` | lista / cria uma marca |

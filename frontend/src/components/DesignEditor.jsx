@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowUp, History, MessageSquare, Download, RotateCcw, Check, Pencil, Eye, SlidersHorizontal, X, MousePointerClick } from 'lucide-react';
 import { API } from '../constants.js';
+import { ModelPicker } from '../components.jsx';
 import { DesignPreviewFrame } from './DesignPreviewFrame.jsx';
 import { DesignAdjustments } from './DesignAdjustments.jsx';
 import {
   outputTypeMeta, exportFormatsFor, exportUrl, formatWhen, versionLabel,
-  canSubmit, modelLabel, targetLabel, liveOverrideCss,
+  canSubmit, modelLabel, targetLabel, liveOverrideCss, effectiveModel,
 } from '../design/designCore.js';
 
 // Tela principal de um projeto: prévia à esquerda, refinamento à direita.
@@ -13,7 +14,7 @@ import {
 // A conversa, o histórico e os ajustes dividem a mesma coluna por abas em vez
 // de empilhar: os três competem pela mesma pergunta ("como está agora?"), e
 // empilhados nenhum deles teria altura suficiente para ser útil.
-export function DesignEditor({ project, busy, error, model, onBack, onGenerate, onRevert, onRename, onSaveAdjustments }) {
+export function DesignEditor({ project, busy, error, model, allModels = [], onBack, onGenerate, onRevert, onRename, onSaveAdjustments, onSaveModel }) {
   const [tab, setTab] = useState('chat');
   const [mobileView, setMobileView] = useState('preview');
   const [prompt, setPrompt] = useState('');
@@ -33,6 +34,8 @@ export function DesignEditor({ project, busy, error, model, onBack, onGenerate, 
   const versions = project.versions || [];
   const tokens = project.tokens || [];
   const hasVersion = Boolean(project.currentVersion);
+  // O modelo do projeto manda; o do app é só o padrão de projetos antigos.
+  const projectModel = effectiveModel(project, model);
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ block: 'end' }); }, [messages.length, busy]);
   useEffect(() => { setTitleDraft(project.title); }, [project.title]);
@@ -111,6 +114,17 @@ export function DesignEditor({ project, busy, error, model, onBack, onGenerate, 
             </button>
           )}
           <span className="dsBadge">{meta.short}</span>
+        </div>
+
+        {/* O seletor mora AQUI, e não no chat lá atrás: o Modo Design ocupa a
+            tela inteira, então o seletor do chat fica inalcançável enquanto
+            ele está aberto. Trocar de modelo não pode exigir fechar a tela. */}
+        <div className="dsModel">
+          <ModelPicker
+            models={allModels}
+            value={projectModel}
+            onChange={id => onSaveModel(id)}
+          />
         </div>
 
         <div className="dsExports">
@@ -215,7 +229,11 @@ export function DesignEditor({ project, busy, error, model, onBack, onGenerate, 
                   <ArrowUp size={17} />
                 </button>
               </form>
-              <small className="dsHint">Enter envia · Shift+Enter quebra a linha{model ? ` · modelo: ${modelLabel(model)}` : ''}</small>
+              <small className="dsHint">
+                Enter envia · Shift+Enter quebra a linha
+                {projectModel ? ` · modelo: ${modelLabel(projectModel)}` : ''}
+                {projectModel && !project.modelRef ? ' (do chat — escolha um acima para fixar neste projeto)' : ''}
+              </small>
             </div>
           )}
 

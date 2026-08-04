@@ -63,6 +63,14 @@ export function versionLabel(version, currentVersionId) {
   return `v${version.versionNumber}${marker}`;
 }
 
+// Modelo que ESTE projeto usa. O do projeto manda; o do app é só o padrão dos
+// projetos criados antes de o modelo passar a ser fixado (`modelRef` nulo).
+// Espelha `modelForProject` do backend — se as duas divergirem, a tela mostra um
+// modelo e a geração usa outro.
+export function effectiveModel(project, appModel) {
+  return String(project?.modelRef || appModel || '').trim();
+}
+
 // Nome do modelo para MOSTRAR. A referência interna tem a forma
 // "<provedor>::<modelo>" (ver backend/src/modelRef.js) e o prefixo é um id
 // aleatório — informação de banco, não de tela.

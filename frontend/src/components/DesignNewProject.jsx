@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Layout, Presentation, FileText, Sparkles, ArrowLeft, Palette } from 'lucide-react';
+import { Layout, Presentation, FileText, Sparkles, ArrowLeft, Palette, Cpu } from 'lucide-react';
+import { ModelPicker } from '../components.jsx';
 import { DESIGN_OUTPUT_TYPES, outputTypeMeta, canSubmit } from '../design/designCore.js';
 
 const TYPE_ICON = { web: Layout, slides: Presentation, document: FileText };
@@ -10,11 +11,14 @@ const TYPE_ICON = { web: Layout, slides: Presentation, document: FileText };
 // marca são opcionais e ficam depois do botão de gerar, porque exigir um nome
 // antes de existir qualquer coisa é o tipo de atrito que faz a pessoa desistir
 // na primeira tela. Sem título, o backend usa o próprio pedido como nome.
-export function DesignNewProject({ systems = [], busy, onCreate, onCancel, error }) {
+export function DesignNewProject({ systems = [], models = [], model = '', busy, onCreate, onCancel, error }) {
   const [outputType, setOutputType] = useState('web');
   const [prompt, setPrompt] = useState('');
   const [title, setTitle] = useState('');
   const [designSystemId, setDesignSystemId] = useState('');
+  // Começa no modelo do chat e fica FIXADO no projeto ao criar — voltar nele
+  // meses depois usa o mesmo modelo, não o que estiver selecionado na hora.
+  const [modelRef, setModelRef] = useState(model);
 
   const meta = outputTypeMeta(outputType);
   const ready = canSubmit(prompt, busy);
@@ -22,7 +26,13 @@ export function DesignNewProject({ systems = [], busy, onCreate, onCancel, error
   function submit(e) {
     e.preventDefault();
     if (!ready) return;
-    onCreate({ outputType, prompt: prompt.trim(), title: title.trim() || undefined, designSystemId: designSystemId || null });
+    onCreate({
+      outputType,
+      prompt: prompt.trim(),
+      title: title.trim() || undefined,
+      designSystemId: designSystemId || null,
+      model: modelRef,
+    });
   }
 
   return (
@@ -80,6 +90,14 @@ export function DesignNewProject({ systems = [], busy, onCreate, onCancel, error
             {systems.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
         </label>
+      </div>
+
+      <div className="dsField">
+        <span className="dsFieldLabel"><Cpu size={13} /> Modelo de IA</span>
+        <div className="dsModel dsModelBlock">
+          <ModelPicker models={models} value={modelRef} onChange={setModelRef} />
+        </div>
+        <small className="dsHint">Fica fixado neste projeto. Dá para trocar depois, na barra do editor.</small>
       </div>
 
       {error && <div className="dsError" role="alert">{error}</div>}
