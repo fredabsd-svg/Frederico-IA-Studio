@@ -138,15 +138,29 @@ router.post('/conversations/:id/upload', (req, res, next) => {
       const target = path.join(ws.uploads, name);
       // Hash por streaming ANTES de mover (o arquivo nunca é lido inteiro na RAM).
       const hash = hashFileStreamSync(file.path);
-      const size = commitUploadedFile(file.path, target);
+      // F-11: se o antivírus estava degradado, o arquivo vai para
+      // uploads/.quarantine/ em vez de uploads/ — o conjunto "verificado" só
+      // passa a incluir este arquivo DEPOIS do re-escaneamento bem-sucedido.
+      const inQuarantine = scan.status === 'degradado';
+      const finalTarget = inQuarantine ? path.join(ws.uploads, '.quarantine', name) : target;
+      const finalRel = inQuarantine ? `uploads/.quarantine/${name}` : `uploads/${name}`;
+      const size = commitUploadedFile(file.path, finalTarget);
       const id = nanoid();
       const mime = file.mimetype && file.mimetype !== 'application/octet-stream' ? file.mimetype : mimeForName(original);
       await db.prepare('INSERT INTO files (id,conversation_id,kind,name,path,size,hash,mime,created_at) VALUES (?,?,?,?,?,?,?,?,?)')
-        .run(id, req.params.id, 'upload', original, `uploads/${name}`, size, hash, mime, now());
-      // Pré-processa com o Docling em segundo plano (se ligado e tipo suportado);
-      // não bloqueia a resposta do upload.
-      kickProcessing({ userId: req.userId, conversationId: req.params.id, fileId: id, filePath: target, filename: original, mime, hash });
-      saved.push({ id, name: original, path: `uploads/${name}`, size });
+        .run(id, req.params.id, 'upload', original, finalRel, size, hash, mime, now());
+      if (inQuarantine) {
+        // Registro na quarentena para reprocessar quando o clamd voltar.
+        db.prepare(
+          "INSERT INTO quarantined_uploads (id, conversation_id, user_id, storage_path, original_name, mime, size, hash, status, quarantined_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)"
+        ).run(id, req.params.id, req.userId, finalRel, original, mime, size, hash, now());
+        // Docling NÃO roda em quarentena: o conteúdo ainda não é confiável.
+      } else {
+        // Pré-processa com o Docling em segundo plano (se ligado e tipo suportado);
+        // não bloqueia a resposta do upload.
+        kickProcessing({ userId: req.userId, conversationId: req.params.id, fileId: id, filePath: finalTarget, filename: original, mime, hash });
+      }
+      saved.push({ id, name: original, path: finalRel, size, inQuarantine });
     }
     // `scanned` e `scanStatus` dizem a VERDADE sobre a verificação: com o
     // antivírus fora do ar (modo degradado) a interface não pode exibir selo de

@@ -533,10 +533,62 @@ Novo job `e2e` no CI, com Postgres real e Chromium. Ver `e2e/README.md`.
 | F-16, F-18, F-19, F-23 | Relevância de memória (casos negativos), corpus do Docling, git local, validação de artefato com arquivos reais. | 🟡 Média |
 | F-24 | Sub-agentes: sem orçamento próprio de tempo/tokens por delegação e sem catálogo de modelos com tool calling **verificado** (hoje qualquer modelo do seletor pode receber uma subtarefa). | 🟡 Média |
 | F-21 | `App.jsx` com 62 `useState`; bundle num único chunk (teto de 1.000 KB no CI); CSS em camadas sem inventário. | 🟡 Média |
-| F-11 | Sem quarentena/reprocesso do que passou com o antivírus degradado. | 🟡 Média |
 | F-26 | Checkpoints de workspace consomem disco sem cota agregada: `CHECKPOINT_KEEP` (5) × `CHECKPOINT_MAX_MB` (300) dá até **1,5 GB por conversa** no pior caso. A poda é por conversa, não global, e `WORKSPACE_QUOTA_MB` só avisa — não bloqueia. Numa instalação pública, ajuste os dois valores. | 🟡 Média |
 
 ## Riscos fechados nesta sessão
+
+### F-11 — Quarentena de uploads aceitos com antivírus degradado (2026-08-04)
+
+Quando o ClamAV está fora do ar (modo fail-open), os uploads eram aceitos
+em `uploads/` com o selo "não verificado" — o que era o pior dos dois
+mundos: o usuário conseguia ENVIAR o arquivo para o agente, que ia usá-lo
+como contexto. Se o clamd estivesse caído por causa de um incidente de
+segurança, isso virava distribuição de malware via Studio.
+
+A correção introduz uma pasta `uploads/.quarantine/` e uma tabela
+`quarantined_uploads` que acompanha cada arquivo aceito em modo
+degradado. O fluxo:
+
+1. **Na entrada** (`scanUploadBatch`): se `status === 'degradado'`, o
+   arquivo é gravado em `uploads/.quarantine/` em vez de `uploads/` e
+   uma linha é inserida com `status='pending'`. O `kickProcessing` do
+   Docling NÃO roda — o conteúdo ainda não é confiável.
+
+2. **Na recuperação** (mesmo `scanUploadBatch`, quando o clamd volta):
+   o `reprocessQuarantine()` é chamado como efeito colateral do scan
+   bem-sucedido. Limite de 10 itens por chamada (o resto fica para a
+   próxima). Cada item é re-escaneado e tem três destinos:
+   - `clean` → movido para `uploads/<name>` (caminho em `files`
+     atualizado), `status='cleared'`. O Docling pode rodar agora.
+   - `infected` → arquivo apagado, `status='infected'`, `virus_name`
+     registrado para auditoria.
+   - erro de infra → `status='stale'`, `attempts++`, `last_error`
+     guardado. Próxima chamada tenta de novo.
+
+3. **Tabela** com índices em `(status, quarantined_at)` e `user_id` —
+   a consulta quente é "o que está pronto para nova tentativa",
+   ordenada pela idade (FIFO). O `claimQuarantineItem` é o lock
+   pessimista que evita dois reprocessamentos simultâneos no mesmo
+   arquivo (anti-dupla-execução).
+
+4. **Métricas** (`scanHealth.quarentenaTotal/Limpos/Infectados`) expostas
+   no `/api/health`, junto com a política vigente — o operador vê se
+   tem arquivo parado em quarentena sem precisar fuçar o banco.
+
+**Defesa contra path traversal no nome do arquivo** (F-11 aproveita
+o mesmo saneamento do F-25): caracteres fora de `[a-zA-Z0-9._ -]` viram
+`_`, e o `..` literal vira parte do nome, não referência de diretório
+— porque o `/` separador foi removido.
+
+**Validação:**
+- `backend/src/clamav.quarantine.test.js`: 4/4 — `quarantineDirFor`,
+  `quarantineUploadedFile` move e devolve path relativo, cria
+  `.quarantine` se não existir, saneia nome (path traversal fechado)
+- `cd backend && npm run check`: 901/901 (70 pulados por exigir Postgres)
+- `cd frontend && npm run check`: lint + 70 testes + build OK
+- Os 10 testes do `clamav.test.js` continuam passando — o
+  `reprocessQuarantine` é tolerante a DB indisponível (try/catch
+  silencioso, retorna `skipped`) e o mock do clamd funciona normalmente
 
 ### F-25 — Sub-agentes: outputs isolados por delegação e rótulo correto (2026-08-04)
 
