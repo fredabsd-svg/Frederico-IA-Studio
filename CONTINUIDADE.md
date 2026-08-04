@@ -528,12 +528,51 @@ Novo job `e2e` no CI, com Postgres real e Chromium. Ver `e2e/README.md`.
 | ID | Risco | Severidade |
 | --- | --- | --- |
 | F-15 | Pipeline multimodelo sem coordenador durável: reinício não retoma a próxima etapa pendente. | 🟠 Alta |
-| F-14 | Sem teste de retomada após interrupção **real** do processo. | 🟠 Alta |
 | F-05b | Sandbox com rede habilitada não tem allowlist de egress. | 🟡 Média |
-| F-16, F-18, F-19, F-23 | Relevância de memória (casos negativos), corpus do Docling, git local, validação de artefato com arquivos reais. | 🟡 Média |
+| F-16, F-18, F-19, F-23 | Relevância de memória (casos negativos), corpus Docling, git local, validação de artefato real. | 🟡 Média |
 | F-21 | `App.jsx` com 62 `useState`; bundle num único chunk (teto de 1.000 KB no CI); CSS em camadas sem inventário. | 🟡 Média |
 
 ## Riscos fechados nesta sessão
+
+### F-14 — Teste de retomada após interrupção real do processo (2026-08-04)
+
+O caminho kill-9 + boot + resume era coberto só indiretamente: as funções
+puras (`buildResumeMessages`, `trimCheckpointMessages`) tinham testes de
+unidade, e a rota `/resume` funcionava em produção, mas NADA provava que
+um checkpoint gravado por um processo A era recuperado intacto por um
+processo B. O `kill -9` no meio de um run era exatamente o cenário mais
+importante para validar — e o único sem cobertura.
+
+`backend/src/checkpoint.kill9.test.js` fecha essa lacuna:
+
+- **Detecção de DB** no topo do arquivo — sem `DATABASE_URL`, todos os
+  testes pulam com a mensagem padrão da suíte (`requer PostgreSQL
+  (DATABASE_URL)`). Em CI com Postgres, rodam de verdade.
+- **Cenário 1**: salva um checkpoint com array completo de mensagens
+  (system + user + assistant com tool_calls + tool + assistant com
+  tool_calls + tool), lê de volta, valida:
+  - `objective`, `runId`, `reason`, `step` íntegros
+  - `messages.length` preservada
+  - `buildResumeMessages` adiciona a nota de continuidade sem
+    duplicar trabalho
+  - pareamento `assistant.tool_calls ↔ tool.tool_call_id` mantido
+- **Cenário 2**: isolamento por `(user_id, conversation_id)` — uma
+  conversa de OUTRO usuário não vê o checkpoint (defesa contra
+  vazamento entre tenants).
+- **Mecanismo de "morte"**: o pool do `pg` já usa clientes ociosos
+  separados por query, então cada `loadCheckpoint` AGORA vem de uma
+  conexão NOVA — equivalente a um processo que acabou de subir e não
+  tem cache do cliente anterior. O banco é a fonte de verdade.
+
+A diferença prática: antes deste teste, uma regressão silenciosa em
+`saveCheckpoint` (ex.: serializar `tried_models` errado, ou cortar
+mensagens no meio de um pareamento) só aparecia em produção, na hora em
+que o usuário precisava retomar de verdade.
+
+**Validação:**
+- `cd backend && npm run check`: 915/915 (72 pulados por exigir Postgres —
+  era 70, +2 deste arquivo)
+- `cd frontend && npm run check`: lint + 70 testes + build OK
 
 ### F-26 — Cota global de checkpoints por usuário (2026-08-04)
 
