@@ -531,11 +531,68 @@ Novo job `e2e` no CI, com Postgres real e Chromium. Ver `e2e/README.md`.
 | F-14 | Sem teste de retomada após interrupção **real** do processo. | 🟠 Alta |
 | F-05b | Sandbox com rede habilitada não tem allowlist de egress. | 🟡 Média |
 | F-16, F-18, F-19, F-23 | Relevância de memória (casos negativos), corpus do Docling, git local, validação de artefato com arquivos reais. | 🟡 Média |
-| F-24 | Sub-agentes: sem orçamento próprio de tempo/tokens por delegação e sem catálogo de modelos com tool calling **verificado** (hoje qualquer modelo do seletor pode receber uma subtarefa). | 🟡 Média |
 | F-21 | `App.jsx` com 62 `useState`; bundle num único chunk (teto de 1.000 KB no CI); CSS em camadas sem inventário. | 🟡 Média |
 | F-26 | Checkpoints de workspace consomem disco sem cota agregada: `CHECKPOINT_KEEP` (5) × `CHECKPOINT_MAX_MB` (300) dá até **1,5 GB por conversa** no pior caso. A poda é por conversa, não global, e `WORKSPACE_QUOTA_MB` só avisa — não bloqueia. Numa instalação pública, ajuste os dois valores. | 🟡 Média |
 
 ## Riscos fechados nesta sessão
+
+### F-24 — Sub-agentes: orçamento próprio + catálogo persistido de tool calling (2026-08-04)
+
+Dois problemas coexistiam na delegação a sub-agentes:
+
+1. **Sem teto por delegação** — o filho herdava o orçamento cheio do pai e
+   podia queimar minutos de chave em uma subtarefa que era pra ser rápida.
+   Em paralelo, o tempo total era a SOMA dos filhos, sem limite global.
+
+2. **Catálogo de tool calling só em memória** — `markModelCapabilityUnsupported`
+   registra no `Map` que o modelo não suporta ferramentas, mas o `Map` se
+   perde no reinício. Resultado: um modelo que falhou ontem com "No
+   endpoints found that support tool use" volta HOJE como apto, recebe a
+   subtarefa, falha de novo, e o usuário paga o ciclo.
+
+**Correção:**
+
+- **Migration 026**: tabela `model_tool_capability_cache(provider_id, model,
+  supports_tools, last_attempt_at, last_error, attempts, updated_at)`. PK
+  composta por `(provider_id, model)`. Índice em `(supports_tools,
+  last_attempt_at)` para a consulta "o que ainda está marcado como ruim".
+- **`markModelCapabilityUnsupported(id, 'tools', { providerId, errorMessage })`**
+  grava também no DB. Falha de DB não derruba (a cache em memória já basta
+  para a sessão atual; a persistência é otimização para o próximo boot).
+- **`loadModelToolCapabilityCache()`** roda uma vez no boot, repopula a
+  cache em memória com os `(provedor, modelo)` já conhecidos como ruins.
+- **`modelLacksToolsInCache(providerId, model)`** consulta rápida para
+  quem for decidir se oferece a ferramenta de delegação ao modelo.
+- **`clearModelToolCapabilityCache(providerId, model)`** para o operador
+  forçar uma re-tentativa quando o provedor publica endpoints novos.
+
+Para o orçamento:
+
+- **`SUBAGENT_DEFAULTS`** centraliza defaults (12 etapas / 18 hard / 30k
+  tokens / 8min total). Overrides por env: `SUBAGENT_BUDGET_STEPS`,
+  `SUBAGENT_BUDGET_TOKENS`, `SUBAGENT_BUDGET_TOTAL_MS`, `SUBAGENT_BUDGET_HARD_STEPS`.
+- **`buildSubagentBudget({ now, deadlineMs, totalMs })`** constrói o
+  objeto `{ maxSteps, hardMaxSteps, maxTokens, deadlineMs }`. Quando o pai
+  passa `deadlineMs`, todas as delegações paralelas compartilham o MESMO
+  relógio — sem isto, duas paralelas dariam o dobro do tempo total.
+- **`runAgent({ subagentRunBudget })`** aplica os tetos (cap nos tetos do
+  pai) e checa o `deadlineMs` + `usage.total_tokens` a cada iteração do
+  loop. Estouro gera `incomplete=true` + `checkpointReason='deadline'`
+  ou `'token_budget'` + `failureMessage` em português.
+- **Compartilhamento no pai**: `runBudget = buildSubagentBudget({ now: Date.now() })`
+  é criado UMA vez por turno e passado para TODAS as chamadas
+  `runSubagent(...)` — garantindo que paralelas param juntas.
+
+**Validação:**
+- `backend/src/subagents.budget.test.js`: 5/5 — defaults, deadline
+  calculado, deadline explícito compartilhado, defaults finitos,
+  totalMs acima do timeout duro do stream
+- `cd backend && npm run check`: 907/907 (70 pulados por exigir Postgres)
+- `cd frontend && npm run check`: lint + 70 testes + build OK
+
+**O que ficou de fora (intencional):** UI para o usuário ver/limpar a
+lista de `(provedor, modelo)` rejeitados. A correção de infra está
+completa — a tela seria puro cosmético e aumenta superfície.
 
 ### F-11 — Quarentena de uploads aceitos com antivírus degradado (2026-08-04)
 

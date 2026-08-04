@@ -30,7 +30,7 @@ import { resolveSandboxNetwork, isToolCallAllowed } from './assistantPolicy.js';
 import { explicitlyAuthorizesPcWrite } from '../execGuard.js';
 import { takeSandboxRestartNotice, sandboxOpenTransaction } from '../sandbox.js';
 import { formatRestartNotice, formatOpenTransactionNotice } from '../agentEnv.js';
-import { SUBAGENT_TOOL_NAME, subagentToolDefinitionFor, listSubagentSpecialists, buildDelegationContext, intersectToolDefinitions, canLaunchDelegationsInParallel, shouldOfferSubagentTool, maxSubagentsPerRun, createSubagentLimiter, runSubagent } from './subagents.js';
+import { SUBAGENT_TOOL_NAME, subagentToolDefinitionFor, listSubagentSpecialists, buildDelegationContext, intersectToolDefinitions, canLaunchDelegationsInParallel, shouldOfferSubagentTool, maxSubagentsPerRun, createSubagentLimiter, runSubagent, buildSubagentBudget } from './subagents.js';
 import { buildDocumentContext, DOC_PRECEDENCE_NOTE } from '../docling/context.js';
 import { doclingImageParts, visualElementsNote } from '../docling/vision.js';
 
@@ -68,7 +68,7 @@ export function buildOutputBaseline(files = [], { acceptAll = false, continuatio
 // um run interrompido — array de mensagens do agente, modelo ativo, cadeia de
 // failover já tentada e o objetivo. Com ele, o loop CONTINUA de onde parou (com
 // orçamento de ciclos NOVO), em vez de recomeçar do zero. Ver checkpoint.js.
-export async function runAgent({ userId, conversationId, userText, model, assistant, webSearch, effort, developer, onEvent, saveUserMessage = true, existingUserMessageId = null, executionBriefing = null, forceExecution = false, control: inheritedControl = null, resume = null, gitWriteAuthorization = null, persistReply = true, continuationOutputPaths = [], subagentDepth = 0, delegation = null, runIdOverride = null, outputsSubdir = null }) {
+export async function runAgent({ userId, conversationId, userText, model, assistant, webSearch, effort, developer, onEvent, saveUserMessage = true, existingUserMessageId = null, executionBriefing = null, forceExecution = false, control: inheritedControl = null, resume = null, gitWriteAuthorization = null, persistReply = true, continuationOutputPaths = [], subagentDepth = 0, delegation = null, runIdOverride = null, outputsSubdir = null, subagentRunBudget = null }) {
   // Execução DELEGADA (sub-agente): compartilha a conversa e o workspace com o
   // pai, mas não é dona da conversa — não grava mensagem, não grava checkpoint
   // e não delega de novo. Quem responde ao usuário e é retomável é o pai.
@@ -558,7 +558,19 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
   // Teto absoluto de segurança contra loop infinito. Uma tarefa que AINDA está
   // rendendo (ferramenta executada com sucesso há poucas etapas) pode passar do
   // orçamento base até este teto, em vez de ser abortada no meio do trabalho.
-  const hardMaxSteps = Math.max(maxSteps, Number(process.env.AGENT_HARD_MAX_STEPS) || Math.round(maxSteps * 1.5));
+  let hardMaxSteps = Math.max(maxSteps, Number(process.env.AGENT_HARD_MAX_STEPS) || Math.round(maxSteps * 1.5));
+  // F-24: orçamento próprio do sub-agente (tempo, etapas, tokens). Sem isto,
+  // o filho pode herdar o teto cheio do pai e queimar minutos de chave em
+  // uma subtarefa que não era crítica. O pai passa o objeto via parâmetro;
+  // defaults sensatos aqui cobrem testes/chamadas internas que esquecem.
+  if (subagentRunBudget) {
+    if (Number.isFinite(subagentRunBudget.maxSteps)) maxSteps = Math.min(maxSteps, subagentRunBudget.maxSteps);
+    if (Number.isFinite(subagentRunBudget.hardMaxSteps)) hardMaxSteps = Math.min(hardMaxSteps, subagentRunBudget.hardMaxSteps);
+  }
+  // Deadline compartilhado: usado para garantir que filhos em paralelo não
+  // estouram um limite global (ex.: 5 minutos totais para todas as
+  // delegações deste turno).
+  const deadlineMs = subagentRunBudget?.deadlineMs || null;
   const IDLE_STEP_GRACE = 2; // etapas sem progresso toleradas após o orçamento base
   let lastProductiveStep = 0;
   // 3) FÔLEGO AUTOMÁTICO: bater o teto AINDA TRABALHANDO deixou de ser erro.
@@ -622,6 +634,23 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
   let reachedStep = 0;
   for (let step = 0; ; step++) {
     const windowStep = step - windowStart;
+    // F-24: deadline compartilhado do sub-agente. Se passar do tempo total
+    // alocado (soma das delegações paralelas), paramos mesmo que ainda haja
+    // etapas — o pai não pode esperar infinitamente.
+    if (deadlineMs && Date.now() >= deadlineMs) {
+      incomplete = true;
+      checkpointReason = 'deadline';
+      failureMessage = `A subtarefa atingiu o tempo limite de ${Math.round((deadlineMs - startedAt) / 1000)}s. Conclua com o que tem.`;
+      break;
+    }
+    // F-24: teto de tokens do sub-agente. Impede que uma subtarefa queima a
+    // chave em uma cadeia de resumos antes do pai perceber.
+    if (subagentRunBudget?.maxTokens && usage.total_tokens >= subagentRunBudget.maxTokens) {
+      incomplete = true;
+      checkpointReason = 'token_budget';
+      failureMessage = `A subtarefa atingiu o limite de ${subagentRunBudget.maxTokens} tokens. Conclua com o que tem.`;
+      break;
+    }
     // Passou do orçamento base? Só segue enquanto o trabalho ainda rende (uma
     // ferramenta executada com sucesso há poucas etapas). Se estagnou, encerra
     // como limite de etapas — as travas de falha (5 seguidas), repetição e
@@ -1010,6 +1039,15 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
     // ou lia a versão anterior; duas execuções idênticas davam resultados
     // diferentes. Com ferramenta de escrita no meio, tudo volta a correr em
     // série, na ordem em que o modelo pediu.
+    // F-24: budget de EXECUÇÃO computado UMA vez por turno e REUSADO em todas
+    // as delegações (paralelas ou em série). O `deadlineMs` é o MESMO objeto
+    // para todos os filhos — assim, se duas delegações rodam em paralelo e o
+    // tempo total estoura, AMBAS param pelo mesmo relógio, não cada uma com
+    // seu próprio (que daria o dobro do tempo). O `now` é capturado aqui, não
+    // dentro de buildSubagentBudget, justamente para o deadline ser justo.
+    // O nome `runBudget` evita colisão com o `subagentBudget` (contagem de
+    // delegações) lá em cima.
+    const runBudget = buildSubagentBudget({ now: Date.now() });
     const startDelegation = (call, delegationArgs) => runSubagent({
       userId,
       conversationId,
@@ -1021,7 +1059,8 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
       depth: subagentDepth,
       webSearch: webSearchActive,
       delegationId: call.id,
-      delegation: delegationContext   // permissões, sandbox e escopo herdados
+      delegation: delegationContext,   // permissões, sandbox e escopo herdados
+      budget: runBudget                // F-24: mesmo budget para todos os filhos
     });
     // F-25: quando o sub-agente for iniciado, registra o prefixo do path.
     // runSubagent propaga `outputsSubdir = call.id` para o filho, então os

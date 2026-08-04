@@ -32,6 +32,39 @@ const DEFAULT_MAX_SUBAGENTS_PER_RUN = 4;
 const DEFAULT_RESULT_CHARS = 8000;
 const DEFAULT_TASK_CHARS = 6000;
 
+// Orçamento por delegação (F-24). Cada sub-agente recebe um teto MENOR que o
+// do agente principal — a subtarefa é justamente o pedaço isolável e
+// auto-contido, não precisa do mesmo fôlego. Defaults abaixo são uma
+// fração saudável dos limites do agente (assumindo os padrões 50 etapas /
+// 100k tokens / sem timeout duro) e podem ser afinados por env sem mexer
+// no código: SUBAGENT_BUDGET_STEPS / SUBAGENT_BUDGET_TOKENS /
+// SUBAGENT_BUDGET_TOTAL_MS / SUBAGENT_BUDGET_HARD_STEPS.
+function readIntEnv(name, fallback) {
+  const v = Number(process.env[name]);
+  return Number.isFinite(v) && v > 0 ? Math.floor(v) : fallback;
+}
+export const SUBAGENT_DEFAULTS = Object.freeze({
+  maxSteps: readIntEnv('SUBAGENT_BUDGET_STEPS', 12),
+  hardMaxSteps: readIntEnv('SUBAGENT_BUDGET_HARD_STEPS', 18),
+  maxTokens: readIntEnv('SUBAGENT_BUDGET_TOKENS', 30000),
+  // Tempo total somando todas as delegações PARALELAS do turno — protege a
+  // VPS de uma delegação esquecida que rodou por horas.
+  totalMs: readIntEnv('SUBAGENT_BUDGET_TOTAL_MS', 8 * 60 * 1000)
+});
+
+// Constrói o orçamento de UMA delegação: aplica defaults e ancora o deadline
+// em `now` se um orçamento total foi informado. Devolve um objeto plano,
+// pronto para passar a runAgent.
+export function buildSubagentBudget({ now = Date.now(), deadlineMs = null, totalMs = SUBAGENT_DEFAULTS.totalMs } = {}) {
+  const effectiveDeadline = deadlineMs || (now + totalMs);
+  return {
+    maxSteps: SUBAGENT_DEFAULTS.maxSteps,
+    hardMaxSteps: SUBAGENT_DEFAULTS.hardMaxSteps,
+    maxTokens: SUBAGENT_DEFAULTS.maxTokens,
+    deadlineMs: effectiveDeadline
+  };
+}
+
 // Eventos do filho repassados ao stream do pai. `delta` fica de FORA de
 // propósito: o texto do sub-agente não pode vazar para dentro da resposta do
 // agente principal. `saved`, `files`, `execution_state` e `resumable` também
@@ -337,7 +370,11 @@ export async function runSubagent({
   webSearch = false,
   delegationId = '',
   delegation = null,
-  runner = null
+  runner = null,
+  budget = null   // F-24: orçamento pré-computado pelo pai. Sem isto, defaults
+                  // de SUBAGENT_DEFAULTS. Importante: passar o MESMO
+                  // deadlineMs entre delegações paralelas para que o
+                  // limite total seja compartilhado.
 }) {
   if (depth >= MAX_SUBAGENT_DEPTH) {
     return { result: JSON.stringify({ error: 'Um sub-agente não pode delegar para outro sub-agente. Execute a subtarefa você mesmo.', code: 'SUBAGENT_DEPTH' }), usage: null };
@@ -378,6 +415,13 @@ export async function runSubagent({
     // nome de arquivo (ex.: relatório.xlsx) sobrescrevem um ao outro; e a
     // interface não tem como rotular "qual sub-agente produziu este arquivo".
     const outputsSubdir = delegationId || null;
+    // F-24: cada delegação tem um teto próprio (etapas, tokens, deadline).
+    // Se o chamador passou um budget explícito, usa-o; senão, defaults
+    // centralizados em SUBAGENT_DEFAULTS. O deadlineMs compartilhado é
+    // importante quando duas delegações correm em paralelo: o totalMs
+    // continua valendo, e a primeira que estourar dispara o `break` interno
+    // do loop.
+    const effectiveBudget = budget || buildSubagentBudget();
     result = await runAgent({
       userId,
       conversationId,                   // mesmo workspace/sandbox do pai
@@ -393,7 +437,8 @@ export async function runSubagent({
       subagentDepth: depth + 1,
       gitWriteAuthorization: false,     // escrita no GitHub não se herda
       delegation,                       // permissões, sandbox e escopo do pai
-      outputsSubdir                     // F-25: isola outputs por delegação
+      outputsSubdir,                    // F-25: isola outputs por delegação
+      subagentBudget: effectiveBudget   // F-24: teto de tempo/etapas/tokens
     });
   } catch (err) {
     onEvent({ type: 'status', content: `O sub-agente ${label} falhou.` });
