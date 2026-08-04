@@ -528,7 +528,6 @@ Novo job `e2e` no CI, com Postgres real e Chromium. Ver `e2e/README.md`.
 | ID | Risco | Severidade |
 | --- | --- | --- |
 | F-15 | Pipeline multimodelo sem coordenador durável: reinício não retoma a próxima etapa pendente. | 🟠 Alta |
-| F-12 | SSE integrado: duas conversas, troca rápida e reconexão **agora cobertos** por `e2e/`; falta o caso isolado de `fromSeq` (reconectar sem duplicar eventos). | 🟡 Média |
 | F-14 | Sem teste de retomada após interrupção **real** do processo. | 🟠 Alta |
 | F-05b | Sandbox com rede habilitada não tem allowlist de egress. | 🟡 Média |
 | F-16, F-18, F-19, F-23 | Relevância de memória (casos negativos), corpus do Docling, git local, validação de artefato com arquivos reais. | 🟡 Média |
@@ -537,6 +536,54 @@ Novo job `e2e` no CI, com Postgres real e Chromium. Ver `e2e/README.md`.
 | F-21 | `App.jsx` com 62 `useState`; bundle num único chunk (teto de 1.000 KB no CI); CSS em camadas sem inventário. | 🟡 Média |
 | F-11 | Sem quarentena/reprocesso do que passou com o antivírus degradado. | 🟡 Média |
 | F-26 | Checkpoints de workspace consomem disco sem cota agregada: `CHECKPOINT_KEEP` (5) × `CHECKPOINT_MAX_MB` (300) dá até **1,5 GB por conversa** no pior caso. A poda é por conversa, não global, e `WORKSPACE_QUOTA_MB` só avisa — não bloqueia. Numa instalação pública, ajuste os dois valores. | 🟡 Média |
+
+## Riscos fechados nesta sessão
+
+### F-12 — SSE: reconexão com cursor (fromSeq + runId) sem duplicar (2026-08-04)
+
+A rota `GET /conversations/:id/stream` aceitava `fromSeq` desde o PR #146,
+mas o frontend nunca enviava — toda reconexão pedia o replay inteiro, e o
+front "remontava do zero" (limpava o balão e aplicava o replay). Resultado:
+flicker visível em cada oscilação de rede e re-renderização de centenas de
+blocos à toa.
+
+A correção tem três peças coordenadas:
+
+1. **Carimbo de runId** — `openLiveStream(convId, runId)` agora recebe o
+   runId; cada `rec` no buffer carrega o carimbo. O runId é gerado em
+   `conversations.js` (e em `checkpoint.runId` na retomada) e passado ao
+   `runAgent` via `runIdOverride`. Sem esta propagação, não há como
+   distinguir "ainda é o mesmo run" de "um run novo começou".
+
+2. **Filtro no subscribe** — `subscribe(fn, { fromSeq, runId })` filtra
+   TANTO o replay quanto novos eventos. O `runId` é estrito: se o cliente
+   pediu um runId que não bate com o buffer atual, recebe vazio (o front
+   decide resetar). Fallback silencioso para "replay do começo" mascararia
+   a colisão "seq antigo vs seq novo" e produziria texto aparentemente
+   correto mas com buraco no início.
+
+3. **Cursor no front** — `liveCursorRef[convId]` guarda o último
+   `(_runId, _seq)` recebido. `reconnectLiveRun` passa-os na URL
+   `?runId=...&fromSeq=...`. O balão SÓ é zerado se o cursor veio vazio
+   (cliente sem referência anterior — primeira reconexão após reload).
+
+**Por que `runId` é obrigatório em vez de só `fromSeq`:** um POST /chat
+entre a desconexão e a reconexão cria um run novo com seq reiniciado em 1.
+Sem o filtro de runId, o cliente mandaria `fromSeq=K` (do run antigo) e
+pularia os primeiros K eventos do novo — texto faltando na remontagem.
+
+**Validação:**
+- `backend/src/liveStream.test.js`: 10 testes (4 novos) — fromSeq, runId,
+  runId estrito, replay após novo run, filtro em eventos pós-subscribe
+- `e2e/tests/reconexao.spec.js`: a rota `/stream` aceita os novos params
+  sem quebrar; o caminho legado (sem cursor) continua respondendo
+- `cd backend && npm run check`: 891/891 (70 pulados por exigir Postgres)
+- `cd frontend && npm run check`: lint + 70 testes + build OK
+
+A cobertura do caminho front→back dentro da MESMA aba (sem reload) ficou
+nos testes unitários do `liveStream` — o `useChat` não expõe um ponto
+estável para forçar uma reconexão SSE sem reload, e o caminho
+cross-page (reload) já era coberto por `multiconversa.spec.js`.
 
 ## Riscos fechados nesta sessão
 

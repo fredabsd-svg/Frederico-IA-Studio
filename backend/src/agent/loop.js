@@ -68,7 +68,7 @@ export function buildOutputBaseline(files = [], { acceptAll = false, continuatio
 // um run interrompido — array de mensagens do agente, modelo ativo, cadeia de
 // failover já tentada e o objetivo. Com ele, o loop CONTINUA de onde parou (com
 // orçamento de ciclos NOVO), em vez de recomeçar do zero. Ver checkpoint.js.
-export async function runAgent({ userId, conversationId, userText, model, assistant, webSearch, effort, developer, onEvent, saveUserMessage = true, existingUserMessageId = null, executionBriefing = null, forceExecution = false, control: inheritedControl = null, resume = null, gitWriteAuthorization = null, persistReply = true, continuationOutputPaths = [], subagentDepth = 0, delegation = null }) {
+export async function runAgent({ userId, conversationId, userText, model, assistant, webSearch, effort, developer, onEvent, saveUserMessage = true, existingUserMessageId = null, executionBriefing = null, forceExecution = false, control: inheritedControl = null, resume = null, gitWriteAuthorization = null, persistReply = true, continuationOutputPaths = [], subagentDepth = 0, delegation = null, runIdOverride = null }) {
   // Execução DELEGADA (sub-agente): compartilha a conversa e o workspace com o
   // pai, mas não é dona da conversa — não grava mensagem, não grava checkpoint
   // e não delega de novo. Quem responde ao usuário e é retomável é o pai.
@@ -80,7 +80,11 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   const requestedModel = resume?.model || model || assistant?.model || '';
   const provider = await getUserProvider(userId, requestedModel); // chave dona do modelo
   const client = provider.client;                          // sombreia o cliente global
-  const runId = resume?.runId || nanoid();
+  // runIdOverride: a rota pode impor um id (compartilhado com o live stream) para
+  // que todos os eventos do run saiam com o MESMO carimbo. Sem isto, a
+  // reconexão por SSE não consegue dizer "ainda é o mesmo run" e o fromSeq
+  // antigo pularia eventos do run novo.
+  const runId = runIdOverride || resume?.runId || nanoid();
   // No resume, o modelo ativo é o que estava rodando quando parou (pode ser um
   // de reserva já acionado) — não voltamos ao modelo original.
   let chosenModel = requestedModel && requestedModel.includes('::') ? requestedModel : (provider.modelRef || requestedModel);

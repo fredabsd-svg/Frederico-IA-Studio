@@ -375,10 +375,18 @@ router.get('/conversations/:id/stream', async (req, res) => {
     // Ao chegar o evento terminal, drenamos e fechamos — o cliente já tem tudo.
     if (event && (event.type === 'done' || event.type === 'error')) closeUp();
   };
-  // fromSeq permite retomar sem duplicar caso o cliente reconecte o próprio
-  // /stream; por padrão (0) reproduz o run inteiro desde o começo.
+  // Filtro da reconexão: o cliente envia o último `_seq` que recebeu e o
+  // `_runId` do run em que estava. Combinados, eles garantem que:
+  //   - se o MESMO run continua rodando, ele recebe só o que perdeu (fromSeq);
+  //   - se um run NOVO começou (o servidor iniciou outra execução na mesma
+  //     conversa), ele recebe o run novo inteiro — sem isto, o fromSeq do run
+  //     ANTIGO pularia os primeiros eventos do novo e a remontagem quebraria.
   const fromSeq = Number.parseInt(req.query.fromSeq, 10) || 0;
-  const unsubscribe = live.subscribe((rec) => write({ ...rec.event, _seq: rec.seq }), fromSeq);
+  const fromRunId = req.query.runId ? String(req.query.runId) : null;
+  const unsubscribe = live.subscribe(
+    (rec) => write({ ...rec.event, _seq: rec.seq, _runId: rec.runId || null }),
+    { fromSeq, runId: fromRunId }
+  );
   res.on('close', () => { clearInterval(heartbeat); unsubscribe(); gone = true; });
 });
 
@@ -435,7 +443,11 @@ router.post('/conversations/:id/chat', validate(schemas.chat), async (req, res) 
   // antes de ir para a resposta atual. Assim, se o usuário reconectar por outra
   // aba/depois de recarregar (GET /stream), ele recebe o replay do que já passou
   // e segue recebendo os próximos eventos — mesmo que ESTA conexão já tenha caído.
-  const live = openLiveStream(req.params.id);
+  // O runId é gerado AQUI (e passado ao runAgent) para carimbar todos os eventos
+  // do run com o mesmo identificador — sem ele, a reconexão não consegue
+  // distinguir "ainda estou vendo o mesmo run" de "um run novo começou".
+  const runId = nanoid();
+  const live = openLiveStream(req.params.id, runId);
   const send = (event) => {
     live.publish(event);
     if (clientGone || res.writableEnded) return;
@@ -521,7 +533,7 @@ router.post('/conversations/:id/chat', validate(schemas.chat), async (req, res) 
       });
     } else {
       const assistant = await loadAssistant(req.userId, req.body?.assistantId);
-      result = await runAgent({ userId: req.userId, conversationId: req.params.id, userText: text, model: req.body?.model, assistant, webSearch: !!req.body?.webSearch, effort: req.body?.effort, developer: req.body?.developer, onEvent: send });
+      result = await runAgent({ userId: req.userId, conversationId: req.params.id, userText: text, model: req.body?.model, assistant, webSearch: !!req.body?.webSearch, effort: req.body?.effort, developer: req.body?.developer, onEvent: send, runIdOverride: runId });
     }
     const chatOutcome = classifyTaskResult(result);
     if (chatOutcome.status === 'error') {
@@ -605,7 +617,10 @@ router.post('/conversations/:id/resume', async (req, res) => {
   res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders?.();
   let clientGone = false;
-  const live = openLiveStream(conversationId);
+  // runId: a retomada continua O run interrompido (checkpoint.runId) — não
+  // geramos um novo. Sem isto, o cliente que reconectou com fromSeq do run
+  // antigo acharia que estamos num run novo e pediria replay do começo.
+  const live = openLiveStream(conversationId, checkpoint.runId || nanoid());
   const send = (event) => {
     live.publish(event);
     if (clientGone || res.writableEnded) return;
@@ -647,7 +662,10 @@ router.post('/conversations/:id/resume', async (req, res) => {
       resume: checkpoint,
       saveUserMessage: false,
       existingUserMessageId: lastUser?.id || null,
-      onEvent: send
+      onEvent: send,
+      // runIdOverride: usar o mesmo do checkpoint (e do live stream) para que a
+      // reconexão ao /stream saiba que ESTE run é continuação do anterior.
+      runIdOverride: checkpoint.runId || nanoid()
     });
     const chatOutcome = classifyTaskResult(result);
     if (chatOutcome.status === 'error') send({ type: 'execution_failed', content: chatOutcome.error });
