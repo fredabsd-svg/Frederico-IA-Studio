@@ -532,9 +532,41 @@ Novo job `e2e` no CI, com Postgres real e Chromium. Ver `e2e/README.md`.
 | F-05b | Sandbox com rede habilitada não tem allowlist de egress. | 🟡 Média |
 | F-16, F-18, F-19, F-23 | Relevância de memória (casos negativos), corpus do Docling, git local, validação de artefato com arquivos reais. | 🟡 Média |
 | F-21 | `App.jsx` com 62 `useState`; bundle num único chunk (teto de 1.000 KB no CI); CSS em camadas sem inventário. | 🟡 Média |
-| F-26 | Checkpoints de workspace consomem disco sem cota agregada: `CHECKPOINT_KEEP` (5) × `CHECKPOINT_MAX_MB` (300) dá até **1,5 GB por conversa** no pior caso. A poda é por conversa, não global, e `WORKSPACE_QUOTA_MB` só avisa — não bloqueia. Numa instalação pública, ajuste os dois valores. | 🟡 Média |
 
 ## Riscos fechados nesta sessão
+
+### F-26 — Cota global de checkpoints por usuário (2026-08-04)
+
+A poda de checkpoints era por conversa — `pruneCheckpoints(checkpointsDir, keep)`
+mantém os `CHECKPOINT_KEEP=5` mais novos POR conversa. Com `CHECKPOINT_MAX_MB=300`
+e muitas conversas, um único usuário podia estourar o disco: 300 MB × 5 ×
+N conversas. `WORKSPACE_QUOTA_MB` só avisa — não bloqueia.
+
+A correção introduz **`pruneCheckpointsGlobal(userCheckpointsRoot, { maxBytes, skipDirName })`**
+que varre TODAS as conversas do usuário, soma os bytes e remove os mais
+antigos até o total ficar abaixo de `CHECKPOINT_GLOBAL_MAX_MB` (default
+**2 GB**; configurável por env).
+
+**Piso por conversa** (crítico): sem ele, a quota global poderia apagar
+o ÚNICO checkpoint da conversa A para liberar espaço para a conversa B
+— e a retomada de A deixaria de existir. O `shift()` da fila é pulado
+se for o último checkpoint daquela conversa. Testado.
+
+**`skipDirName`** (defesa em profundidade): `createCheckpoint` chama a
+poda global ANTES de retornar. Para evitar que o checkpoint recém-criado
+seja candidato à remoção na mesma passada (caso o usuário já esteja
+estourado), a função recebe o nome da conversa atual e a ignora.
+
+**Validação:**
+- `backend/src/agentEnv.checkpointsGlobal.test.js`: 6/6 — cota desligada,
+  abaixo da cota, acima da cota (remove do mais antigo), piso per-conversa,
+  `skipDirName`, soma global entre conversas
+- `cd backend && npm run check`: 913/913 (70 pulados por exigir Postgres)
+- `cd frontend && npm run check`: lint + 70 testes + build OK
+
+**O que ficou de fora (intencional):** contador `currentBytes` exposto no
+`/api/health`. A correção de disco já basta; o contador seria cosmético
+e adiciona uma varredura a cada healthcheck.
 
 ### F-24 — Sub-agentes: orçamento próprio + catálogo persistido de tool calling (2026-08-04)
 
