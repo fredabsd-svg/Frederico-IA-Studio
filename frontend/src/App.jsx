@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, lazy, Suspense } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
@@ -9,34 +9,55 @@ import { Slider, Modal, Drawer, Collapsible, useAppDialog, ModelPicker } from '.
 import { ExecutionSession } from './components/ExecutionSession.jsx';
 import { DevProjectRail } from './components/DevProjectRail.jsx';
 import { DevActivityRail } from './components/DevActivityRail.jsx';
-import { MemoryPanel } from './MemoryPanel.jsx';
 import { PcFoldersPanel } from './PcFoldersPanel.jsx';
 import { ToolsPanel } from './ToolsPanel.jsx';
 import { DeveloperPanel } from './DeveloperPanel.jsx';
 import { SandboxPanel } from './SandboxPanel.jsx';
 import { RoutinesPanel } from './RoutinesPanel.jsx';
 import { InboxPanel } from './InboxPanel.jsx';
-import { ProviderPanel } from './ProviderPanel.jsx';
 import { FreeOnboarding, FreeModeBadge, FreeModeDrawer, FreeLimitModal, fetchFreeStatus } from './FreeMode.jsx';
 import { KeyWizard } from './KeyWizard.jsx';
 import { FreeAdminPanel } from './FreeAdminPanel.jsx';
 import { ConnectorsPanel } from './ConnectorsPanel.jsx';
-import { PrivacyPanel, ConsentGate } from './PrivacyPanel.jsx';
+// ConsentGate fica atrás de lazy também: aparece só no portão de LGPD,
+// que é raro. Mantê-lo estático forçaria o Vite a incluir PrivacyPanel
+// inteiro no bundle principal (mesma arquivo), anulando o split do
+// LazyPrivacyPanel.
+const LazyConsentGate = lazy(() => import('./PrivacyPanel.jsx').then(m => ({ default: m.ConsentGate })));
 import { CameraCapture } from './CameraCapture.jsx';
 import { Companion } from './Companion.jsx';
 import { useCompanion } from './hooks/useCompanion.js';
 import { useDocling } from './hooks/useDocling.js';
 import { DoclingPanel } from './components/DoclingPanel.jsx';
-import { CopilotPanel } from './components/CopilotPanel.jsx';
-import { DesignPanel } from './components/DesignPanel.jsx';
 import { useCopilot } from './hooks/useCopilot.js';
 import { CompanionConfig } from './components/CompanionConfig.jsx';
-import { SettingsHub } from './components/SettingsHub.jsx';
 import { ContextPicker, AssistantGlyph, AssistantTile, ASSISTANT_ICON, modelHasTools } from './components/ContextPicker.jsx';
 import { MultiModelPicker } from './components/MultiModelPicker.jsx';
-import { MultiModelBoard } from './components/MultiModelBoard.jsx';
 import { ClientPicker } from './components/ClientPicker.jsx';
-import { MemoryTrace } from './components/MemoryTrace.jsx';
+
+// F-21: code splitting dos painéis PESADOS que são CONDICIONALMENTE
+// renderizados. Cada `lazy()` quebra um chunk separado — o usuário só
+// baixa o código do painel que ele ABRE. Os painéis carregados aqui:
+// MemoryPanel (gestão de memórias), ProviderPanel (config de provedores),
+// PrivacyPanel (LGPD), CopilotPanel, DesignPanel, SettingsHub,
+// MultiModelBoard (resultado de chat multimodelo) e MemoryTrace (badge
+// de memória em cada resposta). Juntos somam uma fração significativa
+// do bundle atual (1MB) — quebrá-los alivia o TTI da primeira pintura
+// sem mudar UX (todos abrem num clique; o Suspense mostra um fallback
+// leve enquanto o chunk baixa).
+const LazyMemoryPanel = lazy(() => import('./MemoryPanel.jsx'));
+const LazyProviderPanel = lazy(() => import('./ProviderPanel.jsx'));
+const LazyPrivacyPanel = lazy(() => import('./PrivacyPanel.jsx'));
+const LazyCopilotPanel = lazy(() => import('./components/CopilotPanel.jsx'));
+const LazyDesignPanel = lazy(() => import('./components/DesignPanel.jsx'));
+const LazySettingsHub = lazy(() => import('./components/SettingsHub.jsx'));
+const LazyMultiModelBoard = lazy(() => import('./components/MultiModelBoard.jsx'));
+const LazyMemoryTrace = lazy(() => import('./components/MemoryTrace.jsx'));
+
+// Fallback leve para os chunks lazy — aparece só durante o download do
+// módulo (centenas de ms na primeira vez; imperceptível depois). Evita o
+// flash de conteúdo vazio nos painéis.
+const PanelFallback = () => null;
 import { useAssistants } from './hooks/useAssistants.js';
 import { useConversations } from './hooks/useConversations.js';
 import { useSpeech } from './hooks/useSpeech.js';
@@ -1021,14 +1042,16 @@ export default function App({ user } = {}) {
             {/* Execução multimodelo: um cartão por modelo (status, resposta,
                 tokens, custo) + ações por cartão. No modo Comparação o texto
                 salvo é a própria junção das respostas — o quadro basta. */}
-            {m.role === 'assistant' && m.multi && <MultiModelBoard
-              multi={m.multi}
-              live={Boolean(m.multi.live) || (busy && idx === messages.length - 1)}
-              onCancelSlot={busy ? cancelMultiSlot : null}
-              onContinueWith={continueWithModel}
-              onAskReview={askReviewOfModel}
-              onCombine={combineAnswers}
-              downloadUrl={(path) => conversationDownloadUrl(current?.id, path)}/>}
+            {m.role === 'assistant' && m.multi && <Suspense fallback={<PanelFallback/>}>
+              <LazyMultiModelBoard
+                multi={m.multi}
+                live={Boolean(m.multi.live) || (busy && idx === messages.length - 1)}
+                onCancelSlot={busy ? cancelMultiSlot : null}
+                onContinueWith={continueWithModel}
+                onAskReview={askReviewOfModel}
+                onCombine={combineAnswers}
+                downloadUrl={(path) => conversationDownloadUrl(current?.id, path)}/>
+            </Suspense>}
             {/* Com o quadro multimodelo presente, o texto salvo (concatenação das
                 respostas ou a síntese do coordenador) é redundante com o board —
                 que já mostra tudo, inclusive a "Conclusão". Só NÃO suprimimos
@@ -1058,7 +1081,7 @@ export default function App({ user } = {}) {
                 : <MessageText text={m.content}/>)}
             {m.role === 'assistant' && m.resumable && !busy && <button className="retryBtn resumeBtn" onClick={() => resumeRun(current?.id)} title="Retoma a tarefa exatamente de onde parou, sem refazer o que já foi feito"><Play size={14}/> Continuar de onde parei</button>}
             {m.role === 'assistant' && m.failed && <button className="retryBtn" onClick={() => retrySend(idx, m.retryText)}><RefreshCw size={14}/> Reenviar</button>}
-            {m.role === 'assistant' && <MemoryTrace memory={m.memory} onOpenMemory={() => setMemoryOpen(true)}/>}
+            {m.role === 'assistant' && <Suspense fallback={<PanelFallback/>}><LazyMemoryTrace memory={m.memory} onOpenMemory={() => setMemoryOpen(true)}/></Suspense>}
             {m.files?.length > 0 && <div className="filecards">
               {m.files.map(f => {
                 const url = conversationDownloadUrl(current?.id, f.path);
@@ -1295,19 +1318,19 @@ export default function App({ user } = {}) {
       </div>
     </Modal>}
 
-    {memoryOpen && <MemoryPanel assistants={assistants} clients={clients} clientId={clientId} showToast={showToast} askConfirm={askConfirm} askPrompt={askPrompt} onClose={() => setMemoryOpen(false)}/>}
+    {memoryOpen && <Suspense fallback={<PanelFallback/>}><LazyMemoryPanel assistants={assistants} clients={clients} clientId={clientId} showToast={showToast} askConfirm={askConfirm} askPrompt={askPrompt} onClose={() => setMemoryOpen(false)}/></Suspense>}
     {pcOpen && <PcFoldersPanel showToast={showToast} askConfirm={askConfirm} onClose={() => setPcOpen(false)}/>}
     {toolsOpen && <ToolsPanel onPick={pickTool} onClose={() => setToolsOpen(false)}/>}
     {developerOpen && <DeveloperPanel devProjects={devProjects} team={team} initialMode={developerStartMode} onStart={startDeveloperTask} onManageFolders={() => { setDeveloperOpen(false); setPcOpen(true); }} onOpenConnectors={() => { setDeveloperOpen(false); setConnectorsOpen(true); }} onClose={() => setDeveloperOpen(false)}/>}
     {sandboxOpen && <SandboxPanel onClose={() => setSandboxOpen(false)}/>}
     {routinesOpen && <RoutinesPanel assistants={assistants} clients={clients} showToast={showToast} askConfirm={askConfirm} onClose={() => setRoutinesOpen(false)}/>}
     {inboxOpen && <InboxPanel clients={clients} clientId={clientId} showToast={showToast} askConfirm={askConfirm} onOpenConversation={(id) => { fetchConversations(); openConversation(id); }} onClose={() => setInboxOpen(false)}/>}
-    {providerOpen && <ProviderPanel showToast={showToast} freeStatus={freeStatus}
+    {providerOpen && <Suspense fallback={<PanelFallback/>}><LazyProviderPanel showToast={showToast} freeStatus={freeStatus}
       onOpenWizard={() => { setProviderOpen(false); setKeyWizardOpen(true); }}
       onFreeChange={refreshFreeStatus}
       onProvidersChange={loadModels}
       onClose={() => { setProviderOpen(false); refreshFreeStatus(); loadModels(); }}
-    />}
+    /></Suspense>}
     {freeOnbOpen && <FreeOnboarding status={freeStatus} showToast={showToast}
       onStarted={() => { setFreeOnbOpen(false); refreshFreeStatus(); loadModels(); }}
       onOpenWizard={() => { setFreeOnbOpen(false); setKeyWizardOpen(true); }}
@@ -1324,9 +1347,9 @@ export default function App({ user } = {}) {
       onClose={() => setFreeLimitInfo(null)}/>}
     {freeAdminOpen && <FreeAdminPanel showToast={showToast} askConfirm={askConfirm} askPrompt={askPrompt} onClose={() => setFreeAdminOpen(false)}/>}
     {connectorsOpen && <ConnectorsPanel showToast={showToast} onClose={() => setConnectorsOpen(false)}/>}
-    {privacyOpen && <PrivacyPanel user={user} showToast={showToast} askConfirm={askConfirm} askPrompt={askPrompt}
-      onHistoryCleared={() => { startNewChat(); fetchConversations(); }} onClose={() => setPrivacyOpen(false)}/>}
-    {needsConsent && <ConsentGate onAccepted={() => setNeedsConsent(false)}/>}
+    {privacyOpen && <Suspense fallback={<PanelFallback/>}><LazyPrivacyPanel user={user} showToast={showToast} askConfirm={askConfirm} askPrompt={askPrompt}
+      onHistoryCleared={() => { startNewChat(); fetchConversations(); }} onClose={() => setPrivacyOpen(false)}/></Suspense>}
+    {needsConsent && <Suspense fallback={null}><LazyConsentGate onAccepted={() => setNeedsConsent(false)}/></Suspense>}
     {cameraOpen && <CameraCapture
       onClose={() => setCameraOpen(false)}
       onCapture={async (file) => { setCameraOpen(false); await uploadSelectedFiles([file], 'camera'); }}
@@ -1480,8 +1503,8 @@ export default function App({ user } = {}) {
       conversationTitle={current?.title || ''}
       showToast={showToast}
     />}
-    {copilotOpen && <CopilotPanel copilot={copilot} onClose={() => setCopilotOpen(false)} />}
-    {designOpen && <DesignPanel onClose={() => setDesignOpen(false)} model={model} askConfirm={askConfirm} />}
+    {copilotOpen && <Suspense fallback={<PanelFallback/>}><LazyCopilotPanel copilot={copilot} onClose={() => setCopilotOpen(false)} /></Suspense>}
+    {designOpen && <Suspense fallback={<PanelFallback/>}><LazyDesignPanel onClose={() => setDesignOpen(false)} model={model} askConfirm={askConfirm} /></Suspense>}
     {companionConfigOpen && <CompanionConfig
       companion={companion}
       allModels={allModels}
@@ -1489,29 +1512,33 @@ export default function App({ user } = {}) {
       model={model}
       onClose={() => setCompanionConfigOpen(false)}
     />}
-    {settingsHubOpen && <SettingsHub
-      onClose={() => setSettingsHubOpen(false)}
-      isAdmin={me?.isAdmin}
-      pcFoldersEnabled={me?.pcFoldersEnabled}
-      freeConfigured={freeStatus?.configured}
-      actions={{
-        aparencia: () => setThemeOpen(true),
-        copilotoAjustes: () => setCompanionConfigOpen(true),
-        copiloto: () => setCopilotOpen(true),
-        provedor: () => setProviderOpen(true),
-        assistentes: openStudioNew,
-        dev: () => setDeveloperOpen(true),
-        sandbox: () => setSandboxOpen(true),
-        conectores: () => setConnectorsOpen(true),
-        pastas: () => setPcOpen(true),
-        rotinas: () => setRoutinesOpen(true),
-        memoria: () => setMemoryOpen(true),
-        privacidade: () => setPrivacyOpen(true),
-        analises: openAnalytics,
-        inbox: () => setInboxOpen(true),
-        backup: () => window.open(`${API}/api/backup`, '_blank'),
-        gratuito: () => setFreeAdminOpen(true),
-      }}
-    />}
+    {settingsHubOpen && (
+      <Suspense fallback={<PanelFallback/>}>
+        <LazySettingsHub
+          onClose={() => setSettingsHubOpen(false)}
+          isAdmin={me?.isAdmin}
+          pcFoldersEnabled={me?.pcFoldersEnabled}
+          freeConfigured={freeStatus?.configured}
+          actions={{
+            aparencia: () => setThemeOpen(true),
+            copilotoAjustes: () => setCompanionConfigOpen(true),
+            copiloto: () => setCopilotOpen(true),
+            provedor: () => setProviderOpen(true),
+            assistentes: openStudioNew,
+            dev: () => setDeveloperOpen(true),
+            sandbox: () => setSandboxOpen(true),
+            conectores: () => setConnectorsOpen(true),
+            pastas: () => setPcOpen(true),
+            rotinas: () => setRoutinesOpen(true),
+            memoria: () => setMemoryOpen(true),
+            privacidade: () => setPrivacyOpen(true),
+            analises: openAnalytics,
+            inbox: () => setInboxOpen(true),
+            backup: () => window.open(`${API}/api/backup`, '_blank'),
+            gratuito: () => setFreeAdminOpen(true),
+          }}
+        />
+      </Suspense>
+    )}
   </div>;
 }
