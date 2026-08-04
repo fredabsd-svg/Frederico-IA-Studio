@@ -532,12 +532,49 @@ Novo job `e2e` no CI, com Postgres real e Chromium. Ver `e2e/README.md`.
 | F-05b | Sandbox com rede habilitada não tem allowlist de egress. | 🟡 Média |
 | F-16, F-18, F-19, F-23 | Relevância de memória (casos negativos), corpus do Docling, git local, validação de artefato com arquivos reais. | 🟡 Média |
 | F-24 | Sub-agentes: sem orçamento próprio de tempo/tokens por delegação e sem catálogo de modelos com tool calling **verificado** (hoje qualquer modelo do seletor pode receber uma subtarefa). | 🟡 Média |
-| F-25 | Sub-agentes paralelos compartilham `outputs/`: a atribuição de arquivo por filho pode se cruzar e dois filhos podem gravar o mesmo nome. O conjunto que o usuário recebe está certo (o pai também faz o diff); o rótulo por sub-agente é que não é confiável. | 🟡 Média |
 | F-21 | `App.jsx` com 62 `useState`; bundle num único chunk (teto de 1.000 KB no CI); CSS em camadas sem inventário. | 🟡 Média |
 | F-11 | Sem quarentena/reprocesso do que passou com o antivírus degradado. | 🟡 Média |
 | F-26 | Checkpoints de workspace consomem disco sem cota agregada: `CHECKPOINT_KEEP` (5) × `CHECKPOINT_MAX_MB` (300) dá até **1,5 GB por conversa** no pior caso. A poda é por conversa, não global, e `WORKSPACE_QUOTA_MB` só avisa — não bloqueia. Numa instalação pública, ajuste os dois valores. | 🟡 Média |
 
 ## Riscos fechados nesta sessão
+
+### F-25 — Sub-agentes: outputs isolados por delegação e rótulo correto (2026-08-04)
+
+O conjunto de arquivos que o pai entregava ao usuário sempre foi certo
+(o diff `outputsAfter` × `outputsBefore` filtra só os NOVOS), mas dois
+problemas coexistiam:
+
+1. **Colisão**: dois sub-agentes em paralelo que escolhessem o mesmo nome
+   (`relatorio.xlsx`) sobrescreviam um ao outro na raiz `outputs/`.
+2. **Atribuição**: o rótulo por sub-agente não era confiável — o pai
+   emitia `files` sem dizer quem produziu o quê.
+
+A correção isola cada delegação numa subpasta de outputs e propaga o
+rótulo até o cartão de arquivo:
+
+- **`runAgent({ outputsSubdir })`** — novo parâmetro. Quando presente,
+  `generateImage` grava em `outputs/<subdir>/...` em vez de `outputs/`.
+  O id da delegação (`tool_call.id`) é usado como subdir: é determinístico
+  e único por chamada.
+- **`buildSubagentTask`** injeta a subpasta na instrução do sub-agente,
+  para que `write_file`, `bash` e `run_python` sigam o mesmo isolamento
+  (as ferramentas leves lêem o caminho do tool call e o agente obedece).
+- **`resolveOutputsTarget`** — função pura extraída para testes. Faz o
+  saneamento do subdir (mantém só `[a-zA-Z0-9._-]`, troca `/` por `_`),
+  fechando a porta para path traversal via id malicioso.
+- **`subagentProducers`** (mapa no loop) registra `{ delegationId ->
+  label, prefix }`. O label começa como `sub-agente` e é atualizado com
+  o nome real do especialista quando o `delegation.result` é parseado
+  (campo `especialista` retornado por `summarizeSubagentResult`).
+- **Atribuição no `files`** — cada cartão recebe `producer = <label>` se
+  o `path` começa com `outputs/<delegationId>/`. Arquivos do próprio
+  agente principal ficam sem `producer` (mantém o comportamento atual).
+
+**Validação:**
+- `backend/src/tools.outputsSubdir.test.js`: 5/5 — root, com subdir,
+  saneamento contra path traversal, vazio cai na raiz, número/string
+- `cd backend && npm run check`: 896/896 (70 pulados por exigir Postgres)
+- `cd frontend && npm run check`: lint + 70 testes + build OK
 
 ### F-12 — SSE: reconexão com cursor (fromSeq + runId) sem duplicar (2026-08-04)
 

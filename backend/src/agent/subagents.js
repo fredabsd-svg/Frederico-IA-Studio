@@ -173,7 +173,7 @@ export function subagentEffort(parentEffort) {
 
 // Monta o texto que o sub-agente recebe como pedido. Ele parte de uma conversa
 // vazia, então tudo que importa precisa estar aqui.
-export function buildSubagentTask(args = {}) {
+export function buildSubagentTask(args = {}, { outputsSubdir = null } = {}) {
   const original = String(args.tarefa || '').trim();
   // Corte SILENCIOSO era o pior caso: numa instrução longa, o que se perde são
   // justamente as regras do final ("não altere X", "arredonde para baixo") — e
@@ -189,6 +189,14 @@ export function buildSubagentTask(args = {}) {
     ? `\nENTREGUE AO FINAL: ${entregar}`
     : '\nENTREGUE AO FINAL: um resumo objetivo do que foi feito e do resultado obtido.');
   parts.push('Você é um sub-agente executando uma subtarefa delegada por outro agente. Você não participa da conversa com a pessoa e não vê o histórico dela: trabalhe apenas com o que está escrito acima. Execute de fato (ferramentas, arquivos, verificação) e responda só com o resultado — sem saudação, sem se apresentar e sem perguntar de volta. Se algo essencial faltar, diga exatamente o que faltou.');
+  // F-25: o sub-agente roda numa SUBPASTA de outputs. Sem isto, dois
+  // sub-agentes em paralelo que escolhem o mesmo nome de arquivo sobrescrevem
+  // um ao outro — e o pai não tem como saber qual produziu qual. Ferramentas
+  // que escrevem em `outputs/` (generate_image, write_file com caminho em
+  // outputs/, bash/python) devem usar este prefixo.
+  if (outputsSubdir) {
+    parts.push(`SUBPASTA DE OUTPUTS: grave QUALQUER arquivo que deva ser entregue ao usuário em \`outputs/${outputsSubdir}/...\`. NÃO grave na raiz \`outputs/\` — outro sub-agente pode estar rodando em paralelo e o resultado se cruzaria.`);
+  }
   return parts.join('\n');
 }
 
@@ -365,10 +373,15 @@ export async function runSubagent({
   onEvent({ type: 'status', content: `Delegando para ${label}...` });
   let result;
   try {
+    // F-25: cada delegação roda numa subpasta de outputs/ com o id da
+    // delegação. Sem isto, dois sub-agentes em paralelo que escolhem o mesmo
+    // nome de arquivo (ex.: relatório.xlsx) sobrescrevem um ao outro; e a
+    // interface não tem como rotular "qual sub-agente produziu este arquivo".
+    const outputsSubdir = delegationId || null;
     result = await runAgent({
       userId,
       conversationId,                   // mesmo workspace/sandbox do pai
-      userText: buildSubagentTask(args),
+      userText: buildSubagentTask(args, { outputsSubdir }),
       model: modelo,
       assistant,
       webSearch,
@@ -379,7 +392,8 @@ export async function runSubagent({
       persistReply: false,
       subagentDepth: depth + 1,
       gitWriteAuthorization: false,     // escrita no GitHub não se herda
-      delegation                        // permissões, sandbox e escopo do pai
+      delegation,                       // permissões, sandbox e escopo do pai
+      outputsSubdir                     // F-25: isola outputs por delegação
     });
   } catch (err) {
     onEvent({ type: 'status', content: `O sub-agente ${label} falhou.` });

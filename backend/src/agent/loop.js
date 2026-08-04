@@ -68,7 +68,7 @@ export function buildOutputBaseline(files = [], { acceptAll = false, continuatio
 // um run interrompido — array de mensagens do agente, modelo ativo, cadeia de
 // failover já tentada e o objetivo. Com ele, o loop CONTINUA de onde parou (com
 // orçamento de ciclos NOVO), em vez de recomeçar do zero. Ver checkpoint.js.
-export async function runAgent({ userId, conversationId, userText, model, assistant, webSearch, effort, developer, onEvent, saveUserMessage = true, existingUserMessageId = null, executionBriefing = null, forceExecution = false, control: inheritedControl = null, resume = null, gitWriteAuthorization = null, persistReply = true, continuationOutputPaths = [], subagentDepth = 0, delegation = null, runIdOverride = null }) {
+export async function runAgent({ userId, conversationId, userText, model, assistant, webSearch, effort, developer, onEvent, saveUserMessage = true, existingUserMessageId = null, executionBriefing = null, forceExecution = false, control: inheritedControl = null, resume = null, gitWriteAuthorization = null, persistReply = true, continuationOutputPaths = [], subagentDepth = 0, delegation = null, runIdOverride = null, outputsSubdir = null }) {
   // Execução DELEGADA (sub-agente): compartilha a conversa e o workspace com o
   // pai, mas não é dona da conversa — não grava mensagem, não grava checkpoint
   // e não delega de novo. Quem responde ao usuário e é retomável é o pai.
@@ -186,14 +186,18 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   // No filho, as opções são as MESMAS do pai (só o modelo muda, e ele não entra
   // na chave da política) — assim os dois caem no mesmo container, sem a troca
   // de política que reciclava o sandbox no meio da execução.
+  // `outputsSubdir` é o F-25: cada sub-agente roda numa subpasta de outputs
+  // para que dois filhos em paralelo não sobrescrevam arquivos com o mesmo nome
+  // E para que a interface consiga rotular cada arquivo com quem o produziu.
   const sandboxOptions = inherited
-    ? { ...inherited.sandboxOptions, model: chosenModel }
+    ? { ...inherited.sandboxOptions, model: chosenModel, ...(outputsSubdir ? { outputsSubdir } : {}) }
     : {
       ...(developerContext?.sandboxOptions || { readOnlyPc: !pcWriteAuthorized }),
       userId,
       model: chosenModel,
       networkEnabled: sandboxNetworkEnabled,
-      pcWriteAuthorized
+      pcWriteAuthorized,
+      ...(outputsSubdir ? { outputsSubdir } : {})
     };
   const webSearchActive = Boolean(webSearch && !lowSignalTurn);
   let requestedTools = toolsFor(assistant);
@@ -236,6 +240,13 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   // Teto de delegações SIMULTÂNEAS (as do mesmo lote correm em paralelo).
   const delegationSlot = createSubagentLimiter();
   let subagentRuns = 0;
+  // F-25: ids de delegações iniciadas NESTE turno. O path dos arquivos que o
+  // sub-agente escreveu começa com `outputs/<id>/` (runSubagent injeta o
+  // `outputsSubdir = delegationId`). Quando o pai emite `files`, cada cartão
+  // recebe `producer = <label>` se o path casa com o prefixo de uma delegação
+  // conhecida. Sem isto, dois sub-agentes em paralelo sobrescrevem um ao
+  // outro e a UI não tem como rotular.
+  const subagentProducers = new Map(); // delegationId -> { label, prefix }
   // Fronteira de autorização da árvore: montada UMA vez, a partir do pedido real
   // do usuário, e entregue igual a toda delegação desta execução.
   const delegationContext = subagentsOffered
@@ -1012,6 +1023,11 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
       delegationId: call.id,
       delegation: delegationContext   // permissões, sandbox e escopo herdados
     });
+    // F-25: quando o sub-agente for iniciado, registra o prefixo do path.
+    // runSubagent propaga `outputsSubdir = call.id` para o filho, então os
+    // arquivos dele caem em `outputs/<id>/`. O label é atualizado depois com
+    // o nome real do especialista (resolvido dentro de runSubagent).
+    subagentProducers.set(call.id, { label: 'sub-agente', prefix: `outputs/${call.id}/` });
     const delegations = new Map();
     if (canLaunchDelegationsInParallel(stepToolCalls.map(call => call.function.name))) {
       for (const call of stepToolCalls) {
@@ -1101,6 +1117,16 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
           if (delegation.usage) addUsage(usage, delegation.usage);
           if (delegation.stopped) stopped = true;
           result = delegation.result;
+          // F-25: atualiza o label do produtor com o nome real do especialista
+          // (resolvido dentro de runSubagent e devolvido em `especialista`).
+          // Sem isto, todos os cartões de sub-agente mostrariam "sub-agente"
+          // genérico.
+          try {
+            const parsed = JSON.parse(result);
+            if (parsed?.especialista && subagentProducers.has(call.id)) {
+              subagentProducers.get(call.id).label = String(parsed.especialista);
+            }
+          } catch {}
         }
       } else {
         const activeTool = beginToolRequest(control);
@@ -1324,6 +1350,22 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
   if (shouldPersistReply) {
     const persisted = await persistAssistantReply(userId, conversationId, finalText, memoryMeta, newFiles, { executionMeta: execution });
     msgId = persisted.msgId;
+    // F-25: atribui cada cartão ao sub-agente que o produziu, comparando o
+    // path com o prefixo registrado para cada delegação do turno. Arquivos
+    // do próprio agente principal ficam sem `producer` (mantém o
+    // comportamento atual). Compara SEM case-sensitivity porque o path pode
+    // vir capitalizado de jeitos diferentes conforme o filesystem.
+    if (persisted.cards.length && subagentProducers.size) {
+      for (const card of persisted.cards) {
+        const lowerPath = String(card.path || '').toLowerCase();
+        for (const producer of subagentProducers.values()) {
+          if (lowerPath.startsWith(producer.prefix.toLowerCase())) {
+            card.producer = producer.label;
+            break;
+          }
+        }
+      }
+    }
     if (persisted.cards.length) onEvent({ type: 'files', files: persisted.cards });
     if (Object.keys(checks).length) onEvent({ type: 'file_checks', checks });
     onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId: msgId });
