@@ -531,13 +531,44 @@ Novo job `e2e` no CI, com Postgres real e Chromium. Ver `e2e/README.md`.
 | F-12 | SSE integrado: duas conversas, troca rápida e reconexão **agora cobertos** por `e2e/`; falta o caso isolado de `fromSeq` (reconectar sem duplicar eventos). | 🟡 Média |
 | F-14 | Sem teste de retomada após interrupção **real** do processo. | 🟠 Alta |
 | F-05b | Sandbox com rede habilitada não tem allowlist de egress. | 🟡 Média |
-| F-13 | Provedor simulado: streaming, catálogo e erro 401 **cobertos** por `e2e/fixtures/provedorFalso.mjs`; faltam tool calls e timeout. | 🟡 Média |
 | F-16, F-18, F-19, F-23 | Relevância de memória (casos negativos), corpus do Docling, git local, validação de artefato com arquivos reais. | 🟡 Média |
 | F-24 | Sub-agentes: sem orçamento próprio de tempo/tokens por delegação e sem catálogo de modelos com tool calling **verificado** (hoje qualquer modelo do seletor pode receber uma subtarefa). | 🟡 Média |
 | F-25 | Sub-agentes paralelos compartilham `outputs/`: a atribuição de arquivo por filho pode se cruzar e dois filhos podem gravar o mesmo nome. O conjunto que o usuário recebe está certo (o pai também faz o diff); o rótulo por sub-agente é que não é confiável. | 🟡 Média |
 | F-21 | `App.jsx` com 62 `useState`; bundle num único chunk (teto de 1.000 KB no CI); CSS em camadas sem inventário. | 🟡 Média |
 | F-11 | Sem quarentena/reprocesso do que passou com o antivírus degradado. | 🟡 Média |
 | F-26 | Checkpoints de workspace consomem disco sem cota agregada: `CHECKPOINT_KEEP` (5) × `CHECKPOINT_MAX_MB` (300) dá até **1,5 GB por conversa** no pior caso. A poda é por conversa, não global, e `WORKSPACE_QUOTA_MB` só avisa — não bloqueia. Numa instalação pública, ajuste os dois valores. | 🟡 Média |
+
+## Riscos fechados nesta sessão
+
+### F-13 — Provedor falso com tool_calls e stall (2026-08-04)
+
+O provedor simulado (`e2e/fixtures/provedorFalso.mjs`) agora cobre os dois
+caminhos que faltavam para o laço do agente:
+
+- **`ferramentas`** — emite uma `tool_call` (`bash echo ok-e2e-tool`) na 1ª
+  rodada, com `finish_reason: 'tool_calls'`. Quando o backend reenvia com o
+  `tool_result` na conversa, o provedor devolve texto e fecha com `stop`. Os
+  deltas seguem o formato OpenAI: `tool_calls` vem em duas etapas (id + nome,
+  depois argumentos), com `index` para o backend mesclar.
+- **`travado`** — abre o stream, envia apenas o delta inicial (`role`) e
+  fica em silêncio. Forçar o socket vivo sem fechar é o cenário que o
+  `guardStreamStall` foi feito para detectar (proxy engolindo resposta,
+  upstream congelado, rede móvel trocando de antena) — fechar o socket seria
+  outro caminho de erro, e ambos precisam de cobertura.
+
+**Por que dois caminhos de teste e não só o E2E completo:** o laço do agente
+em volta do stall envolve o backend inteiro (provider → OpenAI SDK → loop →
+recuperação → aviso ao usuário). O E2E cobre isso ponta a ponta, mas exige
+Postgres, build de produção e Playwright. Para a guarda barata — sem rede,
+sem banco, em milissegundos — há `e2e/verificar-provedor-falso.mjs`, rodado
+via `npm run verificar:provedor-falso`. Ele valida os três comportamentos
+(ferramentas 1ª chamada, ferramentas 2ª chamada, travado) sem subir nada
+além do próprio provedor.
+
+**Ajuste no `playwright.config.js`:** o backend de E2E agora sobe com
+`STREAM_STALL_TIMEOUT_MS=2000` e `MODEL_STREAM_RECOVERY_LIMIT=1` — sem isto
+o teste de stall esperaria 180s pelo watchdog e 3 ciclos de recuperação
+antes do aviso.
 
 ---
 

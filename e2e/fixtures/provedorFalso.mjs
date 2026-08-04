@@ -12,18 +12,23 @@
 //   eco-lento    → o mesmo, com pausa entre tokens (dá tempo de trocar de
 //                  conversa/derrubar a conexão no meio do stream)
 //   chave-ruim   → responde 401, como uma chave inválida
+//   ferramentas  → responde com uma tool_call (bash echo) na primeira rodada e,
+//                  quando recebe o resultado da ferramenta, devolve texto.
+//                  Exercita o caminho de tool_calls no streaming e na conversa.
+//   travado      → abre o stream, envia apenas o delta inicial e fica em silêncio.
+//                  Força o watchdog do backend a detectar o stall e disparar a
+//                  recuperação (aviso de provedor indisponível).
 //
-// Não há modo "provedor que trava": o watchdog de stream parado já tem teste
-// unitário próprio (backend/src/agent/streamGuard.test.js) e reproduzi-lo aqui
-// custaria os 30s do menor timeout possível, por um resultado que aquele teste
-// já dá em milissegundos.
+// O modelo `travado` é parametrizável: o teste define STREAM_STALL_TIMEOUT_MS
+// baixo (em playwright.config.js) para que o watchdog encerre em ~2s em vez
+// dos 180s padrão — uma espera dessas tornaria o teste E2E inviável.
 //
 // Ecoar a mensagem do usuário é o que permite provar que não há vazamento entre
 // conversas: o teste manda "ALFA" numa e "BETA" noutra e cobra que cada uma só
 // mostre o seu.
 import http from 'node:http';
 
-const MODELOS = ['eco', 'eco-lento', 'chave-ruim', 'design-web', 'design-slides'];
+const MODELOS = ['eco', 'eco-lento', 'chave-ruim', 'ferramentas', 'travado', 'design-web', 'design-slides'];
 const PAUSA_LENTA_MS = Number(process.env.E2E_PAUSA_TOKEN_MS || 250);
 
 const dorme = (ms) => new Promise(r => setTimeout(r, ms));
@@ -116,6 +121,17 @@ async function responderStream(req, res, corpo) {
     Connection: 'keep-alive'
   });
 
+  // Caminho "travado": emite o delta inicial (role) e fica em silêncio. O
+  // watchdog do backend (guardStreamStall) tem de detectar a ausência de chunks
+  // e disparar a recuperação. Mantemos o socket vivo sem encerrar, para o
+  // watchdog medir TEMPO SEM DADOS, não fechamento de conexão — é o cenário
+  // traiçoeiro que ele existe para cobrir (proxy engolindo resposta, upstream
+  // congelado, rede móvel trocando de antena).
+  if (modelo === 'travado') {
+    pedacoSSE(res, modelo, { role: 'assistant', content: '' });
+    return;
+  }
+
   pedacoSSE(res, modelo, { role: 'assistant', content: '' });
 
   const lento = modelo === 'eco-lento';
@@ -127,6 +143,65 @@ async function responderStream(req, res, corpo) {
   }
 
   pedacoSSE(res, modelo, {}, 'stop');
+  res.write(`data: [DONE]\n\n`);
+  res.end();
+}
+
+// `ferramentas` simula um modelo que USA ferramentas no meio da conversa:
+//   1ª chamada (última msg = user) → emite tool_calls para `bash echo ok-e2e-tool`
+//                                    e termina com finish_reason='tool_calls'
+//   2ª chamada (última msg = tool)  → emite texto, como uma resposta normal
+// O id do tool_call precisa ser único por chamada — usamos um prefixo por
+// requisição (contador monotônico) para evitar colisões se o teste repetir.
+let contadorToolCall = 0;
+async function responderStreamFerramentas(req, res, corpo) {
+  const modelo = String(corpo.model || 'ferramentas');
+  const mensagens = Array.isArray(corpo.messages) ? corpo.messages : [];
+  const ultima = mensagens[mensagens.length - 1];
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive'
+  });
+
+  pedacoSSE(res, modelo, { role: 'assistant', content: '' });
+
+  // Volta do tool: resposta final em texto. O eco da mensagem anterior fica
+  // pequeno de propósito — o que vale aqui é o caminho do tool_calls, não o
+  // conteúdo criativo.
+  if (ultima?.role === 'tool') {
+    const tokens = ['ok-e2e-tool recebido'];
+    for (const t of tokens) {
+      if (res.writableEnded || res.destroyed) return;
+      pedacoSSE(res, modelo, { content: t });
+      await dorme(20);
+    }
+    pedacoSSE(res, modelo, {}, 'stop');
+    res.write(`data: [DONE]\n\n`);
+    return res.end();
+  }
+
+  // Primeira chamada: emite a tool_call em dois passos (id+name, depois args),
+  // como chegam os deltas reais do OpenAI. O `index` mantém o estado entre os
+  // chunks — é o que o backend usa para MESCLAR deltas do mesmo tool_call.
+  contadorToolCall += 1;
+  const toolCallId = `call_e2e_${contadorToolCall}`;
+  pedacoSSE(res, modelo, {
+    tool_calls: [{
+      index: 0,
+      id: toolCallId,
+      type: 'function',
+      function: { name: 'bash', arguments: '' }
+    }]
+  });
+  pedacoSSE(res, modelo, {
+    tool_calls: [{
+      index: 0,
+      function: { arguments: '{"command":"echo ok-e2e-tool"}' }
+    }]
+  });
+  pedacoSSE(res, modelo, {}, 'tool_calls');
   res.write(`data: [DONE]\n\n`);
   res.end();
 }
@@ -176,6 +251,7 @@ export function criarProvedorFalso() {
       if (pedido === 'chave-ruim') {
         return json(res, 401, { error: { message: 'Incorrect API key provided.', type: 'invalid_request_error', code: 'invalid_api_key' } });
       }
+      if (pedido === 'ferramentas' && corpo.stream) return responderStreamFerramentas(req, res, corpo);
       if (corpo.stream) return responderStream(req, res, corpo);
       // Sem streaming: validação da chave ao cadastrar o provedor E o Modo
       // Design, que não usa streaming e espera o artefato pronto.
