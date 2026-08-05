@@ -22,9 +22,15 @@ const MAX_BYTES = 3_000_000;
 const GRACE_MS = 90_000;
 
 class LiveStream {
-  constructor(conversationId) {
+  constructor(conversationId, runId) {
     this.conversationId = conversationId;
-    this.events = [];        // [{ seq, event, size }]
+    // Cada stream pertence a UM run: dois POST /chat na mesma conversa criam
+    // streams diferentes (openLiveStream substitui o anterior). O runId é o que
+    // permite ao cliente reconectar e dizer "só me mande eventos a partir do
+    // seq X DESTE run" — sem ele, ao reconectar após o servidor iniciar um
+    // novo run, o cliente pularia eventos do run novo com o seq antigo.
+    this.runId = runId || null;
+    this.events = [];        // [{ seq, event, size, runId }]
     this.seq = 0;
     this.bytes = 0;
     this.subscribers = new Set();
@@ -35,7 +41,7 @@ class LiveStream {
   publish(event) {
     const seq = ++this.seq;
     const size = jsonSize(event);
-    const rec = { seq, event, size };
+    const rec = { seq, event, size, runId: this.runId };
     this.events.push(rec);
     this.bytes += size;
     // Descarta os mais antigos se estourar o teto (mantém sempre os recentes,
@@ -48,11 +54,21 @@ class LiveStream {
     for (const fn of this.subscribers) { try { fn(rec); } catch {} }
   }
 
-  // Reproduz o que já passou (seq > fromSeq) e passa a receber os próximos.
+  // Reproduz o que já passou (passando o filtro) e passa a receber os próximos.
+  // O filtro combina dois critérios:
+  //   - runId: se o cliente passou um, só recebe eventos do MESMO run. Sem isto,
+  //     um cliente que reconectou depois de um novo run começar pularia eventos
+  //     do run novo com o seq do antigo (falsa "deduplicação").
+  //   - fromSeq: pula tudo o que o cliente já viu neste run.
   // Retorna a função para cancelar a assinatura.
-  subscribe(fn, fromSeq = 0) {
+  subscribe(fn, { fromSeq = 0, runId = null } = {}) {
+    const filtro = (rec) => {
+      if (runId && rec.runId && rec.runId !== runId) return false;
+      if (rec.seq <= fromSeq) return false;
+      return true;
+    };
     for (const rec of this.events) {
-      if (rec.seq > fromSeq) { try { fn(rec); } catch {} }
+      if (filtro(rec)) { try { fn(rec); } catch {} }
     }
     this.subscribers.add(fn);
     return () => { this.subscribers.delete(fn); };
@@ -75,10 +91,13 @@ function jsonSize(event) {
 
 // Abre (ou reabre) o stream de uma conversa no INÍCIO de um novo run. Qualquer
 // stream anterior é descartado — só existe um processamento ativo por conversa.
-export function openLiveStream(conversationId) {
+// `runId` é OPCIONAL mas recomendado: ele carimba o stream e permite ao cliente
+// reconectar filtrando por runId (evita a colisão "seq antigo contra run novo"
+// descrita em subscribe).
+export function openLiveStream(conversationId, runId = null) {
   const previous = streams.get(conversationId);
   if (previous?.cleanupTimer) clearTimeout(previous.cleanupTimer);
-  const stream = new LiveStream(conversationId);
+  const stream = new LiveStream(conversationId, runId);
   streams.set(conversationId, stream);
   return stream;
 }

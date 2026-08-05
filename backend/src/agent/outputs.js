@@ -84,8 +84,25 @@ export function fileSignature(file) {
 // de fato recalculado.
 const VALIDATABLE = /\.(xlsx|xlsm|pdf|docx)$/i;
 const VALIDATE_TIMEOUT_MS = Math.max(15000, Number(process.env.VALIDATE_TIMEOUT_MS || 60000));
+
+// Seleciona os arquivos VALIDÁVEIS a partir da lista de outputs. Limite
+// conservador: validar 5 planilhas grandes custa ~30s e a maioria das
+// respostas gera 1-2 arquivos. Pura e testável — separada para poder
+// cobrir o filtro de extensão sem precisar do sandbox.
+//
+// Edge cases cobertos:
+//   - entradas sem `name`: ignoradas (não há como decidir o tipo)
+//   - extensões em CAIXA ALTA: `.XLSX`, `.Pdf` etc. — valem
+//   - extensões compostas (`.xlsx.bak`, `.tar.gz`): NÃO valem (regex é
+//     ancorado no fim do nome)
+//   - arquivos em subpastas (`.outputs/sub/x.xlsx`): o `name` é só o
+//     basename, então a regex casa corretamente
+export function pickValidatableFiles(files, limit = 5) {
+  if (!Array.isArray(files)) return [];
+  return files.filter(f => f && typeof f.name === 'string' && VALIDATABLE.test(f.name)).slice(0, limit);
+}
 export async function validateOutputs(conversationId, files, onEvent, sandboxOptions = {}) {
-  const targets = files.filter(f => VALIDATABLE.test(f.name)).slice(0, 5);
+  const targets = pickValidatableFiles(files, 5);
   if (!targets.length) return {};
   onEvent({ type: 'status', content: 'Validando arquivos gerados...' });
   const listJson = JSON.stringify(targets.map(f => f.path));

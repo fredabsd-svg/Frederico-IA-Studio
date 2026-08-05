@@ -74,7 +74,7 @@ export class BlockedExecutionError extends Error {
 }
 
 // Valida um comando de shell. `pcWriteAuthorized` vem do turno atual.
-export function guardCommand(command, { pcWriteAuthorized = false } = {}) {
+export function guardCommand(command, { pcWriteAuthorized = false, networkAllowlist = null } = {}) {
   const norm = normalizeCommand(command);
   for (const p of GUARD_PATTERNS) {
     if (!p.re.test(norm)) continue;
@@ -85,7 +85,210 @@ export function guardCommand(command, { pcWriteAuthorized = false } = {}) {
   if (!pcWriteAuthorized && norm.includes(PC_MOUNT_ROOT) && SHELL_MUTATING.test(norm)) {
     throw new BlockedExecutionError('alteração de arquivos das Pastas do PC sem autorização do usuário', { needsAuthorization: true });
   }
+  // F-05b: quando a rede está habilitada no sandbox, o allowlist decide
+  // para onde o comando pode falar. Se a lista estiver vazia (default),
+  // qualquer acesso à rede é bloqueado — fail-closed.
+  if (networkAllowlist) guardNetworkEgress(command, { allowlist: networkAllowlist });
   return true;
+}
+
+// ---- Allowlist de EGRESS (F-05b) ---------------------------------------------
+// Quando o sandbox tem a rede aberta, qualquer destino passa — incluindo
+// serviços internos do host, metadados de nuvem (169.254.169.254), outros
+// containers na mesma rede Docker. Esta camada fecha esse vazamento no
+// nível do comando: o bash/run_python é barrado se tentar falar com um
+// destino fora da allowlist configurada.
+//
+// Formato da allowlist (env SANDBOX_NETWORK_ALLOWLIST, vírgula separa):
+//   - domínio literal: api.exemplo.com  → casa com hostname exato
+//   - sufixo de domínio: .exemplo.com    → casa com QUALQUER subdomínio
+//   - CIDR: 10.0.0.0/8                   → casa com IPs na faixa
+//   - IP literal: 192.168.1.5            → casa com o IP exato
+//   - porta opcional: api.exemplo.com:443
+//
+// A allowlist é PURA — não toca em DNS nem em sockets. A defesa real é o
+// Docker/network, mas esta camada é o que o usuário vê: a tentativa de
+// acessar um destino proibido aparece como "Comando bloqueado" no log.
+
+// Extrai hosts (domínios ou IPs) referenciados pelo comando. Cobre:
+//   - URLs em curl/wget/etc.:  https://api.exemplo.com/path
+//   - argumentos soltos de curl: curl api.exemplo.com
+//   - resoluções DNS explícitas: nslookup/dig/host
+//   - IPs literais com porta: 1.2.3.4:8080
+//   - pings: ping api.exemplo.com
+// Não cobre caminhos hardcoded via variáveis, composição em múltiplos
+// comandos, ou ferramentas próprias — limitações aceitas (defesa em profundidade).
+const HOST_HINT_PATTERNS = [
+  // Hostnames + IP opcional. Captura o domínio/IP com captura OPCIONAL
+  // da porta: a parte `:NNNN` está dentro do mesmo grupo, então a regex
+  // retorna o conjunto completo (host:porta) numa só captura.
+  /\b(?:curl|wget|http(?:ie)?|fetch|invoke-webrequest|nc|netcat|ncat|nslookup|dig|host|traceroute|mtr|nmap|telnet|ssh|scp|rsync|ping|curl\s+-)\b[^|;&\n]*?(?:\b(?:--url|-u|--host)\s+|(?:["'`]))?((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+|\d{1,3}(?:\.\d{1,3}){3})(?::\d{1,5})?)/gi
+];
+
+// CIDR simples: suporta IPv4 (a maioria dos casos em sandbox). IPv6 fica
+// para uma frente posterior — a sintaxe é diferente e o volume de teste
+// real aqui é baixo.
+function ipv4ToInt(ip) {
+  const parts = ip.split('.');
+  if (parts.length !== 4) return null;
+  let n = 0;
+  for (const p of parts) {
+    const v = Number(p);
+    if (!Number.isInteger(v) || v < 0 || v > 255) return null;
+    n = (n * 256) + v;
+  }
+  return n;
+}
+
+function cidrContains(cidr, ip) {
+  const [base, bitsStr] = cidr.split('/');
+  const bits = Number(bitsStr);
+  if (!Number.isFinite(bits) || bits < 0 || bits > 32) return false;
+  const baseInt = ipv4ToInt(base);
+  const ipInt = ipv4ToInt(ip);
+  if (baseInt == null || ipInt == null) return false;
+  // Máscara de rede: primeiros `bits` bits em 1, resto em 0. Ex.: /8 →
+  // 0xFF000000. A operação `~` em JS devolve inteiro com sinal; o `>>> 0`
+  // converte para unsigned de 32 bits.
+  const mask = bits === 0 ? 0 : ((0xFFFFFFFF << (32 - bits)) >>> 0);
+  return ((baseInt & mask) >>> 0) === ((ipInt & mask) >>> 0);
+}
+
+// Compila a allowlist (string ou array) em uma estrutura de matching.
+// `rules` é uma lista de entradas; cada entrada pode ser:
+//   - string: como acima (domínio/CIDR/IP) — strings com vírgula viram
+//     múltiplas entradas (formato da env SANDBOX_NETWORK_ALLOWLIST)
+//   - objeto: { kind: 'domain'|'suffix'|'cidr'|'ip', value, port? }
+export function compileNetworkAllowlist(rules) {
+  const list = [];
+  if (Array.isArray(rules)) {
+    for (const r of rules) {
+      if (typeof r === 'string') list.push(...parseAllowlistString(r));
+      else if (r && typeof r === 'object') list.push(r);
+    }
+  } else if (typeof rules === 'string') {
+    list.push(...parseAllowlistString(rules));
+  }
+  return list;
+}
+
+// Uma string pode trazer várias regras separadas por vírgula. Cada
+// "fatia" vira uma (ou mais) entradas estruturadas via parseAllowlistEntry.
+function parseAllowlistString(s) {
+  return String(s || '')
+    .split(',')
+    .map(part => part.trim())
+    .filter(Boolean)
+    .flatMap(part => parseAllowlistEntry(part));
+}
+
+function parseAllowlistEntry(entry) {
+  if (!entry) return [];
+  const raw = String(entry).trim().toLowerCase();
+  // CIDR detectado ANTES de strip de path — senão "10.0.0.0/8" virava
+  // "10.0.0.0" e era classificado como IP.
+  if (/^https?:\/\//.test(raw)) {
+    // Strip do scheme só.
+    const noScheme = raw.replace(/^https?:\/\//, '');
+    return parseAllowlistEntry(noScheme);
+  }
+  if (/\/\d{1,2}$/.test(raw) && /^\d{1,3}(\.\d{1,3}){3}\/\d{1,2}$/.test(raw)) {
+    return [{ kind: 'cidr', value: raw }];
+  }
+  const cleaned = raw.replace(/\/.*$/, '');
+  if (!cleaned) return [];
+  // IP literal
+  if (/^\d{1,3}(\.\d{1,3}){3}(:\d{1,5})?$/.test(cleaned)) {
+    const [ip, port] = cleaned.split(':');
+    return [{ kind: 'ip', value: ip, port: port ? Number(port) : null }];
+  }
+  // Domínio com sufixo (.exemplo.com → "qualquer subdomínio")
+  if (cleaned.startsWith('.')) return [{ kind: 'suffix', value: cleaned.slice(1) }];
+  // Domínio exato (opcionalmente com porta)
+  const [host, port] = cleaned.split(':');
+  return [{ kind: 'domain', value: host, port: port ? Number(port) : null }];
+}
+
+export { parseAllowlistEntry };
+
+// Verifica se um host (com porta opcional) casa com a allowlist.
+//
+// Regras de porta (intuitivas):
+//   - regra SEM porta → casa com QUALQUER porta (e com chamada sem porta)
+//   - regra COM porta X → só casa se a chamada tiver porta X
+//     (chamada sem porta = "porta padrão do protocolo"; não casa)
+export function hostMatchesAllowlist(host, port, compiled) {
+  if (!host || !compiled || !compiled.length) return false;
+  const hostname = String(host).toLowerCase().trim();
+  for (const rule of compiled) {
+    // A regra TEM porta: a chamada PRECISA ter a mesma porta (sem
+    // fallback para "porta padrão"). É o caminho conservador — o operador
+    // que quis expor 443 não aceitou 80 por tabela.
+    if (rule.port != null) {
+      if (port == null) continue;
+      if (rule.port !== port) continue;
+    }
+    if (rule.kind === 'domain' && hostname === rule.value) return true;
+    if (rule.kind === 'suffix' && (hostname === rule.value || hostname.endsWith('.' + rule.value))) return true;
+    if (rule.kind === 'ip' && ipv4ToInt(hostname) === ipv4ToInt(rule.value)) return true;
+    if (rule.kind === 'cidr' && cidrContains(rule.value, hostname)) return true;
+  }
+  return false;
+}
+
+// Extrai candidatos a host do comando. Útil para diagnóstico e para o
+// teste de unidade. Não tenta ser exaustivo — cobre o que aparece com
+// frequência real (curl/wget/ping/etc.).
+//
+// A porta é detectada por um padrão que casa `:NNNN` em QUALQUER posição
+// (não só no fim) — o regex de captura já inclui a porta opcional, então
+// aqui só separamos o que veio colado no host. Separamos só a porta
+// final (última ocorrência de `:NNNN` no token) para evitar confundir
+// `host:8080:9090` ou `http://host:8080/path` (que o regex já trata).
+export function extractHostCandidates(command) {
+  const out = new Set();
+  for (const re of HOST_HINT_PATTERNS) {
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(command || '')) !== null) {
+      const raw = String(m[1] || '');
+      // `:NNNN` é a porta se vier ANTES de qualquer `/` ou `?` (separador
+      // de path/query). Aceita só dígitos (1-5) para não confundir com
+      // literais que porventura tenham `:` no domínio (IPv6 fica para
+      // outra frente — o regex principal nem captura IPv6).
+      const portMatch = raw.match(/:(\d{1,5})(?=[/?#]|$)/);
+      const host = portMatch ? raw.slice(0, -portMatch[0].length) : raw;
+      const port = portMatch ? Number(portMatch[1]) : null;
+      out.add(JSON.stringify({ host, port }));
+    }
+  }
+  return [...out].map(s => JSON.parse(s));
+}
+
+// Verifica TODOS os hosts extraídos do comando contra a allowlist. Se
+// algum não casa, lança BlockedExecutionError. Com allowlist VAZIA, qualquer
+// host (e portanto o comando inteiro) é barrado.
+export function guardNetworkEgress(command, { allowlist } = {}) {
+  const compiled = compileNetworkAllowlist(allowlist);
+  const hosts = extractHostCandidates(command);
+  if (!hosts.length) return true; // nada de rede detectado no comando
+  for (const { host, port } of hosts) {
+    if (!hostMatchesAllowlist(host, port, compiled)) {
+      // Mensagem aponta o destino não autorizado — feedback para o modelo
+      // ajustar o pedido (ou para o usuário revisar a allowlist).
+      throw new BlockedExecutionError(`acesso à rede bloqueado: destino '${host}${port ? ':' + port : ''}' não está na allowlist do sandbox`);
+    }
+  }
+  return true;
+}
+
+// Lê a allowlist da env. Lista vazia = fail-closed (qualquer acesso à
+// rede é bloqueado). Para uma allowlist permissiva, defina
+// SANDBOX_NETWORK_ALLOWLIST="api.openai.com,github.com,.pypi.org,8.8.8.8".
+export function networkAllowlistFromEnv() {
+  const raw = String(process.env.SANDBOX_NETWORK_ALLOWLIST || '').trim();
+  if (!raw) return [];
+  return raw.split(',').map(s => s.trim()).filter(Boolean);
 }
 
 // ---- Código Python -----------------------------------------------------------

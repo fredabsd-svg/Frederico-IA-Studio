@@ -58,6 +58,8 @@ servidor é sem estado:
 | `eco` | devolve o texto da última mensagem do usuário, token a token |
 | `eco-lento` | o mesmo, com pausa entre tokens (dá tempo de trocar de conversa ou derrubar a conexão no meio) |
 | `chave-ruim` | responde 401, como uma chave inválida |
+| `ferramentas` | emite uma `tool_call` (`bash echo ok-e2e-tool`) na 1ª rodada e texto na 2ª, após o `tool_result` — exercita o caminho de tool calling nativo via streaming |
+| `travado` | abre o stream e fica em silêncio; força o watchdog do backend (`guardStreamStall`) a detectar o stall e disparar a recuperação |
 | `design-web` | devolve um documento HTML completo **sujo** (conversa em volta + cerca de código), como respondem os modelos reais — usado pelo Modo Design |
 | `design-slides` | devolve o JSON de slides (`{"slides":[…]}`) do Modo Design |
 

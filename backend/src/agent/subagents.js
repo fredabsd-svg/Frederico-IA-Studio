@@ -31,6 +31,43 @@ export const MAX_SUBAGENT_DEPTH = 1;
 const DEFAULT_MAX_SUBAGENTS_PER_RUN = 4;
 const DEFAULT_RESULT_CHARS = 8000;
 const DEFAULT_TASK_CHARS = 6000;
+// A partir de quantas etapas o loop LEMBRA o modelo de que delegar existe.
+// 15 é o ponto em que uma execução deixa de ser "algumas ferramentas" e passa a
+// acumular contexto — que é justamente o custo que o sub-agente evita.
+const DEFAULT_NUDGE_STEPS = 15;
+
+// Orçamento por delegação (F-24). Cada sub-agente recebe um teto MENOR que o
+// do agente principal — a subtarefa é justamente o pedaço isolável e
+// auto-contido, não precisa do mesmo fôlego. Defaults abaixo são uma
+// fração saudável dos limites do agente (assumindo os padrões 50 etapas /
+// 100k tokens / sem timeout duro) e podem ser afinados por env sem mexer
+// no código: SUBAGENT_BUDGET_STEPS / SUBAGENT_BUDGET_TOKENS /
+// SUBAGENT_BUDGET_TOTAL_MS / SUBAGENT_BUDGET_HARD_STEPS.
+function readIntEnv(name, fallback) {
+  const v = Number(process.env[name]);
+  return Number.isFinite(v) && v > 0 ? Math.floor(v) : fallback;
+}
+export const SUBAGENT_DEFAULTS = Object.freeze({
+  maxSteps: readIntEnv('SUBAGENT_BUDGET_STEPS', 12),
+  hardMaxSteps: readIntEnv('SUBAGENT_BUDGET_HARD_STEPS', 18),
+  maxTokens: readIntEnv('SUBAGENT_BUDGET_TOKENS', 30000),
+  // Tempo total somando todas as delegações PARALELAS do turno — protege a
+  // VPS de uma delegação esquecida que rodou por horas.
+  totalMs: readIntEnv('SUBAGENT_BUDGET_TOTAL_MS', 8 * 60 * 1000)
+});
+
+// Constrói o orçamento de UMA delegação: aplica defaults e ancora o deadline
+// em `now` se um orçamento total foi informado. Devolve um objeto plano,
+// pronto para passar a runAgent.
+export function buildSubagentBudget({ now = Date.now(), deadlineMs = null, totalMs = SUBAGENT_DEFAULTS.totalMs } = {}) {
+  const effectiveDeadline = deadlineMs || (now + totalMs);
+  return {
+    maxSteps: SUBAGENT_DEFAULTS.maxSteps,
+    hardMaxSteps: SUBAGENT_DEFAULTS.hardMaxSteps,
+    maxTokens: SUBAGENT_DEFAULTS.maxTokens,
+    deadlineMs: effectiveDeadline
+  };
+}
 
 // Eventos do filho repassados ao stream do pai. `delta` fica de FORA de
 // propósito: o texto do sub-agente não pode vazar para dentro da resposta do
@@ -97,11 +134,43 @@ export function subagentsEnabled() {
   return String(process.env.SUBAGENTS_ENABLED || '').toLowerCase() !== 'false';
 }
 
+// Etapa a partir da qual o lembrete de delegação é injetado. `0` (ou qualquer
+// valor não positivo) desliga o lembrete sem desligar os sub-agentes.
+export function subagentNudgeStep() {
+  const raw = process.env.SUBAGENT_NUDGE_STEPS;
+  if (raw == null || String(raw).trim() === '') return DEFAULT_NUDGE_STEPS;
+  const configured = Number(raw);
+  if (!Number.isFinite(configured) || configured <= 0) return 0;
+  return Math.floor(configured);
+}
+
+// O lembrete tem uma saída explícita ("siga direto e ignore"): sem ela, o modelo
+// tende a obedecer à nota e delegar mesmo quando terminar aqui era o certo — o
+// oposto do problema que o lembrete resolve.
+export const SUBAGENT_NUDGE_NOTE = 'ESTA EXECUÇÃO JÁ ESTÁ LONGA. Se ainda restam frentes INDEPENDENTES e autocontidas do pedido, delegue-as agora com delegar_subagente, uma chamada por frente, em vez de executar tudo aqui: o sub-agente trabalha no mesmo workspace, com contexto próprio, e devolve só o resultado — é o que impede este histórico de crescer a ponto de prejudicar sua precisão. Se o que resta depende do que você já tem em contexto, é a integração final das partes ou é rápido de terminar, siga direto e ignore este lembrete.';
+
+// Decide se o lembrete entra NESTA etapa. Pura de propósito: é o ponto testável
+// da política (o loop só fornece os contadores).
+export function shouldNudgeSubagent({
+  step = 0,
+  offered = false,
+  delegations = 0,
+  budget = Infinity,
+  alreadyNudged = false,
+  threshold = subagentNudgeStep()
+} = {}) {
+  if (!offered || alreadyNudged) return false;
+  if (threshold <= 0) return false;          // lembrete desligado por ambiente
+  if (step < threshold) return false;
+  if (delegations > 0) return false;         // já delegou: não precisa de empurrão
+  return delegations < budget;               // sem orçamento, lembrar seria pedir o impossível
+}
+
 // Quantos especialistas cabem no inventário mandado ao modelo. Acima disso a
 // definição da ferramenta cresce mais do que ajuda.
 const MAX_SPECIALISTS_OFFERED = 20;
 
-const SUBAGENT_TOOL_DESCRIPTION = 'Delega uma subtarefa AUTOCONTIDA a um sub-agente com contexto próprio, que executa ferramentas e devolve só o resultado final. Use quando a subtarefa for pesada e isolável (varrer muitos arquivos, analisar um documento longo, apurar um ponto específico, testar uma hipótese) e o detalhe do caminho NÃO precisar ocupar esta conversa. Não use para pedidos curtos que você já resolve direto — delegar custa tempo e tokens. O sub-agente NÃO vê esta conversa: escreva a tarefa completa, com todos os dados necessários. Ele trabalha com as MESMAS ferramentas e as mesmas autorizações desta tarefa — delegar não amplia acesso.';
+const SUBAGENT_TOOL_DESCRIPTION = 'Delega uma subtarefa AUTOCONTIDA a um sub-agente com contexto próprio, que executa ferramentas e devolve só o resultado final. GATILHO PRINCIPAL: quando o pedido tem TRÊS OU MAIS entregas independentes entre si (frentes que não dependem do resultado uma da outra), delegue as isoláveis — UMA chamada por entrega, que podem correr em paralelo — em vez de executar todas em linha nesta conversa. Também vale para subtarefa única e pesada (varrer muitos arquivos, analisar um documento longo, apurar um ponto específico, testar uma hipótese). Faça você mesmo o que é curto, o que depende do que já está neste contexto e a integração final das partes. O sub-agente NÃO vê esta conversa: escreva a tarefa completa, com todos os dados necessários. Ele trabalha com as MESMAS ferramentas e as mesmas autorizações desta tarefa — delegar não amplia acesso.';
 
 // Monta a definição da ferramenta com o INVENTÁRIO real de especialistas do
 // usuário. Antes, `especialista` era texto livre pedindo "o nome exato" sem que
@@ -173,7 +242,7 @@ export function subagentEffort(parentEffort) {
 
 // Monta o texto que o sub-agente recebe como pedido. Ele parte de uma conversa
 // vazia, então tudo que importa precisa estar aqui.
-export function buildSubagentTask(args = {}) {
+export function buildSubagentTask(args = {}, { outputsSubdir = null } = {}) {
   const original = String(args.tarefa || '').trim();
   // Corte SILENCIOSO era o pior caso: numa instrução longa, o que se perde são
   // justamente as regras do final ("não altere X", "arredonde para baixo") — e
@@ -189,6 +258,14 @@ export function buildSubagentTask(args = {}) {
     ? `\nENTREGUE AO FINAL: ${entregar}`
     : '\nENTREGUE AO FINAL: um resumo objetivo do que foi feito e do resultado obtido.');
   parts.push('Você é um sub-agente executando uma subtarefa delegada por outro agente. Você não participa da conversa com a pessoa e não vê o histórico dela: trabalhe apenas com o que está escrito acima. Execute de fato (ferramentas, arquivos, verificação) e responda só com o resultado — sem saudação, sem se apresentar e sem perguntar de volta. Se algo essencial faltar, diga exatamente o que faltou.');
+  // F-25: o sub-agente roda numa SUBPASTA de outputs. Sem isto, dois
+  // sub-agentes em paralelo que escolhem o mesmo nome de arquivo sobrescrevem
+  // um ao outro — e o pai não tem como saber qual produziu qual. Ferramentas
+  // que escrevem em `outputs/` (generate_image, write_file com caminho em
+  // outputs/, bash/python) devem usar este prefixo.
+  if (outputsSubdir) {
+    parts.push(`SUBPASTA DE OUTPUTS: grave QUALQUER arquivo que deva ser entregue ao usuário em \`outputs/${outputsSubdir}/...\`. NÃO grave na raiz \`outputs/\` — outro sub-agente pode estar rodando em paralelo e o resultado se cruzaria.`);
+  }
   return parts.join('\n');
 }
 
@@ -329,7 +406,11 @@ export async function runSubagent({
   webSearch = false,
   delegationId = '',
   delegation = null,
-  runner = null
+  runner = null,
+  budget = null   // F-24: orçamento pré-computado pelo pai. Sem isto, defaults
+                  // de SUBAGENT_DEFAULTS. Importante: passar o MESMO
+                  // deadlineMs entre delegações paralelas para que o
+                  // limite total seja compartilhado.
 }) {
   if (depth >= MAX_SUBAGENT_DEPTH) {
     return { result: JSON.stringify({ error: 'Um sub-agente não pode delegar para outro sub-agente. Execute a subtarefa você mesmo.', code: 'SUBAGENT_DEPTH' }), usage: null };
@@ -365,10 +446,22 @@ export async function runSubagent({
   onEvent({ type: 'status', content: `Delegando para ${label}...` });
   let result;
   try {
+    // F-25: cada delegação roda numa subpasta de outputs/ com o id da
+    // delegação. Sem isto, dois sub-agentes em paralelo que escolhem o mesmo
+    // nome de arquivo (ex.: relatório.xlsx) sobrescrevem um ao outro; e a
+    // interface não tem como rotular "qual sub-agente produziu este arquivo".
+    const outputsSubdir = delegationId || null;
+    // F-24: cada delegação tem um teto próprio (etapas, tokens, deadline).
+    // Se o chamador passou um budget explícito, usa-o; senão, defaults
+    // centralizados em SUBAGENT_DEFAULTS. O deadlineMs compartilhado é
+    // importante quando duas delegações correm em paralelo: o totalMs
+    // continua valendo, e a primeira que estourar dispara o `break` interno
+    // do loop.
+    const effectiveBudget = budget || buildSubagentBudget();
     result = await runAgent({
       userId,
       conversationId,                   // mesmo workspace/sandbox do pai
-      userText: buildSubagentTask(args),
+      userText: buildSubagentTask(args, { outputsSubdir }),
       model: modelo,
       assistant,
       webSearch,
@@ -379,7 +472,9 @@ export async function runSubagent({
       persistReply: false,
       subagentDepth: depth + 1,
       gitWriteAuthorization: false,     // escrita no GitHub não se herda
-      delegation                        // permissões, sandbox e escopo do pai
+      delegation,                       // permissões, sandbox e escopo do pai
+      outputsSubdir,                    // F-25: isola outputs por delegação
+      subagentBudget: effectiveBudget   // F-24: teto de tempo/etapas/tokens
     });
   } catch (err) {
     onEvent({ type: 'status', content: `O sub-agente ${label} falhou.` });

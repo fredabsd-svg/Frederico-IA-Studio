@@ -74,6 +74,13 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
   const newStreamEpoch = (convId) => (streamEpochsRef.current[convId] = (streamEpochsRef.current[convId] || 0) + 1);
   const isLiveEpoch = (convId, epoch) => streamEpochsRef.current[convId] === epoch;
 
+  // PONTO DE RETOMADA: o backend carimba cada evento do run com `_seq` e
+  // `_runId`. Na reconexão ao /stream mandamos esses dois: o `_runId` diz
+  // "ainda é o mesmo run?"; o `_seq` diz "pule tudo até aqui". Sem o runId,
+  // um run novo iniciado entre a desconexão e a reconexão faria o fromSeq
+  // do run antigo pular os primeiros eventos do novo — a remontagem quebraria.
+  const liveCursorRef = useRef({}); // { [convId]: { runId, seq } }
+
   const currentRunState = (current?.id && runs[current.id]) || {};
   const busy = Boolean(currentRunState.busy);
   const paused = Boolean(currentRunState.paused);
@@ -227,6 +234,17 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
       const parsed = takeSseEvents(buffer, { flush: done });
       buffer = parsed.rest;
       for (const ev of parsed.events) {
+        // Cursor de retomada: o ÚLTIMO (_runId, _seq) que vimos. Atualizado
+        // em CADA evento (não só nos `delta`) porque a reconexão pode
+        // acontecer a qualquer momento — se travarmos no meio de um tool_call
+        // longo, queremos retomar DEPOIS do último `tool_start` e não antes.
+        if (ev._seq != null) {
+          const prev = liveCursorRef.current[convId] || { runId: null, seq: 0 };
+          liveCursorRef.current[convId] = {
+            runId: ev._runId || prev.runId,
+            seq: Number(ev._seq) || prev.seq
+          };
+        }
         if (ev.type === 'status') patchRun(convId, { status: ev.content || '' });
         // ---- Modo gratuito: estados da fila e status atualizado ----
         if (ev.type === 'free_queue') {
@@ -341,13 +359,28 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
       if (!reused) ref.key = placeholderId;
     }
     patchRun(convId, { busy: true, paused: false, status: 'Retomando...' });
-    // Remonta do zero: zera o balão-alvo antes do replay para evitar texto dobrado.
-    if (currentRef.current?.id === convId) {
+    // Cursor de retomada: se a conexão anterior desta conversa já recebeu
+    // eventos do run atual, mandamos o ponto exato onde parou. O backend
+    // combina `runId` + `fromSeq` para decidir se ainda é o mesmo run (e
+    // então pular o replay) ou se um novo começou (e então replay do começo).
+    // Sem cursor, o backend sempre devolveria o buffer inteiro, forçando o
+    // front a limpar o balão (replay) e a remontar — flicker visível.
+    const cursor = liveCursorRef.current[convId];
+    // Reset do balão SÓ quando é um run NOVO (cursor.runId ausente ou diferente
+    // do que o backend vier a mandar). Sem este `if`, uma reconexão normal
+    // apagaria o texto que já estávamos mostrando enquanto a rede oscilava.
+    // A certeza absoluta do "é o mesmo run" vem do backend; aqui limpamos por
+    // segurança só quando não temos referência anterior.
+    if (currentRef.current?.id === convId && !cursor?.runId) {
       setMessages(prev => prev.map(m => m.id === ref.key ? { ...m, content: '', blocks: [] } : m));
     }
     let res;
     try {
-      res = await fetch(`${API}/api/conversations/${convId}/stream`);
+      const params = new URLSearchParams();
+      if (cursor?.runId) params.set('runId', cursor.runId);
+      if (cursor?.seq) params.set('fromSeq', String(cursor.seq));
+      const qs = params.toString();
+      res = await fetch(`${API}/api/conversations/${convId}/stream${qs ? `?${qs}` : ''}`);
     } catch {
       return { attached: false, sawDone: false };
     }

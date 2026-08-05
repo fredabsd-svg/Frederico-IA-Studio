@@ -16,14 +16,21 @@ frontend React 19 + Vite; autenticação Better Auth (e-mail/senha, GitHub, Goog
 
 **Prontidão para produção: 🟡 amarelo — apto com restrições.**
 **Nenhum risco crítico aberto** desde o fechamento do F-04 (o backend não detém mais o
-socket do Docker — ver `docs/SECURITY.md` §4.3). O que ainda impede o verde é a cobertura
-de testes: **o SSE integrado saiu do zero** (ver a frente abaixo), mas a retomada após
-interrupção real do processo e o pipeline multimodelo retomável continuam sem teste.
-Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
+socket do Docker — ver `docs/SECURITY.md` §4.3). A cobertura deu um salto nesta
+integração: a retomada após interrupção real do processo **passou a ter teste** (F-14,
+contra PostgreSQL de verdade), o tool calling nativo e o watchdog do provedor entraram
+nos testes de navegador (F-13) e o SSE ganhou o caso de reconexão com cursor (F-12). O
+que ainda segura o verde é o **pipeline multimodelo retomável**: o F-15 entregou a
+tabela e as primitivas, mas o `runMultiModel` ainda não as usa, então o reinício continua
+sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** o **modelo de IA por projeto no Modo Design** (frente abaixo):
+- **Último trabalho:** a **integração das 16 frentes abertas** numa branch só (F-05b,
+  F-11 a F-26, geração de imagem por capacidade e o acionamento real dos sub-agentes).
+  Entre elas, o **modelo de IA por projeto no Modo Design** (frente abaixo):
   o seletor saiu de trás do painel e passou a morar na barra do editor, e a escolha
-  virou coluna do projeto em vez de estado do app. Antes dele, a
+  virou coluna do projeto em vez de estado do app; e a **geração de imagem escolhendo a
+  chave por capacidade** (frente abaixo) — o "Nenhuma chave de API configurada" aparecia
+  com o chat respondendo na mesma tela. Antes deles, a
   **identidade "Tinta & Latão"** nos três kits (frente abaixo):
   o redesenho visual entrou POR CIMA da grade do PR #149, com os blocos que faltavam —
   sumário, citação, linha do tempo, gráficos, assinaturas, contracapa, `confidencial=` e
@@ -46,13 +53,14 @@ Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
   (o Nino cobrindo o botão de enviar), **[#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)**
   (Playwright + suíte ponta a ponta) e **[#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)**
   (as sete falhas P0 dos sub-agentes).
-- **Última validação:** 2026-07-27 — **1099 testes** (backend 897, frontend 71, guarda
-  do Docker 49, sandbox Python 59, ponta a ponta 23). O PostgreSQL 16 subiu **neste
-  contêiner** (binários locais, sem Docker), então nada foi pulado no backend:
-  **897/897**, mais **frontend 71/71** e os **23 E2E em navegador real**
-  (`E2E_CHROMIUM_PATH` apontando o Chromium do contêiner): 23/23. A
-  contagem vem de `cd backend && npm run test:count` — não a escreva à mão.
-  Sem banco, o backend passa 818 e pula 79 — o esperado.
+- **Última validação:** 2026-08-05 — **1219 testes**, com o backend em **1008/1008 e
+  NADA pulado**: o PostgreSQL 16 subiu **neste contêiner** (binários locais, sem Docker
+  e sem a extensão `vector` — nenhuma migration usa o tipo). Mais **frontend 77/77**
+  (lint + testes + build), **guarda do Docker 49/49** e os **26 ponta a ponta em
+  navegador real** (`E2E_CHROMIUM_PATH` apontando o Chromium do contêiner): 26/26. Os
+  **59 do sandbox Python** pulam aqui por falta da imagem do sandbox — quem os roda é o
+  CI. A contagem vem de `cd backend && npm run test:count` — não a escreva à mão.
+  Sem banco, o backend passa 916 e pula 92 — o esperado.
   Repare em um job do CI: **"Artefatos (Excel real)"** roda os testes dos kits no runner
   do GitHub, que **não tem as mesmas fontes** do sandbox. Ou seja, o caminho de
   degradação do `pdfpro` (sem TrueType, caindo para as Type1 base-14) é exercitado a
@@ -60,8 +68,91 @@ Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
   do matplotlib.
   **O LibreOffice deste contêiner não converte nada** (falha até com um `.txt` de uma
   linha), então a conferência do `.docx` foi estrutural — OOXML sobre o arquivo reaberto.
-  O PDF foi conferido página a página, renderizado com PyMuPDF, e com as fontes reais
-  instaladas em `/usr/share/fonts/truetype/tinta-latao`.
+
+---
+
+## A integração das 16 frentes, e o que só o navegador acusou (2026-08-05)
+
+Dezesseis PRs abertos, em quatro pilhas: F-13→F-21 (dez commits), F-23→F-16
+(quatro), a geração de imagem por capacidade e o acionamento dos sub-agentes.
+Juntá-los foi menos sobre resolver conflito de texto e mais sobre descobrir que
+**três defeitos só aparecem quando as peças estão no mesmo lugar** — nenhum dos
+três falhava na branch de origem, porque a prova exigia rodar o app inteiro.
+
+**1. Os oito `React.lazy` do F-21 apontavam para módulos sem `export default`.**
+Nenhum componente deste projeto tem default — são todos exports nomeados. O
+`lazy()` resolvia `default` como `undefined` e o React derrubava a árvore no
+error boundary: qualquer conversa com resposta virava "Algo deu errado por
+aqui". O build não pega (o bundler resolve exportações, não o formato que o
+`lazy` espera), os testes de módulo não pegam (nenhum importa o componente), e
+o `LazyConsentGate` — o único escrito certo, com `.then(m => ({ default: … }))`
+— estava ali do lado como modelo. Corrigidos os oito e criado o guarda que
+faltava: `frontend/scripts/lazyDefaultExport.mjs`, no `npm run lint`, irmão do
+`reexportBindings.mjs` e pela mesma razão registrada lá.
+
+**2. O F-25 referenciava `call` fora do escopo dele.** O registro do produtor de
+arquivos (`subagentProducers.set(call.id, …)`) ficou solto no corpo do passo,
+onde `call` não existe — só dentro dos laços sobre `stepToolCalls`. Resultado:
+`ReferenceError` em **qualquer** execução com ferramenta, não só nas com
+delegação. O registro passou para dentro de `startDelegation`, por onde os dois
+caminhos (lote paralelo e sequencial) já passam e onde `call` é parâmetro.
+
+**3. O `STREAM_STALL_TIMEOUT_MS=2000` do E2E nunca valeu.** O `streamGuard`
+aplica `Math.max(30000, …)` — com teste unitário guardando o piso. O teste do
+watchdog do F-13 esperava um ciclo de ~5s quando o real é ~60s (dois stalls de
+30s), e morria no timeout. O config agora diz 30000 e explica o piso; o teste
+carrega fôlego próprio.
+
+Além desses, dois ajustes nos testes que chegaram junto: o do F-12 chamava
+`request.get()` numa rota **SSE** — que responde 200 e deixa a conexão aberta,
+então o `request.get()` esperava para sempre por um corpo que não fecha (agora o
+status é lido do navegador e a conexão é abortada); e o do F-14 gravava
+checkpoint para uma conversa que nunca existiu, violando a chave estrangeira —
+o primeiro caso falhava e o **segundo passava pelo motivo errado**, provando
+isolamento sobre um banco vazio.
+
+**Conflitos de código, e por que cada um existia:** o F-21 passou os painéis
+para `lazy` a partir de uma base anterior ao seletor de modelo do Modo Design e
+perdeu a prop `allModels` no caminho; o F-24 trocou a definição estática da
+ferramenta de delegação por uma fábrica com o inventário real de especialistas
+(`especialista_id` como `enum`) enquanto o #141 reescrevia a **descrição** da
+mesma ferramenta para ganhar um gatilho positivo ("3+ entregas independentes →
+uma chamada por entrega") — mudanças ortogonais, ficaram as duas; e o
+`getUserProvider` saiu do `tools.js` porque o `resolveImageProvider` tomou o
+lugar dele na geração de imagem.
+
+**Nada foi descartado:** as 16 frentes entraram inteiras.
+
+---
+
+## Os sub-agentes existiam e nunca eram acionados (2026-07-26)
+
+Um pedido de seis entregas ("Fase 7": API, nginx, dashboard, watchdog, relatórios,
+testes) virou uma execução única de 49 etapas, sem uma delegação sequer — com a
+ferramenta disponível o tempo todo. **Não era bug de integração: era omissão de
+política.** Os guard-rails do PR #136 só sabiam dizer NÃO (profundidade, orçamento,
+modo gratuito, turno social); nada dizia QUANDO delegar.
+
+Três causas, três correções:
+
+| Causa | Correção |
+| --- | --- |
+| O `PLAN_BEFORE` — onde o modelo decide **como** atacar a tarefa — não menciona divisão de trabalho | `PLAN_DELEGATION_TOPIC`: sexto tópico do plano ("o que delegar e o que fazer aqui"), acrescentado pelo `loop.js` só nos modos que escrevem **e** com a ferramenta na mesa |
+| A descrição da ferramenta era dissuasiva ("delegar custa tempo e tokens"), sem gatilho positivo | Gatilho explícito: **3+ entregas independentes → uma chamada por entrega**. Em `subagentToolDefinition` e no inventário (`toolAvailabilityNote`) |
+| Nada reagia ao tamanho da execução — aos 40 passos o modelo não recebia sinal novo, e o contexto acumulado é justamente o custo que o sub-agente evita | `SUBAGENT_NUDGE_NOTE`: uma nota de sistema, **uma vez por execução**, ao passar de `SUBAGENT_NUDGE_STEPS` (padrão 15) sem ter delegado nada |
+
+O lembrete tem **saída explícita** ("se o que resta depende deste contexto ou é a
+integração final, siga direto e ignore"): sem ela o modelo obedeceria à nota e passaria
+a delegar quando terminar ali era o certo — o oposto do problema. Pelo mesmo motivo o
+tópico do plano aceita "sem delegação" com o motivo em uma linha.
+
+O tópico do plano fica **fora** de `developerContextFor` de propósito: a ferramenta pode
+não estar disponível (modo gratuito, `SUBAGENTS_ENABLED=false`), e mandar planejar
+delegação sem poder delegar é pior que não mencionar. Quem sabe disso é o `loop.js`.
+
+`SUBAGENT_NUDGE_STEPS=0` desliga o lembrete sem desligar os sub-agentes. 9 testes novos.
+
+---
 
 ---
 
@@ -107,6 +198,48 @@ Onde está: migration `024_design_modelo.sql`; `modelForProject` em
 `frontend/src/design/designCore.js`; seletor em `DesignEditor.jsx` e
 `DesignNewProject.jsx`. Testes: 6 de rota, 2 de banco, 1 puro no frontend e 1 em
 navegador real (que é o que guarda o `Esc`).
+---
+
+## Geração de imagem: a chave é escolhida por capacidade (2026-07-27)
+
+Sintoma relatado com print: o assistente respondeu **"Nenhuma chave de API configurada
+para gerar imagens"** — e o chat, na mesma tela, estava funcionando normalmente. A
+mensagem mandava cadastrar o que já estava cadastrado.
+
+**Causa.** `generate_image` resolvia a credencial com a referência de modelo **vazia**:
+`runTool` tinha `sandboxOptions.model` em mãos e não repassava. Com referência vazia,
+`getUserProvider` cai no `rows[0]` — o provedor **mais antigo** da conta. Daí saíam dois
+defeitos:
+
+1. numa conta com mais de uma chave, a imagem era pedida ao provedor errado (base da
+   DeepSeek + modelo da OpenRouter = 404), enquanto o chat rodava na chave certa;
+2. se essa linha mais antiga estivesse órfã — cifra que a `ENCRYPTION_KEY` atual não abre
+   —, `providerFromRow` devolvia `none()` e a conta inteira parecia sem chave. O modo
+   gratuito, única credencial que ainda restava, nem era tentado: o `if (row)` já tinha
+   retornado.
+
+**O que mudou.** `backend/src/imageProvider.js` escolhe a credencial por **capacidade**, não
+por antiguidade: entre as chaves da conta vale a que tem, no catálogo importado do
+provedor, um modelo com `output_modalities` incluindo `image` — preferindo a chave do
+modelo ativo na conversa, para a imagem sair pela credencial que o usuário está vendo
+cobrar. `IMAGE_MODEL` continua impondo um modelo, mas só num provedor que o tenha (em
+outro seria um 404 disfarçado de configuração). O **modo gratuito não gera imagem** salvo
+se o operador tiver posto um modelo de imagem em `FREE_TIER_MODELS` — a chave é da
+plataforma e os modelos de imagem são pagos; era exatamente o que a allowlist existe para
+impedir. E `getUserProvider` deixou de morrer numa linha órfã: o padrão sem provedor
+pedido é a primeira chave **utilizável**, e um provedor sem chave cai para o modo gratuito
+antes de desistir.
+
+**Mudança visível para o usuário:** quem tem uma chave capaz e outra não passa a gerar
+imagem sem mexer em nada. Quem não tem nenhuma lê o motivo certo — "nenhuma das suas
+chaves gera imagem, você tem DeepSeek" — em vez de "nenhuma chave configurada". Erro do
+provedor também parou de virar só um HTTP nu: 401/403 dizem que a chave foi recusada, 402
+que faltou crédito, e o resto carrega a mensagem do provedor.
+
+**O que ficou de fora:** um seletor de modelo de imagem na interface (a escolha automática
++ `IMAGE_MODEL` cobre os dois casos reais) e o suporte a APIs de imagem que **não** são o
+`/chat/completions` com `modalities` — `/images/generations` da OpenAI, por exemplo, é
+outro contrato e exigiria um segundo caminho de chamada.
 
 ---
 
@@ -576,48 +709,459 @@ Novo job `e2e` no CI, com Postgres real e Chromium. Ver `e2e/README.md`.
 
 | ID | Risco | Severidade |
 | --- | --- | --- |
-| F-15 | Pipeline multimodelo sem coordenador durável: reinício não retoma a próxima etapa pendente. | 🟠 Alta |
-| F-12 | SSE integrado: duas conversas, troca rápida e reconexão **agora cobertos** por `e2e/`; falta o caso isolado de `fromSeq` (reconectar sem duplicar eventos). | 🟡 Média |
-| F-14 | Sem teste de retomada após interrupção **real** do processo. | 🟠 Alta |
-| F-05b | Sandbox com rede habilitada não tem allowlist de egress. | 🟡 Média |
-| F-13 | Provedor simulado: streaming, catálogo e erro 401 **cobertos** por `e2e/fixtures/provedorFalso.mjs`; faltam tool calls e timeout. | 🟡 Média |
-| F-16, F-18, F-19, F-23 | Relevância de memória (casos negativos), corpus do Docling, git local, validação de artefato com arquivos reais. | 🟡 Média |
-| F-24 | Sub-agentes: sem orçamento próprio de tempo/tokens por delegação e sem catálogo de modelos com tool calling **verificado** (hoje qualquer modelo do seletor pode receber uma subtarefa). | 🟡 Média |
-| F-25 | Sub-agentes paralelos compartilham `outputs/`: a atribuição de arquivo por filho pode se cruzar e dois filhos podem gravar o mesmo nome. O conjunto que o usuário recebe está certo (o pai também faz o diff); o rótulo por sub-agente é que não é confiável. | 🟡 Média |
-| F-21 | `App.jsx` com 62 `useState`; bundle num único chunk (teto de 1.000 KB no CI); CSS em camadas sem inventário. | 🟡 Média |
-| F-11 | Sem quarentena/reprocesso do que passou com o antivírus degradado. | 🟡 Média |
-| F-26 | Checkpoints de workspace consomem disco sem cota agregada: `CHECKPOINT_KEEP` (5) × `CHECKPOINT_MAX_MB` (300) dá até **1,5 GB por conversa** no pior caso. A poda é por conversa, não global, e `WORKSPACE_QUOTA_MB` só avisa — não bloqueia. Numa instalação pública, ajuste os dois valores. | 🟡 Média |
+| F-21 | `App.jsx` ainda concentra dezenas de `useState`; CSS em camadas sem inventário. O **bundle deixou de ser um chunk só** (`React.lazy` nos painéis pesados: principal ~920 KB contra o teto de 1.000 KB do CI), mas o `MultiModelBoard` segue no principal — é importado de forma estática pelo `Landing.jsx`. | 🟡 Média |
+| F-15 | O coordenador durável de pipelines entrou como **infraestrutura** (tabela + primitivas provadas); `runMultiModel` ainda não atualiza o estágio corrente nem retoma no boot, então o reinício continua sem retomar a próxima etapa pendente. | 🟠 Alta |
+
+## Riscos fechados nesta sessão
+
+### F-16, F-18, F-19 e F-23 — as quatro lacunas de cobertura (2026-08-05)
+
+Quatro frentes irmãs, cada uma fechando uma lacuna de teste que o
+`CONTINUIDADE.md` listava como risco. Os commits originais trouxeram os
+arquivos e **esqueceram de dar baixa aqui** — o registro é desta integração,
+não das branches:
+
+| Risco | O que passou a ser coberto | Onde |
+| --- | --- | --- |
+| F-16 | Relevância de memória nos casos NEGATIVOS (o que não deve ser lembrado) | `backend/src/memory/retrievalPolicy.relevance.test.js` |
+| F-18 | Corpus Docling: whitelist de tipo e conferência por magic bytes | `backend/src/docling.corpus.test.js` |
+| F-19 | Git local (clone/commit/push) contra um **bare repo** de verdade | `backend/src/connectors.github.local.test.js` |
+| F-23 | Casos de borda do validador de artefatos (`pickValidatableFiles`) | (coberto pelo commit F-23, que deu a própria baixa) |
+
+O F-19 é o mais substancial dos quatro: em vez de simular o git, cria um
+repositório bare em disco e exercita o caminho real — é o único jeito de o
+teste falhar quando o comando muda.
+
+### F-05b — Allowlist de egress no sandbox (2026-08-04)
+
+Quando o sandbox tinha `networkEnabled=true`, o container conseguia
+falar com QUALQUER destino: metadados de nuvem (`169.254.169.254`),
+outros containers na mesma rede Docker, serviços internos do host. Era
+o vetor de risco mais sério restante na fronteira do container.
+
+A correção adiciona allowlist de egress no nível do comando — a
+defesa real continua sendo o Docker/network, mas esta camada é o que
+o usuário vê quando tenta acessar um destino proibido (a tentativa
+aparece como "Comando bloqueado" no log do run).
+
+- **`SANDBOX_NETWORK_ALLOWLIST`** (env, vírgula separa): lista de
+  destinos permitidos. Aceita:
+  - Domínio exato: `api.openai.com`
+  - Domínio com sufixo (subdomínios): `.openai.com`
+  - IP literal (com porta opcional): `192.168.1.5` ou `8.8.8.8:53`
+  - CIDR: `10.0.0.0/8`
+- **Default fail-closed**: allowlist vazia = NADA de rede passa. Sem
+  opt-in explícito, o sandbox é tão fechado quanto antes do
+  `networkEnabled=true` — só que agora o caminho para abrir é
+  explícito (definir a env) em vez de implícito (assumir "tudo aberto").
+- **`compileNetworkAllowlist` / `parseAllowlistEntry`** transformam
+  string/array/objeto em regras estruturadas (`{kind, value, port?}`).
+  IPv6 fica para uma frente posterior (a sintaxe é diferente e o volume
+  de teste real é baixo).
+- **`hostMatchesAllowlist`** aplica as regras — e a semântica de porta
+  é conservadora: regra COM porta só casa com a mesma porta na
+  chamada (sem fallback para "porta padrão"). Quem abriu 443 não
+  aceitou 80 por tabela.
+- **`extractHostCandidates`** varre `curl`/`wget`/`ping`/`nc`/`ssh`/`nslookup`/etc.
+  com regex e devolve `{host, port}[]`. Cobre o uso real, não tenta
+  ser exaustivo (defesa em profundidade).
+- **`guardNetworkEgress`** itera os hosts extraídos e bloqueia o
+  comando se ALGUM não casa. `pipe`-chains (`curl A | curl B`) são
+  cobertos: se B não está na allowlist, A também não roda.
+- **`guardCommand`** chama `guardNetworkEgress` quando recebe
+  `networkAllowlist` no context — integração direta com `runTool`'s
+  `bash` e `run_python`. Com rede desligada (`networkEnabled=false`),
+  a allowlist fica vazia e o gate não dispara (sem custo extra).
+
+**Limite honesto:** a análise é textual. O modelo que monta o host via
+variável, ofusca com `${HOST}`, ou usa uma ferramenta própria escapa.
+A defesa em camadas continua: Docker network + `CapDrop: ALL` +
+`no-new-privileges`. Esta camada reduz a superfície e é o que aparece
+no log — é melhor que nada, mas não é "à prova de modelo".
+
+**Validação:**
+- `backend/src/execGuard.networkAllowlist.test.js`: 23/23 — parsing
+  (domínio/IP/CIDR/sufixo/porta), matching (case-insensitive, sufixo,
+  IP, CIDR, porta), extração (`curl` URL, `curl` IP+porta, `ping`,
+  `wget`, comando sem rede), fail-closed, IP proibido (metadados),
+  integração via `guardCommand`
+- `cd backend && npm run check`: 946/946 (79 pulados por Postgres)
+- `cd frontend && npm run check`: lint + 70 testes + build OK
+
+### F-15 — Coordenador durável de pipelines multimodelo (infraestrutura) (2026-08-04)
+
+O `runMultiModel` opera em estágios sequenciais (modo `pipeline`) ou em
+rodadas paralelas (`compare`/`council`/`debate`). Sem persistência, um
+kill-9 ou restart no meio de uma execução descartava o progresso dos
+estágios anteriores — o usuário tinha de reenviar o pedido e refazer
+CADA chamada de modelo, pagando o custo em tokens e segundos novamente.
+
+A correção introduz a infraestrutura de coordenação durável:
+
+- **Migration 027**: tabela `pipeline_runs` com PK `pipeline_run_id`
+  (`pipe_<nanoid>`), índices em `(conversation_id, status)` e
+  `(user_id, status)`, e **UNIQUE INDEX parcial** em
+  `(conversation_id) WHERE status='running'` — defesa em profundidade
+  contra duas instâncias do backend inserirem a mesma linha em uma race.
+- **`agent/pipelineRuns.js`** exporta as primitivas:
+  - `createPipelineRun({ conversationId, userId, mode, totalStages, config, rounds })`
+    — insere a linha. Falha de DB NÃO derruba o fluxo: o run continua em
+    memória, só sem retomada.
+  - `updatePipelineRun(id, patch)` — atualiza `current_stage`,
+    `rounds_run`, `status`, `state_json` e/ou `completed_at` em uma
+    única chamada. Idempotente: o último estado gravado vale.
+  - `loadPipelineRun(conversationId, { includeTerminal })` — recupera
+    o run ativo (default) ou qualquer um (`includeTerminal: true`).
+  - `completePipelineRun(id, { status })` — fecha o ciclo.
+  - `sweepStalePipelineRuns({ olderThanMs })` — varre terminais antigos
+    (default: 90s de carência, mesma janela do liveStream).
+
+**Validação:**
+- `backend/src/agent.pipelineRuns.test.js`: 7/7 (todos pulam sem DB) —
+  cria run com id único, atualiza `currentStage` + state, `loadPipelineRun`
+  sem run ativo devolve null, `completePipelineRun` muda status e
+  seta `completedAt`, sweeper remove antigos mas preserva recentes,
+  patch vazio é no-op, `newPipelineRunId` gera 100 ids únicos
+- `cd backend && npm run check`: 923/923 (79 pulados por exigir Postgres)
+- `cd frontend && npm run check`: lint + 70 testes + build OK
+
+**O que ficou de fora (próxima frente):** integração no `runMultiModel`
+para chamar `createPipelineRun` na entrada, `updatePipelineRun`
+entre estágios, `completePipelineRun` na saída, e a rota `/resume`
+detectar `pipeline_runs` ativo e retomar do `currentStage`. Esta PR
+provê o substrato de banco + funções; a integração é mudança de
+comportamento que precisa de janela própria.
+
+### F-14 — Teste de retomada após interrupção real do processo (2026-08-04)
+
+O caminho kill-9 + boot + resume era coberto só indiretamente: as funções
+puras (`buildResumeMessages`, `trimCheckpointMessages`) tinham testes de
+unidade, e a rota `/resume` funcionava em produção, mas NADA provava que
+um checkpoint gravado por um processo A era recuperado intacto por um
+processo B. O `kill -9` no meio de um run era exatamente o cenário mais
+importante para validar — e o único sem cobertura.
+
+`backend/src/checkpoint.kill9.test.js` fecha essa lacuna:
+
+- **Detecção de DB** no topo do arquivo — sem `DATABASE_URL`, todos os
+  testes pulam com a mensagem padrão da suíte (`requer PostgreSQL
+  (DATABASE_URL)`). Em CI com Postgres, rodam de verdade.
+- **Cenário 1**: salva um checkpoint com array completo de mensagens
+  (system + user + assistant com tool_calls + tool + assistant com
+  tool_calls + tool), lê de volta, valida:
+  - `objective`, `runId`, `reason`, `step` íntegros
+  - `messages.length` preservada
+  - `buildResumeMessages` adiciona a nota de continuidade sem
+    duplicar trabalho
+  - pareamento `assistant.tool_calls ↔ tool.tool_call_id` mantido
+- **Cenário 2**: isolamento por `(user_id, conversation_id)` — uma
+  conversa de OUTRO usuário não vê o checkpoint (defesa contra
+  vazamento entre tenants).
+- **Mecanismo de "morte"**: o pool do `pg` já usa clientes ociosos
+  separados por query, então cada `loadCheckpoint` AGORA vem de uma
+  conexão NOVA — equivalente a um processo que acabou de subir e não
+  tem cache do cliente anterior. O banco é a fonte de verdade.
+
+A diferença prática: antes deste teste, uma regressão silenciosa em
+`saveCheckpoint` (ex.: serializar `tried_models` errado, ou cortar
+mensagens no meio de um pareamento) só aparecia em produção, na hora em
+que o usuário precisava retomar de verdade.
+
+**Validação:**
+- `cd backend && npm run check`: 915/915 (72 pulados por exigir Postgres —
+  era 70, +2 deste arquivo)
+- `cd frontend && npm run check`: lint + 70 testes + build OK
+
+### F-26 — Cota global de checkpoints por usuário (2026-08-04)
+
+A poda de checkpoints era por conversa — `pruneCheckpoints(checkpointsDir, keep)`
+mantém os `CHECKPOINT_KEEP=5` mais novos POR conversa. Com `CHECKPOINT_MAX_MB=300`
+e muitas conversas, um único usuário podia estourar o disco: 300 MB × 5 ×
+N conversas. `WORKSPACE_QUOTA_MB` só avisa — não bloqueia.
+
+A correção introduz **`pruneCheckpointsGlobal(userCheckpointsRoot, { maxBytes, skipDirName })`**
+que varre TODAS as conversas do usuário, soma os bytes e remove os mais
+antigos até o total ficar abaixo de `CHECKPOINT_GLOBAL_MAX_MB` (default
+**2 GB**; configurável por env).
+
+**Piso por conversa** (crítico): sem ele, a quota global poderia apagar
+o ÚNICO checkpoint da conversa A para liberar espaço para a conversa B
+— e a retomada de A deixaria de existir. O `shift()` da fila é pulado
+se for o último checkpoint daquela conversa. Testado.
+
+**`skipDirName`** (defesa em profundidade): `createCheckpoint` chama a
+poda global ANTES de retornar. Para evitar que o checkpoint recém-criado
+seja candidato à remoção na mesma passada (caso o usuário já esteja
+estourado), a função recebe o nome da conversa atual e a ignora.
+
+**Validação:**
+- `backend/src/agentEnv.checkpointsGlobal.test.js`: 6/6 — cota desligada,
+  abaixo da cota, acima da cota (remove do mais antigo), piso per-conversa,
+  `skipDirName`, soma global entre conversas
+- `cd backend && npm run check`: 913/913 (70 pulados por exigir Postgres)
+- `cd frontend && npm run check`: lint + 70 testes + build OK
+
+**O que ficou de fora (intencional):** contador `currentBytes` exposto no
+`/api/health`. A correção de disco já basta; o contador seria cosmético
+e adiciona uma varredura a cada healthcheck.
+
+### F-24 — Sub-agentes: orçamento próprio + catálogo persistido de tool calling (2026-08-04)
+
+Dois problemas coexistiam na delegação a sub-agentes:
+
+1. **Sem teto por delegação** — o filho herdava o orçamento cheio do pai e
+   podia queimar minutos de chave em uma subtarefa que era pra ser rápida.
+   Em paralelo, o tempo total era a SOMA dos filhos, sem limite global.
+
+2. **Catálogo de tool calling só em memória** — `markModelCapabilityUnsupported`
+   registra no `Map` que o modelo não suporta ferramentas, mas o `Map` se
+   perde no reinício. Resultado: um modelo que falhou ontem com "No
+   endpoints found that support tool use" volta HOJE como apto, recebe a
+   subtarefa, falha de novo, e o usuário paga o ciclo.
+
+**Correção:**
+
+- **Migration 026**: tabela `model_tool_capability_cache(provider_id, model,
+  supports_tools, last_attempt_at, last_error, attempts, updated_at)`. PK
+  composta por `(provider_id, model)`. Índice em `(supports_tools,
+  last_attempt_at)` para a consulta "o que ainda está marcado como ruim".
+- **`markModelCapabilityUnsupported(id, 'tools', { providerId, errorMessage })`**
+  grava também no DB. Falha de DB não derruba (a cache em memória já basta
+  para a sessão atual; a persistência é otimização para o próximo boot).
+- **`loadModelToolCapabilityCache()`** roda uma vez no boot, repopula a
+  cache em memória com os `(provedor, modelo)` já conhecidos como ruins.
+- **`modelLacksToolsInCache(providerId, model)`** consulta rápida para
+  quem for decidir se oferece a ferramenta de delegação ao modelo.
+- **`clearModelToolCapabilityCache(providerId, model)`** para o operador
+  forçar uma re-tentativa quando o provedor publica endpoints novos.
+
+Para o orçamento:
+
+- **`SUBAGENT_DEFAULTS`** centraliza defaults (12 etapas / 18 hard / 30k
+  tokens / 8min total). Overrides por env: `SUBAGENT_BUDGET_STEPS`,
+  `SUBAGENT_BUDGET_TOKENS`, `SUBAGENT_BUDGET_TOTAL_MS`, `SUBAGENT_BUDGET_HARD_STEPS`.
+- **`buildSubagentBudget({ now, deadlineMs, totalMs })`** constrói o
+  objeto `{ maxSteps, hardMaxSteps, maxTokens, deadlineMs }`. Quando o pai
+  passa `deadlineMs`, todas as delegações paralelas compartilham o MESMO
+  relógio — sem isto, duas paralelas dariam o dobro do tempo total.
+- **`runAgent({ subagentRunBudget })`** aplica os tetos (cap nos tetos do
+  pai) e checa o `deadlineMs` + `usage.total_tokens` a cada iteração do
+  loop. Estouro gera `incomplete=true` + `checkpointReason='deadline'`
+  ou `'token_budget'` + `failureMessage` em português.
+- **Compartilhamento no pai**: `runBudget = buildSubagentBudget({ now: Date.now() })`
+  é criado UMA vez por turno e passado para TODAS as chamadas
+  `runSubagent(...)` — garantindo que paralelas param juntas.
+
+**Validação:**
+- `backend/src/subagents.budget.test.js`: 5/5 — defaults, deadline
+  calculado, deadline explícito compartilhado, defaults finitos,
+  totalMs acima do timeout duro do stream
+- `cd backend && npm run check`: 907/907 (70 pulados por exigir Postgres)
+- `cd frontend && npm run check`: lint + 70 testes + build OK
+
+**O que ficou de fora (intencional):** UI para o usuário ver/limpar a
+lista de `(provedor, modelo)` rejeitados. A correção de infra está
+completa — a tela seria puro cosmético e aumenta superfície.
+
+### F-11 — Quarentena de uploads aceitos com antivírus degradado (2026-08-04)
+
+Quando o ClamAV está fora do ar (modo fail-open), os uploads eram aceitos
+em `uploads/` com o selo "não verificado" — o que era o pior dos dois
+mundos: o usuário conseguia ENVIAR o arquivo para o agente, que ia usá-lo
+como contexto. Se o clamd estivesse caído por causa de um incidente de
+segurança, isso virava distribuição de malware via Studio.
+
+A correção introduz uma pasta `uploads/.quarantine/` e uma tabela
+`quarantined_uploads` que acompanha cada arquivo aceito em modo
+degradado. O fluxo:
+
+1. **Na entrada** (`scanUploadBatch`): se `status === 'degradado'`, o
+   arquivo é gravado em `uploads/.quarantine/` em vez de `uploads/` e
+   uma linha é inserida com `status='pending'`. O `kickProcessing` do
+   Docling NÃO roda — o conteúdo ainda não é confiável.
+
+2. **Na recuperação** (mesmo `scanUploadBatch`, quando o clamd volta):
+   o `reprocessQuarantine()` é chamado como efeito colateral do scan
+   bem-sucedido. Limite de 10 itens por chamada (o resto fica para a
+   próxima). Cada item é re-escaneado e tem três destinos:
+   - `clean` → movido para `uploads/<name>` (caminho em `files`
+     atualizado), `status='cleared'`. O Docling pode rodar agora.
+   - `infected` → arquivo apagado, `status='infected'`, `virus_name`
+     registrado para auditoria.
+   - erro de infra → `status='stale'`, `attempts++`, `last_error`
+     guardado. Próxima chamada tenta de novo.
+
+3. **Tabela** com índices em `(status, quarantined_at)` e `user_id` —
+   a consulta quente é "o que está pronto para nova tentativa",
+   ordenada pela idade (FIFO). O `claimQuarantineItem` é o lock
+   pessimista que evita dois reprocessamentos simultâneos no mesmo
+   arquivo (anti-dupla-execução).
+
+4. **Métricas** (`scanHealth.quarentenaTotal/Limpos/Infectados`) expostas
+   no `/api/health`, junto com a política vigente — o operador vê se
+   tem arquivo parado em quarentena sem precisar fuçar o banco.
+
+**Defesa contra path traversal no nome do arquivo** (F-11 aproveita
+o mesmo saneamento do F-25): caracteres fora de `[a-zA-Z0-9._ -]` viram
+`_`, e o `..` literal vira parte do nome, não referência de diretório
+— porque o `/` separador foi removido.
+
+**Validação:**
+- `backend/src/clamav.quarantine.test.js`: 4/4 — `quarantineDirFor`,
+  `quarantineUploadedFile` move e devolve path relativo, cria
+  `.quarantine` se não existir, saneia nome (path traversal fechado)
+- `cd backend && npm run check`: 901/901 (70 pulados por exigir Postgres)
+- `cd frontend && npm run check`: lint + 70 testes + build OK
+- Os 10 testes do `clamav.test.js` continuam passando — o
+  `reprocessQuarantine` é tolerante a DB indisponível (try/catch
+  silencioso, retorna `skipped`) e o mock do clamd funciona normalmente
+
+### F-25 — Sub-agentes: outputs isolados por delegação e rótulo correto (2026-08-04)
+
+O conjunto de arquivos que o pai entregava ao usuário sempre foi certo
+(o diff `outputsAfter` × `outputsBefore` filtra só os NOVOS), mas dois
+problemas coexistiam:
+
+1. **Colisão**: dois sub-agentes em paralelo que escolhessem o mesmo nome
+   (`relatorio.xlsx`) sobrescreviam um ao outro na raiz `outputs/`.
+2. **Atribuição**: o rótulo por sub-agente não era confiável — o pai
+   emitia `files` sem dizer quem produziu o quê.
+
+A correção isola cada delegação numa subpasta de outputs e propaga o
+rótulo até o cartão de arquivo:
+
+- **`runAgent({ outputsSubdir })`** — novo parâmetro. Quando presente,
+  `generateImage` grava em `outputs/<subdir>/...` em vez de `outputs/`.
+  O id da delegação (`tool_call.id`) é usado como subdir: é determinístico
+  e único por chamada.
+- **`buildSubagentTask`** injeta a subpasta na instrução do sub-agente,
+  para que `write_file`, `bash` e `run_python` sigam o mesmo isolamento
+  (as ferramentas leves lêem o caminho do tool call e o agente obedece).
+- **`resolveOutputsTarget`** — função pura extraída para testes. Faz o
+  saneamento do subdir (mantém só `[a-zA-Z0-9._-]`, troca `/` por `_`),
+  fechando a porta para path traversal via id malicioso.
+- **`subagentProducers`** (mapa no loop) registra `{ delegationId ->
+  label, prefix }`. O label começa como `sub-agente` e é atualizado com
+  o nome real do especialista quando o `delegation.result` é parseado
+  (campo `especialista` retornado por `summarizeSubagentResult`).
+- **Atribuição no `files`** — cada cartão recebe `producer = <label>` se
+  o `path` começa com `outputs/<delegationId>/`. Arquivos do próprio
+  agente principal ficam sem `producer` (mantém o comportamento atual).
+
+**Validação:**
+- `backend/src/tools.outputsSubdir.test.js`: 5/5 — root, com subdir,
+  saneamento contra path traversal, vazio cai na raiz, número/string
+- `cd backend && npm run check`: 896/896 (70 pulados por exigir Postgres)
+- `cd frontend && npm run check`: lint + 70 testes + build OK
+
+### F-12 — SSE: reconexão com cursor (fromSeq + runId) sem duplicar (2026-08-04)
+
+A rota `GET /conversations/:id/stream` aceitava `fromSeq` desde o PR #146,
+mas o frontend nunca enviava — toda reconexão pedia o replay inteiro, e o
+front "remontava do zero" (limpava o balão e aplicava o replay). Resultado:
+flicker visível em cada oscilação de rede e re-renderização de centenas de
+blocos à toa.
+
+A correção tem três peças coordenadas:
+
+1. **Carimbo de runId** — `openLiveStream(convId, runId)` agora recebe o
+   runId; cada `rec` no buffer carrega o carimbo. O runId é gerado em
+   `conversations.js` (e em `checkpoint.runId` na retomada) e passado ao
+   `runAgent` via `runIdOverride`. Sem esta propagação, não há como
+   distinguir "ainda é o mesmo run" de "um run novo começou".
+
+2. **Filtro no subscribe** — `subscribe(fn, { fromSeq, runId })` filtra
+   TANTO o replay quanto novos eventos. O `runId` é estrito: se o cliente
+   pediu um runId que não bate com o buffer atual, recebe vazio (o front
+   decide resetar). Fallback silencioso para "replay do começo" mascararia
+   a colisão "seq antigo vs seq novo" e produziria texto aparentemente
+   correto mas com buraco no início.
+
+3. **Cursor no front** — `liveCursorRef[convId]` guarda o último
+   `(_runId, _seq)` recebido. `reconnectLiveRun` passa-os na URL
+   `?runId=...&fromSeq=...`. O balão SÓ é zerado se o cursor veio vazio
+   (cliente sem referência anterior — primeira reconexão após reload).
+
+**Por que `runId` é obrigatório em vez de só `fromSeq`:** um POST /chat
+entre a desconexão e a reconexão cria um run novo com seq reiniciado em 1.
+Sem o filtro de runId, o cliente mandaria `fromSeq=K` (do run antigo) e
+pularia os primeiros K eventos do novo — texto faltando na remontagem.
+
+**Validação:**
+- `backend/src/liveStream.test.js`: 10 testes (4 novos) — fromSeq, runId,
+  runId estrito, replay após novo run, filtro em eventos pós-subscribe
+- `e2e/tests/reconexao.spec.js`: a rota `/stream` aceita os novos params
+  sem quebrar; o caminho legado (sem cursor) continua respondendo
+- `cd backend && npm run check`: 891/891 (70 pulados por exigir Postgres)
+- `cd frontend && npm run check`: lint + 70 testes + build OK
+
+A cobertura do caminho front→back dentro da MESMA aba (sem reload) ficou
+nos testes unitários do `liveStream` — o `useChat` não expõe um ponto
+estável para forçar uma reconexão SSE sem reload, e o caminho
+cross-page (reload) já era coberto por `multiconversa.spec.js`.
+
+### F-13 — Provedor falso com tool_calls e stall (2026-08-04)
+
+O provedor simulado (`e2e/fixtures/provedorFalso.mjs`) agora cobre os dois
+caminhos que faltavam para o laço do agente:
+
+- **`ferramentas`** — emite uma `tool_call` (`bash echo ok-e2e-tool`) na 1ª
+  rodada, com `finish_reason: 'tool_calls'`. Quando o backend reenvia com o
+  `tool_result` na conversa, o provedor devolve texto e fecha com `stop`. Os
+  deltas seguem o formato OpenAI: `tool_calls` vem em duas etapas (id + nome,
+  depois argumentos), com `index` para o backend mesclar.
+- **`travado`** — abre o stream, envia apenas o delta inicial (`role`) e
+  fica em silêncio. Forçar o socket vivo sem fechar é o cenário que o
+  `guardStreamStall` foi feito para detectar (proxy engolindo resposta,
+  upstream congelado, rede móvel trocando de antena) — fechar o socket seria
+  outro caminho de erro, e ambos precisam de cobertura.
+
+**Por que dois caminhos de teste e não só o E2E completo:** o laço do agente
+em volta do stall envolve o backend inteiro (provider → OpenAI SDK → loop →
+recuperação → aviso ao usuário). O E2E cobre isso ponta a ponta, mas exige
+Postgres, build de produção e Playwright. Para a guarda barata — sem rede,
+sem banco, em milissegundos — há `e2e/verificar-provedor-falso.mjs`, rodado
+via `npm run verificar:provedor-falso`. Ele valida os três comportamentos
+(ferramentas 1ª chamada, ferramentas 2ª chamada, travado) sem subir nada
+além do próprio provedor.
+
+**Ajuste no `playwright.config.js`:** o backend de E2E agora sobe com
+`STREAM_STALL_TIMEOUT_MS=2000` e `MODEL_STREAM_RECOVERY_LIMIT=1` — sem isto
+o teste de stall esperaria 180s pelo watchdog e 3 ciclos de recuperação
+antes do aviso.
 
 ---
 
 ## Próximos passos (em ordem)
 
-1. **Modelo do assistente sem provedor** (causa raiz do 401 do PR #140, ainda aberta).
-   `getUserProvider` cai em `rows[0]` — o provedor mais ANTIGO — quando o id do modelo
-   não tem prefixo `<provedor>::` e não aparece em catálogo nenhum. O assistente deve
-   guardar um `modelRef` completo. Envolve: unificar os dois defaults incoerentes
+1. **Modelo do assistente sem provedor** (causa raiz do 401 do PR #140). A frente da
+   **geração de imagem** tratou o sintoma no caminho dela — `getUserProvider` não morre
+   mais numa linha órfã e a imagem escolhe a chave por capacidade — mas a raiz continua:
+   o assistente não guarda um `modelRef` completo, então um id sem prefixo
+   `<provedor>::` ainda cai no `rows[0]`. Envolve: unificar os dois defaults incoerentes
    (`deepseek/deepseek-chat` em `seed.js` e `routes/assistants.js`; `deepseek-chat` em
    `schedules`, `inbox`, `conversations` e `helpers`), migrar os assistentes já gravados
    e decidir o que fazer quando o modelo não for atribuível — hoje o chute é silencioso.
-2. **F-12/F-13, o que sobrou** — reconexão do `/stream` com `fromSeq` sem duplicar
-   eventos, e tool calls/timeout no provedor falso (`e2e/fixtures/provedorFalso.mjs`,
-   onde o resto já está pronto).
-3. **F-14** — retomada após `kill -9` no meio de um run, com checkpoint real.
-4. **F-15** — tabela `pipeline_runs` (`pipeline_run_id`, `current_stage`,
-   `completed_stages`, `pending_stages`, `artifact_versions`, `status`, `checkpoint`,
-   `updated_at`) e retomada no boot.
-5. **F-21** — extrair de `App.jsx`, por etapas: shell → estado da conversa → estado da
-   execução → drawers/configurações. `React.lazy` nos painéis pesados.
-6. **Modo Design, o que sobrou (opcional, sem risco aberto)** — edição inline e
+2. **F-15, a integração que falta.** O coordenador durável de pipelines entrou como
+   **infraestrutura**: a tabela `pipeline_runs` e as primitivas de save/load/complete
+   estão provadas, mas `runMultiModel` ainda não atualiza o `currentStage` entre
+   estágios nem retoma no boot. Sem isso, o risco que o F-15 descreve segue de pé na
+   prática — só que agora com o banco pronto para recebê-lo.
+3. **F-21, o que sobrou.** O `React.lazy` nos painéis pesados está feito (o chunk
+   principal caiu para ~920 KB, abaixo do teto de 1.000 KB do CI), mas o `App.jsx`
+   continua com dezenas de `useState`. Extrair por etapas: shell → estado da conversa →
+   estado da execução → drawers/configurações. Repare que o `MultiModelBoard` é
+   importado de forma dinâmica pelo `App.jsx` e **estática** pelo `Landing.jsx` e pelo
+   `MultiModelPicker.jsx` — enquanto isso valer, ele não sai do chunk principal (o build
+   avisa: `INEFFECTIVE_DYNAMIC_IMPORT`).
+4. **Modo Design, o que sobrou (opcional, sem risco aberto)** — edição inline e
    controles de ajuste estão **feitos**; falta imagens no artefato (a geração de
    imagens já existe no app) e a tela de compartilhamento público sobre o token
    de prévia que já existe.
-7. **F-24/F-25 (sub-agentes, o que sobrou dos P1/P2)** — orçamento por delegação
-   (`SUBAGENT_TIMEOUT_MS`, `MAX_STEPS`, `MAX_TOKENS`, deadline compartilhado); diretório
-   `outputs/<delegationId>/` com manifesto por filho; catálogo persistido de capacidade de
-   tool calling por `provedor+modelo+endpoint` (hoje `markModelCapabilityUnsupported` só
-   vive em memória e se perde no reinício); controle "Usar sub-agentes: automático /
-   desligado / obrigatório" e motivo de indisponibilidade na interface.
+5. **Sub-agentes, o que sobrou dos P1/P2.** Orçamento por delegação, `outputs/` isolado
+   e catálogo persistido de tool calling entraram (F-24/F-25). Falta o controle na
+   interface — "Usar sub-agentes: automático / desligado / obrigatório" — e o motivo de
+   indisponibilidade aparecendo para o usuário.
 
 ---
 
