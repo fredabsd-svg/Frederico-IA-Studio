@@ -576,7 +576,6 @@ Novo job `e2e` no CI, com Postgres real e Chromium. Ver `e2e/README.md`.
 
 | ID | Risco | Severidade |
 | --- | --- | --- |
-| F-16, F-18, F-19, F-23 | Relevância de memória (casos negativos), corpus Docling, git local, validação de artefato real. | 🟡 Média |
 | F-21 | `App.jsx` com 62 `useState`; bundle num único chunk (teto de 1.000 KB no CI); CSS em camadas sem inventário. | 🟡 Média |
 
 ## Riscos fechados nesta sessão
