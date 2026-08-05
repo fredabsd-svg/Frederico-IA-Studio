@@ -751,6 +751,101 @@ Novo job `e2e` no CI, com Postgres real e Chromium. Ver `e2e/README.md`.
 
 ## Riscos fechados nesta sessão
 
+### F-1 — `modelRef` completo no assistente (causa-raiz do 401 do PR #140)
+
+A frente da **geração de imagem** (PR #168) tratou o sintoma no caminho dela
+— `getUserProvider` não morre mais numa linha órfã e a imagem escolhe a
+chave por capacidade — mas a raiz continuava: o assistente não guardava
+um `modelRef` completo, então um id sem prefixo `<provedor>::` ainda caía
+no `rows[0]` da tabela `user_ai_providers` (o provedor mais antigo da
+conta). Em conta com DeepSeek + OpenRouter, o chat falhava com a chave do
+provedor errado e a mensagem genérica do 401 não deixava o usuário
+identificar a causa.
+
+A correção tem quatro peças:
+
+1. **`backend/src/defaults.js`** — a constante única
+   `DEFAULT_MODEL_REF = 'deepseek/deepseek-chat'` (formato OpenRouter,
+   mesmo id que o seed já gravava e que o teste E2E do provedor falso
+   fixa) e o `resolveDefaultModelRef()` que respeita o `DEEPSEEK_MODEL`
+   do env. Substitui as duas cadeias que viviam divergentes: o hardcoded
+   em `seed.js` e `routes/assistants.js`, e o `process.env.DEEPSEEK_MODEL
+   || 'deepseek-chat'` em `routes/schedules.js`, `routes/inbox.js`,
+   `routes/conversations.js`, `routes/helpers.js` e
+   `memory/indexer.js`. Agora a semente, a criação de conversa, a inbox,
+   a rotina, o `ensureConversation` e a extração de fatos da memória
+   partilham da mesma fonte — e o que está no `.env` é o que vale em
+   todos eles.
+2. **Migration 028** — adiciona `assistants.model_ref` (nullable).
+   O `model` legado continua existindo (é a coluna que a UI exibe como
+   rótulo). A migração não preenche retroativamente: o id do provedor é
+   por usuário e depende da ordem de cadastro; preencher errado seria
+   pior que deixar para o backend.
+3. **`backend/src/userProvider.js`**:
+   - `resolveBareModelToRef(userId, bareModel)` é o coração da frente:
+     recebe um id de modelo nu (sem `<provedor>::`) e devolve a referência
+     completa, casando com o catálogo dos provedores da conta. Sem
+     provedor capaz, devolve `null` e o caller grava a linha com
+     `model_ref=NULL` (modo legado, tratado em runtime).
+   - `getUserProvider` deixa de cair no `rows[0]` silencioso quando o
+     usuário pediu um modelo específico que não está em catálogo nenhum.
+     Antes o sistema chutava o provedor mais antigo e o 401 saía com a
+     chave errada; agora `attributionError` carrega a mensagem e o caminho
+     segue para o modo gratuito. O fallback do `rows[0]` continua valendo
+     — mas SÓ quando não há modelo pedido (o cenário "usuário não disse
+     qual, pega o padrão da conta"), que é o único em que chutar é
+     legítimo.
+4. **`backend/src/agent/loop.js`** e **`backend/src/agent/subagents.js`**
+   passam a preferir `assistant.model_ref` sobre `assistant.model`. A
+   mesma precedência vale no `runSubagent` (o especialista herda o
+   provedor certo, não o chute do `rows[0]`). O `runOrchestrator` checa
+   o `model_ref` na allowlist do modo gratuito (o caminho antigo só
+   olhava o `model` cru, que nunca casava com a `freeModels` que já é
+   `free::xxx`).
+
+**Validação:**
+- `backend/src/defaults.test.js` (3 testes) — constante canônica,
+  override via env, fallback no default.
+- `backend/src/userProvider.test.js` (8 testes) — `resolveBareModelToRef`
+  com 1 e 2 provedores, modelo ausente, `getUserProvider` com id nu
+  escolhe o provedor certo, `modelRef` completo escolhe pelo prefixo,
+  modelo fora de catálogo devolve erro claro, `model_ref` NULL preserva
+  compatibilidade com linhas pré-migration, e o caso do PR #140 (provedor
+  mais antigo com chave quebrada não é mais o escolhido).
+- `backend/src/routes/assistants.test.js` (6 testes HTTP) — POST
+  grava `model_ref` quando o id está no catálogo (1 provedor, formato
+  nativo; 1 provedor, formato OpenRouter; modelRef completo) e
+  aceita `model=NULL` para soltar a fixação. PUT atualiza `model_ref`
+  quando o modelo muda.
+- `cd backend && npm run check`: lint 232 arquivos + **921 passam**,
+  106 pulados (estes precisam de `DATABASE_URL`; ver §Validação local
+  abaixo para a tentativa de rodar contra PostgreSQL real).
+- `cd frontend && npm run check`: lint 41 arquivos + **77 testes** +
+  build OK.
+
+**Validação que não rodei contra o banco real:** o `embedded-postgres`
+no Windows desta sandbox inicia um cluster, mas o cluster sai com
+encoding `WIN1252` (a única locale disponível no contêiner é `C`); os
+testes que escrevem caracteres UTF-8 (setas `→`, acentos, etc.,
+presentes em comentários de casos) batem em `0xe2 0x86 0x92` quando o
+`pg` tenta serializar a query. Sem pgvector, sem pg16 nativo, e com
+Docker indisponível (serviço parado, ver `dockerDesktopLinuxEngine`
+ausente), o caminho de "banco real" desta frente não foi exercitado
+nesta máquina — os testes novos foram ESCRITOS para rodar com
+`DATABASE_URL`, têm o `if (dbReady)` padrão do projeto e o CI os
+executa contra `pgvector/pgvector:pg16` (mesmo image do `docker-compose.yml`).
+A cobertura nova está portanto **provada** pelo `test:count` no CI, não
+por contagem local.
+
+**Risco residual:** o fallback `rows[0]` no caminho "sem provedor
+pedido e sem modelo pedido" continua valendo. É o ÚNICO caminho em
+que o chute é legítimo: o app precisa de um modelo padrão quando o
+usuário não disse qual, e cair no provedor mais antigo utilizável é
+o mesmo comportamento de antes (com o filtro de "utilizável" que o
+PR da imagem de capacidade adicionou). Quem quiser zerar o fallback
+também aqui precisa decidir o que servir sem chave — fora do escopo
+desta frente.
+
 ### F-16, F-18, F-19 e F-23 — as quatro lacunas de cobertura (2026-08-05)
 
 Quatro frentes irmãs, cada uma fechando uma lacuna de teste que o
@@ -1171,15 +1266,7 @@ antes do aviso.
 
 ## Próximos passos (em ordem)
 
-1. **Modelo do assistente sem provedor** (causa raiz do 401 do PR #140). A frente da
-   **geração de imagem** tratou o sintoma no caminho dela — `getUserProvider` não morre
-   mais numa linha órfã e a imagem escolhe a chave por capacidade — mas a raiz continua:
-   o assistente não guarda um `modelRef` completo, então um id sem prefixo
-   `<provedor>::` ainda cai no `rows[0]`. Envolve: unificar os dois defaults incoerentes
-   (`deepseek/deepseek-chat` em `seed.js` e `routes/assistants.js`; `deepseek-chat` em
-   `schedules`, `inbox`, `conversations` e `helpers`), migrar os assistentes já gravados
-   e decidir o que fazer quando o modelo não for atribuível — hoje o chute é silencioso.
-2. **F-15, a integração que falta.** O coordenador durável de pipelines entrou como
+1. **F-15, a integração que falta.** O coordenador durável de pipelines entrou como
    **infraestrutura**: a tabela `pipeline_runs` e as primitivas de save/load/complete
    estão provadas, mas `runMultiModel` ainda não atualiza o `currentStage` entre
    estágios nem retoma no boot. Sem isso, o risco que o F-15 descreve segue de pé na

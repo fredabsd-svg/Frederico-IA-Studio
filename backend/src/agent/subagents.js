@@ -212,10 +212,19 @@ export async function listSubagentSpecialists(userId) {
   try {
     // O teto entra literal (é constante de código, não entrada do usuário): um
     // `LIMIT ?` deixaria o Postgres inferir o tipo de um parâmetro sem contexto.
-    const rows = await db.prepare(`SELECT id, name, model FROM assistants WHERE user_id=? ORDER BY created_at ASC LIMIT ${MAX_SPECIALISTS_OFFERED}`)
+    const rows = await db.prepare(`SELECT id, name, model, model_ref FROM assistants WHERE user_id=? ORDER BY created_at ASC LIMIT ${MAX_SPECIALISTS_OFFERED}`)
       .all(userId);
     return (rows || [])
-      .map(row => ({ id: String(row.id || ''), name: String(row.name || '').trim(), model: row.model || null }))
+      .map(row => ({
+        id: String(row.id || ''),
+        name: String(row.name || '').trim(),
+        model: row.model || null,
+        // `model_ref` é a forma completa `<provedor>::<modelo>`; o `model` cru
+        // continua sendo devolvido para a UI exibir o rótulo amigável. A
+        // resolução em tempo de execução prefere `model_ref` quando existe
+        // (causa-raiz F-1).
+        modelRef: row.model_ref || null
+      }))
       .filter(row => row.id && row.name);
   } catch (err) {
     console.error('[subagente] inventário de especialistas indisponível:', err.message);
@@ -440,7 +449,10 @@ export async function runSubagent({
     }
   }
   const label = assistant?.name || 'sub-agente';
-  const modelo = assistant?.model || model || null;
+  // `assistant.model_ref` tem prioridade sobre `model` cru (causa-raiz F-1): o
+  // especialista herda o provedor certo e o `getUserProvider` não cai no `rows[0]`
+  // se o modelo sumir do catálogo.
+  const modelo = assistant?.model_ref || assistant?.model || model || null;
   const runAgent = runner || await loadRunAgent();
 
   onEvent({ type: 'status', content: `Delegando para ${label}...` });

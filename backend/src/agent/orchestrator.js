@@ -37,8 +37,12 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
     if (!allowed.includes(coordModel)) coordModel = provider.modelRef;
     // Assistentes/executor com modelo próprio fora da allowlist herdam o
     // coordenador (member.model || coordModel) em vez de gastar modelo pago.
-    assistants = assistants.map(a => allowed.includes(a.model) ? a : { ...a, model: null });
-    if (executor && !allowed.includes(executor.model)) executor = { ...executor, model: null };
+    // Conferimos TANTO o `model_ref` (novo, completo) quanto o `model` cru
+    // (legado): sem isto, a referência nova nunca casaria com os items da
+    // allowlist que são modelRefs (`free::xxx`).
+    const inAllowlist = (a) => a && (allowed.includes(a.model_ref) || allowed.includes(a.model));
+    assistants = assistants.map(a => inAllowlist(a) ? a : { ...a, model: null });
+    if (executor && !inAllowlist(executor)) executor = { ...executor, model: null };
   }
   if (!provider.hasKey) {
     const finalText = 'Nenhuma chave de API configurada. Vá em **Configurações → Provedor de IA** e cadastre a sua chave para usar o Modo Equipe.';

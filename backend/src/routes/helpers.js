@@ -11,6 +11,7 @@ import {
   upload, UPLOAD_LIMITS, cleanupRequestUploads, totalUploadBytes,
   rejectOversizedRequest, acquireUploadSlot, directorySize, quotaVerdict
 } from '../uploads.js';
+import { resolveDefaultModelRef } from '../defaults.js';
 
 // Router com o mesmo "shim" async do app: com as rotas assíncronas (Postgres),
 // uma rejeição de Promise num handler NÃO é encaminhada ao middleware de erro
@@ -227,7 +228,7 @@ export async function ensureConversation(userId, id, model) {
   if (await db.prepare('SELECT 1 FROM conversations WHERE id=?').get(id)) return null;
   const t = now();
   await db.prepare('INSERT INTO conversations (id,user_id,title,model,created_at,updated_at) VALUES (?,?,?,?,?,?)')
-    .run(id, userId, 'Nova conversa', model || process.env.DEEPSEEK_MODEL || 'deepseek-chat', t, t);
+    .run(id, userId, 'Nova conversa', model || resolveDefaultModelRef(), t, t);
   workspaceFor(id, userId);
   return db.prepare('SELECT * FROM conversations WHERE id=? AND user_id=?').get(id, userId);
 }

@@ -77,7 +77,16 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   // permissão é derivado do `userText` — que, aqui, é texto escrito pelo modelo
   // principal, não pelo usuário.
   const inherited = isSubagent && delegation ? delegation : null;
-  const requestedModel = resume?.model || model || assistant?.model || '';
+  // `assistant.model_ref` (forma completa `<provedor>::<modelo>`) tem prioridade
+  // sobre `assistant.model` (id cru, legado): resolve sem ambiguidade e impede
+  // o `getUserProvider` de cair no `rows[0]` quando o modelo não bate com
+  // catálogo nenhum. Quando só o id cru existe (linhas anteriores à migration
+  // 028), o resolver tenta casar com o catálogo dos provedores cadastrados.
+  const requestedModel = resume?.model
+    || model
+    || assistant?.model_ref
+    || assistant?.model
+    || '';
   const provider = await getUserProvider(userId, requestedModel); // chave dona do modelo
   const client = provider.client;                          // sombreia o cliente global
   // runIdOverride: a rota pode impor um id (compartilhado com o live stream) para

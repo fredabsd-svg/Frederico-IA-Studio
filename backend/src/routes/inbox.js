@@ -7,6 +7,7 @@ import { db, now } from '../db.js';
 import { workspaceFor } from '../sandbox.js';
 import { makeRouter, upload, scanOrReject, decodeUploadName, beginUpload, enforceUploadLimits, cleanupRequestUploads } from './helpers.js';
 import { commitUploadedFile } from '../uploads.js';
+import { resolveDefaultModelRef } from '../defaults.js';
 
 const router = makeRouter();
 
@@ -73,7 +74,7 @@ router.post('/inbox/:client/to-conversation', async (req, res) => {
   const t = now();
   const clientId = req.params.client === 'geral' ? null : req.params.client;
   await db.prepare('INSERT INTO conversations (id,user_id,title,model,client_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?)')
-    .run(convId, req.userId, `Documentos recebidos — ${t.slice(0, 10)}`, process.env.DEEPSEEK_MODEL || 'deepseek-chat', clientId, t, t);
+    .run(convId, req.userId, `Documentos recebidos — ${t.slice(0, 10)}`, resolveDefaultModelRef(), clientId, t, t);
   const ws = workspaceFor(convId, req.userId);
   for (const n of files) {
     // Prefixo de comprimento fixo (nanoid(6)) — a versão antiga com `+_` guloso

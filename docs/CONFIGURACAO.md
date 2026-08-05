@@ -72,9 +72,18 @@ ativar o modo gratuito num site público, reflita isso na sua Política de Priva
 
 | Variável | Padrão | Finalidade |
 |---|---|---|
+| `DEEPSEEK_MODEL` | `deepseek/deepseek-chat` | Id do modelo padrão. É a única constante canônica do app (`backend/src/defaults.js`): seed, criação de conversa, rotinas, caixa de entrada e extração de memória usam o mesmo valor. Formato OpenRouter (com `/`); defina `DEEPSEEK_MODEL=deepseek-chat` se a sua chave for da API nativa. **Não pode ficar vazio em produção** |
 | `OPENROUTER_QUANTIZATIONS` | `fp8,fp16,bf16,fp32,unknown` | Precisões aceitas. O padrão exclui só a compressão agressiva (`int4/int8/fp4/fp6`), onde a qualidade cai. Use `bf16,fp16,fp32` para exigir precisão cheia, ou `off` para desligar o filtro |
 | `OPENROUTER_ALLOW_FALLBACKS` | ligado | Reroteia entre provedores da faixa permitida se o preferido cair. `0` trava no preferido (erro em vez de troca silenciosa) |
 | `MODEL_FALLBACKS` | — | Modelos de reserva (em ordem) para failover automático |
+
+**Resolução de modelo por provedor (`backend/src/userProvider.js`).** Cada
+chamada carrega a referência `<providerId>::<modelo>` (forma interna). O
+assistente guarda essa referência na coluna `assistants.model_ref`; quando
+ela está vazia (legado), o backend tenta casar o id nu com o catálogo dos
+provedores da conta. Se não achar, devolve erro claro em vez do chute
+silencioso no `rows[0]` — a causa-raiz do "401 do provedor errado" do PR #140
+(ver [CHANGELOG_HISTORY.md §PR #140](CHANGELOG_HISTORY.md)).
 
 ---
 
