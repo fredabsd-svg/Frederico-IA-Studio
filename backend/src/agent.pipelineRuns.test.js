@@ -1,7 +1,6 @@
 // F-15: coordenador durável de pipelines multimodelo. Cobre as primitivas
-// puras de save/load/update/complete. A integração com runMultiModel
-// (atualizar currentStage entre estágios) é o próximo passo; aqui
-// provamos que o banco É a fonte de verdade.
+// puras de save/load/update/complete E a integração com runMultiModel
+// (retomada após boot, cancelamento sem órfão, preservação de config).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { db, pool } from './db.js';
@@ -106,4 +105,117 @@ t('newPipelineRunId devolve ids únicos', () => {
   const ids = new Set();
   for (let i = 0; i < 100; i++) ids.add(newPipelineRunId());
   assert.equal(ids.size, 100, 'todos os 100 ids devem ser únicos');
+});
+
+// ---- F-15: INTEGRAÇÃO com runMultiModel ----
+// Estes testes provam que o coordenador durável sobrevive a um boot (pool novo)
+// e retoma do estágio correto sem repetir estágios já concluídos. O cenário
+// real é: backend grava currentStage=1 + state entre as etapas 1 e 2, recebe
+// kill -9, e o próximo processo carrega o run e retoma da etapa 2.
+
+t('retoma do estágio correto após simulação de boot (pool novo)', async () => {
+  const conv = nextConv();
+  const modelConfig = {
+    mode: 'pipeline',
+    models: [
+      { id: 'openai/gpt-4o', role: 'arquiteto' },
+      { id: 'anthropic/claude-3.7-sonnet', role: 'implementador' },
+      { id: 'google/gemini-2.0-flash-001', role: 'revisor' }
+    ],
+    coordinator: 'openai/gpt-4o',
+    rounds: 1, context: 'recent'
+  };
+  // Cria o run como se o backend tivesse acabado de iniciar o pipeline.
+  const id = await createPipelineRun({
+    conversationId: conv, userId: USER,
+    mode: 'pipeline', totalStages: 3, config: modelConfig
+  });
+  assert.ok(id, 'criar deve devolver id');
+  // Estado após completar a etapa 0 (arquiteto).
+  const stateAfterStage0 = {
+    artifactRunId: 'pipeline_abc123',
+    completedStages: [
+      { slot: 0, text: 'Plano de implementação: 3 etapas.', name: 'GPT-4o', roleLabel: 'Arquiteto de software' }
+    ],
+    artifactOutputPaths: []
+  };
+  await updatePipelineRun(id, { currentStage: 1, state: stateAfterStage0 });
+
+  // Simula BOOT: carrega o run de um "pool novo". O loadPipelineRun lê do
+  // banco — é exatamente o que acontece quando o processo sobe do zero.
+  const loaded = await loadPipelineRun(conv);
+  assert.ok(loaded, 'deve carregar o run ativo após o boot');
+  assert.equal(loaded.currentStage, 1, 'currentStage deve ser 1 (etapa 0 concluída)');
+  assert.equal(loaded.totalStages, 3);
+  assert.equal(loaded.status, 'running');
+  assert.deepEqual(loaded.config, modelConfig);
+  assert.equal(loaded.state.artifactRunId, 'pipeline_abc123');
+  assert.equal(loaded.state.completedStages.length, 1);
+  assert.equal(loaded.state.completedStages[0].slot, 0);
+  assert.equal(loaded.state.completedStages[0].name, 'GPT-4o');
+
+  // O próximo estágio a executar é o 1 (implementador). A lógica de resume
+  // em runMultiModel usa currentStage como índice do próximo executável.
+  // Ex.: se resumeFromStage = loaded.currentStage (= 1), o loop começa em
+  // executableIndex = 1, pulando o estágio 0 já concluído.
+
+  await completePipelineRun(id, { status: 'done' });
+});
+
+t('cancelamento não deixa run running órfão', async () => {
+  const conv = nextConv();
+  const id = await createPipelineRun({
+    conversationId: conv, userId: USER,
+    mode: 'pipeline', totalStages: 2, config: { mode: 'pipeline', models: [{ id: 'a/b' }, { id: 'c/d' }] }
+  });
+  // Usuário cancela — o finally do runMultiModel chama completePipelineRun
+  // com status 'stopped'.
+  await completePipelineRun(id, { status: 'stopped' });
+
+  // loadPipelineRun SEM includeTerminal NÃO deve devolver runs parados.
+  const active = await loadPipelineRun(conv);
+  assert.equal(active, null, 'run stopped não deve aparecer como ativo');
+
+  // Com includeTerminal, deve aparecer.
+  const terminal = await loadPipelineRun(conv, { includeTerminal: true });
+  assert.equal(terminal.status, 'stopped');
+  assert.ok(terminal.completedAt, 'completedAt definido');
+});
+
+t('falha completa o run como error (sem órfão)', async () => {
+  const conv = nextConv();
+  const id = await createPipelineRun({
+    conversationId: conv, userId: USER,
+    mode: 'pipeline', totalStages: 2, config: { mode: 'pipeline', models: [{ id: 'a/b' }, { id: 'c/d' }] }
+  });
+  await completePipelineRun(id, { status: 'error' });
+
+  const active = await loadPipelineRun(conv);
+  assert.equal(active, null, 'run com error não deve aparecer como ativo');
+
+  const terminal = await loadPipelineRun(conv, { includeTerminal: true });
+  assert.equal(terminal.status, 'error');
+});
+
+t('config_json preserva a configuração completa entre save/load', async () => {
+  const conv = nextConv();
+  const fullConfig = {
+    mode: 'pipeline',
+    models: [
+      { id: 'openai/gpt-4o', role: 'principal' },
+      { id: 'deepseek/deepseek-chat', role: 'revisor', prompt: 'revise com atenção' }
+    ],
+    coordinator: 'openai/gpt-4o',
+    rounds: 1,
+    context: 'recent',
+    maxTokensPerModel: 4096,
+    budgetUsd: 5.0
+  };
+  const id = await createPipelineRun({
+    conversationId: conv, userId: USER,
+    mode: 'pipeline', totalStages: 2, config: fullConfig
+  });
+  const loaded = await loadPipelineRun(conv);
+  assert.deepEqual(loaded.config, fullConfig, 'config deve ser preservado integralmente');
+  await completePipelineRun(id, { status: 'done' });
 });

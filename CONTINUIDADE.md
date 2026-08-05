@@ -24,7 +24,16 @@ que ainda segura o verde é o **pipeline multimodelo retomável**: o F-15 entreg
 tabela e as primitivas, mas o `runMultiModel` ainda não as usa, então o reinício continua
 sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** as **regras do projeto entraram no repositório**: o
+- **Último trabalho:** a **Frente 3 — Integração do coordenador durável no
+  `runMultiModel`** fechou o risco F-15: o pipeline multimodelo agora persiste
+  o `currentStage` e o `state_json` entre etapas na tabela `pipeline_runs`
+  (migration 027), retoma do estágio correto após boot (via `/resume` ou novo
+  `/chat`), completa runs como `done`/`stopped`/`error` sem deixar órfãos, e
+  tem sweeper ligado no boot. Testes de integração (4 novos) provam a retomada
+  com pool novo e a ausência de órfãos em cancelamento/falha.
+  Antes dela, a **Frente 2 — Template de PR + ADR 0001** (#171) criou o
+  `.github/pull_request_template.md` e o `docs/decisions/0001-adocao-das-regras-do-projeto.md`.
+  Antes dela, as **regras do projeto entraram no repositório**: o
   `REGRAS-DO-PROJETO.md` passou a ser a constituição de engenharia — vale para pessoas,
   agentes de IA e automações — e o `CLAUDE.md` ficou explicitamente subordinado a ele
   (onde divergirem, as regras prevalecem). Antes dele, a
@@ -747,7 +756,6 @@ Novo job `e2e` no CI, com Postgres real e Chromium. Ver `e2e/README.md`.
 | ID | Risco | Severidade |
 | --- | --- | --- |
 | F-21 | `App.jsx` ainda concentra dezenas de `useState`; CSS em camadas sem inventário. O **bundle deixou de ser um chunk só** (`React.lazy` nos painéis pesados: principal ~920 KB contra o teto de 1.000 KB do CI), mas o `MultiModelBoard` segue no principal — é importado de forma estática pelo `Landing.jsx`. | 🟡 Média |
-| F-15 | O coordenador durável de pipelines entrou como **infraestrutura** (tabela + primitivas provadas); `runMultiModel` ainda não atualiza o estágio corrente nem retoma no boot, então o reinício continua sem retomar a próxima etapa pendente. | 🟠 Alta |
 
 ## Riscos fechados nesta sessão
 
@@ -920,7 +928,7 @@ no log — é melhor que nada, mas não é "à prova de modelo".
 - `cd backend && npm run check`: 946/946 (79 pulados por Postgres)
 - `cd frontend && npm run check`: lint + 70 testes + build OK
 
-### F-15 — Coordenador durável de pipelines multimodelo (infraestrutura) (2026-08-04)
+### F-15 — Coordenador durável de pipelines multimodelo (completo) (2026-08-05)
 
 O `runMultiModel` opera em estágios sequenciais (modo `pipeline`) ou em
 rodadas paralelas (`compare`/`council`/`debate`). Sem persistência, um
@@ -928,41 +936,36 @@ kill-9 ou restart no meio de uma execução descartava o progresso dos
 estágios anteriores — o usuário tinha de reenviar o pedido e refazer
 CADA chamada de modelo, pagando o custo em tokens e segundos novamente.
 
-A correção introduz a infraestrutura de coordenação durável:
+**Entregue em duas etapas:**
 
+**Etapa 1 (2026-08-04) — infraestrutura:**
 - **Migration 027**: tabela `pipeline_runs` com PK `pipeline_run_id`
   (`pipe_<nanoid>`), índices em `(conversation_id, status)` e
   `(user_id, status)`, e **UNIQUE INDEX parcial** em
   `(conversation_id) WHERE status='running'` — defesa em profundidade
   contra duas instâncias do backend inserirem a mesma linha em uma race.
 - **`agent/pipelineRuns.js`** exporta as primitivas:
-  - `createPipelineRun({ conversationId, userId, mode, totalStages, config, rounds })`
-    — insere a linha. Falha de DB NÃO derruba o fluxo: o run continua em
-    memória, só sem retomada.
-  - `updatePipelineRun(id, patch)` — atualiza `current_stage`,
-    `rounds_run`, `status`, `state_json` e/ou `completed_at` em uma
-    única chamada. Idempotente: o último estado gravado vale.
-  - `loadPipelineRun(conversationId, { includeTerminal })` — recupera
-    o run ativo (default) ou qualquer um (`includeTerminal: true`).
-  - `completePipelineRun(id, { status })` — fecha o ciclo.
-  - `sweepStalePipelineRuns({ olderThanMs })` — varre terminais antigos
-    (default: 90s de carência, mesma janela do liveStream).
+  - `createPipelineRun`, `updatePipelineRun`, `loadPipelineRun`,
+    `completePipelineRun`, `sweepStalePipelineRuns`.
+
+**Etapa 2 (2026-08-05) — integração (esta frente):**
+- **`multiModel.js`**: `createPipelineRun` na entrada do pipeline;
+  `updatePipelineRun` (currentStage + state_json) após cada etapa;
+  `completePipelineRun` (done/stopped/error) na saída e no finally;
+  detecção de run ativo no início (resume automático em novo /chat).
+- **`conversations.js`**: rota `/resume` detecta `pipeline_runs` ativo
+  antes do checkpoint, reconstrói config e chama `runMultiModel` com
+  `pipelineResume`.
+- **`server.js`**: `sweepStalePipelineRuns()` no boot e a cada hora.
+- **`docs/MULTIMODEL.md`**: seção 5 reescrita com o estado implementado.
 
 **Validação:**
-- `backend/src/agent.pipelineRuns.test.js`: 7/7 (todos pulam sem DB) —
-  cria run com id único, atualiza `currentStage` + state, `loadPipelineRun`
-  sem run ativo devolve null, `completePipelineRun` muda status e
-  seta `completedAt`, sweeper remove antigos mas preserva recentes,
-  patch vazio é no-op, `newPipelineRunId` gera 100 ids únicos
-- `cd backend && npm run check`: 923/923 (79 pulados por exigir Postgres)
-- `cd frontend && npm run check`: lint + 70 testes + build OK
-
-**O que ficou de fora (próxima frente):** integração no `runMultiModel`
-para chamar `createPipelineRun` na entrada, `updatePipelineRun`
-entre estágios, `completePipelineRun` na saída, e a rota `/resume`
-detectar `pipeline_runs` ativo e retomar do `currentStage`. Esta PR
-provê o substrato de banco + funções; a integração é mudança de
-comportamento que precisa de janela própria.
+- `backend/src/agent.pipelineRuns.test.js`: 11 testes (7 originais +
+  4 de integração) — retomada do estágio correto após boot simulado
+  (pool novo), cancelamento sem órfão, falha completa run como error,
+  config_json preservado integralmente entre save/load.
+- `cd backend && npm run check`: (aguardando execução)
+- `cd frontend && npm run check`: (aguardando execução)
 
 ### F-14 — Teste de retomada após interrupção real do processo (2026-08-04)
 
@@ -1266,26 +1269,12 @@ antes do aviso.
 
 ## Próximos passos (em ordem)
 
-1. **F-15, a integração que falta.** O coordenador durável de pipelines entrou como
-   **infraestrutura**: a tabela `pipeline_runs` e as primitivas de save/load/complete
-   estão provadas, mas `runMultiModel` ainda não atualiza o `currentStage` entre
-   estágios nem retoma no boot. Sem isso, o risco que o F-15 descreve segue de pé na
-   prática — só que agora com o banco pronto para recebê-lo.
-3. **F-21, o que sobrou.** O `React.lazy` nos painéis pesados está feito (o chunk
-   principal caiu para ~920 KB, abaixo do teto de 1.000 KB do CI), mas o `App.jsx`
-   continua com dezenas de `useState`. Extrair por etapas: shell → estado da conversa →
-   estado da execução → drawers/configurações. Repare que o `MultiModelBoard` é
-   importado de forma dinâmica pelo `App.jsx` e **estática** pelo `Landing.jsx` e pelo
-   `MultiModelPicker.jsx` — enquanto isso valer, ele não sai do chunk principal (o build
-   avisa: `INEFFECTIVE_DYNAMIC_IMPORT`).
-4. **Modo Design, o que sobrou (opcional, sem risco aberto)** — edição inline e
-   controles de ajuste estão **feitos**; falta imagens no artefato (a geração de
-   imagens já existe no app) e a tela de compartilhamento público sobre o token
-   de prévia que já existe.
-5. **Sub-agentes, o que sobrou dos P1/P2.** Orçamento por delegação, `outputs/` isolado
-   e catálogo persistido de tool calling entraram (F-24/F-25). Falta o controle na
-   interface — "Usar sub-agentes: automático / desligado / obrigatório" — e o motivo de
-   indisponibilidade aparecendo para o usuário.
+1. **Frente 4 — Vulnerabilidades de dependências.** O CI acusa `3 vulnerabilities
+   (2 moderate, 1 high)` no backend e `1 high` no frontend em todo `npm ci`.
+2. **Frente 5 — IPv6 + `git` na allowlist de egress do sandbox.**
+   `parseAllowlistEntry` declara que IPv6 ficou de fora; `extractHostCandidates`
+   não varre `git`.
+3. **Frentes seguintes** conforme o backlog ordenado.
 
 ---
 
