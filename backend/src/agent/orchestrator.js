@@ -45,7 +45,10 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
     if (executor && !inAllowlist(executor)) executor = { ...executor, model: null };
   }
   if (!provider.hasKey) {
-    const finalText = 'Nenhuma chave de API configurada. Vá em **Configurações → Provedor de IA** e cadastre a sua chave para usar o Modo Equipe.';
+    // F-1: modelo não atribuível ≠ conta sem chave. O motivo real vem em
+    // `attributionError` (ver userProvider.js) e prevalece sobre a genérica.
+    const finalText = provider.attributionError
+      || 'Nenhuma chave de API configurada. Vá em **Configurações → Provedor de IA** e cadastre a sua chave para usar o Modo Equipe.';
     onEvent({ type: 'delta', content: finalText });
     const assistantMessageId = await saveMessage(userId, conversationId, 'assistant', finalText);
     onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId });

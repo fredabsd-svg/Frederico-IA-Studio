@@ -21,8 +21,6 @@
 // O `resolveDefaultModelRef()` devolve o valor final considerando o env — é o
 // que seed/rotas devem chamar em vez de ler o env direto, para que a
 // substituição seja uniforme.
-import { parseModelRef } from './modelRef.js';
-
 export const DEFAULT_MODEL_REF = 'deepseek/deepseek-chat';
 
 // Lê `DEEPSEEK_MODEL` do ambiente com fallback para o default canônico.
@@ -31,11 +29,10 @@ export const DEFAULT_MODEL_REF = 'deepseek/deepseek-chat';
 // não tenha `::` é devolvido como está — quem chamou decide se completa o
 // prefixo a partir dos provedores cadastrados.
 export function resolveDefaultModelRef() {
-  const envValue = String(process.env.DEEPSEEK_MODEL || '').trim();
-  const parsed = parseModelRef(envValue || DEFAULT_MODEL_REF);
   // Env sem prefixo `provider::` cai no id cru — preservamos o comportamento
   // anterior (o loop/seed gravam esse valor e o resolver tenta casar com o
   // catálogo do provedor do usuário). Só usamos o default canônico quando o
   // env está vazio.
+  const envValue = String(process.env.DEEPSEEK_MODEL || '').trim();
   return envValue || DEFAULT_MODEL_REF;
 }

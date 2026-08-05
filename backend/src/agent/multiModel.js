@@ -205,7 +205,11 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
     const userMsgId = await saveMessage(userId, conversationId, 'user', userText);
     const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
     if (!coordinatorProvider.hasKey && !memberProviders.some(provider => provider.hasKey)) {
-      const finalText = 'Nenhuma chave de API configurada. Vá em **Configurações → Provedor de IA** e cadastre a sua chave para usar o modo Multimodelo.';
+      // F-1: se algum provedor falhou por modelo não atribuível, o motivo real
+      // prevalece sobre a genérica de "sem chave".
+      const finalText = coordinatorProvider.attributionError
+        || memberProviders.find(p => p.attributionError)?.attributionError
+        || 'Nenhuma chave de API configurada. Vá em **Configurações → Provedor de IA** e cadastre a sua chave para usar o modo Multimodelo.';
       onEvent({ type: 'delta', content: finalText });
       const assistantMessageId = await saveMessage(userId, conversationId, 'assistant', finalText);
       onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId });

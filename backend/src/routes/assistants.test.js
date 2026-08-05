@@ -16,7 +16,7 @@ import { nanoid } from 'nanoid';
 const { db, now } = await import('../db.js');
 let dbReady = true;
 try { await db.prepare('SELECT 1 AS ok').get(); } catch { dbReady = false; }
-if (dbReady) { const { runMigrations } = await import('../migrate.js').then(m => m.runMigrations()); }
+if (dbReady) { const { runMigrations } = await import('../migrate.js'); await runMigrations(); }
 const needsDb = dbReady ? false : 'requer PostgreSQL (DATABASE_URL)';
 
 const { encryptSecret } = await import('../crypto.js');

@@ -315,9 +315,15 @@ export async function runAgent({ userId, conversationId, userText, model, assist
 
   // BYOK: sem chave de API configurada, orienta a cadastrar e encerra.
   if (!provider.hasKey) {
-    const finalText = freeTierConfigured()
-      ? 'Nenhuma chave de API configurada. Você pode **começar gratuitamente** (Configurações → Provedor de IA → "Começar gratuitamente") ou cadastrar a sua própria chave (OpenRouter/DeepSeek) para conversar.'
-      : 'Nenhuma chave de API configurada. Vá em **Configurações → Provedor de IA** e cadastre a sua chave (OpenRouter/DeepSeek) para começar a conversar.';
+    // F-1: quando há chave mas o MODELO pedido não está em catálogo nenhum,
+    // `getUserProvider` devolve o motivo em `attributionError`. Mostrar
+    // "Nenhuma chave configurada" aqui seria repetir a mensagem enganosa do
+    // PR #140 — o usuário TEM chave; o problema é outro, e ele precisa ler qual.
+    const finalText = provider.attributionError
+      ? provider.attributionError
+      : freeTierConfigured()
+        ? 'Nenhuma chave de API configurada. Você pode **começar gratuitamente** (Configurações → Provedor de IA → "Começar gratuitamente") ou cadastrar a sua própria chave (OpenRouter/DeepSeek) para conversar.'
+        : 'Nenhuma chave de API configurada. Vá em **Configurações → Provedor de IA** e cadastre a sua chave (OpenRouter/DeepSeek) para começar a conversar.';
     onEvent({ type: 'status', content: 'Chave de API não configurada' });
     onEvent({ type: 'delta', content: finalText });
     const execution = emitExecutionState(onEvent, 'awaiting_user', 'Configuração do provedor necessária', { runId });
