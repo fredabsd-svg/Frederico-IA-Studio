@@ -10,8 +10,6 @@
 // se prova de ponta a ponta, com o backend real recebendo o stream morto.
 import { test, expect, criarConta, abrirLogado, enviar, ultimaRespostaDoAssistente, ui } from '../fixtures/app.js';
 
-const SENHAO_TOOL = 'Ferramenta executada'; // rótulo da aba "Ambiente de Trabalho" quando o `bash` finaliza
-
 test('modelo com tool_calls: a ferramenta aparece na conversa e o resultado volta ao usuário', async ({ page, request }) => {
   const conta = await criarConta(request, { modelo: 'ferramentas' });
   await abrirLogado(page, request, conta);
@@ -20,9 +18,18 @@ test('modelo com tool_calls: a ferramenta aparece na conversa e o resultado volt
 
   // O agente recebe a tool_call do provedor, executa `bash echo ok-e2e-tool`
   // (no E2E o sandbox pode não estar disponível — a falha do comando vira
-  // tool_result mesmo assim) e reenvia ao provedor. A esta altura a UI já
-  // mostrou a ferramenta rodando pelo menos uma vez.
-  await expect(page.getByText(/Comando no terminal/).first()).toBeVisible({ timeout: 60_000 });
+  // tool_result mesmo assim) e reenvia ao provedor. A carta FECHADA da execução
+  // mostra a frase-resumo por categoria, não o nome da etapa: para o `bash` é
+  // "executando comandos" mais o contador de comandos.
+  await expect(page.getByText(/executando comandos/i).first()).toBeVisible({ timeout: 60_000 });
+
+  // O rótulo por etapa (`TOOL_META.bash`) só existe com os detalhes abertos —
+  // é ali que se prova que a tool_call virou um passo `bash` de verdade, e não
+  // só um contador genérico.
+  await page.getByRole('button', { name: 'Ver detalhes' }).first().click();
+  await expect(page.getByText(/Comando no terminal|Executando comando no terminal/).first())
+    .toBeVisible({ timeout: 30_000 });
+  await page.keyboard.press('Escape');
 
   // E a conversa termina com uma resposta do assistente — seja o eco do
   // provedor (`ok-e2e-tool recebido`) ou o aviso de falha do ambiente,
@@ -32,12 +39,17 @@ test('modelo com tool_calls: a ferramenta aparece na conversa e o resultado volt
   expect(resposta.length, 'o assistente precisa ter entregado alguma resposta').toBeGreaterThan(0);
 });
 
+// Dois stalls de 30s (o piso do watchdog) mais a retentativa não cabem nos
+// 90s padrão do arquivo — este caso precisa de fôlego próprio.
 test('provedor travado: o watchdog encerra o stream e o usuário recebe o aviso de indisponibilidade', async ({ page, request }) => {
-  // O `travado` abre o stream e nunca envia nada além do delta inicial.
-  // STREAM_STALL_TIMEOUT_MS=2000 (em playwright.config.js) faz o watchdog
-  // disparar em ~2s; MODEL_STREAM_RECOVERY_LIMIT=1 fecha o ciclo em uma única
-  // retentativa. No fim, o agente cai no PROVIDER_TIMEOUT_NOTICE — o aviso
-  // em português que o usuário vê quando o provedor ficou indisponível.
+  test.setTimeout(180_000);
+  // O `travado` abre o stream e nunca envia nada além do delta inicial. O
+  // watchdog do `streamGuard` tem PISO de 30s (não dá para baixar por
+  // ambiente — ver o comentário em playwright.config.js), e
+  // MODEL_STREAM_RECOVERY_LIMIT=1 fecha o ciclo em uma única retentativa: são
+  // dois stalls de 30s, ~60s até o agente desistir. No fim ele cai no
+  // PROVIDER_TIMEOUT_NOTICE — o aviso em português que o usuário vê quando o
+  // provedor ficou indisponível.
   const conta = await criarConta(request, { modelo: 'travado' });
   await abrirLogado(page, request, conta);
 
@@ -48,5 +60,5 @@ test('provedor travado: o watchdog encerra o stream e o usuário recebe o aviso 
   // stall→retry→stall pode variar entre runs.
   await expect(
     page.getByText(/provedor do modelo ficou indispon/i).first()
-  ).toBeVisible({ timeout: 60_000 });
+  ).toBeVisible({ timeout: 150_000 });
 });

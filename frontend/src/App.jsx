@@ -45,14 +45,20 @@ import { ClientPicker } from './components/ClientPicker.jsx';
 // do bundle atual (1MB) — quebrá-los alivia o TTI da primeira pintura
 // sem mudar UX (todos abrem num clique; o Suspense mostra um fallback
 // leve enquanto o chunk baixa).
-const LazyMemoryPanel = lazy(() => import('./MemoryPanel.jsx'));
-const LazyProviderPanel = lazy(() => import('./ProviderPanel.jsx'));
-const LazyPrivacyPanel = lazy(() => import('./PrivacyPanel.jsx'));
-const LazyCopilotPanel = lazy(() => import('./components/CopilotPanel.jsx'));
-const LazyDesignPanel = lazy(() => import('./components/DesignPanel.jsx'));
-const LazySettingsHub = lazy(() => import('./components/SettingsHub.jsx'));
-const LazyMultiModelBoard = lazy(() => import('./components/MultiModelBoard.jsx'));
-const LazyMemoryTrace = lazy(() => import('./components/MemoryTrace.jsx'));
+// Nenhum destes módulos tem `export default` — são todos exports NOMEADOS. O
+// `lazy()` exige um módulo cujo `default` seja o componente, então cada import
+// precisa remapear o nome (é o que o LazyConsentGate acima já fazia). Sem o
+// remapeamento o `default` vem `undefined` e o React derruba a árvore inteira
+// no error boundary (erro #306) — e nada disso aparece no build nem nos testes
+// de módulo, só com o app aberto.
+const LazyMemoryPanel = lazy(() => import('./MemoryPanel.jsx').then(m => ({ default: m.MemoryPanel })));
+const LazyProviderPanel = lazy(() => import('./ProviderPanel.jsx').then(m => ({ default: m.ProviderPanel })));
+const LazyPrivacyPanel = lazy(() => import('./PrivacyPanel.jsx').then(m => ({ default: m.PrivacyPanel })));
+const LazyCopilotPanel = lazy(() => import('./components/CopilotPanel.jsx').then(m => ({ default: m.CopilotPanel })));
+const LazyDesignPanel = lazy(() => import('./components/DesignPanel.jsx').then(m => ({ default: m.DesignPanel })));
+const LazySettingsHub = lazy(() => import('./components/SettingsHub.jsx').then(m => ({ default: m.SettingsHub })));
+const LazyMultiModelBoard = lazy(() => import('./components/MultiModelBoard.jsx').then(m => ({ default: m.MultiModelBoard })));
+const LazyMemoryTrace = lazy(() => import('./components/MemoryTrace.jsx').then(m => ({ default: m.MemoryTrace })));
 
 // Fallback leve para os chunks lazy — aparece só durante o download do
 // módulo (centenas de ms na primeira vez; imperceptível depois). Evita o

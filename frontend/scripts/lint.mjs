@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { findReexportBindingBugs } from './reexportBindings.mjs';
+import { findLazyDefaultBugs } from './lazyDefaultExport.mjs';
 
 const frontendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -62,4 +63,23 @@ if (scopeErrors.length) {
   process.exit(1);
 }
 
-console.log(`[lint] ${files.length} arquivo(s) sem erro de sintaxe; ${scoped.length} arquivo(s) com re-exports conferidos.`);
+// Conferência dos `React.lazy`: o módulo apontado precisa ter `export default`,
+// ou o import precisa remapear o nome. Mesmo sintoma do bloco acima — o app
+// inteiro cai no error boundary — e igualmente invisível para o build.
+const lazyErrors = [];
+for (const file of scoped) {
+  for (const bug of findLazyDefaultBugs(fs.readFileSync(file, 'utf8'), file)) {
+    lazyErrors.push(
+      `${rel(file)}:${bug.line} — \`lazy(() => import('${bug.spec}'))\` aponta para um módulo sem ` +
+      `\`export default\`: o \`default\` resolve como undefined e o React derruba a árvore inteira. ` +
+      `Remapeie o nome: \`import('${bug.spec}').then(m => ({ default: m.NomeDoComponente }))\`.`
+    );
+  }
+}
+
+if (lazyErrors.length) {
+  console.error(`[lint] ${lazyErrors.length} React.lazy sem default export:\n\n${lazyErrors.join('\n\n')}`);
+  process.exit(1);
+}
+
+console.log(`[lint] ${files.length} arquivo(s) sem erro de sintaxe; ${scoped.length} arquivo(s) com re-exports e React.lazy conferidos.`);

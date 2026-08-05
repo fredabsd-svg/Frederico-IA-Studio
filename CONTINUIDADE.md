@@ -16,10 +16,13 @@ frontend React 19 + Vite; autenticação Better Auth (e-mail/senha, GitHub, Goog
 
 **Prontidão para produção: 🟡 amarelo — apto com restrições.**
 **Nenhum risco crítico aberto** desde o fechamento do F-04 (o backend não detém mais o
-socket do Docker — ver `docs/SECURITY.md` §4.3). O que ainda impede o verde é a cobertura
-de testes: **o SSE integrado saiu do zero** (ver a frente abaixo), mas a retomada após
-interrupção real do processo e o pipeline multimodelo retomável continuam sem teste.
-Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
+socket do Docker — ver `docs/SECURITY.md` §4.3). A cobertura deu um salto nesta
+integração: a retomada após interrupção real do processo **passou a ter teste** (F-14,
+contra PostgreSQL de verdade), o tool calling nativo e o watchdog do provedor entraram
+nos testes de navegador (F-13) e o SSE ganhou o caso de reconexão com cursor (F-12). O
+que ainda segura o verde é o **pipeline multimodelo retomável**: o F-15 entregou a
+tabela e as primitivas, mas o `runMultiModel` ainda não as usa, então o reinício continua
+sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
 - **Último trabalho:** a **integração das 16 frentes abertas** numa branch só (F-05b,
   F-11 a F-26, geração de imagem por capacidade e o acionamento real dos sub-agentes).
@@ -50,12 +53,13 @@ Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
   (o Nino cobrindo o botão de enviar), **[#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)**
   (Playwright + suíte ponta a ponta) e **[#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)**
   (as sete falhas P0 dos sub-agentes).
-- **Última validação:** 2026-08-05 — **1187 testes listados**, com o backend em
-  **1008/1008 e NADA pulado**: o PostgreSQL 16 subiu **neste contêiner** (binários
-  locais, sem Docker, sem a extensão `vector` — nenhuma migration usa o tipo).
-  Mais **frontend 71/71** (lint + testes + build) e **guarda do Docker 49/49**. Os
-  **59 do sandbox Python** pulam aqui por falta da imagem do sandbox — quem os roda é
-  o CI. A contagem vem de `cd backend && npm run test:count` — não a escreva à mão.
+- **Última validação:** 2026-08-05 — **1219 testes**, com o backend em **1008/1008 e
+  NADA pulado**: o PostgreSQL 16 subiu **neste contêiner** (binários locais, sem Docker
+  e sem a extensão `vector` — nenhuma migration usa o tipo). Mais **frontend 77/77**
+  (lint + testes + build), **guarda do Docker 49/49** e os **26 ponta a ponta em
+  navegador real** (`E2E_CHROMIUM_PATH` apontando o Chromium do contêiner): 26/26. Os
+  **59 do sandbox Python** pulam aqui por falta da imagem do sandbox — quem os roda é o
+  CI. A contagem vem de `cd backend && npm run test:count` — não a escreva à mão.
   Sem banco, o backend passa 916 e pula 92 — o esperado.
   Repare em um job do CI: **"Artefatos (Excel real)"** roda os testes dos kits no runner
   do GitHub, que **não tem as mesmas fontes** do sandbox. Ou seja, o caminho de
@@ -64,8 +68,60 @@ Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
   do matplotlib.
   **O LibreOffice deste contêiner não converte nada** (falha até com um `.txt` de uma
   linha), então a conferência do `.docx` foi estrutural — OOXML sobre o arquivo reaberto.
-  O PDF foi conferido página a página, renderizado com PyMuPDF, e com as fontes reais
-  instaladas em `/usr/share/fonts/truetype/tinta-latao`.
+
+---
+
+## A integração das 16 frentes, e o que só o navegador acusou (2026-08-05)
+
+Dezesseis PRs abertos, em quatro pilhas: F-13→F-21 (dez commits), F-23→F-16
+(quatro), a geração de imagem por capacidade e o acionamento dos sub-agentes.
+Juntá-los foi menos sobre resolver conflito de texto e mais sobre descobrir que
+**três defeitos só aparecem quando as peças estão no mesmo lugar** — nenhum dos
+três falhava na branch de origem, porque a prova exigia rodar o app inteiro.
+
+**1. Os oito `React.lazy` do F-21 apontavam para módulos sem `export default`.**
+Nenhum componente deste projeto tem default — são todos exports nomeados. O
+`lazy()` resolvia `default` como `undefined` e o React derrubava a árvore no
+error boundary: qualquer conversa com resposta virava "Algo deu errado por
+aqui". O build não pega (o bundler resolve exportações, não o formato que o
+`lazy` espera), os testes de módulo não pegam (nenhum importa o componente), e
+o `LazyConsentGate` — o único escrito certo, com `.then(m => ({ default: … }))`
+— estava ali do lado como modelo. Corrigidos os oito e criado o guarda que
+faltava: `frontend/scripts/lazyDefaultExport.mjs`, no `npm run lint`, irmão do
+`reexportBindings.mjs` e pela mesma razão registrada lá.
+
+**2. O F-25 referenciava `call` fora do escopo dele.** O registro do produtor de
+arquivos (`subagentProducers.set(call.id, …)`) ficou solto no corpo do passo,
+onde `call` não existe — só dentro dos laços sobre `stepToolCalls`. Resultado:
+`ReferenceError` em **qualquer** execução com ferramenta, não só nas com
+delegação. O registro passou para dentro de `startDelegation`, por onde os dois
+caminhos (lote paralelo e sequencial) já passam e onde `call` é parâmetro.
+
+**3. O `STREAM_STALL_TIMEOUT_MS=2000` do E2E nunca valeu.** O `streamGuard`
+aplica `Math.max(30000, …)` — com teste unitário guardando o piso. O teste do
+watchdog do F-13 esperava um ciclo de ~5s quando o real é ~60s (dois stalls de
+30s), e morria no timeout. O config agora diz 30000 e explica o piso; o teste
+carrega fôlego próprio.
+
+Além desses, dois ajustes nos testes que chegaram junto: o do F-12 chamava
+`request.get()` numa rota **SSE** — que responde 200 e deixa a conexão aberta,
+então o `request.get()` esperava para sempre por um corpo que não fecha (agora o
+status é lido do navegador e a conexão é abortada); e o do F-14 gravava
+checkpoint para uma conversa que nunca existiu, violando a chave estrangeira —
+o primeiro caso falhava e o **segundo passava pelo motivo errado**, provando
+isolamento sobre um banco vazio.
+
+**Conflitos de código, e por que cada um existia:** o F-21 passou os painéis
+para `lazy` a partir de uma base anterior ao seletor de modelo do Modo Design e
+perdeu a prop `allModels` no caminho; o F-24 trocou a definição estática da
+ferramenta de delegação por uma fábrica com o inventário real de especialistas
+(`especialista_id` como `enum`) enquanto o #141 reescrevia a **descrição** da
+mesma ferramenta para ganhar um gatilho positivo ("3+ entregas independentes →
+uma chamada por entrega") — mudanças ortogonais, ficaram as duas; e o
+`getUserProvider` saiu do `tools.js` porque o `resolveImageProvider` tomou o
+lugar dele na geração de imagem.
+
+**Nada foi descartado:** as 16 frentes entraram inteiras.
 
 ---
 

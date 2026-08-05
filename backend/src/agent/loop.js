@@ -1069,25 +1069,33 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
     // O nome `runBudget` evita colisão com o `subagentBudget` (contagem de
     // delegações) lá em cima.
     const runBudget = buildSubagentBudget({ now: Date.now() });
-    const startDelegation = (call, delegationArgs) => runSubagent({
-      userId,
-      conversationId,
-      args: delegationArgs,
-      model: chosenModel,
-      effort,
-      control,
-      onEvent,
-      depth: subagentDepth,
-      webSearch: webSearchActive,
-      delegationId: call.id,
-      delegation: delegationContext,   // permissões, sandbox e escopo herdados
-      budget: runBudget                // F-24: mesmo budget para todos os filhos
-    });
-    // F-25: quando o sub-agente for iniciado, registra o prefixo do path.
-    // runSubagent propaga `outputsSubdir = call.id` para o filho, então os
-    // arquivos dele caem em `outputs/<id>/`. O label é atualizado depois com
-    // o nome real do especialista (resolvido dentro de runSubagent).
-    subagentProducers.set(call.id, { label: 'sub-agente', prefix: `outputs/${call.id}/` });
+    const startDelegation = (call, delegationArgs) => {
+      // F-25: no momento em que o sub-agente parte, registra o prefixo do path.
+      // runSubagent propaga `outputsSubdir = call.id` para o filho, então os
+      // arquivos dele caem em `outputs/<id>/`. O label é atualizado depois com
+      // o nome real do especialista (resolvido dentro de runSubagent).
+      //
+      // O registro mora AQUI, e não solto no corpo do passo, porque `call` só
+      // existe dentro dos laços que percorrem `stepToolCalls` — e os dois
+      // caminhos de delegação (o lote paralelo e o sequencial) passam por esta
+      // função. Fora dela, a referência a `call` derrubava o passo inteiro com
+      // um ReferenceError, em QUALQUER execução com ferramenta.
+      subagentProducers.set(call.id, { label: 'sub-agente', prefix: `outputs/${call.id}/` });
+      return runSubagent({
+        userId,
+        conversationId,
+        args: delegationArgs,
+        model: chosenModel,
+        effort,
+        control,
+        onEvent,
+        depth: subagentDepth,
+        webSearch: webSearchActive,
+        delegationId: call.id,
+        delegation: delegationContext,   // permissões, sandbox e escopo herdados
+        budget: runBudget                // F-24: mesmo budget para todos os filhos
+      });
+    };
     const delegations = new Map();
     if (canLaunchDelegationsInParallel(stepToolCalls.map(call => call.function.name))) {
       for (const call of stepToolCalls) {

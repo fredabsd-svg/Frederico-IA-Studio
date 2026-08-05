@@ -46,11 +46,14 @@ const ambienteBackend = {
   SANDBOX_RECONCILE_ON_BOOT: 'false',
   // A miniatura de página abriria navegador de verdade no meio do teste.
   WEB_FETCH_SCREENSHOTS: '0',
-  // O teste do provedor "travado" precisa que o watchdog encerre o stream em
-  // poucos segundos em vez dos 180s padrão — espera desse tamanho tornaria o
-  // E2E inviável. O limite de recuperação fica em 1 para o ciclo (stall →
-  // tenta de novo → stall → desiste) terminar em ~5s, não em minutos.
-  STREAM_STALL_TIMEOUT_MS: '2000',
+  // O teste do provedor "travado" precisa que o watchdog encerre o stream sem
+  // esperar os 180s padrão. ATENÇÃO ao piso: `streamGuard.js` aplica
+  // `Math.max(30000, ...)` a esta variável, e há um teste unitário guardando
+  // esse piso — pedir menos que 30s aqui não acelera nada, só engana quem lê.
+  // Com o limite de recuperação em 1, o ciclo é stall (30s) → tenta de novo →
+  // stall (30s) → desiste: ~60s, e é por isso que o teste do watchdog carrega
+  // um timeout próprio bem maior que o do arquivo.
+  STREAM_STALL_TIMEOUT_MS: '30000',
   MODEL_STREAM_RECOVERY_LIMIT: '1',
   NODE_ENV: 'test'
 };

@@ -14,6 +14,24 @@ import { test, expect, criarConta, abrirLogado, enviar, ui } from '../fixtures/a
 
 const PALAVRAS = ['UM', 'DOIS', 'TRES', 'QUATRO', 'CINCO', 'SEIS', 'SETE', 'OITO', 'NOVE', 'DEZ', 'ONZE', 'DOZE'];
 
+// `/stream` é SSE: responde 200 e deixa a conexão ABERTA. O `request.get()` do
+// Playwright só resolve quando o corpo termina, então numa rota dessas ele
+// espera para sempre e o teste morre no timeout — mesmo com o servidor tendo
+// respondido certo. Aqui o que interessa é só o código de status, então a
+// requisição sai do próprio navegador (mesma origem, mesmo cookie de sessão) e
+// é abortada assim que os cabeçalhos chegam.
+async function statusDoStream(page, url) {
+  return page.evaluate(async (alvo) => {
+    const corte = new AbortController();
+    try {
+      const resposta = await fetch(alvo, { signal: corte.signal, headers: { accept: 'text/event-stream' } });
+      return resposta.status;
+    } finally {
+      corte.abort();   // não deixa o SSE pendurado depois da conferência
+    }
+  }, url);
+}
+
 async function idDaConversaAberta(request) {
   // O app não expõe o id da conversa no DOM — pegamos pela API, que devolve
   // a lista em ordem cronológica inversa (a mais recente vem primeiro). Como
@@ -38,11 +56,11 @@ test('a rota /stream aceita os parâmetros fromSeq e runId sem quebrar', async (
   // GET /stream com runId inexistente e fromSeq alto: a rota não pode devolver
   // 500 (sintoma de ter engolido os params novos). Pode ser 200 (stream vivo,
   // replay filtrado → vazio neste caso), 204 (sem nada) ou 404 — nunca 5xx.
-  const comCursor = await request.get(`/api/conversations/${conversationId}/stream?runId=inexistente&fromSeq=999999`);
-  expect(comCursor.status(), `status inesperado com cursor: ${comCursor.status()}`).toBeLessThan(500);
+  const comCursor = await statusDoStream(page, `/api/conversations/${conversationId}/stream?runId=inexistente&fromSeq=999999`);
+  expect(comCursor, `status inesperado com cursor: ${comCursor}`).toBeLessThan(500);
 
   // E sem params (caminho legado) também continua dentro do esperado — quem
   // ainda não atualizou o front não pode quebrar.
-  const semCursor = await request.get(`/api/conversations/${conversationId}/stream`);
-  expect(semCursor.status(), `status inesperado sem cursor: ${semCursor.status()}`).toBeLessThan(500);
+  const semCursor = await statusDoStream(page, `/api/conversations/${conversationId}/stream`);
+  expect(semCursor, `status inesperado sem cursor: ${semCursor}`).toBeLessThan(500);
 });
