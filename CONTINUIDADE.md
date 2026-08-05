@@ -532,7 +532,9 @@ Novo job `e2e` no CI, com Postgres real e Chromium. Ver `e2e/README.md`.
 | F-14 | Sem teste de retomada após interrupção **real** do processo. | 🟠 Alta |
 | F-05b | Sandbox com rede habilitada não tem allowlist de egress. | 🟡 Média |
 | F-13 | Provedor simulado: streaming, catálogo e erro 401 **cobertos** por `e2e/fixtures/provedorFalso.mjs`; faltam tool calls e timeout. | 🟡 Média |
-| F-16, F-18, F-19, F-23 | Relevância de memória (casos negativos), corpus do Docling, git local, validação de artefato com arquivos reais. | 🟡 Média |
+| F-16 | Relevância de memória (casos negativos) | 🟡 Média |
+| F-18 | Corpus Docling com arquivos reais | 🟡 Média |
+| F-19 | Git local (clone/push/PR) | 🟡 Média |
 | F-24 | Sub-agentes: sem orçamento próprio de tempo/tokens por delegação e sem catálogo de modelos com tool calling **verificado** (hoje qualquer modelo do seletor pode receber uma subtarefa). | 🟡 Média |
 | F-25 | Sub-agentes paralelos compartilham `outputs/`: a atribuição de arquivo por filho pode se cruzar e dois filhos podem gravar o mesmo nome. O conjunto que o usuário recebe está certo (o pai também faz o diff); o rótulo por sub-agente é que não é confiável. | 🟡 Média |
 | F-21 | `App.jsx` com 62 `useState`; bundle num único chunk (teto de 1.000 KB no CI); CSS em camadas sem inventário. | 🟡 Média |
