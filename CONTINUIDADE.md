@@ -24,7 +24,11 @@ que ainda segura o verde é o **pipeline multimodelo retomável**: o F-15 entreg
 tabela e as primitivas, mas o `runMultiModel` ainda não as usa, então o reinício continua
 sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** a **integração das 16 frentes abertas** numa branch só (F-05b,
+- **Último trabalho:** as **regras do projeto entraram no repositório**: o
+  `REGRAS-DO-PROJETO.md` passou a ser a constituição de engenharia — vale para pessoas,
+  agentes de IA e automações — e o `CLAUDE.md` ficou explicitamente subordinado a ele
+  (onde divergirem, as regras prevalecem). Antes dele, a
+  **integração das 16 frentes abertas** numa branch só (F-05b,
   F-11 a F-26, geração de imagem por capacidade e o acionamento real dos sub-agentes).
   Entre elas, o **modelo de IA por projeto no Modo Design** (frente abaixo):
   o seletor saiu de trás do painel e passou a morar na barra do editor, e a escolha
@@ -68,6 +72,39 @@ sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md
   do matplotlib.
   **O LibreOffice deste contêiner não converte nada** (falha até com um `.txt` de uma
   linha), então a conferência do `.docx` foi estrutural — OOXML sobre o arquivo reaberto.
+
+---
+
+## As regras do projeto viraram documento do repositório (2026-08-05)
+
+Até aqui a governança de engenharia morava só no `CLAUDE.md` — um checklist
+curto, escrito para uma ferramenta específica. Quem abrisse o repositório por
+fora dela (uma pessoa, outro agente, uma automação) não tinha onde ler as
+fronteiras que o projeto já respeitava na prática.
+
+O `REGRAS-DO-PROJETO.md` fecha essa lacuna com treze regras: documentação como
+parte do produto, fronteiras de arquitetura, banco e migrations, contratos e
+SSE, agentes e menor privilégio, segurança e segredos, sandbox e kits de
+documento, frontend e acessibilidade, testes e portões, Git e PRs, ADRs,
+operação e um caminho de adoção sem criar dívida nova.
+
+**A precedência é explícita:** as regras prevalecem sobre o `CLAUDE.md`, que
+continua sendo o checklist do dia a dia. O ponteiro entrou no topo do
+`CLAUDE.md` — o arquivo que toda sessão de IA carrega automaticamente — e no
+índice do README, para o caminho humano.
+
+O que as regras codificam já era prática aqui: não anunciar o que não existe,
+não pular teste com banco disponível, não devolver o socket do Docker, isolar
+por usuário, não declarar sucesso falso. O ganho não é mudança de
+comportamento, é passar a ser **verificável por quem chega depois**.
+
+**O que ficou de fora, e está registrado:** o relatório de adaptação listava
+cinco artefatos; dois vieram. O **template de Pull Request**
+(`.github/pull_request_template.md`) e o **ADR 0001** não acompanharam a entrega
+e não existem no repositório. Isso vale anotar porque a Regra 10.3 enumera o que
+todo PR precisa informar e a Regra 11 exige ADR para decisão estrutural — as
+duas funcionam sem os arquivos, mas o template tornaria a 10.3 automática.
+A nota no topo do relatório registra a discrepância para quem o ler depois.
 
 ---
 

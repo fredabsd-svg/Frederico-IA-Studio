@@ -3,6 +3,22 @@
 Este arquivo é carregado automaticamente em toda sessão do Claude Code neste
 repositório. Vale para qualquer conversa, em qualquer chat.
 
+## Antes de tudo: leia o `REGRAS-DO-PROJETO.md`
+
+**[`REGRAS-DO-PROJETO.md`](REGRAS-DO-PROJETO.md) é a constituição de engenharia
+do repositório** — vale para toda pessoa, agente de IA, automação ou integração
+que altere este código. Ele cobre documentação, fronteiras de arquitetura,
+banco e migrations, contratos e SSE, agentes e ferramentas, segurança, sandbox,
+frontend, testes, Git, ADRs e operação.
+
+Este `CLAUDE.md` é o **checklist curto** do dia a dia. Onde os dois divergirem,
+**as regras prevalecem** (Regra 0.2). Se você é um modelo de IA lendo isto:
+abra o `REGRAS-DO-PROJETO.md` antes de mexer em qualquer área que ele governe —
+não deduza o conteúdo pelo resumo abaixo.
+
+O [relatório de adaptação](docs/RELATORIO_ADAPTACAO_REGRAS.md) explica por que
+as regras têm a forma que têm. É histórico: não é fonte de regra vigente.
+
 ## Regra permanente: sempre abrir um Pull Request
 
 **Toda frente de trabalho termina com um Pull Request aberto.** Não espere o

@@ -320,6 +320,7 @@ chave única do servidor para uso pessoal/de equipe.
 
 | Documento | Conteúdo |
 |---|---|
+| [REGRAS-DO-PROJETO.md](REGRAS-DO-PROJETO.md) | ⚖️ **Constituição de engenharia** — vale para pessoas, agentes de IA e automações. Documentação, arquitetura, banco, contratos, segurança, testes, Git e operação |
 | [CONTINUIDADE.md](CONTINUIDADE.md) | 📌 **Leia antes de iniciar uma frente** — estado atual, riscos abertos e como retomar (curto) |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Arquitetura real: serviços, fluxos, persistência, lacunas |
 | [docs/SECURITY.md](docs/SECURITY.md) | Modelo de ameaça, isolamento, sandbox, segredos, LGPD |
@@ -337,9 +338,14 @@ chave única do servidor para uso pessoal/de equipe.
 | [docs/FREDERICO_COMPANION.md](docs/FREDERICO_COMPANION.md) | O copiloto Nino em detalhe |
 | [VPS-DEPLOY.md](VPS-DEPLOY.md) | Publicação em VPS com HTTPS |
 | [NOTEBOOK-SERVIDOR.md](NOTEBOOK-SERVIDOR.md) | Acesso remoto com notebook e Tailscale |
+| [docs/RELATORIO_ADAPTACAO_REGRAS.md](docs/RELATORIO_ADAPTACAO_REGRAS.md) | Como as regras do projeto foram adaptadas ao aplicativo (histórico) |
 | [docs/CHANGELOG_HISTORY.md](docs/CHANGELOG_HISTORY.md) | Histórico completo do projeto |
 
 ## 🤝 Contribuir
+
+**Antes de abrir um PR, leia o [REGRAS-DO-PROJETO.md](REGRAS-DO-PROJETO.md).** Ele é a
+constituição de engenharia do repositório e vale igualmente para pessoas e para agentes
+de IA — inclusive o que cada Pull Request precisa informar (Regra 10.3).
 
 Toda mudança relevante precisa: atualizar o `CONTINUIDADE.md` (que é **curto** — o
 histórico vai para `docs/CHANGELOG_HISTORY.md`), passar por `npm run check` nos dois
