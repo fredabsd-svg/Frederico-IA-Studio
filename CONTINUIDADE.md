@@ -50,9 +50,13 @@ Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
   (o Nino cobrindo o botão de enviar), **[#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)**
   (Playwright + suíte ponta a ponta) e **[#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)**
   (as sete falhas P0 dos sub-agentes).
-@@VALIDACAO@@
-  contagem vem de `cd backend && npm run test:count` — não a escreva à mão.
-  Sem banco, o backend passa 818 e pula 79 — o esperado.
+- **Última validação:** 2026-08-05 — **1187 testes listados**, com o backend em
+  **1008/1008 e NADA pulado**: o PostgreSQL 16 subiu **neste contêiner** (binários
+  locais, sem Docker, sem a extensão `vector` — nenhuma migration usa o tipo).
+  Mais **frontend 71/71** (lint + testes + build) e **guarda do Docker 49/49**. Os
+  **59 do sandbox Python** pulam aqui por falta da imagem do sandbox — quem os roda é
+  o CI. A contagem vem de `cd backend && npm run test:count` — não a escreva à mão.
+  Sem banco, o backend passa 916 e pula 92 — o esperado.
   Repare em um job do CI: **"Artefatos (Excel real)"** roda os testes dos kits no runner
   do GitHub, que **não tem as mesmas fontes** do sandbox. Ou seja, o caminho de
   degradação do `pdfpro` (sem TrueType, caindo para as Type1 base-14) é exercitado a
@@ -649,9 +653,28 @@ Novo job `e2e` no CI, com Postgres real e Chromium. Ver `e2e/README.md`.
 
 | ID | Risco | Severidade |
 | --- | --- | --- |
-| F-21 | `App.jsx` com 62 `useState`; bundle num único chunk (teto de 1.000 KB no CI); CSS em camadas sem inventário. | 🟡 Média |
+| F-21 | `App.jsx` ainda concentra dezenas de `useState`; CSS em camadas sem inventário. O **bundle deixou de ser um chunk só** (`React.lazy` nos painéis pesados: principal ~920 KB contra o teto de 1.000 KB do CI), mas o `MultiModelBoard` segue no principal — é importado de forma estática pelo `Landing.jsx`. | 🟡 Média |
+| F-15 | O coordenador durável de pipelines entrou como **infraestrutura** (tabela + primitivas provadas); `runMultiModel` ainda não atualiza o estágio corrente nem retoma no boot, então o reinício continua sem retomar a próxima etapa pendente. | 🟠 Alta |
 
 ## Riscos fechados nesta sessão
+
+### F-16, F-18, F-19 e F-23 — as quatro lacunas de cobertura (2026-08-05)
+
+Quatro frentes irmãs, cada uma fechando uma lacuna de teste que o
+`CONTINUIDADE.md` listava como risco. Os commits originais trouxeram os
+arquivos e **esqueceram de dar baixa aqui** — o registro é desta integração,
+não das branches:
+
+| Risco | O que passou a ser coberto | Onde |
+| --- | --- | --- |
+| F-16 | Relevância de memória nos casos NEGATIVOS (o que não deve ser lembrado) | `backend/src/memory/retrievalPolicy.relevance.test.js` |
+| F-18 | Corpus Docling: whitelist de tipo e conferência por magic bytes | `backend/src/docling.corpus.test.js` |
+| F-19 | Git local (clone/commit/push) contra um **bare repo** de verdade | `backend/src/connectors.github.local.test.js` |
+| F-23 | Casos de borda do validador de artefatos (`pickValidatableFiles`) | (coberto pelo commit F-23, que deu a própria baixa) |
+
+O F-19 é o mais substancial dos quatro: em vez de simular o git, cria um
+repositório bare em disco e exercita o caminho real — é o único jeito de o
+teste falhar quando o comando muda.
 
 ### F-05b — Allowlist de egress no sandbox (2026-08-04)
 
@@ -1021,8 +1044,6 @@ nos testes unitários do `liveStream` — o `useChat` não expõe um ponto
 estável para forçar uma reconexão SSE sem reload, e o caminho
 cross-page (reload) já era coberto por `multiconversa.spec.js`.
 
-## Riscos fechados nesta sessão
-
 ### F-13 — Provedor falso com tool_calls e stall (2026-08-04)
 
 O provedor simulado (`e2e/fixtures/provedorFalso.mjs`) agora cobre os dois
@@ -1057,32 +1078,34 @@ antes do aviso.
 
 ## Próximos passos (em ordem)
 
-1. **Modelo do assistente sem provedor** (causa raiz do 401 do PR #140, ainda aberta).
-   `getUserProvider` cai em `rows[0]` — o provedor mais ANTIGO — quando o id do modelo
-   não tem prefixo `<provedor>::` e não aparece em catálogo nenhum. O assistente deve
-   guardar um `modelRef` completo. Envolve: unificar os dois defaults incoerentes
+1. **Modelo do assistente sem provedor** (causa raiz do 401 do PR #140). A frente da
+   **geração de imagem** tratou o sintoma no caminho dela — `getUserProvider` não morre
+   mais numa linha órfã e a imagem escolhe a chave por capacidade — mas a raiz continua:
+   o assistente não guarda um `modelRef` completo, então um id sem prefixo
+   `<provedor>::` ainda cai no `rows[0]`. Envolve: unificar os dois defaults incoerentes
    (`deepseek/deepseek-chat` em `seed.js` e `routes/assistants.js`; `deepseek-chat` em
    `schedules`, `inbox`, `conversations` e `helpers`), migrar os assistentes já gravados
    e decidir o que fazer quando o modelo não for atribuível — hoje o chute é silencioso.
-2. **F-12/F-13, o que sobrou** — reconexão do `/stream` com `fromSeq` sem duplicar
-   eventos, e tool calls/timeout no provedor falso (`e2e/fixtures/provedorFalso.mjs`,
-   onde o resto já está pronto).
-3. **F-14** — retomada após `kill -9` no meio de um run, com checkpoint real.
-4. **F-15** — tabela `pipeline_runs` (`pipeline_run_id`, `current_stage`,
-   `completed_stages`, `pending_stages`, `artifact_versions`, `status`, `checkpoint`,
-   `updated_at`) e retomada no boot.
-5. **F-21** — extrair de `App.jsx`, por etapas: shell → estado da conversa → estado da
-   execução → drawers/configurações. `React.lazy` nos painéis pesados.
-6. **Modo Design, o que sobrou (opcional, sem risco aberto)** — edição inline e
+2. **F-15, a integração que falta.** O coordenador durável de pipelines entrou como
+   **infraestrutura**: a tabela `pipeline_runs` e as primitivas de save/load/complete
+   estão provadas, mas `runMultiModel` ainda não atualiza o `currentStage` entre
+   estágios nem retoma no boot. Sem isso, o risco que o F-15 descreve segue de pé na
+   prática — só que agora com o banco pronto para recebê-lo.
+3. **F-21, o que sobrou.** O `React.lazy` nos painéis pesados está feito (o chunk
+   principal caiu para ~920 KB, abaixo do teto de 1.000 KB do CI), mas o `App.jsx`
+   continua com dezenas de `useState`. Extrair por etapas: shell → estado da conversa →
+   estado da execução → drawers/configurações. Repare que o `MultiModelBoard` é
+   importado de forma dinâmica pelo `App.jsx` e **estática** pelo `Landing.jsx` e pelo
+   `MultiModelPicker.jsx` — enquanto isso valer, ele não sai do chunk principal (o build
+   avisa: `INEFFECTIVE_DYNAMIC_IMPORT`).
+4. **Modo Design, o que sobrou (opcional, sem risco aberto)** — edição inline e
    controles de ajuste estão **feitos**; falta imagens no artefato (a geração de
    imagens já existe no app) e a tela de compartilhamento público sobre o token
    de prévia que já existe.
-7. **F-24/F-25 (sub-agentes, o que sobrou dos P1/P2)** — orçamento por delegação
-   (`SUBAGENT_TIMEOUT_MS`, `MAX_STEPS`, `MAX_TOKENS`, deadline compartilhado); diretório
-   `outputs/<delegationId>/` com manifesto por filho; catálogo persistido de capacidade de
-   tool calling por `provedor+modelo+endpoint` (hoje `markModelCapabilityUnsupported` só
-   vive em memória e se perde no reinício); controle "Usar sub-agentes: automático /
-   desligado / obrigatório" e motivo de indisponibilidade na interface.
+5. **Sub-agentes, o que sobrou dos P1/P2.** Orçamento por delegação, `outputs/` isolado
+   e catálogo persistido de tool calling entraram (F-24/F-25). Falta o controle na
+   interface — "Usar sub-agentes: automático / desligado / obrigatório" — e o motivo de
+   indisponibilidade aparecendo para o usuário.
 
 ---
 

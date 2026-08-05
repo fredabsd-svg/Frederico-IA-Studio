@@ -16,7 +16,7 @@
 // buildResumeMessages; este teste prova que o banco É a fonte de verdade.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pool } from './db.js';
+import { db, pool } from './db.js';
 import { saveCheckpoint, loadCheckpoint, clearCheckpoint, buildResumeMessages } from './agent/checkpoint.js';
 
 // Tenta abrir o pool uma vez. Se o Postgres não estiver disponível
@@ -27,8 +27,20 @@ try { await pool.query('SELECT 1'); } catch { dbReady = false; }
 const skipReason = dbReady ? false : 'requer PostgreSQL (DATABASE_URL)';
 const t = (name, fn) => test(name, { skip: skipReason }, fn);
 
-const USER = 'f14-user';
+const USER = 'f14-user-' + Date.now();
 const CONV = 'f14-conv-' + Date.now();
+
+// `execution_checkpoints.conversation_id` referencia `conversations(id)`, que
+// por sua vez referencia o usuário. Sem semear os dois, `saveCheckpoint` cai na
+// violação de chave estrangeira, devolve `false` e o teste mede o nada: o
+// isolamento por (user, conversa) passaria só porque não há checkpoint nenhum.
+if (dbReady) {
+  const stamp = new Date().toISOString();
+  await db.prepare('INSERT INTO "user" (id,name,email,"emailVerified","createdAt","updatedAt") VALUES (?,?,?,?,?,?)')
+    .run(USER, 'Teste F-14', `${USER}@t.com`, false, stamp, stamp);
+  await db.prepare('INSERT INTO conversations (id,user_id,title,model,created_at,updated_at) VALUES (?,?,?,?,?,?)')
+    .run(CONV, USER, 'Teste F-14', 'modelo-teste', stamp, stamp);
+}
 
 t('checkpoint escrito em um pool é legível por outro (simula kill-9 + boot)', async () => {
   // Estado de um run interrompido: usuário pediu uma planilha, o agente

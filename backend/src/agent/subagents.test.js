@@ -431,6 +431,7 @@ test('subtarefa longa é cortada COM aviso ao sub-agente', () => {
   const longa = buildSubagentTask({ tarefa: `${'x'.repeat(6000)} NÃO ARREDONDE PARA CIMA` });
   assert.match(longa, /\[TAREFA TRUNCADA/);
   assert.doesNotMatch(longa, /NÃO ARREDONDE/, 'a regra final realmente se perdeu — por isso o aviso');
+});
 
 // ---- Acionamento: o gatilho positivo e o lembrete por etapas ----
 //
