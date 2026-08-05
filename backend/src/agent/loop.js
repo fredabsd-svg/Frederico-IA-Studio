@@ -77,7 +77,16 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   // permissão é derivado do `userText` — que, aqui, é texto escrito pelo modelo
   // principal, não pelo usuário.
   const inherited = isSubagent && delegation ? delegation : null;
-  const requestedModel = resume?.model || model || assistant?.model || '';
+  // `assistant.model_ref` (forma completa `<provedor>::<modelo>`) tem prioridade
+  // sobre `assistant.model` (id cru, legado): resolve sem ambiguidade e impede
+  // o `getUserProvider` de cair no `rows[0]` quando o modelo não bate com
+  // catálogo nenhum. Quando só o id cru existe (linhas anteriores à migration
+  // 028), o resolver tenta casar com o catálogo dos provedores cadastrados.
+  const requestedModel = resume?.model
+    || model
+    || assistant?.model_ref
+    || assistant?.model
+    || '';
   const provider = await getUserProvider(userId, requestedModel); // chave dona do modelo
   const client = provider.client;                          // sombreia o cliente global
   // runIdOverride: a rota pode impor um id (compartilhado com o live stream) para
@@ -306,9 +315,15 @@ export async function runAgent({ userId, conversationId, userText, model, assist
 
   // BYOK: sem chave de API configurada, orienta a cadastrar e encerra.
   if (!provider.hasKey) {
-    const finalText = freeTierConfigured()
-      ? 'Nenhuma chave de API configurada. Você pode **começar gratuitamente** (Configurações → Provedor de IA → "Começar gratuitamente") ou cadastrar a sua própria chave (OpenRouter/DeepSeek) para conversar.'
-      : 'Nenhuma chave de API configurada. Vá em **Configurações → Provedor de IA** e cadastre a sua chave (OpenRouter/DeepSeek) para começar a conversar.';
+    // F-1: quando há chave mas o MODELO pedido não está em catálogo nenhum,
+    // `getUserProvider` devolve o motivo em `attributionError`. Mostrar
+    // "Nenhuma chave configurada" aqui seria repetir a mensagem enganosa do
+    // PR #140 — o usuário TEM chave; o problema é outro, e ele precisa ler qual.
+    const finalText = provider.attributionError
+      ? provider.attributionError
+      : freeTierConfigured()
+        ? 'Nenhuma chave de API configurada. Você pode **começar gratuitamente** (Configurações → Provedor de IA → "Começar gratuitamente") ou cadastrar a sua própria chave (OpenRouter/DeepSeek) para conversar.'
+        : 'Nenhuma chave de API configurada. Vá em **Configurações → Provedor de IA** e cadastre a sua chave (OpenRouter/DeepSeek) para começar a conversar.';
     onEvent({ type: 'status', content: 'Chave de API não configurada' });
     onEvent({ type: 'delta', content: finalText });
     const execution = emitExecutionState(onEvent, 'awaiting_user', 'Configuração do provedor necessária', { runId });

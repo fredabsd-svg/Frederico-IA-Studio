@@ -7,6 +7,7 @@ import { workspaceFor } from '../sandbox.js';
 import { processTasks } from './tasks.js';
 import { validate, schemas } from '../validation.js';
 import { makeRouter, scheduleTimeZone } from './helpers.js';
+import { resolveDefaultModelRef } from '../defaults.js';
 
 const router = makeRouter();
 
@@ -16,7 +17,7 @@ async function runSchedule(s, d, markRun = true) {
   const t = now();
   const runDate = scheduleDateKey(d, scheduleTimeZone);
   await db.prepare('INSERT INTO conversations (id,user_id,title,model,client_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?)')
-    .run(convId, s.user_id, `Rotina: ${s.title} — ${runDate}`, s.model || process.env.DEEPSEEK_MODEL || 'deepseek-chat', s.client_id || null, t, t);
+    .run(convId, s.user_id, `Rotina: ${s.title} — ${runDate}`, s.model || resolveDefaultModelRef(), s.client_id || null, t, t);
   workspaceFor(convId, s.user_id);
   await db.prepare('INSERT INTO tasks (id,user_id,conversation_id,assistant_id,model,web_search,prompt,status,created_at) VALUES (?,?,?,?,?,?,?,?,?)')
     .run(nanoid(), s.user_id, convId, s.assistant_id || null, s.model || null, s.web_search ? 1 : 0, s.prompt, 'queued', t);

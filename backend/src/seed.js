@@ -13,6 +13,8 @@ import { nanoid } from 'nanoid';
 import { db, now } from './db.js';
 import { AGENTS } from './agent.js';
 import { ASSISTANT_TOOL_NAMES } from './agent/assistantPolicy.js';
+import { resolveDefaultModelRef } from './defaults.js';
+import { resolveBareModelToRef } from './userProvider.js';
 
 const promptsDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'prompts', 'docpro');
 export const DOCPRO_PROMPT = fs.readFileSync(path.join(promptsDir, 'atual.txt'), 'utf8');
@@ -22,18 +24,29 @@ const OLD_DOCPRO_PROMPTS = fs.readdirSync(promptsDir)
   .map((f) => fs.readFileSync(path.join(promptsDir, f), 'utf8'));
 const DEFAULT_TOOLS_JSON = JSON.stringify(ASSISTANT_TOOL_NAMES);
 
+// Modelo padrão canônico. Mantemos o id "nu" do modelo em `model` (a coluna
+// histórica) e tentamos preencher `model_ref` com a referência completa
+// `<provedor>::<modelo>`. Se a conta ainda não tem provedor cadastrado, o
+// `model_ref` fica NULL — o runtime resolve em modo "legado" e devolve erro
+// claro quando o usuário tentar usar o assistente antes de adicionar uma chave.
+async function defaultAssistantModel(userId) {
+  const bareModel = resolveDefaultModelRef();
+  const ref = await resolveBareModelToRef(userId, bareModel);
+  return { model: bareModel, modelRef: ref || null };
+}
+
 // Cria os assistentes padrão na primeira execução DE CADA USUÁRIO
 async function seedAssistants(userId) {
   if (Number((await db.prepare('SELECT COUNT(*) c FROM assistants WHERE user_id=?').get(userId)).c) > 0) return;
-  const defaultModel = process.env.DEEPSEEK_MODEL || 'deepseek/deepseek-chat';
+  const { model, modelRef } = await defaultAssistantModel(userId);
   // `emoji` guarda o nome de um ícone Lucide (ver frontend/src/constants.js).
   const defaults = [
     { name: 'Assistente geral', emoji: 'bot', prompt: AGENTS.geral.prompt },
     { name: 'Programação (Codex)', emoji: 'code-2', prompt: AGENTS.codigo.prompt }
   ];
-  const stmt = db.prepare('INSERT INTO assistants (id,user_id,name,emoji,model,system_prompt,tools,personality,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)');
+  const stmt = db.prepare('INSERT INTO assistants (id,user_id,name,emoji,model,model_ref,system_prompt,tools,personality,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)');
   const t = now();
-  for (const d of defaults) await stmt.run(nanoid(), userId, d.name, d.emoji, defaultModel, d.prompt, DEFAULT_TOOLS_JSON, JSON.stringify({ form: 50, det: 50, criat: 20 }), t, t);
+  for (const d of defaults) await stmt.run(nanoid(), userId, d.name, d.emoji, model, modelRef, d.prompt, DEFAULT_TOOLS_JSON, JSON.stringify({ form: 50, det: 50, criat: 20 }), t, t);
 }
 
 // Cria o assistente "Documentos profissionais" deste usuário com o prompt
@@ -44,10 +57,10 @@ async function seedDocProAssistant(userId) {
   try {
     const exists = await db.prepare('SELECT id,system_prompt FROM assistants WHERE name=? AND user_id=?').get('Documentos profissionais', userId);
     if (!exists) {
-      const defaultModel = process.env.DEEPSEEK_MODEL || 'deepseek/deepseek-chat';
+      const { model, modelRef } = await defaultAssistantModel(userId);
       const t = now();
-      await db.prepare('INSERT INTO assistants (id,user_id,name,emoji,model,system_prompt,tools,personality,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
-        .run(nanoid(), userId, 'Documentos profissionais', 'file-pen-line', defaultModel, DOCPRO_PROMPT, DEFAULT_TOOLS_JSON, JSON.stringify({ form: 60, det: 60, criat: 30 }), t, t);
+      await db.prepare('INSERT INTO assistants (id,user_id,name,emoji,model,model_ref,system_prompt,tools,personality,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
+        .run(nanoid(), userId, 'Documentos profissionais', 'file-pen-line', model, modelRef, DOCPRO_PROMPT, DEFAULT_TOOLS_JSON, JSON.stringify({ form: 60, det: 60, criat: 30 }), t, t);
     } else if (!String(exists.system_prompt || '').trim() || OLD_DOCPRO_PROMPTS.includes(exists.system_prompt)) {
       // Migra dos prompts padrão anteriores (legacy, v2…v9) para o atual —
       // sem tocar em versões personalizadas pelo usuário.

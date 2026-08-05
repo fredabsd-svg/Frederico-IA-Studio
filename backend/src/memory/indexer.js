@@ -7,14 +7,16 @@ import { getUserProvider } from '../userProvider.js';
 import { sanitizeToolProtocolText } from '../toolProtocol.js';
 import { untrustedContext } from '../agent/promptRegistry.js';
 import { openRouterRouting } from '../agent/provider.js';
+import { resolveDefaultModelRef } from '../defaults.js';
 
 // Indexa conversas (chunks + resumo) e extrai fatos importantes para a
 // memória de longo prazo. Roda em segundo plano, sem atrasar as respostas.
 
-// Fallback coerente com a base URL: OpenRouter usa ids com barra; a API
-// nativa da DeepSeek usa 'deepseek-chat'.
-const EXTRACT_MODEL = () => process.env.EXTRACT_MODEL || process.env.DEEPSEEK_MODEL ||
-  ((process.env.DEEPSEEK_BASE_URL || '').includes('openrouter') ? 'deepseek/deepseek-chat' : 'deepseek-chat');
+// EXTRACT_MODEL tem precedência sobre DEEPSEEK_MODEL porque é uma chamada
+// barata de segundo plano (resumos, fatos) — quem configura quer fixar um
+// modelo menor, não usar o principal. O default final vem de
+// `resolveDefaultModelRef()`, mesma constante que seed/rotas usam.
+const EXTRACT_MODEL = () => process.env.EXTRACT_MODEL || resolveDefaultModelRef();
 
 // Estimativa de tokens ciente de alfabeto. O fator plano len/3.5 é calibrado
 // para texto latino e SUBESTIMA 2–3× em japonês/chinês/coreano, árabe, cirílico

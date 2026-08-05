@@ -21,6 +21,7 @@ import { runGithubTool } from '../connectors/github.js';
 import { validateAttachmentManifest } from '../attachments.js';
 import { kickProcessing, mimeForName } from '../docling/service.js';
 import { purgeIfOrphan } from '../docling/retention.js';
+import { resolveDefaultModelRef } from '../defaults.js';
 
 const router = makeRouter();
 
@@ -40,7 +41,7 @@ router.post('/conversations', validate(schemas.conversationCreate), async (req, 
   const id = nanoid();
   const t = now();
   const title = req.body?.title || 'Nova conversa';
-  const model = req.body?.model || process.env.DEEPSEEK_MODEL || 'deepseek-chat';
+  const model = req.body?.model || resolveDefaultModelRef();
   const clientId = req.body?.clientId || null;
   await db.prepare('INSERT INTO conversations (id,user_id,title,model,client_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?)').run(id, req.userId, title, model, clientId, t, t);
   workspaceFor(id, req.userId);

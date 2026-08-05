@@ -1,0 +1,28 @@
+-- F-1: modelRef completo no assistente (causa-raiz do 401 do PR #140).
+--
+-- `assistants.model` guarda o id cru do modelo (ex.: "deepseek/deepseek-chat"
+-- no formato OpenRouter, ou "deepseek-chat" no formato nativo DeepSeek). Quando
+-- esse id é passado para `getUserProvider`, o parser reconhece `provider::model`
+-- como uma referência ambígua e, se não achar o modelo em catálogo nenhum, cai
+-- no `rows[0]` da tabela `user_ai_providers` — o provedor mais ANTIGO da conta.
+-- É o chute silencioso que produziu o "Chave da API inválida" do PR #140.
+--
+-- A nova coluna `model_ref` guarda a referência COMPLETA, no formato
+-- `<provider_id>::<modelo>` (ver `backend/src/modelRef.js`), atrelando o
+-- assistente ao provedor certo. A precedência na resolução é:
+--
+--   1) `model_ref` quando preenchido (forma nova, inequívoca);
+--   2) `model` legado (id cru) — `getUserProvider` tenta casar com o catálogo
+--      do provedor e, se não achar, devolve erro claro em vez do `rows[0]`.
+--
+-- A coluna entra como NULLABLE. As linhas existentes ficam com `model_ref=NULL`
+-- até a primeira interação do usuário (criação/edição do assistente), que
+-- resolve o `model` legado contra os provedores da conta. A migração não
+-- preenche automaticamente porque o id do provedor é por usuário e depende da
+-- ordem de cadastro: precher errado seria pior que deixar para o backend.
+--
+-- Esta coluna NÃO substitui `model`: a coluna antiga continua sendo a fonte
+-- para a interface (mostra o rótulo que o usuário escolheu no seletor) e é
+-- preservada em todas as escritas. A `model_ref` é só o índice de resolução.
+
+ALTER TABLE assistants ADD COLUMN IF NOT EXISTS model_ref TEXT;
