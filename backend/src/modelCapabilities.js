@@ -3,6 +3,7 @@
 // intentionally different from `false`: unknown models can still be tried,
 // while known-incompatible models never receive an unsupported parameter.
 import { enrichModelProfile } from './modelKnowledge.js';
+import { db, now } from './db.js';
 
 export const CAPABILITY_KEYS = Object.freeze(['text', 'tools', 'vision', 'image', 'reasoning', 'video', 'audio', 'web', 'files', 'code', 'embeddings']);
 
@@ -274,13 +275,85 @@ export function providerLabel(id) {
   return prefix.charAt(0).toUpperCase() + prefix.slice(1);
 }
 
-export function markModelCapabilityUnsupported(id, capability) {
+export function markModelCapabilityUnsupported(id, capability, { providerId = null, errorMessage = null } = {}) {
   if (!CAPABILITY_KEYS.includes(capability)) return null;
   const profile = getModelProfile(id);
   profile.capabilities[capability] = false;
   if (capability in profile) profile[capability] = false;
   catalog.set(profile.id, profile);
+  // F-24: persiste a decisão em `model_tool_capability_cache` para que o
+  // reinício do backend não traga de volta o modelo como "suporta tools"
+  // quando a falha veio do próprio provedor. Apenas `tools` tem persistência
+  // por enquanto — outras capacidades continuam em memória (são menos
+  // críticas e mudam mais raramente).
+  if (capability === 'tools' && providerId) {
+    try {
+      db.prepare(
+        `INSERT INTO model_tool_capability_cache (provider_id, model, supports_tools, last_attempt_at, last_error, attempts, updated_at)
+         VALUES (?, ?, 0, ?, ?, 1, ?)
+         ON CONFLICT (provider_id, model) DO UPDATE SET
+           supports_tools = 0,
+           last_attempt_at = excluded.last_attempt_at,
+           last_error = excluded.last_error,
+           attempts = model_tool_capability_cache.attempts + 1,
+           updated_at = excluded.updated_at`
+      ).run(providerId, id, now(), String(errorMessage || '').slice(0, 200), now());
+    } catch (err) {
+      // Sem DB ou tabela ainda não migrada: a cache em memória já basta para
+      // esta sessão; a persistência é otimização para o próximo boot.
+      console.warn('[modelCapabilities] falha ao persistir cache de tools:', err.message);
+    }
+  }
   return profile;
+}
+
+// Carrega o cache persistido de tools para a memória no boot do backend. Sem
+// isto, um modelo que falhou com "no endpoints found that support tool use"
+// ontem volta HOJE como apto para ferramentas — o usuário paga o ciclo.
+// Falha de DB não derruba o boot: o cache em memória pode ser reconstruído
+// em uso normal.
+let cacheLoaded = false;
+export async function loadModelToolCapabilityCache() {
+  if (cacheLoaded) return;
+  try {
+    const rows = await db.prepare(
+      "SELECT provider_id, model FROM model_tool_capability_cache WHERE supports_tools = 0"
+    ).all();
+    for (const row of rows) {
+      const profile = getModelProfile(row.model);
+      profile.capabilities.tools = false;
+      catalog.set(profile.id, profile);
+    }
+    cacheLoaded = true;
+  } catch {
+    // Tabela ainda não existe (instalação nova antes do migrate). Tenta de novo
+    // na próxima chamada — barato.
+  }
+}
+
+// Consulta rápida: este (provedor, modelo) tem histórico de falha com tools?
+// Usado pelo sub-agente para decidir se oferece a ferramenta de delegação ao
+// modelo — se já sabemos que o modelo não suporta, nem oferecemos.
+export async function modelLacksToolsInCache(providerId, model) {
+  if (!providerId || !model) return false;
+  try {
+    const row = await db.prepare(
+      "SELECT 1 AS hit FROM model_tool_capability_cache WHERE provider_id=? AND model=? AND supports_tools=0 LIMIT 1"
+    ).get(providerId, model);
+    return Boolean(row);
+  } catch { return false; }
+}
+
+// Limpa uma entrada do cache (para o operador forçar uma re-tentativa quando o
+// provedor publica novos endpoints que passam a aceitar ferramentas).
+export async function clearModelToolCapabilityCache(providerId, model) {
+  try {
+    await db.prepare(
+      "DELETE FROM model_tool_capability_cache WHERE provider_id=? AND model=?"
+    ).run(providerId, model);
+    cacheLoaded = false; // força recarga na próxima decisão
+    return true;
+  } catch { return false; }
 }
 
 export function detectToolRequirement({ userText, webSearch = false, developer = false, hasUploads = false } = {}) {

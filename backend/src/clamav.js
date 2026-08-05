@@ -62,7 +62,13 @@ export const scanHealth = {
   ultimoErroEm: null,
   arquivosVerificados: 0,
   arquivosNaoVerificados: 0,
-  arquivosInfectados: 0
+  arquivosInfectados: 0,
+  // F-11: contadores da quarentena. Não substituem arquivosVerificados/NaoVerificados
+  // — o momento do escaneamento (na entrada) continua sendo contado lá. Estes
+  // aqui refletem o resultado do RE-ESCANEAMENTO pós-recuperação.
+  quarentenaTotal: 0,
+  quarentenaLimpos: 0,
+  quarentenaInfectados: 0
 };
 
 // Escaneia um Buffer no clamd. Resolve { clean:true } ou { clean:false, virus }.
@@ -160,5 +166,137 @@ export async function scanUploadBatch(files) {
       clean.push(file);
     }
   }
+  // F-11: se o scan passou EM ALGUM arquivo desta chamada (clamd voltou),
+  // aproveita para reprocessar a fila de quarentena — é o melhor sinal que
+  // temos de que o antivírus está saudável. Limitado a 10 por chamada para
+  // não segurar a resposta do upload; o resto fica para a próxima.
+  if (scanned) {
+    try {
+      const r = await reprocessQuarantine();
+      if (r.processed) console.log(`[clamav] quarentena reprocessada: ${JSON.stringify(r)}`);
+    } catch (e) { console.warn('[clamav] falha ao reprocessar quarentena:', e.message); }
+  }
   return { scanned, status: scanned ? 'verificado' : 'degradado', clean, rejected };
+}
+
+// ---- Quarentena (F-11) -----------------------------------------------------
+// Quando o clamd está fora do ar, o upload é aceito em modo degradado. Em vez
+// de marcar como "verificado" (o que seria mentira), o arquivo vai para uma
+// pasta `.quarantine/` e esta tabela rastreia o que precisa ser RE-ESCANEADO
+// quando o antivírus voltar.
+//
+// O caminho é por design: deixar o arquivo em `uploads/` como se estivesse OK
+// é exatamente o que a auditoria apontou como vetor (distribuição de malware
+// com selo de verificado). Quarentena é separada para que o conjunto que o
+// usuário consegue baixar/enviar para um agente seja só o que passou.
+
+import path from 'node:path';
+import { db, now } from './db.js';
+
+// Pasta de quarentena dentro de uploads/. Não inventária aqui o caminho — quem
+// chama é que conhece a raiz do workspace desta conversa.
+export function quarantineDirFor(uploadsDir) {
+  return path.join(uploadsDir, '.quarantine');
+}
+
+// Move o arquivo temporário do upload para a pasta de quarentena da conversa
+// e registra a linha na tabela `quarantined_uploads`. NÃO muda a linha em
+// `files` — a quarentena é uma camada por cima, não uma reescrita do upload.
+// `files` continua apontando para o caminho em `.quarantine/` (que é onde o
+// arquivo REAL está). Ao ser liberado (cleared), movemos o arquivo para
+// `uploads/<name>` e ATUALIZAMOS o caminho em `files`.
+export function quarantineUploadedFile({ conversationId, userId, srcPath, uploadsDir, name, mime, size, hash }) {
+  const qdir = quarantineDirFor(uploadsDir);
+  fs.mkdirSync(qdir, { recursive: true });
+  // Mesmo nome opaco do `commitUploadedFile`: timestamp + nanoid, para não
+  // vazar o nome original no caminho do arquivo em disco.
+  const safeName = `${Date.now()}_${Math.random().toString(36).slice(2, 10)}_${name.replace(/[^a-zA-Z0-9._ -]/g, '_')}`;
+  const target = path.join(qdir, safeName);
+  fs.renameSync(srcPath, target);
+  try { fs.chownSync(target, 1000, 1000); } catch {}
+  const relPath = path.relative(path.dirname(uploadsDir), target).replaceAll('\\', '/');
+  return relPath; // ex.: "uploads/.quarantine/1717000000_abc_file.pdf"
+}
+
+// Lista arquivos em quarentena com status 'pending' ou 'stale' (pronto para
+// nova tentativa). Limite padrão: 50 por chamada (a fila de re-escaneamento).
+export async function listQuarantinedReady(limit = 50) {
+  try {
+    return await db.prepare(
+      "SELECT id, conversation_id, user_id, storage_path, original_name, mime, size, hash, attempts, quarantined_at FROM quarantined_uploads WHERE status IN ('pending', 'stale') ORDER BY quarantined_at ASC LIMIT ?"
+    ).all(limit);
+  } catch {
+    // Tabela ainda não migrada (instalação nova antes do migrate) ou DB
+    // indisponível — devolve vazio em vez de derrubar o chamador. Reprocessar
+    // quarentena não é caminho crítico no boot.
+    return [];
+  }
+}
+
+// Marca um item como 'processing' para evitar duas tentativas simultâneas no
+// mesmo arquivo. Devolve true se reservou, false se outro worker já está nele.
+export async function claimQuarantineItem(id) {
+  try {
+    const result = await db.prepare(
+      "UPDATE quarantined_uploads SET status='processing', last_attempt_at=? WHERE id=? AND status IN ('pending', 'stale')"
+    ).run(now(), id);
+    return result.changes > 0;
+  } catch { return false; }
+}
+
+// Fecha o ciclo de uma tentativa de re-escaneamento.
+export async function markQuarantineResult(id, { clean, virus, error }) {
+  try {
+    if (clean === true) {
+      await db.prepare("UPDATE quarantined_uploads SET status='cleared', cleared_at=?, last_error=NULL WHERE id=?")
+        .run(now(), id);
+      scanHealth.quarentenaLimpos += 1;
+    } else if (clean === false) {
+      await db.prepare("UPDATE quarantined_uploads SET status='infected', virus_name=?, cleared_at=?, last_error=NULL WHERE id=?")
+        .run(virus || 'desconhecido', now(), id);
+      scanHealth.quarentenaInfectados += 1;
+    } else {
+      // Erro de infra (clamd caiu de novo, timeout, I/O): mantém pending/stale
+      // para tentar de novo depois. attempts++ para detectar loops travados.
+      await db.prepare("UPDATE quarantined_uploads SET status='stale', attempts=attempts+1, last_attempt_at=?, last_error=? WHERE id=?")
+        .run(now(), String(error || '').slice(0, 200), id);
+    }
+  } catch {}
+}
+
+// Re-escaneia a fila de quarentena. Chamado depois de um scan BEM-SUCEDIDO
+// (sinal de que o clamd está vivo de novo). Limite conservador de 10 por
+// chamada — o resto fica para a próxima. Devolve um resumo com o que fez.
+export async function reprocessQuarantine() {
+  if (!scanEnabled()) return { skipped: true, reason: 'av-desligado' };
+  const items = await listQuarantinedReady(10);
+  if (!items.length) return { skipped: true, reason: 'fila-vazia' };
+  const result = { processed: 0, cleared: 0, infected: 0, stale: 0, errors: [] };
+  for (const item of items) {
+    if (!await claimQuarantineItem(item.id)) continue;
+    result.processed += 1;
+    try {
+      const fullPath = path.join(path.dirname(path.dirname(item.storage_path)), item.storage_path);
+      const r = await scanFilePath(fullPath);
+      if (r.clean) {
+        const target = path.join(path.dirname(path.dirname(fullPath)), 'uploads', path.basename(fullPath).replace(/^\d+_[a-z0-9]+_/, ''));
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.renameSync(fullPath, target);
+        try { fs.chownSync(target, 1000, 1000); } catch {}
+        const newRel = path.relative(path.dirname(path.dirname(target)), target).replaceAll('\\', '/');
+        try { await db.prepare("UPDATE files SET path=? WHERE id=?").run(newRel, item.id); } catch {}
+        await markQuarantineResult(item.id, { clean: true });
+        result.cleared += 1;
+      } else {
+        try { fs.rmSync(fullPath, { force: true }); } catch {}
+        await markQuarantineResult(item.id, { clean: false, virus: r.virus });
+        result.infected += 1;
+      }
+    } catch (err) {
+      await markQuarantineResult(item.id, { error: err.message });
+      result.stale += 1;
+      result.errors.push({ id: item.id, error: err.message });
+    }
+  }
+  return result;
 }

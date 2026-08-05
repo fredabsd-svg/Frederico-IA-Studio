@@ -46,6 +46,12 @@ const ambienteBackend = {
   SANDBOX_RECONCILE_ON_BOOT: 'false',
   // A miniatura de página abriria navegador de verdade no meio do teste.
   WEB_FETCH_SCREENSHOTS: '0',
+  // O teste do provedor "travado" precisa que o watchdog encerre o stream em
+  // poucos segundos em vez dos 180s padrão — espera desse tamanho tornaria o
+  // E2E inviável. O limite de recuperação fica em 1 para o ciclo (stall →
+  // tenta de novo → stall → desiste) terminar em ~5s, não em minutos.
+  STREAM_STALL_TIMEOUT_MS: '2000',
+  MODEL_STREAM_RECOVERY_LIMIT: '1',
   NODE_ENV: 'test'
 };
 

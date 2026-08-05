@@ -331,6 +331,16 @@ export function isCheckpointSkipped(relPath) {
 
 const MAX_CHECKPOINT_BYTES = Math.max(1, Number(process.env.CHECKPOINT_MAX_MB || 300)) * 1024 * 1024;
 const CHECKPOINT_KEEP = Math.max(1, Number(process.env.CHECKPOINT_KEEP || 5));
+// F-26: cota GLOBAL por usuário somando TODAS as conversas. Sem ela,
+// CHECKPOINT_KEEP × CHECKPOINT_MAX_MB × N_CONVERSAS pode estourar o disco
+// (300 MB × 5 × 100 conversas = 150 GB). O default de 2 GB é generoso para
+// uso pessoal; num deploy público vale a pena reduzir.
+//   0 ou ausente desliga a cota global (corte apenas por CHECKPOINT_KEEP
+//   continua valendo). Recomendado em produção.
+const CHECKPOINT_GLOBAL_MAX_BYTES = (() => {
+  const v = Number(process.env.CHECKPOINT_GLOBAL_MAX_MB);
+  return Number.isFinite(v) && v >= 0 ? Math.floor(v) * 1024 * 1024 : 2 * 1024 * 1024 * 1024;
+})();
 
 // Lista os arquivos elegíveis, com o custo já somado. Separado da cópia para
 // que o teto seja verificado ANTES de gravar qualquer coisa (um checkpoint pela
@@ -396,6 +406,14 @@ export function createCheckpoint(base, checkpointsDir, { label = '', reason = 'm
   };
   fs.writeFileSync(path.join(dir, 'meta.json'), JSON.stringify(meta, null, 2), 'utf8');
   pruneCheckpoints(checkpointsDir, keep);
+  // F-26: depois da poda por-conversa, verifica a cota GLOBAL do usuário.
+  // Estrutura: <root>/.checkpoints/<userId>/<conversationId>/<checkpointId>.
+  // Aqui `checkpointsDir` já é `<root>/.checkpoints/<userId>/<conversationId>`,
+  // então o userRoot é o dirname. O `skipDirName` é o basename
+  // (= conversationId) — protege o checkpoint recém-criado desta conversa
+  // de ser podado na mesma passada.
+  const userRoot = path.dirname(checkpointsDir);
+  pruneCheckpointsGlobal(userRoot, { skipDirName: path.basename(checkpointsDir) });
   return { id, arquivos: meta.arquivos, bytes, ignorados: ignorados.length };
 }
 
@@ -419,6 +437,49 @@ export function pruneCheckpoints(checkpointsDir, keep = CHECKPOINT_KEEP) {
     try { fs.rmSync(path.join(checkpointsDir, cp.id), { recursive: true, force: true }); removed++; } catch {}
   }
   return removed;
+}
+
+// F-26: poda GLOBAL por usuário. Recebe a RAIZ dos checkpoints do usuário
+// (`<root>/<userId>`) e remove os mais antigos até o total ficar abaixo de
+// `maxBytes` (default: `CHECKPOINT_GLOBAL_MAX_BYTES`). A granularidade é por
+// checkpoint inteiro — não cortamos um checkpoint pela metade, porque a
+// integridade do snapshot é o que viabiliza a retomada.
+//
+// Importante: a varredura SOMA todas as conversas do usuário; sem isto,
+// 1000 conversas com 1.5 GB cada estouram 1.5 TB de checkpoints.
+export function pruneCheckpointsGlobal(userCheckpointsRoot, { maxBytes = CHECKPOINT_GLOBAL_MAX_BYTES, skipDirName = null } = {}) {
+  if (!maxBytes) return { removed: 0, skipped: 0, totalBytes: 0, reason: 'cota-desligada' };
+  let all = [];
+  let convDirs = [];
+  try { convDirs = fs.readdirSync(userCheckpointsRoot, { withFileTypes: true }).filter(d => d.isDirectory()).map(d => d.name); }
+  catch { return { removed: 0, skipped: 0, totalBytes: 0, reason: 'sem-pasta' }; }
+  for (const convId of convDirs) {
+    if (skipDirName && convId === skipDirName) continue; // protege o checkpoint que acabou de ser criado
+    const convDir = path.join(userCheckpointsRoot, convId);
+    for (const cp of listCheckpoints(convDir)) all.push({ ...cp, convId, fullDir: path.join(convDir, cp.id) });
+  }
+  // listCheckpoints já devolve ordenado do mais novo para o mais antigo.
+  // Para a poda, queremos do MAIS ANTIGO primeiro — invertemos.
+  all.sort((a, b) => String(a.criado_em).localeCompare(String(b.criado_em)));
+  let totalBytes = all.reduce((s, cp) => s + Number(cp.bytes || 0), 0);
+  let removed = 0;
+  // Itera dos mais antigos para os mais novos, removendo enquanto o total
+  // passar do teto. O loop é estável: para quando sobra dentro do orçamento.
+  // Mantém um piso de `keep=CHECKPOINT_KEEP` POR CONVERSA — sem isso, a
+  // quota global poderia apagar o ÚNICO checkpoint da conversa A para
+  // liberar espaço para a conversa B.
+  while (totalBytes > maxBytes && all.length) {
+    const cp = all.shift(); // mais antigo
+    // Pula se é o último checkpoint desta conversa (proteção per-conversa).
+    const restantes = all.filter(c => c.convId === cp.convId);
+    if (restantes.length < 1) continue;
+    try {
+      fs.rmSync(cp.fullDir, { recursive: true, force: true });
+      totalBytes -= Number(cp.bytes || 0);
+      removed += 1;
+    } catch {}
+  }
+  return { removed, totalBytes, maxBytes };
 }
 
 // Restaura o snapshot POR CIMA do workspace: repõe os arquivos do checkpoint e

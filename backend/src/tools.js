@@ -25,7 +25,7 @@ import { runGithubTool } from './connectors/github.js';
 import { createCache } from './cache.js';
 import { captureThumbnail } from './agent/pageShot.js';
 import { getUserProvider } from './userProvider.js';
-import { guardCommand, guardPythonCode, PC_MOUNT_ROOT } from './execGuard.js';
+import { guardCommand, guardPythonCode, PC_MOUNT_ROOT, networkAllowlistFromEnv } from './execGuard.js';
 import { audit } from './companion/audit.js';
 
 // Cache de chamadas EXTERNAS caras/repetidas. Desligável com TOOL_CACHE=0
@@ -523,19 +523,35 @@ async function generateImage(ws, args, options = {}) {
   const images = data.choices?.[0]?.message?.images || [];
   if (!images.length) return { error: 'O modelo não retornou imagem. Resposta: ' + String(data.choices?.[0]?.message?.content || '').slice(0, 200) };
   const saved = [];
+  // Sub-agentes rodam numa subpasta de outputs para que dois em paralelo não
+  // sobrescrevam arquivos com o mesmo nome E para que cada cartão na interface
+  // mostre quem produziu. O pai (sem outputsSubdir) grava na raiz, como sempre.
+  const { targetDir, prefix } = resolveOutputsTarget(ws.outputs, options.outputsSubdir);
+  if (prefix) { try { fs.mkdirSync(targetDir, { recursive: true }); } catch {} }
   images.forEach((img, i) => {
     const url = img?.image_url?.url || img?.url || '';
     const m = /^data:image\/(\w+);base64,(.+)$/s.exec(url);
     if (!m) return;
     const cleanName = (args.file_name || 'imagem').replace(/[^a-zA-Z0-9._-]/g, '_').replace(/\.(png|jpe?g|webp|gif)$/i, '');
     const fname = `${cleanName}${images.length > 1 ? '-' + (i + 1) : ''}.${m[1] === 'jpeg' ? 'jpg' : m[1]}`;
-    const target = path.join(ws.outputs, fname);
+    const target = path.join(targetDir, fname);
     fs.writeFileSync(target, Buffer.from(m[2], 'base64'));
     try { fs.chownSync(target, 1000, 1000); } catch {}
-    saved.push(`outputs/${fname}`);
+    saved.push(prefix ? `${prefix}${fname}` : `outputs/${fname}`);
   });
   if (!saved.length) return { error: 'Não foi possível decodificar a imagem retornada pelo modelo.' };
   return { ok: true, saved, note: 'Imagem salva em outputs — o sistema exibirá a prévia e o download ao usuário.' };
+}
+
+// Resolve o diretório real e o prefixo de path para gravar uma saída, dado o
+// `outputsSubdir` da delegação. Extraído de generateImage para ser testável
+// sem rede: o F-25 (isolamento de outputs por sub-agente) vive ou morre
+// nesta resolução — um path mal formado aqui vazaria arquivos do filho para
+// a raiz ou gravaria fora do workspace.
+export function resolveOutputsTarget(outputsBase, outputsSubdir) {
+  const subdir = outputsSubdir ? String(outputsSubdir).replace(/[^a-zA-Z0-9._-]/g, '_') : '';
+  if (!subdir) return { targetDir: outputsBase, prefix: '' };
+  return { targetDir: path.join(outputsBase, subdir), prefix: `outputs/${subdir}/` };
 }
 
 // A rede é controlada pela política do container (desligada por padrão).
@@ -704,7 +720,15 @@ export async function runTool(conversationId, name, args = {}, sandboxOptions = 
   if (name === 'generate_image') return JSON.stringify(await generateImage(ws, args, { signal, userId: sandboxOptions.userId }));
   // Autorização de escrita nas Pastas do PC vale para ESTE turno e é decidida
   // pelo backend a partir do pedido do usuário (loop.js) — nunca pelo prompt.
-  const guardContext = { pcWriteAuthorized: sandboxOptions.pcWriteAuthorized === true };
+  // F-05b: a rede é opt-in (turno autorizou networkEnabled) e, quando aberta,
+  // só permite falar com destinos em SANDBOX_NETWORK_ALLOWLIST. Lista vazia
+  // = fail-closed: nada de rede. Aqui a allowlist vem da env UMA vez por
+  // processo — o `networkAllowlist` passado para guardCommand é derivado.
+  const networkAllowlist = sandboxOptions.networkEnabled ? networkAllowlistFromEnv() : [];
+  const guardContext = {
+    pcWriteAuthorized: sandboxOptions.pcWriteAuthorized === true,
+    networkAllowlist
+  };
   if (name === 'run_python') {
     guardPythonCode(args.code || '', guardContext);
     await auditExecution(sandboxOptions, { tool: 'run_python', payload: args.code, guardContext, pcMounts });
