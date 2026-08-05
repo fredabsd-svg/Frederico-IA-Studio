@@ -12,6 +12,11 @@ import {
 
 let dbReady = true;
 try { await pool.query('SELECT 1'); } catch { dbReady = false; }
+// As migrações rodam AQUI, como nos demais testes de banco: os arquivos de
+// teste correm em paralelo e nenhum pode contar com outro para preparar o
+// schema. Sem esta linha o resultado depende da ordem de execução — passa na
+// suíte completa (algum vizinho migrou antes) e falha no job da contagem.
+if (dbReady) { const { runMigrations } = await import('./migrate.js'); await runMigrations(); }
 const skipReason = dbReady ? false : 'requer PostgreSQL (DATABASE_URL)';
 const t = (name, fn) => test(name, { skip: skipReason }, fn);
 
