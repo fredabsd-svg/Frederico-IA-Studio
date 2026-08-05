@@ -65,6 +65,37 @@ Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
 ---
 
+## Os sub-agentes existiam e nunca eram acionados (2026-07-26)
+
+Um pedido de seis entregas ("Fase 7": API, nginx, dashboard, watchdog, relatórios,
+testes) virou uma execução única de 49 etapas, sem uma delegação sequer — com a
+ferramenta disponível o tempo todo. **Não era bug de integração: era omissão de
+política.** Os guard-rails do PR #136 só sabiam dizer NÃO (profundidade, orçamento,
+modo gratuito, turno social); nada dizia QUANDO delegar.
+
+Três causas, três correções:
+
+| Causa | Correção |
+| --- | --- |
+| O `PLAN_BEFORE` — onde o modelo decide **como** atacar a tarefa — não menciona divisão de trabalho | `PLAN_DELEGATION_TOPIC`: sexto tópico do plano ("o que delegar e o que fazer aqui"), acrescentado pelo `loop.js` só nos modos que escrevem **e** com a ferramenta na mesa |
+| A descrição da ferramenta era dissuasiva ("delegar custa tempo e tokens"), sem gatilho positivo | Gatilho explícito: **3+ entregas independentes → uma chamada por entrega**. Em `subagentToolDefinition` e no inventário (`toolAvailabilityNote`) |
+| Nada reagia ao tamanho da execução — aos 40 passos o modelo não recebia sinal novo, e o contexto acumulado é justamente o custo que o sub-agente evita | `SUBAGENT_NUDGE_NOTE`: uma nota de sistema, **uma vez por execução**, ao passar de `SUBAGENT_NUDGE_STEPS` (padrão 15) sem ter delegado nada |
+
+O lembrete tem **saída explícita** ("se o que resta depende deste contexto ou é a
+integração final, siga direto e ignore"): sem ela o modelo obedeceria à nota e passaria
+a delegar quando terminar ali era o certo — o oposto do problema. Pelo mesmo motivo o
+tópico do plano aceita "sem delegação" com o motivo em uma linha.
+
+O tópico do plano fica **fora** de `developerContextFor` de propósito: a ferramenta pode
+não estar disponível (modo gratuito, `SUBAGENTS_ENABLED=false`), e mandar planejar
+delegação sem poder delegar é pior que não mencionar. Quem sabe disso é o `loop.js`.
+
+`SUBAGENT_NUDGE_STEPS=0` desliga o lembrete sem desligar os sub-agentes. 9 testes novos.
+
+---
+
+---
+
 ## Modelo de IA por projeto no Modo Design (2026-07-27)
 
 Uma lacuna de uso que só apareceu quando o usuário perguntou "como eu troco o

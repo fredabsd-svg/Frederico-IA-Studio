@@ -38,6 +38,17 @@ test('lista vazia de ferramentas não libera tudo', () => {
   assert.deepEqual(toolsFor({ tools: ['read_file', 'inexistente'] }).map(tool => tool.function.name), ['read_file']);
 });
 
+// A delegação vivia num item que só dizia quando NÃO delegar. O gatilho positivo
+// é o que faz o modelo dividir uma tarefa de várias frentes em vez de executar
+// tudo em linha — e ele precisa aparecer no inventário, que é o que o modelo lê.
+test('o inventário traz o gatilho de delegação quando a ferramenta está na mesa', () => {
+  const comDelegacao = toolAvailabilityNote([{ type: 'function', function: { name: 'delegar_subagente' } }]);
+  assert.match(comDelegacao, /TRÊS OU MAIS entregas independentes/i);
+  assert.match(comDelegacao, /UMA chamada por entrega/i);
+  // Sem a ferramenta oferecida, nem uma palavra sobre delegar.
+  assert.doesNotMatch(toolAvailabilityNote(toolsFor({})), /delegar_subagente/);
+});
+
 test('assistente sem ferramentas informa configuração sem negar capacidade do aplicativo', () => {
   const note = toolAvailabilityNote([]);
   assert.match(note, /CONFIGURADO sem ferramentas/);

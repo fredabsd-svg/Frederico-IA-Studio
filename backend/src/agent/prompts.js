@@ -276,6 +276,14 @@ export const DEV_WRITE_MODES = new Set(['build', 'fix', 'auto']);
 // Instrução reutilizada pelos modos que executam: apresentar um plano curto
 // ANTES de mexer no projeto (item 6 da especificação do Modo Desenvolvedor).
 const PLAN_BEFORE = 'ANTES DE QUALQUER EDIÇÃO, apresente em cinco tópicos curtos: (1) o que você entendeu do pedido; (2) quais arquivos pretende analisar; (3) quais mudanças pretende fazer; (4) riscos ou impactos possíveis; (5) como vai validar o resultado. Só depois comece a executar, mostrando o progresso.';
+// Sexto tópico do plano, acrescentado SÓ quando a delegação está de fato na mesa
+// (ver shouldOfferSubagentTool). Sem ele, o plano decide "como atacar" uma tarefa
+// de várias frentes sem nunca considerar dividi-la — foi assim que um pedido de
+// seis entregas virou uma execução única de dezenas de etapas. Fica separado do
+// PLAN_BEFORE porque a ferramenta pode não estar disponível (modo gratuito,
+// SUBAGENTS_ENABLED=false), e planejar delegação sem poder delegar é pior que
+// não mencionar.
+export const PLAN_DELEGATION_TOPIC = 'AINDA NO PLANO, acrescente um SEXTO tópico: (6) divisão do trabalho — quais partes você vai DELEGAR com delegar_subagente e o que vai fazer você mesmo. Frentes independentes entre si (que não dependem do resultado uma da outra) devem ser delegadas, uma chamada por frente; o que depende do contexto desta conversa, a integração final e as tarefas curtas ficam com você. Se nada aqui compensa delegar, escreva "sem delegação" e o motivo em uma linha.';
 // Resumo profissional exigido ao final das tarefas que alteram o projeto
 // (item 10 da especificação).
 const FINAL_SUMMARY = 'AO CONCLUIR, entregue um resumo profissional com: o que foi alterado; arquivos modificados; arquivos criados ou removidos; testes executados e seus resultados; problemas encontrados; pendências; e sugestões de próximas etapas.';
@@ -382,7 +390,7 @@ export function toolAvailabilityNote(tools, { includeInventory = false, sandboxN
   if (names.has('github_list_repos')) lines.push('- github_list_repos: listar os repositórios GitHub da conta conectada.');
   // Delegação: o modelo precisa saber que o sub-agente NÃO vê a conversa, senão
   // manda "continue a análise" e o filho não tem contexto nenhum para trabalhar.
-  if (names.has('delegar_subagente')) lines.push('- delegar_subagente: delegar uma subtarefa AUTOCONTIDA a um sub-agente com contexto próprio, que executa ferramentas e devolve só o resultado. Vale a pena quando a subtarefa é pesada e isolável (varrer muitos arquivos, ler um documento longo, apurar um ponto específico) e o passo a passo dela não precisa ocupar esta conversa. Ele NÃO enxerga o histórico daqui: escreva a tarefa inteira, com caminhos, números e regras. Para pedido curto que você já resolve direto, NÃO delegue.');
+  if (names.has('delegar_subagente')) lines.push('- delegar_subagente: delegar uma subtarefa AUTOCONTIDA a um sub-agente com contexto próprio, que executa ferramentas e devolve só o resultado. GATILHO: pedido com TRÊS OU MAIS entregas independentes entre si — delegue as isoláveis, UMA chamada por entrega (as do mesmo lote correm em paralelo), em vez de executar todas em linha. Vale também para subtarefa única e pesada (varrer muitos arquivos, ler um documento longo, apurar um ponto específico). Ele NÃO enxerga o histórico daqui: escreva a tarefa inteira, com caminhos, números e regras. Fica com você o que é curto, o que depende deste contexto e a integração final das partes.');
   if (!tools.length) lines.push('- Este assistente está CONFIGURADO sem ferramentas de execução. Não diga que o modelo ou o aplicativo é incapaz de ler PDFs ou gerar arquivos; explique que as ferramentas deste assistente estão desativadas e oriente o usuário a habilitá-las no Assistant Studio ou escolher outro assistente.');
 
   if (includeInventory && names.has('run_python')) {
