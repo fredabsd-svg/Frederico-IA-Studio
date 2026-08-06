@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Modal, ModelPicker } from '../components.jsx';
-import { ShieldCheck } from 'lucide-react';
+import { RotateCcw, ShieldCheck } from 'lucide-react';
 import { NinoAvatar } from './NinoAvatar.jsx';
 
 // Configuração do Copiloto/Companion — vive em Configurações. Reúne personagem,
@@ -37,6 +37,12 @@ export function CompanionConfig({ companion, allModels = [], assistants = [], mo
   const name = local.characterName || 'Nino';
 
   function save() { saveSettings(local); onClose(); }
+  function restoreVisibility() {
+    localStorage.removeItem('fred_companion_pos');
+    localStorage.removeItem('fred_companion_min');
+    window.dispatchEvent(new Event('fred:companion-reset-position'));
+    set({ enabled: true });
+  }
 
   const previewFace = (
     <span className="cmpPreviewFace">
@@ -141,6 +147,7 @@ export function CompanionConfig({ companion, allModels = [], assistants = [], mo
         </div>
 
         <div className="cmpFormActions">
+          <button className="ghost" onClick={restoreVisibility}><RotateCcw size={14} /> Restaurar na tela</button>
           <button className="ghost" onClick={onClose}>Cancelar</button>
           <button className="primary" onClick={save}>Salvar</button>
         </div>

@@ -4,6 +4,7 @@ import { API } from './constants.js';
 import { useCopilotChat } from './hooks/useCopilotChat.js';
 import { CopilotWorkspace } from './components/CopilotWorkspace.jsx';
 import { NinoAvatar, NINO_CAPTION } from './components/NinoAvatar.jsx';
+import { clampCompanionPosition, parseCompanionPosition } from './companionPosition.js';
 
 // Frederico Companion — a representação visual e interativa do Studio. É a
 // CAMADA de experiência: a inteligência vem do núcleo do Studio. O avatar abre
@@ -160,22 +161,57 @@ export function Companion({
   model, allModels = [], assistants = [],
   draft = '', onApplyDraft,
   conversationId = null, conversationTitle = '',
+  rightInset = 22,
   showToast,
 }) {
   const { settings, persona, events } = companion;
   const copilot = useCopilotChat();
   const [open, setOpen] = useState(false);
   const [minimized, setMinimized] = useState(() => localStorage.getItem('fred_companion_min') === '1');
-  const [pos, setPos] = useState(() => {
-    try { const p = JSON.parse(localStorage.getItem('fred_companion_pos') || 'null'); if (p && typeof p.x === 'number') return p; } catch {}
-    return null; // null = ancorado no canto inferior direito (CSS)
-  });
+  const [pos, setPos] = useState(() => parseCompanionPosition(localStorage.getItem('fred_companion_pos')));
   const [successFlash, setSuccessFlash] = useState(false);
   const [bubblePhase, setBubblePhase] = useState('idle');
   const [tucked, setTucked] = useState(false);
   const rootRef = useRef(null);
   const dragRef = useRef(null);
   const prevBusy = useRef(busy);
+
+  // A posição é persistida entre sessões, mas resolução, zoom e colunas do
+  // workspace podem mudar. Revalida no início e a cada redimensionamento para o
+  // Nino nunca ficar fora da tela ou escondido atrás do painel Atividade.
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const keepVisible = () => {
+      setPos(current => {
+        if (!current) return current;
+        const rect = rootRef.current?.getBoundingClientRect();
+        const reserveRight = window.innerWidth > 1180 ? rightInset : 8;
+        const next = clampCompanionPosition(
+          current,
+          { width: window.innerWidth, height: window.innerHeight },
+          { width: rect?.width, height: rect?.height },
+          { right: reserveRight },
+        );
+        if (!next || (next.x === current.x && next.y === current.y)) return current;
+        localStorage.setItem('fred_companion_pos', JSON.stringify(next));
+        return next;
+      });
+    };
+    const reset = () => {
+      localStorage.removeItem('fred_companion_pos');
+      localStorage.removeItem('fred_companion_min');
+      setPos(null);
+      setMinimized(false);
+      setOpen(false);
+    };
+    keepVisible();
+    window.addEventListener('resize', keepVisible);
+    window.addEventListener('fred:companion-reset-position', reset);
+    return () => {
+      window.removeEventListener('resize', keepVisible);
+      window.removeEventListener('fred:companion-reset-position', reset);
+    };
+  }, [minimized, rightInset]);
 
   const unread = useMemo(() => events.filter(e => e.status === 'novo' || e.status === 'visto'), [events]);
   const hasCritical = unread.some(e => e.level === 'critico');
@@ -264,7 +300,9 @@ export function Companion({
     setMinimized(m => { const nv = !m; localStorage.setItem('fred_companion_min', nv ? '1' : '0'); if (nv) setOpen(false); return nv; });
   }
 
-  const rootStyle = pos ? { left: pos.x, top: pos.y, right: 'auto', bottom: 'auto' } : undefined;
+  const rootStyle = pos
+    ? { left: pos.x, top: pos.y, right: 'auto', bottom: 'auto' }
+    : { '--companion-right': `${rightInset}px` };
   const quiet = settings.animationLevel !== 'completo';
 
   return (
