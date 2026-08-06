@@ -324,6 +324,8 @@ token.
 | `GET` | `/design/projects/:id/export?format=&versionId=` | baixa o artefato |
 | `GET`/`POST` | `/design/systems` | lista / cria uma marca |
 | `PUT`/`DELETE` | `/design/systems/:id` | edita / apaga |
+| `GET` | `/admin/design/image-stats` | **admin** — métricas de compressão de imagens (total, salvos, originais mantidos) |
+| `POST` | `/admin/design/purge-stale-image-originals?days=N` | **admin** — remove o `BYTEA` original após o TTL (default 30 dias) |
 
 Notas:
 
@@ -337,6 +339,37 @@ Notas:
   registra consumo em `usage` com `kind='design'`.
 
 ---
+
+## Compressão automática (Frente 13)
+
+Imagens devolvidas pelo provedor entram no banco em **JPEG q=85** quando passam de 1 MB. A versão ORIGINAL é preservada por 30 dias em colunas separadas (`original_mime`, `original_size`, `original_data`, `compressed_at`) para auditoria — depois disso o endpoint `/admin/design/purge-stale-image-originals` zera o `BYTEA` original, mantendo só os tamanhos para a métrica histórica.
+
+Regras da heurística (`backend/src/design/compress.js`):
+
+- < 1 MB → passa intacta (re-encodar raramente vale o trabalho e pode piorar).
+- JPEG entre 1 e 2 MB → passa intacto (já está num formato eficiente).
+- PNG/JPEG/WebP/GIF > 1 MB → re-encoda em JPEG q=85 com mozjpeg e progressive.
+- Se o re-encode ficar **maior ou igual** ao original → mantém o original (sem perda de qualidade sem ganho de espaço).
+- Se o `sharp` falhar (decoder, OOM, formato corrompido) → fallback silencioso para o input original. A geração da imagem **não** falha por causa da otimização.
+
+Métricas em `/admin/design/image-stats`:
+
+```json
+{
+  "totalImages": 142,
+  "totalBytes": 18432000,
+  "compressedImages": 38,
+  "keptOriginalImages": 24,
+  "originalBytes": 41200000,
+  "compressedBytes": 7900000,
+  "savedBytes": 33300000,
+  "savingsRatio": 0.808,
+  "ttlDays": 30
+}
+```
+
+- `keptOriginalImages` é o que **ainda** está dentro do TTL de auditoria. Cai após o purge.
+- `savingsRatio` é `savedBytes / originalBytes` — em fotos de mockup costuma ficar entre 0.7 e 0.9.
 
 ## Configuração
 
@@ -409,16 +442,18 @@ funcionando.
 | `backend/src/design/bridge.js` | script-ponte injetado na prévia (seleção + ajuste ao vivo) |
 | `backend/src/design/store.js` | banco (projetos, versões, chat, marcas) |
 | `backend/src/design/generate.js` | chamada ao provedor de IA |
+| `backend/src/design/compress.js` | compressão transparente de imagens (PNG grande → JPEG q=85) — **puro** |
 | `backend/src/design/pdf.js` | impressão em PDF (Chromium + guarda de SSRF) |
 | `backend/src/design/pptx.js` | exportação `.pptx` |
-| `backend/src/routes/design.js` | as rotas |
+| `backend/src/routes/design.js` | as rotas do projeto (geração, prévia, exportação, imagens) |
+| `backend/src/routes/designAdmin.js` | **admin** — métricas e purge do BYTEA original das imagens |
 | `frontend/src/components/Design*.jsx` | as telas (incluindo `DesignAdjustments.jsx`) |
 | `frontend/src/design/designCore.js` | lógica pura da interface |
 | `frontend/src/hooks/useDesign.js` | estado e chamadas de API |
 
 **Testes:** `design/core.test.js` (extração, validação e prompt do alvo),
 `design/render.test.js` (escape e deck), `design/tokens.test.js` (detecção,
-validação e sobreposição de CSS), `design/bridge.test.js` (contrato da ponte),
+validação e sobreposição de CSS), `design/bridge.test.js` (contrato da ponte), `design/compress.test.js` (heurística, puro),
 `design/pptx.test.js` (arquivo abrível), `design/store.test.js` (versionamento e
 isolamento, exige Postgres), `routes/design.http.test.js` (rotas ponta a ponta
 com provedor falso, exige Postgres) e `e2e/tests/design.spec.js` (navegador

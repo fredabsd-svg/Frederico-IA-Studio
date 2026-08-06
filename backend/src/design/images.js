@@ -20,6 +20,7 @@
 import { nanoid } from 'nanoid';
 import { db, now } from '../db.js';
 import { resolveImageProvider } from '../imageProvider.js';
+import { compressIfWorthy } from './compress.js';
 
 // Limites. O teto por imagem é o que o OpenRouter costuma devolver; o teto por
 // projeto impede que um usuário gere 200 imagens de 5 MB e infle o banco.
@@ -152,18 +153,26 @@ export async function generateDesignImage({ userId, projectId, prompt, model = '
   const result = await callImageProvider(choice.provider, choice.model, cleanPrompt, signal);
   if (!result.ok) return { ok: false, error: result.error, code: result.code, status: result.status || 502 };
 
-  if (result.buffer.length > MAX_IMAGE_BYTES) {
+  // Compressão transparente. Roda ANTES da checagem de cota: o teto vale sobre
+  // o que vai para o banco, e o que vai para o banco pode ser menor que o que
+  // o provedor devolveu. Falha do compressor = input intacto (não perdemos a
+  // imagem por causa da otimização).
+  const compression = await compressIfWorthy(result.buffer, result.mime);
+  const finalBuffer = compression.buffer;
+  const finalMime = compression.mime;
+
+  if (finalBuffer.length > MAX_IMAGE_BYTES) {
     return {
       ok: false,
-      error: `A imagem devolvida pelo modelo tem ${(result.buffer.length / 1024 / 1024).toFixed(1)} MB, acima do teto de ${MAX_IMAGE_BYTES / 1024 / 1024} MB. Tente um pedido mais simples.`,
+      error: `A imagem devolvida pelo modelo tem ${(finalBuffer.length / 1024 / 1024).toFixed(1)} MB, acima do teto de ${MAX_IMAGE_BYTES / 1024 / 1024} MB. Tente um pedido mais simples.`,
       code: 'IMAGE_MUITO_GRANDE',
       status: 413,
     };
   }
-  if (used + result.buffer.length > MAX_PROJECT_BYTES) {
+  if (used + finalBuffer.length > MAX_PROJECT_BYTES) {
     return {
       ok: false,
-      error: `Esta imagem lotaria o espaço do projeto (${((used + result.buffer.length) / 1024 / 1024).toFixed(1)} MB de ${MAX_PROJECT_BYTES / 1024 / 1024} MB). Apague uma imagem do histórico antes de gerar outra.`,
+      error: `Esta imagem lotaria o espaço do projeto (${((used + finalBuffer.length) / 1024 / 1024).toFixed(1)} MB de ${MAX_PROJECT_BYTES / 1024 / 1024} MB). Apague uma imagem do histórico antes de gerar outra.`,
       code: 'IMAGE_PROJETO_CHEIO',
       status: 413,
     };
@@ -171,10 +180,17 @@ export async function generateDesignImage({ userId, projectId, prompt, model = '
 
   const id = nanoid();
   const t = now();
+  const orig = compression.original;
   await db.prepare(
-    `INSERT INTO design_images (id,user_id,project_id,prompt,mime,byte_size,data,model,created_at)
-     VALUES (?,?,?,?,?,?,?,?,?)`
-  ).run(id, userId, projectId, cleanPrompt, result.mime, result.buffer.length, result.buffer, result.model || null, t);
+    `INSERT INTO design_images (id,user_id,project_id,prompt,mime,byte_size,data,model,created_at,original_mime,original_size,original_data,compressed_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
+  ).run(
+    id, userId, projectId, cleanPrompt, finalMime, finalBuffer.length, finalBuffer, result.model || null, t,
+    orig ? orig.mime : null,
+    orig ? orig.size : null,
+    orig ? orig.data : null,
+    orig ? t : null,
+  );
 
   if (result.usage) {
     await db.prepare(
@@ -187,11 +203,19 @@ export async function generateDesignImage({ userId, projectId, prompt, model = '
   return {
     ok: true,
     id,
-    mime: result.mime,
-    byteSize: result.buffer.length,
+    mime: finalMime,
+    byteSize: finalBuffer.length,
     prompt: cleanPrompt,
     model: result.model || choice.model,
     createdAt: t,
+    compression: compression.changed
+      ? {
+          saved: compression.bytesSaved || 0,
+          originalMime: orig.mime,
+          originalSize: orig.size,
+          reason: compression.reason,
+        }
+      : { changed: false, reason: compression.reason },
   };
 }
 
@@ -234,16 +258,26 @@ export async function listDesignImages(userId, projectId) {
   const project = await db.prepare('SELECT id FROM design_projects WHERE id=? AND user_id=?').get(projectId, userId);
   if (!project) return [];
   const rows = await db.prepare(
-    'SELECT id, prompt, mime, byte_size, model, created_at FROM design_images WHERE project_id=? ORDER BY created_at DESC'
+    `SELECT id, prompt, mime, byte_size, model, created_at,
+            original_mime, original_size, compressed_at
+       FROM design_images WHERE project_id=? ORDER BY created_at DESC`
   ).all(projectId);
-  return rows.map(row => ({
-    id: row.id,
-    prompt: row.prompt,
-    mime: row.mime,
-    byteSize: Number(row.byte_size || 0),
-    model: row.model || null,
-    createdAt: row.created_at,
-  }));
+  return rows.map(row => {
+    const out = {
+      id: row.id,
+      prompt: row.prompt,
+      mime: row.mime,
+      byteSize: Number(row.byte_size || 0),
+      model: row.model || null,
+      createdAt: row.created_at,
+    };
+    if (row.compressed_at) {
+      out.originalMime = row.original_mime || null;
+      out.originalSize = Number(row.original_size || 0);
+      out.compressedAt = row.compressed_at;
+    }
+    return out;
+  });
 }
 
 // Apaga uma imagem do projeto. Só o dono.
@@ -256,4 +290,9 @@ export const DESIGN_IMAGE_LIMITS = Object.freeze({
   maxImageBytes: MAX_IMAGE_BYTES,
   maxProjectBytes: MAX_PROJECT_BYTES,
   maxPromptChars: MAX_PROMPT_CHARS,
+  // Tamanho que o compressor tenta garantir como limite prático de cada
+  // imagem (sem ser regra rígida: imagens pequenas ficam intactas, e a
+  // checagem final ainda usa maxImageBytes). Exposto para a UI mostrar
+  // "comprimido para ~1 MB" no diálogo de geração.
+  compressionTargetBytes: 1 * 1024 * 1024,
 });

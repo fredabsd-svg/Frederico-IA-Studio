@@ -1381,7 +1381,20 @@ antes do aviso.
 
 ## Próximos passos (em ordem)
 
-1. **Frente 13 — Modo Design: compartilhamento público.** O token de prévia
+0. **Frente 13 — Modo Design: compressão automática de imagens (mergeada).**
+   Branch `t6-frente-13-design-image-compression`. Migration 030 adiciona
+   `original_mime/original_size/original_data/compressed_at` em
+   `design_images` (índice parcial para o purge). `design/compress.js`
+   re-encoda PNG > 1 MB em JPEG q=85 antes da checagem de cota;
+   preserva o original em colunas separadas por 30 dias.
+   `designAdmin.js` expõe métricas (`/admin/design/image-stats`) e o
+   purge (`POST /admin/design/purge-stale-image-originals?days=N`,
+   `requireAdmin` + `recordAdminAction`). Testes: `compress.test.js`
+   (puro, 7 casos incluindo fallback de input corrompido) e 3 novos
+   casos em `images.test.js` (compressão com auditoria, não-compressão
+   de imagens pequenas, listagem com metadados). Doc:
+   `docs/DESIGN_STUDIO.md` §Compressão automática.
+1. **Frente 13 (antiga, renumerada) — Modo Design: compartilhamento público.** O token de prévia
    já existe; falta a tela pública sobre ele. Rota pública mínima (Regra 2.2)
    servindo a prévia por token, sem sessão; revogação. Testes de autorização
    (válido/inválido/revogado); `docs/SECURITY.md`.
@@ -1405,10 +1418,11 @@ antes do aviso.
    com ambiente completo. O detector já as expõe em `dist/cssInventory.json`.
 6. **Pendência da Frente 12 — refinamentos do "Imagem no artefato":**
    a frente entregou o caminho mínimo (gerar via diálogo + aplicar via
-   prompt). Ficam para frente futura: (a) geração automática via detecção
-   de "imagem"/"foto"/"ilustração" no chat do projeto; (b) edição inline
-   de imagem (clicar para trocar); (c) múltiplas imagens por slide; (d)
-   compressão/otimização antes de gravar.
+   prompt). **(d) compressão/otimização antes de gravar → entregue na
+   Frente 13.** Restam para frente futura: (a) geração automática via
+   detecção de "imagem"/"foto"/"ilustração" no chat do projeto; (b)
+   edição inline de imagem (clicar para trocar); (c) múltiplas imagens
+   por slide.
 
 ## Como retomar o desenvolvimento
 

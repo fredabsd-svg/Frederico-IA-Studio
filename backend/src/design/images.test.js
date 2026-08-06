@@ -155,4 +155,116 @@ test('DESIGN_IMAGE_LIMITS exporta os tetos', { skip: needsDb }, async () => {
   assert.equal(images.DESIGN_IMAGE_LIMITS.maxImageBytes, 5 * 1024 * 1024);
   assert.equal(images.DESIGN_IMAGE_LIMITS.maxProjectBytes, 50 * 1024 * 1024);
   assert.equal(images.DESIGN_IMAGE_LIMITS.maxPromptChars, 1000);
+  assert.ok(images.DESIGN_IMAGE_LIMITS.compressionTargetBytes >= 64 * 1024);
+});
+
+
+// ---- Compressão automática (Frente 13) --------------------------------------
+
+// Estes testes verificam a INTEGRAÇÃO entre generateDesignImage e o módulo
+// compress.js: precisam de DB (para gravar a linha) e de sharp (para
+// gerar o PNG grande). Skip se faltar qualquer um dos dois.
+let sharpAvailable = true;
+try {
+  const sharp = (await import('sharp')).default;
+  await sharp({ create: { width: 1, height: 1, channels: 3, background: { r: 0, g: 0, b: 0 } } }).png().toBuffer();
+} catch { sharpAvailable = false; }
+const needsSharp = sharpAvailable ? false : 'requer sharp';
+
+// Stub do provedor de imagem. Devolve o buffer que o teste passa — assim
+// conseguimos simular "PNG de 3 MB devolvido pelo provedor" sem precisar
+// de rede nem do OpenRouter.
+const stubbedImages = [];
+let stubbedProvider = null;
+async function withStubbedProvider(providerFn, fn) {
+  // Importa o imageProvider dinamicamente e substitui resolveImageProvider
+  // no módulo images.js. Como images.js já importou o original, precisamos
+  // de um caminho diferente: vamos pelo módulo que ele importa.
+  const ip = await import('../imageProvider.js');
+  const original = ip.resolveImageProvider;
+  ip.resolveImageProvider = providerFn;
+  try { return await fn(); } finally { ip.resolveImageProvider = original; }
+}
+
+async function bigPngBuffer() {
+  const sharp = (await import('sharp')).default;
+  const { randomBytes } = await import('node:crypto');
+  const noise = randomBytes(4000 * 3000 * 3);
+  return sharp(noise, { raw: { width: 4000, height: 3000, channels: 3 } })
+    .png({ compressionLevel: 0 }).toBuffer();
+}
+
+async function smallPngBuffer() {
+  const sharp = (await import('sharp')).default;
+  return sharp({ create: { width: 50, height: 50, channels: 3, background: { r: 255, g: 0, b: 0 } } }).png().toBuffer();
+}
+
+test('generateDesignImage comprime PNG grande e grava auditoria', { skip: needsDb || needsSharp }, async () => {
+  const project = await newProject();
+  const big = await bigPngBuffer();
+  assert.ok(big.length > 1024 * 1024, `precisamos de PNG > 1 MB (foi ${big.length})`);
+
+  const result = await withStubbedProvider(
+    async () => ({ provider: { baseURL: 'https://stub', apiKey: 'x' }, model: 'stub' }),
+    () => images.generateDesignImage({ userId: OWNER, projectId: project.id, prompt: 'compress me' })
+  );
+
+  assert.equal(result.ok, true);
+  assert.ok(result.byteSize < big.length, `comprimido (${result.byteSize}) deveria ser menor que original (${big.length})`);
+  assert.equal(result.mime, 'image/jpeg', 'compressão muda mime para image/jpeg');
+  assert.equal(result.compression.changed, true);
+  assert.equal(result.compression.originalMime, 'image/png');
+  assert.equal(result.compression.originalSize, big.length);
+
+  // Auditoria: a linha gravada tem original_* e compressed_at preenchidos
+  const row = await db.prepare(
+    'SELECT mime, byte_size, original_mime, original_size, original_data, compressed_at FROM design_images WHERE id=?'
+  ).get(result.id);
+  assert.equal(row.mime, 'image/jpeg');
+  assert.equal(row.byte_size, result.byteSize);
+  assert.equal(row.original_mime, 'image/png');
+  assert.equal(row.original_size, big.length);
+  assert.ok(row.original_data, 'blob original deve estar preservado');
+  assert.equal(row.original_data.length, big.length);
+  assert.ok(row.compressed_at, 'compressed_at preenchido');
+});
+
+test('generateDesignImage NÃO comprime PNG pequeno e deixa original nulo', { skip: needsDb || needsSharp }, async () => {
+  const project = await newProject();
+  const small = await smallPngBuffer();
+  assert.ok(small.length < 1024 * 1024);
+
+  const result = await withStubbedProvider(
+    async () => ({ provider: { baseURL: 'https://stub', apiKey: 'x' }, model: 'stub' }),
+    () => images.generateDesignImage({ userId: OWNER, projectId: project.id, prompt: 'tiny' })
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.byteSize, small.length);
+  assert.equal(result.mime, 'image/png', 'imagem pequena fica intacta em PNG');
+  assert.equal(result.compression.changed, false);
+
+  const row = await db.prepare(
+    'SELECT original_mime, original_data, compressed_at FROM design_images WHERE id=?'
+  ).get(result.id);
+  assert.equal(row.original_mime, null);
+  assert.equal(row.original_data, null);
+  assert.equal(row.compressed_at, null);
+});
+
+test('listDesignImages inclui metadados de compressão quando houve mudança', { skip: needsDb || needsSharp }, async () => {
+  const project = await newProject();
+  const big = await bigPngBuffer();
+  const result = await withStubbedProvider(
+    async () => ({ provider: { baseURL: 'https://stub', apiKey: 'x' }, model: 'stub' }),
+    () => images.generateDesignImage({ userId: OWNER, projectId: project.id, prompt: 'list test' })
+  );
+  assert.equal(result.ok, true);
+
+  const list = await images.listDesignImages(OWNER, project.id);
+  const found = list.find(i => i.id === result.id);
+  assert.ok(found, 'imagem deve aparecer na lista');
+  assert.equal(found.originalMime, 'image/png');
+  assert.equal(found.originalSize, big.length);
+  assert.ok(found.compressedAt, 'compressedAt presente');
 });
