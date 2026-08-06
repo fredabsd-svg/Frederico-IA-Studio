@@ -4,9 +4,11 @@ import { API } from '../constants.js';
 import { ModelPicker } from '../components.jsx';
 import { DesignPreviewFrame } from './DesignPreviewFrame.jsx';
 import { DesignAdjustments } from './DesignAdjustments.jsx';
+import { DesignImageInsert } from './DesignImageInsert.jsx';
 import {
   outputTypeMeta, exportFormatsFor, exportUrl, formatWhen, versionLabel,
   canSubmit, modelLabel, targetLabel, liveOverrideCss, effectiveModel,
+  buildImageApplyPrompt,
 } from '../design/designCore.js';
 
 // Tela principal de um projeto: prévia à esquerda, refinamento à direita.
@@ -14,7 +16,7 @@ import {
 // A conversa, o histórico e os ajustes dividem a mesma coluna por abas em vez
 // de empilhar: os três competem pela mesma pergunta ("como está agora?"), e
 // empilhados nenhum deles teria altura suficiente para ser útil.
-export function DesignEditor({ project, busy, error, model, allModels = [], onBack, onGenerate, onRevert, onRename, onSaveAdjustments, onSaveModel }) {
+export function DesignEditor({ project, busy, error, model, allModels = [], onBack, onGenerate, onGenerateImage, onListImages, onRemoveImage, onRevert, onRename, onSaveAdjustments, onSaveModel }) {
   const [tab, setTab] = useState('chat');
   const [mobileView, setMobileView] = useState('preview');
   const [prompt, setPrompt] = useState('');
@@ -58,6 +60,16 @@ export function DesignEditor({ project, busy, error, model, allModels = [], onBa
   function resetAdjust() {
     setDraftAdjustments({});
     onSaveAdjustments({});
+  }
+
+  // Quando o usuário "aplica" uma imagem gerada, mandamos o modelo INCORPORAR
+  // o <img> na próxima versão. O `src` volta com o token do preview na query
+  // string — a prévia (origem opaca) carrega a imagem por essa URL. O texto
+  // do pedido é gerado por `buildImageApplyPrompt` (testado em designCore).
+  function submitWithImage(image) {
+    const pedido = buildImageApplyPrompt(image);
+    if (!pedido) return;
+    onGenerate(pedido, null);
   }
 
   function selectTarget(alvo) {
@@ -125,6 +137,20 @@ export function DesignEditor({ project, busy, error, model, allModels = [], onBa
             value={projectModel}
             onChange={id => onSaveModel(id)}
           />
+        </div>
+
+        <div className="dsImageInsertWrap">
+          {onGenerateImage && onListImages && onRemoveImage && (
+            <DesignImageInsert
+              projectId={project.id}
+              busy={busy}
+              model={effectiveModel(project, model)}
+              onGenerate={onGenerateImage}
+              onList={onListImages}
+              onRemove={onRemoveImage}
+              onApply={(image) => submitWithImage(image)}
+            />
+          )}
         </div>
 
         <div className="dsExports">

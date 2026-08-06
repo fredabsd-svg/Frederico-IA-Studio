@@ -119,6 +119,9 @@ export function DesignPanel({ onClose, model = '', allModels = [], askConfirm })
               allModels={allModels}
               onBack={() => { design.closeProject(); setView('home'); }}
               onGenerate={(prompt, target) => design.generate(design.project.id, prompt, model, target)}
+              onGenerateImage={(prompt, modelo) => design.generateImage(design.project.id, prompt, modelo)}
+              onListImages={(projectId) => design.listImages(projectId)}
+              onRemoveImage={(projectId, imageId) => design.removeImage(projectId, imageId)}
               onRevert={(versionId) => design.revert(design.project.id, versionId)}
               onRename={(title) => design.renameProject(design.project.id, title)}
               onSaveAdjustments={(ajustes) => design.saveAdjustments(design.project.id, ajustes)}

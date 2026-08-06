@@ -116,14 +116,21 @@ app.use(express.json({ limit: '10mb' }));
 // Todas as rotas /api exigem login, exceto a checagem de saúde e o próprio fluxo
 // de autenticação. requireAuth coloca o id do usuário logado em req.userId
 // (base do isolamento por usuário da Fase 3).
-// A prévia do Modo Design (`/design/preview/:token`) é a única rota de API que
-// NÃO exige sessão. Ela serve HTML gerado por IA — código não confiável — a
-// partir de um token aleatório de 32 caracteres, e existe justamente para poder
-// ser servida de outra origem (DESIGN_PREVIEW_ORIGIN) sem que o navegador tenha
-// motivo para mandar o cookie do app junto. Ver docs/DESIGN_STUDIO.md.
+// Rotas de API que NÃO exigem sessão:
+//   * `/health` — checagem de saúde;
+//   * `/auth/*` — fluxo de autenticação;
+//   * `/design/preview/:token` — prévia do Modo Design (HTML gerado por IA,
+//     código não confiável, servido a partir de um token aleatório de 32
+//     caracteres; existe justamente para poder ser servida de outra origem
+//     sem que o navegador envie o cookie do app);
+//   * `/design/images/:id` — imagens geradas para o artefato. O iframe do
+//     preview roda em origem opaca e não envia cookie, então a autorização
+//     aqui é o token de preview do projeto passado por query string (validado
+//     em design/images.js). Ver docs/DESIGN_STUDIO.md §Imagens no artefato.
 const isPublicApiPath = (path) => path === '/health'
   || path.startsWith('/auth')
-  || path.startsWith('/design/preview/');
+  || path.startsWith('/design/preview/')
+  || path.startsWith('/design/images/');
 
 app.use('/api', (req, res, next) => {
   if (isPublicApiPath(req.path)) return next();

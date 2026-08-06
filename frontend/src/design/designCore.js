@@ -154,3 +154,20 @@ export function liveOverrideCss(tokens, adjustments) {
   }
   return linhas.length ? `:root{\n${linhas.join('\n')}\n}` : '';
 }
+
+// ---- Imagens no artefato ---------------------------------------------------
+
+// Limite do prompt de imagem (espelha o backend). Aqui também é o freio do
+// campo da interface, para o erro aparecer antes da requisição sair.
+export const MAX_IMAGE_PROMPT_CHARS = 1000;
+
+// Pedido que o componente "Inserir imagem" manda ao modelo na hora de aplicar.
+// O modelo recebe o HTML pronto para colar e a instrução de manter o resto do
+// design idêntico — é o mesmo padrão da edição inline, só que o alvo é uma
+// imagem inteira em vez de um elemento clicado na prévia.
+export function buildImageApplyPrompt(image) {
+  const url = String(image?.src || '').trim();
+  if (!url) return '';
+  const alt = String(image?.prompt || '').trim().replace(/"/g, '&quot;');
+  return `Inclua esta imagem no design usando exatamente este HTML: <img src="${url}" alt="${alt}" />. Posicione-a em um lugar coerente com o conteúdo atual e mantenha o restante do design idêntico.`;
+}

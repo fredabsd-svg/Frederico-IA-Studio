@@ -35,6 +35,7 @@ const HTML = '<!DOCTYPE html><html lang="pt-BR"><head><title>Landing</title></he
 // de tokens é um caso que precisa de guarda própria.
 let nextReply = HTML;
 let nextFinish = 'stop';
+let nextImageReply = null; // quando setado, o provedor devolve uma imagem em vez de texto
 let lastRequest = null;
 
 const provider = http.createServer((req, res) => {
@@ -42,6 +43,18 @@ const provider = http.createServer((req, res) => {
   req.on('data', chunk => { body += chunk; });
   req.on('end', () => {
     lastRequest = JSON.parse(body || '{}');
+    if (nextImageReply) {
+      const img = nextImageReply;
+      nextImageReply = null;
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        id: 'chatcmpl-fake-img',
+        model: 'fake-image-model',
+        choices: [{ index: 0, message: { role: 'assistant', content: 'imagem', images: [{ image_url: { url: `data:${img.mime};base64,${img.b64}` } }] }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 5, completion_tokens: 0, total_tokens: 5 },
+      }));
+      return;
+    }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       id: 'chatcmpl-fake',
@@ -662,6 +675,119 @@ test('trocar o modelo de projeto alheio é 404', { skip: needsDb }, async () => 
   currentUser = USER_B;
   try {
     const r = await call('PATCH', `/api/design/projects/${project.id}`, { model: 'prov::invasor' });
+    assert.equal(r.status, 404);
+  } finally {
+    currentUser = USER_A;
+  }
+});
+
+// ---- Imagens no artefato ----------------------------------------------------
+
+// 1x1 PNG transparente em base64 — pequeno o bastante para o teste não inflar.
+const TINY_PNG_B64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+
+test('gerar imagem grava no banco e devolve src absoluta com token', { skip: needsDb }, async () => {
+  const project = await newProject();
+  nextImageReply = { mime: 'image/png', b64: TINY_PNG_B64 };
+
+  const r = await call('POST', `/api/design/projects/${project.id}/images`, { prompt: 'um gato' });
+  assert.equal(r.status, 200, r.text);
+  assert.equal(r.json.mime, 'image/png');
+  assert.ok(r.json.id);
+  assert.match(r.json.src, /\/api\/design\/images\//);
+  assert.match(r.json.src, /token=/);
+  // O provedor foi chamado com modalities: ['image','text'] — o que prova que
+  // o caminho de imagem é o mesmo do generate_image do chat.
+  assert.deepEqual(lastRequest.modalities, ['image', 'text']);
+});
+
+test('a imagem gerada pode ser lida pela sessão do dono', { skip: needsDb }, async () => {
+  const project = await newProject();
+  nextImageReply = { mime: 'image/png', b64: TINY_PNG_B64 };
+  const created = await call('POST', `/api/design/projects/${project.id}/images`, { prompt: 'paisagem' });
+  assert.equal(created.status, 200);
+
+  const r = await fetch(`${baseUrl}/api/design/images/${created.json.id}`);
+  assert.equal(r.status, 200);
+  assert.equal(r.headers.get('content-type'), 'image/png');
+  const buf = Buffer.from(await r.arrayBuffer());
+  assert.ok(buf.length > 0);
+});
+
+test('a imagem pode ser lida pelo token de preview (origem opaca do iframe)', { skip: needsDb }, async () => {
+  const project = await newProject();
+  nextImageReply = { mime: 'image/png', b64: TINY_PNG_B64 };
+  const created = await call('POST', `/api/design/projects/${project.id}/images`, { prompt: 'paisagem' });
+
+  // Sem sessão: passa o token do projeto na query string.
+  const r = await fetch(`${baseUrl}/api/design/images/${created.json.id}?token=${encodeURIComponent(project.previewToken)}`);
+  assert.equal(r.status, 200);
+  assert.equal(r.headers.get('content-type'), 'image/png');
+});
+
+test('token de preview de OUTRO projeto não libera a imagem', { skip: needsDb }, async () => {
+  const project = await newProject();
+  nextImageReply = { mime: 'image/png', b64: TINY_PNG_B64 };
+  const created = await call('POST', `/api/design/projects/${project.id}/images`, { prompt: 'paisagem' });
+
+  const other = await newProject();
+  const r = await fetch(`${baseUrl}/api/design/images/${created.json.id}?token=${encodeURIComponent(other.previewToken)}`);
+  assert.equal(r.status, 404, 'a imagem pertence ao projeto A, não ao token do projeto B');
+});
+
+test('imagem de outro usuário é 404 mesmo com sessão', { skip: needsDb }, async () => {
+  const project = await newProject();
+  nextImageReply = { mime: 'image/png', b64: TINY_PNG_B64 };
+  const created = await call('POST', `/api/design/projects/${project.id}/images`, { prompt: 'paisagem' });
+
+  currentUser = USER_B;
+  try {
+    const r = await fetch(`${baseUrl}/api/design/images/${created.json.id}`);
+    assert.equal(r.status, 404);
+  } finally {
+    currentUser = USER_A;
+  }
+});
+
+test('listar imagens do projeto devolve metadados sem o binário', { skip: needsDb }, async () => {
+  const project = await newProject();
+  nextImageReply = { mime: 'image/png', b64: TINY_PNG_B64 };
+  await call('POST', `/api/design/projects/${project.id}/images`, { prompt: 'uma' });
+  nextImageReply = { mime: 'image/jpeg', b64: '/9j/4AAQ' };
+  await call('POST', `/api/design/projects/${project.id}/images`, { prompt: 'outra' });
+
+  const r = await call('GET', `/api/design/projects/${project.id}/images`);
+  assert.equal(r.status, 200);
+  assert.equal(r.json.length, 2);
+  assert.ok(!('data' in r.json[0]), 'o binário não pode vazar na listagem');
+  assert.equal(r.json[0].mime, 'image/jpeg');
+  assert.equal(r.json[1].mime, 'image/png');
+});
+
+test('apagar imagem remove do banco e libera espaço', { skip: needsDb }, async () => {
+  const project = await newProject();
+  nextImageReply = { mime: 'image/png', b64: TINY_PNG_B64 };
+  const created = await call('POST', `/api/design/projects/${project.id}/images`, { prompt: 'a' });
+
+  const del = await call('DELETE', `/api/design/projects/${project.id}/images/${created.json.id}`);
+  assert.equal(del.status, 200);
+
+  const list = await call('GET', `/api/design/projects/${project.id}/images`);
+  assert.equal(list.json.length, 0);
+});
+
+test('prompt vazio é barrado antes de chamar o provedor', { skip: needsDb }, async () => {
+  const project = await newProject();
+  const r = await call('POST', `/api/design/projects/${project.id}/images`, { prompt: '   ' });
+  assert.equal(r.status, 400);
+});
+
+test('imagem em projeto de outra conta é 404', { skip: needsDb }, async () => {
+  const project = await newProject();
+  currentUser = USER_B;
+  try {
+    nextImageReply = { mime: 'image/png', b64: TINY_PNG_B64 };
+    const r = await call('POST', `/api/design/projects/${project.id}/images`, { prompt: 'a' });
     assert.equal(r.status, 404);
   } finally {
     currentUser = USER_A;

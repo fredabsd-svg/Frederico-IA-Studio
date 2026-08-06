@@ -317,6 +317,10 @@ token.
 | `PUT` | `/design/projects/:id/adjustments` | grava os ajustes finos (não chama a IA, não cria versão) |
 | `PATCH` | `/design/projects/:id` | renomeia, troca a marca e **fixa/solta o modelo** (`model`; string vazia solta) |
 | `POST` | `/design/projects/:id/preview-token` | invalida a URL da prévia e emite outra |
+| `POST` | `/design/projects/:id/images` | gera uma imagem por IA para o projeto |
+| `GET` | `/design/projects/:id/images` | lista as imagens geradas no projeto (metadados) |
+| `DELETE` | `/design/projects/:id/images/:imageId` | apaga uma imagem do projeto |
+| `GET` | `/design/images/:id?token=` | **sem sessão** — serve a imagem (a autorização é a sessão do dono OU o token de preview do projeto dono) |
 | `GET` | `/design/projects/:id/export?format=&versionId=` | baixa o artefato |
 | `GET`/`POST` | `/design/systems` | lista / cria uma marca |
 | `PUT`/`DELETE` | `/design/systems/:id` | edita / apaga |
@@ -366,9 +370,13 @@ funcionando.
 
 ## Limites conhecidos
 
-- **Sem imagens.** O modelo devolve texto; o layout `image-full` entrega um
-  painel na cor da marca, não uma foto. Integrar com a geração de imagens já
-  existente no app é um passo natural, mas não está feito.
+- **Imagens dentro do artefato.** O botão **Imagem** na barra do editor
+  gera uma imagem por IA (mesma política de `resolveImageProvider` do chat) e
+  pede ao modelo que a incorpore ao design via `<img src="/api/design/images/:id">`.
+  O `src` carrega o token do preview na query string porque o iframe do preview
+  roda em origem opaca e não envia cookie. Cada projeto guarda até 50 MB de
+  imagens (teto por imagem: 5 MB), e a leitura exige sessão OU o token do
+  preview do projeto dono — token de outro projeto não libera.
 - **Os controles de ajuste dependem do contrato das variáveis `--fred-*`.** Um
   artefato gerado antes desta versão, ou por um modelo que ignorou a regra, não
   mostra controle nenhum — a tela explica e sugere pedir uma versão nova. Não há

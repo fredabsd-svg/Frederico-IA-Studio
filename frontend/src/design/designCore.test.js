@@ -4,6 +4,7 @@ import {
   DESIGN_OUTPUT_TYPES, outputTypeMeta, exportFormatsFor, formatWhen,
   versionLabel, canSubmit, exportUrl, modelLabel,
   PREVIEW_MESSAGES, isPreviewMessage, targetLabel, tokenValue, liveOverrideCss, effectiveModel,
+  MAX_IMAGE_PROMPT_CHARS, buildImageApplyPrompt,
 } from './designCore.js';
 
 // A lista de formatos aqui espelha EXPORT_FORMATS do backend
@@ -130,4 +131,29 @@ test('o modelo do projeto vence o do app (espelho de modelForProject)', () => {
   assert.equal(effectiveModel({ modelRef: null }, 'prov::do-chat'), 'prov::do-chat');
   assert.equal(effectiveModel(null, 'prov::do-chat'), 'prov::do-chat');
   assert.equal(effectiveModel({ modelRef: null }, ''), '');
+});
+
+test('MAX_IMAGE_PROMPT_CHARS espelha o teto do backend (1000)', () => {
+  assert.equal(MAX_IMAGE_PROMPT_CHARS, 1000);
+});
+
+test('buildImageApplyPrompt monta o pedido de inserir a imagem com o src completo', () => {
+  const image = { src: 'https://api/.../images/abc?token=xyz', prompt: 'um pôr do sol' };
+  const pedido = buildImageApplyPrompt(image);
+  assert.match(pedido, /Inclua esta imagem/);
+  assert.match(pedido, /<img src="https:\/\/api\/...\/images\/abc\?token=xyz"/);
+  assert.match(pedido, /alt="um pôr do sol"/);
+  assert.match(pedido, /mantenha o restante do design idêntico/);
+});
+
+test('buildImageApplyPrompt escapa aspas no alt para não quebrar o atributo', () => {
+  const image = { src: 'https://x/y', prompt: 'uma "cena"' };
+  const pedido = buildImageApplyPrompt(image);
+  assert.match(pedido, /alt="uma &quot;cena&quot;"/);
+  assert.ok(!pedido.includes('alt="uma "cena""'), 'aspas no alt abririam o atributo');
+});
+
+test('buildImageApplyPrompt devolve string vazia se a imagem não tem src', () => {
+  assert.equal(buildImageApplyPrompt(null), '');
+  assert.equal(buildImageApplyPrompt({ src: '' }), '');
 });

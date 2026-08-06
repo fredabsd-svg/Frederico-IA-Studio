@@ -117,6 +117,47 @@ export function useDesign() {
     }
   }, [loadProjects]);
 
+  // Gera uma imagem para o projeto via API. Devolve o registro (id, src, mime)
+  // em caso de sucesso, ou null em caso de falha — o erro fica em `error`.
+  const generateImage = useCallback(async (projectId, prompt, model = '') => {
+    setBusy(true);
+    setError('');
+    try {
+      const r = await fetch(`${API}/api/design/projects/${encodeURIComponent(projectId)}/images`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt, model }),
+      });
+      const data = await r.json().catch(() => null);
+      if (!r.ok) { setError(data?.error || 'Não consegui gerar a imagem.'); return null; }
+      return data;
+    } catch {
+      setError('Não consegui gerar a imagem.');
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  const listImages = useCallback(async (projectId) => {
+    try {
+      const r = await fetch(`${API}/api/design/projects/${encodeURIComponent(projectId)}/images`);
+      if (!r.ok) return [];
+      return await r.json();
+    } catch {
+      return [];
+    }
+  }, []);
+
+  const removeImage = useCallback(async (projectId, imageId) => {
+    try {
+      const r = await fetch(`${API}/api/design/projects/${encodeURIComponent(projectId)}/images/${encodeURIComponent(imageId)}`, {
+        method: 'DELETE',
+      });
+      return r.ok;
+    } catch { return false; }
+  }, []);
+
   const revert = useCallback(async (projectId, versionId) => {
     setBusy(true);
     try {
@@ -240,7 +281,8 @@ export function useDesign() {
   return {
     projects, systems, project, loading, busy, error,
     setError, loadProjects, loadSystems, openProject, closeProject,
-    createProject, generate, revert, removeProject, renameProject,
+    createProject, generate, generateImage, listImages, removeImage,
+    revert, removeProject, renameProject,
     saveAdjustments, saveModel, saveSystem, removeSystem,
   };
 }

@@ -25,6 +25,9 @@ import { renderSlidesDeck, renderPlaceholder } from '../design/render.js';
 import { applyAdjustments, detectTokens } from '../design/tokens.js';
 import { bridgeSnippet } from '../design/bridge.js';
 import { generateArtifact } from '../design/generate.js';
+import {
+  generateDesignImage, readDesignImage, listDesignImages, deleteDesignImage, DESIGN_IMAGE_LIMITS,
+} from '../design/images.js';
 import { htmlToPdf } from '../design/pdf.js';
 import { slidesToPptx } from '../design/pptx.js';
 import {
@@ -275,6 +278,69 @@ router.post('/design/projects/:id/generate', validate(schemas.designGenerate), a
   };
   if (!result.ok) return res.status(result.status || 502).json({ error: result.error, ...payload });
   res.json(payload);
+});
+
+// ---- Imagens geradas -------------------------------------------------------
+
+// Gera uma imagem para o projeto. O prompt é o que o usuário descreve; o
+// modelo é o do projeto (ou o do app, se o projeto não fixou). A imagem é
+// gravada no banco e devolvida com id — a interface reescreve o artefato
+// para incluir `<img src="/api/design/images/:id">`.
+router.post('/design/projects/:id/images', validate(schemas.designImageGenerate), async (req, res) => {
+  const project = await requireProject(req, res);
+  if (!project) return;
+  const result = await generateDesignImage({
+    userId: req.userId,
+    projectId: project.id,
+    prompt: req.body.prompt,
+    model: req.body.model || '',
+  });
+  if (!result.ok) return res.status(result.status || 502).json({ error: result.error, code: result.code });
+  res.json({
+    id: result.id,
+    mime: result.mime,
+    byteSize: result.byteSize,
+    prompt: result.prompt,
+    model: result.model,
+    createdAt: result.createdAt,
+    // URL absoluta: o iframe do preview está em origem opaca e não envia
+    // cookie, então o navegador precisa de um caminho resolvível. O host é o
+    // do próprio backend (a rota aceita o token de preview como alternativa).
+    src: `${req.protocol}://${req.get('host')}/api/design/images/${result.id}?token=${encodeURIComponent(project.preview_token)}`,
+  });
+});
+
+// Lista as imagens do projeto (sem o binário). Usado pela interface para
+// mostrar o histórico e permitir apagar.
+router.get('/design/projects/:id/images', async (req, res) => {
+  const project = await requireProject(req, res);
+  if (!project) return;
+  res.json(await listDesignImages(req.userId, project.id));
+});
+
+router.delete('/design/projects/:id/images/:imageId', async (req, res) => {
+  const project = await requireProject(req, res);
+  if (!project) return;
+  const ok = await deleteDesignImage(req.userId, req.params.imageId);
+  if (!ok) return res.status(404).json({ error: 'Imagem não encontrada.' });
+  res.json({ ok: true });
+});
+
+// Serve a imagem. Aceita sessão do dono OU o token de preview do projeto
+// (passado por query string). O iframe do preview roda em origem opaca e não
+// envia cookie — sem o caminho do token, a imagem não carregaria lá.
+router.get('/design/images/:id', async (req, res) => {
+  const token = String(req.query.token || '').trim();
+  const result = await readDesignImage({
+    imageId: req.params.id,
+    userId: req.userId || '',
+    previewToken: token,
+  });
+  if (!result.ok) return res.status(result.status).json({ error: result.error });
+  res.setHeader('Content-Type', result.mime);
+  res.setHeader('Cache-Control', 'private, max-age=3600');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.send(result.buffer);
 });
 
 router.get('/design/projects/:id/messages', async (req, res) => {

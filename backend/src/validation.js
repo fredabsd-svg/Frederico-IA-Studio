@@ -222,6 +222,12 @@ export const schemas = {
     versionId: shortText(120, 'Versão não informada.'),
   }),
 
+
+  designImageGenerate: z.looseObject({
+    prompt: z.string({ error: 'Descreva a imagem que você quer.' }).trim().min(1, 'Descreva a imagem que você quer.')
+      .max(1000, 'O pedido é grande demais para uma imagem.'),
+    model: modelId.nullish(),
+  }),
   designSystem: z.looseObject({
     name: z.string().trim().max(80).optional(),
     primaryColor: z.string().trim().max(20).nullish(),

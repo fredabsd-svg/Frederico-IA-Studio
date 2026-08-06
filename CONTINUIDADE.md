@@ -1381,33 +1381,34 @@ antes do aviso.
 
 ## Próximos passos (em ordem)
 
-1. **Frente 12 — Modo Design: imagens no artefato.** A geração de imagens já
-   existe no app; o Modo Design não a usa. Permitir que o artefato inclua
-   imagens geradas (respeitando o sandbox de prévia com origem opaca — Regra
-   6.6); `docs/DESIGN_STUDIO.md` documenta. Aceite: E2E pedindo site com
-   imagem e a prévia renderiza.
-2. **Frente 13 — Modo Design: compartilhamento público.** O token de prévia
+1. **Frente 13 — Modo Design: compartilhamento público.** O token de prévia
    já existe; falta a tela pública sobre ele. Rota pública mínima (Regra 2.2)
    servindo a prévia por token, sem sessão; revogação. Testes de autorização
    (válido/inválido/revogado); `docs/SECURITY.md`.
-3. **Frente 14 — Sub-agentes: controle na interface.** Backend pronto; falta
+2. **Frente 14 — Sub-agentes: controle na interface.** Backend pronto; falta
    o controle "automático / desligado / obrigatório" e o motivo de
    indisponibilidade visível. `shouldOfferSubagentTool` respeita a
    preferência.
-4. **Frente 15 — Sonda de tool calling na primeira delegação.** O catálogo
+3. **Frente 15 — Sonda de tool calling na primeira delegação.** O catálogo
    persistido (`model_tool_capability_cache`) registra capacidade DEPOIS da
    falha — a primeira delegação a um modelo sem suporte é desperdiçada.
    Sonda barata; resultado vai ao catálogo.
-5. **Frente 9 — Desmontar o `App.jsx` (etapas 2-4):** a etapa 1 (shell/sidebar)
+4. **Frente 9 — Desmontar o `App.jsx` (etapas 2-4):** a etapa 1 (shell/sidebar)
    está feita. Faltam: etapa 2 (estado da conversa), etapa 3 (estado da
    execução), etapa 4 (drawers/configurações). Plano completo em
    `docs/ARCHITECTURE.md`.
-6. **Pendência conhecida — 123 regras mistas no inventário CSS:** regras
+5. **Pendência conhecida — 123 regras mistas no inventário CSS:** regras
    que combinam classes mortas com classes vivas (ex.: `.morta .viva`,
-   `.morta.viva`). Não foram tocadas nesta frente porque a remoção segura
+   `.morta.viva`). Não foram tocadas na frente 11 porque a remoção segura
    depende de validação visual com E2E ponta a ponta, indisponível neste
    sandbox (sem Postgres + `/opt/pw-browsers/`). Ficam para frente futura
    com ambiente completo. O detector já as expõe em `dist/cssInventory.json`.
+6. **Pendência da Frente 12 — refinamentos do "Imagem no artefato":**
+   a frente entregou o caminho mínimo (gerar via diálogo + aplicar via
+   prompt). Ficam para frente futura: (a) geração automática via detecção
+   de "imagem"/"foto"/"ilustração" no chat do projeto; (b) edição inline
+   de imagem (clicar para trocar); (c) múltiplas imagens por slide; (d)
+   compressão/otimização antes de gravar.
 
 ## Como retomar o desenvolvimento
 
