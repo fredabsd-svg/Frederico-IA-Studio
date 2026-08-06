@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { LoginScreen } from './LoginScreen.jsx';
 import { DEV_WORK_MODES } from './constants.js';
-import { MULTI_MODE_LABEL } from './components/MultiModelBoard.jsx';
+import { MULTI_MODE_LABEL } from './constants.js';
 import { MULTI_ROLE_OPTIONS } from './components/MultiModelPicker.jsx';
 
 const FEATURES = [
