@@ -27,7 +27,8 @@ const {
   _sessionsForTests,
   SANDBOX_LABEL_APP,
   SANDBOX_LABEL_INSTANCE,
-  SANDBOX_APP_VALUE
+  SANDBOX_APP_VALUE,
+  shouldReconcileOnBoot
 } = await import('./sandbox.js');
 
 test.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -181,8 +182,13 @@ test('no boot (carência 0) todo container de instância anterior é órfão', (
 });
 
 // ---- Política de reconciliação (Frente 7) ----
-
-import { shouldReconcileOnBoot } from './sandbox.js';
+//
+// `shouldReconcileOnBoot` vem do import DINÂMICO lá em cima, junto com o resto.
+// Um `import` estático aqui embaixo pareceria inofensivo e não é: import de ES
+// é ICADO, então o `sandbox.js` carregaria ANTES da linha que aponta o
+// WORKSPACE_ROOT para o diretório temporário — e o módulo guarda essa raiz no
+// carregamento. O efeito era três testes de isolamento passarem a mexer no
+// workspace REAL do repositório e falharem.
 
 test('reconciliação ligada por padrão fora de teste', () => {
   assert.equal(shouldReconcileOnBoot({ NODE_ENV: 'production' }), true);
