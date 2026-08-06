@@ -24,7 +24,12 @@ que ainda segura o verde é o **pipeline multimodelo retomável**: o F-15 entreg
 tabela e as primitivas, mas o `runMultiModel` ainda não as usa, então o reinício continua
 sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** a **Frente 4 — Vulnerabilidades de dependências** zerou
+- **Último trabalho:** a **Frente 8 — Retomada real pós-kill-9** fecha o F-14
+  de verdade: teste de integração com `child_process` onde o processo A grava
+  checkpoint com tool calls e encerra (simulando SIGKILL), e o processo B
+  carrega e reconstrói via `buildResumeMessages` sem duplicar ferramentas.
+  Pula com a mensagem padrão sem PostgreSQL; com banco, exerce o caminho real.
+  Antes dela, a **Frente 4 — Vulnerabilidades de dependências** zerou
   as 4 vulnerabilidades do `npm audit`: no backend, o override `uuid: ^11.1.1`
   corrigiu o dockerode (moderate) e o `npm audit fix` atualizou `ip-address`
   (high); no frontend, o override `postcss: ^8.5.23` corrigiu a vulnerabilidade
@@ -1282,9 +1287,8 @@ antes do aviso.
 
 ## Próximos passos (em ordem)
 
-1. **Frente 5 — IPv6 + `git` na allowlist de egress do sandbox.**
-   `parseAllowlistEntry` declara que IPv6 ficou de fora; `extractHostCandidates`
-   não varre `git`.
+1. **Frente 9 — Desmontar o App.jsx (etapa 1: shell).** Extrair shell (layout,
+   sidebar, drawers de abertura) para componentes próprios, sem mudar comportamento.
 2. **Frentes seguintes** conforme o backlog ordenado.
 
 ---
