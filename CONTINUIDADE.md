@@ -44,6 +44,12 @@ sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md
   e o repassa ao `getUserProvider`, eliminando o 404 de "modelo não pertence a
   este provedor" em contas multi-chave. O log virou `console.warn` com mensagem
   mais informativa. 9 testes unitários cobrem a precedência.
+- **Último trabalho:** a **Frente 7 — Reconciliação de sandbox ligada por
+  padrão** ajustou a política de `SANDBOX_RECONCILE_ON_BOOT`: fora de
+  `NODE_ENV=test` a reconciliação é LIGADA por padrão (remove containers
+  órfãos no boot); em teste, DESLIGADA (a suíte não tem Docker). O boot
+  agora sempre relata o resultado da reconciliação (mesmo sem órfãos).
+  5 testes de política pura cobrem todos os cenários.
 - **Último trabalho:** a **Frente 10 — MultiModelBoard fora do chunk principal**
   moveu `MULTI_MODE_LABEL` para `constants.js`, eliminando o import estático do
   `MultiModelBoard` no `Landing.jsx` e `MultiModelPicker.jsx`. O aviso
@@ -1354,6 +1360,9 @@ antes do aviso.
    ativo da conversa.
 1. **Frente 7 — Reconciliação de sandbox ligada por padrão.** `SANDBOX_RECONCILE_ON_BOOT=false`
    desliga a coleta de containers órfãos; em produção, crash deixa lixo.
+1. **Frente 8 — Retomada real pós-kill-9.** Teste de integração com `child_process`: 
+   processo A grava checkpoint mid-run e leva SIGKILL; processo B lê e retoma sem
+   duplicar ferramentas. Fecha o F-14 de verdade.
 1. **Frente 11 — Inventário e poda do CSS.** ~206 KB de CSS num arquivo único
    (`styles.css`), dívida declarada do F-21.
 2. **Frentes seguintes** conforme o backlog ordenado.
