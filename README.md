@@ -195,11 +195,13 @@ O personagem que acompanha o Studio — e explica o que está acontecendo.
   polars, duckdb), documentos e PDF (python-docx, reportlab, PyMuPDF, OCR),
   compiladores (C/C++, Go, Rust, Java, C#, Kotlin), Node e Chromium headless com
   Playwright, e APIs **REST e GraphQL** (Flask, FastAPI e strawberry-graphql).
-- **Ambiente de Trabalho da IA** — terminal, código, arquivos, pesquisa e
-  navegador agrupados em **uma sessão ao vivo**, com passo a passo e miniatura
-  real das páginas abertas. Comando longo mostra a **saída em tempo real** e
-  avisa quando fica em silêncio ("sem saída há 25s"), em vez de deixar você
-  olhando uma barra parada.
+- **Terminal de execução no rodapé do chat** — terminal, código, arquivos,
+  pesquisa e navegador agrupados em **uma sessão ao vivo**, num painel recolhível
+  e redimensionável entre a conversa e o campo de mensagem (o trabalho não cresce
+  mais dentro do balão, empurrando a resposta para fora da tela). Passo a passo,
+  miniatura real das páginas abertas, **saída em tempo real** e aviso quando o
+  comando fica em silêncio ("sem saída há 25s"). A rolagem do terminal é
+  independente da do chat, e a sessão concluída pode ser reaberta pelo histórico.
 - **Ambiente que não perde o seu trabalho** — o sandbox pode ser reciclado no meio
   de uma tarefa longa. Quando isso acontece, o assistente é avisado **do que
   sobreviveu e do que se perdeu**, em vez de continuar achando que está tudo lá.
@@ -213,8 +215,15 @@ O personagem que acompanha o Studio — e explica o que está acontecendo.
 - **Modo Desenvolvedor** — projetos com memória permanente, explorador de
   arquivos e seis modos de trabalho (Perguntar, Planejar, Implementar, Corrigir
   erro, Revisar e Agente autônomo).
+- **A IA pergunta quando precisa decidir com você** — escopo, opção A ou B,
+  autorização. A pergunta vira um cartão na conversa com a forma certa de
+  responder (texto, sim/não ou lista de opções), **não** um erro com botão de
+  "Reenviar". Ela sobrevive a fechar o modal e a recarregar a página.
 - **Conector GitHub** — clone, alteração e **push ou Pull Request em 1 clique**;
-  o token fica cifrado e nunca entra no sandbox.
+  o token fica cifrado e nunca entra no sandbox. A publicação exige uma
+  autorização sua, **escopada ao repositório e à branch**, e o painel mostra
+  separadamente o que está conectado, vinculado, autorizado e disponível — com a
+  causa exata quando algo bloqueia.
 - **Sub-agentes** — o próprio agente delega uma subtarefa a um `runAgent` completo,
   com ferramentas e uma janela de contexto **própria e descartável** (sem histórico
   nem memória da conversa); os arquivos gerados aparecem normalmente em `outputs/`.

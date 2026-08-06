@@ -17,7 +17,14 @@ import { useCallback, useEffect, useRef } from 'react';
 // Devolve um **callback ref**: assim a medição acompanha o elemento mesmo
 // quando ele é montado e desmontado (troca de modo de trabalho, painel em tela
 // cheia), sem depender de acertar a lista de dependências de um efeito.
-export function useComposerHeight() {
+//
+// `variavel` permite medir OUTRA faixa do rodapé com o mesmo mecanismo. O
+// terminal inferior (`--dock-h`) usa isto: ele fica ENTRE as mensagens e o
+// compositor, então quem flutua no canto precisa somar as duas alturas — sem
+// isso o personagem do copiloto pousa em cima do cabeçalho do terminal e
+// intercepta os cliques dos botões de recolher/expandir (medido com navegador
+// real, em `e2e/tests/modo-desenvolvedor.spec.js`).
+export function useComposerHeight(variavel = '--composer-h') {
   const observadorRef = useRef(null);
 
   const limpar = useCallback(() => {
@@ -25,8 +32,8 @@ export function useComposerHeight() {
       observadorRef.current.disconnect();
       observadorRef.current = null;
     }
-    document.documentElement.style.removeProperty('--composer-h');
-  }, []);
+    document.documentElement.style.removeProperty(variavel);
+  }, [variavel]);
 
   // Some com a variável ao desmontar: deixá-la para trás faria o personagem
   // flutuar alto numa tela que nem tem compositor.
@@ -38,12 +45,12 @@ export function useComposerHeight() {
 
     const medir = () => {
       const altura = Math.round(elemento.getBoundingClientRect().height);
-      document.documentElement.style.setProperty('--composer-h', `${altura}px`);
+      document.documentElement.style.setProperty(variavel, `${altura}px`);
     };
     medir();
 
     if (typeof ResizeObserver === 'undefined') return; // navegador antigo: fica a medida inicial
     observadorRef.current = new ResizeObserver(medir);
     observadorRef.current.observe(elemento);
-  }, [limpar]);
+  }, [limpar, variavel]);
 }

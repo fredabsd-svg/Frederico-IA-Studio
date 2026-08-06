@@ -291,6 +291,30 @@ foram corrigidas nesta frente:
    apesar de esta seção já afirmar o contrário. Era o maior canal de texto de terceiros do
    app (`web_fetch`, `read_file`, `bash`, `github_clone`) e a cadeia mais curta até execução.
 
+### 8.0 Autorização de publicação no GitHub — decisão do usuário, não do modelo
+
+`autorização do usuário ≠ disponibilidade técnica da ferramenta`. As duas passaram a ser
+verificadas separadamente, num único lugar (`agent/githubAccess.js`), e o pré-voo que
+libera a ferramenta é o MESMO que a interface exibe e o que o prompt anuncia.
+
+Controles:
+
+| Superfície | Regra |
+| --- | --- |
+| Origem | Ação explícita do usuário: o botão **Autorizar publicação** (que mostra repositório, branch, destino e ações antes de confirmar) ou a confirmação de um `ask_user` cujo escopo o **backend** carimba a partir do vínculo — nunca do texto do modelo. |
+| Escopo | Repositório + branch + branch base + ações (`push`, `create_pr`). Não vale para outro repositório, outra branch ou outra base. Não é permissão global. |
+| Re-validação | O backend normaliza tudo (`normalizeGithubWriteAuthorization`): campos desconhecidos e ações fora do enum são **descartados**, branch inválida (ex.: `--force`) é recusada. O frontend não amplia nada. |
+| Modo | Só `build`/`fix`/`auto` podem publicar; `ask`/`plan`/`review` ficam em leitura mesmo com autorização registrada. |
+| Sub-agente | Nunca publica (ver 8.1). |
+| Turno social | `lowSignalTurn` não recebe ferramenta remota nenhuma. |
+| Token | Continua cifrado em `user_connectors` e **nunca** entra no sandbox: clone/push/PR rodam no backend, com `scrubSecrets()` em toda saída. O pré-voo é estado, não credencial — nenhuma rota devolve token, login ou escopo do PAT. |
+| Contorno | Git remoto pelo bash do sandbox é **bloqueado** (`execGuard.js`), com a mensagem que aponta as ferramentas do backend. Antes, a falha chegava como erro de rede genérico e o modelo insistia (nova tentativa, `GIT_SSL_NO_VERIFY`, abrir o github.com no navegador). |
+| Bloqueio honesto | Quando indisponível, a causa real é informada (`github_not_connected`, `repository_not_bound`, `read_only_mode`, `write_not_confirmed`, `scope_mismatch`, `action_not_authorized`, `invalid_branch`, `subagent_not_allowed`) — nunca um genérico "a ferramenta não está habilitada". |
+
+Testes: `agent/githubAccess.test.js` (matriz completa + catraca de inventário único),
+`execGuard.remoteGit.test.js`, `frontend/src/hooks/useDevProjects.test.js`.
+Decisão em `docs/decisions/0002-autorizacao-estruturada-de-publicacao-no-github.md`.
+
 ### 8.1 Delegação a sub-agentes — a fronteira de autorização
 
 Um sub-agente (`agent/subagents.js`) roda um `runAgent` COMPLETO, com ferramentas de
@@ -306,7 +330,7 @@ Controles:
 | Rede do sandbox | Herdada do pai. O filho **não** chama `resolveSandboxNetwork` sobre a subtarefa. |
 | Escrita nas Pastas do PC | Herdada do pai. O filho **não** chama `explicitlyAuthorizesPcWrite` sobre a subtarefa. |
 | Política de sandbox | O filho recebe o `sandboxOptions` do pai verbatim → mesma `sandboxPolicy().key` → mesmo container. |
-| Escrita no GitHub | Nunca se herda (`gitWriteAuthorized: false`). |
+| Escrita no GitHub | Nunca se herda (`gitWriteAuthorized: false`) **e o pré-voo recusa por construção**: `githubPreflight({ isSubagent: true })` devolve `subagent_not_allowed`, então `github_push`/`github_create_pr` não entram no inventário do filho mesmo com autorização válida do pai (`agent/githubAccess.test.js`). |
 | Profundidade | `MAX_SUBAGENT_DEPTH = 1` — sub-agente não delega. O nome da ferramenta é removido da herança. |
 | Contexto | Janela isolada: sem memória de longo prazo e sem histórico da conversa (o prompt do filho afirma isso, e agora é verdade). |
 

@@ -152,6 +152,35 @@ Apagar entrega de usuário é decisão do operador — por isso a maioria vem de
    resposta da API. Não há quarentena/reprocessamento automático — **lacuna conhecida
    (F-11)**. Reprocesso manual: reenviar o arquivo com o clamd de pé.
 
+### "O agente não consegue publicar no GitHub"
+
+Antes de mexer em qualquer coisa, leia o **pré-voo** — ele diz a causa real, e as causas são
+diferentes entre si:
+
+```bash
+# Com a sessão do usuário (cookie), pelo navegador ou via curl:
+GET /api/connectors/github/preflight?repo=owner/repo&branch=<branch>&base=main&mode=build
+```
+
+A resposta traz `connected`, `repository`, `branch`, `base`, `mode`, `canRead`, `canWrite`,
+`writeAuthorized`, `tools.{clone,push,createPr}`, `blockingReason` e `blockingMessage`.
+Nenhum segredo sai nessa rota — é estado, não credencial.
+
+| `blockingReason` | O que fazer |
+| --- | --- |
+| `github_not_connected` | Reconectar em Configurações → Conectores. Se o token estava salvo, quase sempre a `ENCRYPTION_KEY` mudou entre deploys — o log do backend diz isso explicitamente (`[github] ... o token não descriptografou`). |
+| `repository_not_bound` | Vincular um repositório ao projeto no painel do Modo Desenvolvedor. |
+| `read_only_mode` | O modo é `ask`/`plan`/`review`. Trocar para Implementar, Corrigir ou Autônomo. |
+| `write_not_confirmed` | Falta a autorização do usuário: botão **Autorizar publicação** no painel (ele mostra repositório, branch, destino e ações antes de confirmar). |
+| `scope_mismatch` | A branch, o repositório ou o destino mudaram depois de autorizar. Autorizar de novo — é o comportamento correto, não um defeito. |
+| `subagent_not_allowed` | Esperado: sub-agente não publica. Quem publica é o agente principal. |
+
+Se o pré-voo diz `writeAuthorized: true` com `tools.push: true` e o `github_push` **ainda**
+falha, aí sim o problema é o token ou o repositório: a mensagem do conector nomeia a causa
+(403/permissão, `non-fast-forward`, repositório inexistente). Nenhum desses casos se resolve
+por `git push` no sandbox — ele é **bloqueado** de propósito (`execGuard.js`), porque o token
+nunca entra lá.
+
 ### Ferramentas do sandbox pararam de funcionar
 
 Quase sempre é o guarda recusando algo ou fora do ar.

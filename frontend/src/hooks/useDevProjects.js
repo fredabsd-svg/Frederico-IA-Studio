@@ -27,6 +27,15 @@ function emptyMemory() {
   return MEMORY_FIELDS.reduce((acc, f) => { acc[f.key] = ''; return acc; }, {});
 }
 
+// AUTORIZAÇÃO DE PUBLICAÇÃO NO GITHUB — ações que ela pode conceder.
+// A lista é a mesma do backend (`agent/githubAccess.js`), que RE-VALIDA tudo:
+// nada aqui amplia permissão, isto só registra a decisão do usuário.
+export const GITHUB_WRITE_ACTIONS = ['push', 'create_pr'];
+
+function emptyPermissions() {
+  return { githubWrite: false, githubWriteConfirmedAt: null, githubWriteScope: null };
+}
+
 export function newDevProject(partial = {}) {
   const id = `p_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   return {
@@ -37,13 +46,40 @@ export function newDevProject(partial = {}) {
     binding: { type: 'none' },
     rules: '',
     memory: emptyMemory(),
+    permissions: emptyPermissions(),
     mode: 'plan',
     conversationIds: [],
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     ...partial,
     // Garante que a memória tenha todas as chaves mesmo em projetos antigos.
-    memory: { ...emptyMemory(), ...(partial.memory || {}) }
+    memory: { ...emptyMemory(), ...(partial.memory || {}) },
+    permissions: { ...emptyPermissions(), ...(partial.permissions || {}) }
+  };
+}
+
+// Monta a autorização a enviar ao backend, SÓ se o escopo registrado ainda
+// corresponder ao vínculo atual do projeto. PURA (testável).
+//
+// Por que o escopo é conferido aqui também: mudar o repositório, a branch ou a
+// branch base depois de autorizar é mudar o que foi autorizado. Nesse caso a
+// permissão simplesmente não viaja — e a interface volta a pedir confirmação, em
+// vez de publicar em outro lugar com um "sim" antigo.
+export function githubWritePermissionFor(project, { base = null } = {}) {
+  const perms = project?.permissions;
+  const scope = perms?.githubWriteScope;
+  if (!perms?.githubWrite || !scope?.repo) return null;
+  const binding = project?.binding || {};
+  if (binding.type !== 'github' || !binding.repo) return null;
+  if (scope.repo !== binding.repo) return null;
+  if (scope.branch !== (binding.branch || '')) return null;
+  if (base && scope.base && scope.base !== base) return null;
+  const actions = (scope.actions || []).filter(a => GITHUB_WRITE_ACTIONS.includes(a));
+  if (!actions.length) return null;
+  return {
+    githubWrite: true,
+    githubWriteConfirmedAt: perms.githubWriteConfirmedAt || null,
+    githubWriteScope: { repo: scope.repo, branch: scope.branch, base: scope.base || null, actions }
   };
 }
 
@@ -51,7 +87,12 @@ function load() {
   try {
     const raw = JSON.parse(localStorage.getItem(STORE_KEY) || '[]');
     if (!Array.isArray(raw)) return [];
-    return raw.map(p => ({ ...newDevProject(), ...p, memory: { ...emptyMemory(), ...(p.memory || {}) } }));
+    return raw.map(p => ({
+      ...newDevProject(),
+      ...p,
+      memory: { ...emptyMemory(), ...(p.memory || {}) },
+      permissions: { ...emptyPermissions(), ...(p.permissions || {}) }
+    }));
   } catch {
     return [];
   }
@@ -95,6 +136,11 @@ export function developerSessionForConversation(projects, conversationId) {
     rules: projectContextText(project),
     devProjectId: project.id,
     conversationId,
+    // A autorização de publicação viaja junto: é ela que faz `github_push` e
+    // `github_create_pr` continuarem no inventário em turnos seguintes e depois
+    // de reabrir a conversa. Sem isto, a permissão morria com o turno em que o
+    // usuário a concedeu.
+    permissions: githubWritePermissionFor(project)
   };
 }
 
@@ -145,7 +191,33 @@ export function useDevProjects() {
     }));
   }, []);
 
+  // AUTORIZAR a publicação — só por ação explícita do usuário (o botão
+  // "Autorizar publicação", ou a confirmação de um `ask_user`). O escopo é
+  // gravado junto: repositório, branch, branch base e ações. O backend confere
+  // tudo de novo; isto é o registro da decisão, não a permissão em si.
+  const authorizeGithubWrite = useCallback((id, { repo, branch, base = null, actions = GITHUB_WRITE_ACTIONS } = {}) => {
+    if (!id || !repo) return;
+    const allowed = actions.filter(a => GITHUB_WRITE_ACTIONS.includes(a));
+    if (!allowed.length) return;
+    setProjects(prev => prev.map(p => p.id === id ? {
+      ...p,
+      permissions: {
+        githubWrite: true,
+        githubWriteConfirmedAt: new Date().toISOString(),
+        githubWriteScope: { repo, branch: branch || '', base: base || null, actions: allowed }
+      },
+      updatedAt: new Date().toISOString()
+    } : p));
+  }, []);
+
+  const revokeGithubWrite = useCallback((id) => {
+    if (!id) return;
+    setProjects(prev => prev.map(p => p.id === id
+      ? { ...p, permissions: emptyPermissions(), updatedAt: new Date().toISOString() }
+      : p));
+  }, []);
+
   const active = useMemo(() => projects.find(p => p.id === activeId) || null, [projects, activeId]);
 
-  return { projects, activeId, active, setActiveId, createProject, updateProject, deleteProject, linkConversation };
+  return { projects, activeId, active, setActiveId, createProject, updateProject, deleteProject, linkConversation, authorizeGithubWrite, revokeGithubWrite };
 }

@@ -10,6 +10,13 @@ export function classifyTaskResult(result = {}) {
   if (result.stopped) {
     return { status: 'canceled', progress: 'Cancelada', error: null };
   }
+  // PERGUNTA AO USUÁRIO não é falha. O agente pediu uma decisão (escopo, opção
+  // A ou B, autorização) e parou — o correto é aguardar, não emitir
+  // `execution_failed` e pintar a mensagem de vermelho no chat, como acontecia
+  // quando um turno assim caía em `incomplete`.
+  if (result.execution?.state === 'awaiting_user') {
+    return { status: 'waiting_user', progress: 'Aguardando resposta', error: null };
+  }
   if (result.compatibility) {
     return {
       status: 'error',

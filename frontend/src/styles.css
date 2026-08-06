@@ -931,18 +931,6 @@ input[type=checkbox]:focus-visible,input[type=radio]:focus-visible{outline-offse
 /* ===== Ambiente de Trabalho da IA (sessão de execução unificada) =====
    Substitui os dezenas de cartões "bash 0s" por um único cartão compacto que
    abre uma janela ao vivo com terminal, arquivos, código e pesquisas. */
-.esCard{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:10px 0;padding:12px 14px;border:1px solid var(--line);border-radius:var(--r-md);background:rgba(127,127,127,.06);max-width:720px}
-.esCard.live{border-color:var(--accent);background:rgba(79,140,255,.07)}
-.esCard.warn{border-color:rgba(239,68,68,.35)}
-.esCardMain{display:flex;align-items:flex-start;gap:11px;flex:1;min-width:0}
-.esCardIcon{flex:none;display:flex;align-items:center;margin-top:1px}
-.esCardText{display:flex;flex-direction:column;gap:2px;min-width:0}
-.esCardText b{font-size:var(--fs-sm);color:var(--text)}
-.esCardSub{font-size:var(--fs-xs);color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
-.esCardMeta{font-size:var(--fs-2xs);color:var(--muted);opacity:.85;font-variant-numeric:tabular-nums}
-.esCardBtn{flex:none;display:flex;align-items:center;gap:7px;font-size:var(--fs-xs);font-weight:600;padding:8px 13px;border-radius:var(--r-sm);border:1px solid var(--line);background:var(--panel2);color:var(--text);cursor:pointer}
-.esCardBtn:hover{border-color:var(--accent);color:var(--accent)}
-.esCard.live .esCardBtn{border-color:var(--accent);color:var(--accent)}
 
 .esSpin{animation:spin .8s linear infinite;color:var(--accent)}
 .esOk{color:var(--ok)}
@@ -1015,15 +1003,10 @@ input[type=checkbox]:focus-visible,input[type=radio]:focus-visible{outline-offse
   .esWindow{width:100%;height:100%;border-radius:0;border:none}
   .esWinBody{flex-direction:column}
   .esSteps{width:100%;max-width:none;max-height:44%;border-right:none;border-bottom:1px solid var(--line)}
-  .esCardBtn{width:100%;justify-content:center}
 }
 
 /* ===== Ambiente de Trabalho da IA — detalhe rico + transições orgânicas ===== */
-/* Movimento suave: o cartão e as etapas mudam de estado sem "pular". */
-.esCard{transition:border-color .25s ease,background .25s ease}
-.esCardSub{transition:color .2s ease}
-.esCard.live{animation:esPulse 2.4s ease-in-out infinite}
-@keyframes esPulse{0%,100%{box-shadow:0 0 0 0 rgba(79,140,255,0)}50%{box-shadow:0 0 0 3px rgba(79,140,255,.10)}}
+/* Movimento suave: as etapas mudam de estado sem "pular". */
 .esStepIn{animation:esIn .22s ease both}
 @keyframes esIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 .esStep{transition:background .18s ease,border-color .18s ease}
@@ -1032,8 +1015,9 @@ input[type=checkbox]:focus-visible,input[type=radio]:focus-visible{outline-offse
 @keyframes esFade{from{opacity:0}to{opacity:1}}
 @keyframes esRise{from{opacity:0;transform:translateY(10px) scale(.99)}to{opacity:1;transform:none}}
 @media(prefers-reduced-motion:reduce){
-  .esCard.live,.esStepIn,.esOverlay,.esWindow{animation:none}
-  .esCard,.esCardSub,.esStep{transition:none}
+  .esStepIn,.esOverlay,.esWindow{animation:none}
+  .esStep{transition:none}
+  .execLine,.execDock,.dockStep{transition:none}
 }
 
 /* Miniaturas de imagens geradas */
@@ -1282,3 +1266,166 @@ input[type=checkbox]:focus-visible,input[type=radio]:focus-visible{outline-offse
 .mpVersionsToggle:hover{text-decoration:underline}
 .mpVersionsHint{color:var(--muted);font-weight:600}
 .mpItemVersion{margin-left:26px;opacity:.88;border-left:2px solid var(--line);padding-left:8px}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MODO DESENVOLVEDOR — auto-scroll, terminal inferior e perguntas interativas
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── "Ir para o final" ──────────────────────────────────────────────────────
+   Fora da área rolável e ACIMA do terminal e do compositor: altura zero, então
+   não desloca o layout e não cobre mensagem, botão de enviar nem modal. */
+.chatJumpWrap{position:relative;height:0;display:flex;justify-content:center;pointer-events:none;z-index:8}
+.chatJump{pointer-events:auto;position:absolute;bottom:8px;display:flex;align-items:center;gap:7px;padding:8px 14px;border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--text);font-size:var(--fs-xs);font-weight:600;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.18)}
+.chatJump:hover{border-color:var(--accent);color:var(--accent)}
+.chatJump:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.chatJump.streaming{border-color:var(--accent);color:var(--accent);background:var(--panel2)}
+
+/* ── Linha compacta da execução no histórico ────────────────────────────────
+   Substitui o cartão grande e vivo dentro do balão: o trabalho em andamento
+   aparece no terminal inferior. */
+.execLine{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:8px 0;padding:8px 12px;border:1px solid var(--line);border-radius:var(--r-md);background:rgba(127,127,127,.05);max-width:720px}
+.execLine.live{border-color:var(--accent);background:rgba(79,140,255,.07)}
+.execLine.warn{border-color:rgba(239,68,68,.32)}
+.execLineIcon{flex:none;display:flex;align-items:center}
+.execLineText{flex:1;min-width:0;font-size:var(--fs-xs);color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.execLineBtn{flex:none;font-size:var(--fs-2xs);font-weight:700;padding:6px 11px;border-radius:var(--r-sm);border:1px solid var(--line);background:var(--panel2);color:var(--text);cursor:pointer}
+.execLineBtn:hover{border-color:var(--accent);color:var(--accent)}
+
+/* ── Terminal inferior ─────────────────────────────────────────────────────
+   Filho normal do `.chat` (nunca position:fixed): reserva a própria altura, e é
+   por isso que nunca cobre o compositor. */
+.execDock{flex:none;display:flex;flex-direction:column;min-height:0;border-top:1px solid var(--line);background:var(--panel);overflow:hidden}
+.execDock.live{border-top-color:var(--accent)}
+.execDock.warn{border-top-color:rgba(239,68,68,.4)}
+.dockHandle{flex:none;height:7px;cursor:ns-resize;background:transparent;border-bottom:1px solid transparent}
+.dockHandle:hover,.dockHandle:focus-visible{background:rgba(79,140,255,.18);outline:none}
+body.dockResizing{user-select:none;cursor:ns-resize}
+.dockHead{flex:none;display:flex;align-items:center;gap:8px;padding:0 10px 0 12px;min-height:40px}
+.dockTitle{flex:1;min-width:0;display:flex;align-items:center;gap:9px;border:none;background:transparent;color:var(--text);padding:8px 0;cursor:pointer;text-align:left}
+.dockIcon{flex:none;display:flex;align-items:center}
+.dockStatus{flex:none;font-size:var(--fs-xs);font-weight:700}
+.dockSummary{flex:1;min-width:0;font-size:var(--fs-xs);color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dockCurrentCmd{flex:none;max-width:34%;font-size:var(--fs-2xs);font-family:ui-monospace,Consolas,monospace;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.85}
+.dockClock{flex:none;font-size:var(--fs-2xs);color:var(--muted);font-variant-numeric:tabular-nums}
+.dockActions{flex:none;display:flex;align-items:center;gap:2px}
+.dockActions button{display:flex;align-items:center;justify-content:center;border:none;background:transparent;color:var(--muted);padding:7px;border-radius:var(--r-sm);cursor:pointer}
+.dockActions button:hover{background:var(--panel2);color:var(--accent)}
+.dockActions button:disabled{opacity:.4;cursor:not-allowed}
+.dockActions .dockStop:hover{color:var(--danger)}
+.dockBody{flex:1;min-height:0;display:grid;grid-template-columns:minmax(200px,300px) 1fr;gap:0;border-top:1px solid var(--line)}
+.dockSteps{list-style:none;margin:0;padding:6px;overflow:auto;border-right:1px solid var(--line);display:flex;flex-direction:column;gap:2px}
+.dockStepSub{padding-left:16px}
+.dockStep{width:100%;display:flex;align-items:flex-start;gap:8px;text-align:left;border:1px solid transparent;background:transparent;color:var(--text);padding:6px 8px;border-radius:var(--r-sm);cursor:pointer}
+.dockStep:hover{background:var(--panel2)}
+.dockStep.sel{border-color:var(--accent);background:rgba(79,140,255,.10)}
+.dockStepStat,.dockStepCat{flex:none;display:flex;align-items:center;margin-top:1px}
+.dockStepText{min-width:0;display:flex;flex-direction:column;gap:1px}
+.dockStepText b{font-size:var(--fs-2xs);font-weight:600}
+.dockStepText small{font-size:var(--fs-2xs);color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,Consolas,monospace}
+.dockNext{display:flex;align-items:center;gap:7px;padding:6px 9px;font-size:var(--fs-2xs);color:var(--muted)}
+.dockOutput{min-width:0;display:flex;flex-direction:column;min-height:0;padding:8px 10px;gap:6px}
+.dockOutputHead{flex:none;display:flex;align-items:center;gap:7px;font-size:var(--fs-2xs);color:var(--muted)}
+.dockOutputHead b{color:var(--text);font-size:var(--fs-2xs)}
+.dockOutputMeta{margin-left:auto;font-variant-numeric:tabular-nums}
+.dockCommand{flex:none;margin:0;padding:7px 9px;border-radius:var(--r-sm);background:rgba(127,127,127,.10);font-size:var(--fs-2xs);font-family:ui-monospace,Consolas,monospace;white-space:pre-wrap;word-break:break-word;max-height:74px;overflow:auto}
+.dockPrompt{color:var(--accent);font-weight:700}
+.dockLogWrap{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
+.dockLog{flex:1;min-height:0;margin:0;overflow:auto;padding:8px 9px;border-radius:var(--r-sm);background:rgba(0,0,0,.16);font-size:var(--fs-2xs);font-family:ui-monospace,Consolas,monospace;white-space:pre-wrap;word-break:break-word}
+.dockLog:empty{display:none}
+.light .dockLog{background:rgba(127,127,127,.10)}
+.dockResult{flex:1;min-height:0;overflow:auto}
+.dockNewLogs{position:absolute;right:12px;bottom:10px;display:flex;align-items:center;gap:5px;padding:5px 10px;border:1px solid var(--accent);border-radius:999px;background:var(--panel);color:var(--accent);font-size:var(--fs-2xs);font-weight:700;cursor:pointer}
+.execDock.collapsed .dockBody{display:none}
+
+/* Mobile: uma coluna só (etapas em cima, saída embaixo) e o dock não passa de
+   55vh, para o campo de mensagem continuar utilizável. */
+@media(max-width:720px){
+  .dockBody{grid-template-columns:1fr;grid-template-rows:minmax(60px,34%) 1fr}
+  .dockSteps{border-right:none;border-bottom:1px solid var(--line)}
+  .dockCurrentCmd,.dockSummary{display:none}
+}
+
+/* ── Perguntas interativas da IA ────────────────────────────────────────────
+   Um pedido de decisão não é erro: nada de vermelho de falha aqui. */
+.inputReqCard{display:flex;align-items:flex-start;gap:11px;margin:10px 0;padding:12px 14px;border:1px solid var(--accent);border-radius:var(--r-md);background:rgba(79,140,255,.08);max-width:720px}
+.inputReqCard.resolved{border-color:var(--line);background:rgba(127,127,127,.05)}
+.inputReqIcon{flex:none;display:flex;align-items:center;margin-top:2px;color:var(--accent)}
+.inputReqCard.resolved .inputReqIcon{color:var(--muted)}
+.inputReqText{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.inputReqText b{font-size:var(--fs-sm)}
+.inputReqText span{font-size:var(--fs-xs);color:var(--muted)}
+.inputReqOpen{flex:none;font-size:var(--fs-xs);font-weight:700;padding:8px 14px;border-radius:var(--r-sm);border:1px solid var(--accent);background:var(--accent);color:var(--on-accent);cursor:pointer}
+.inputReqOpen:hover{filter:brightness(1.06)}
+.inputReqOverlay{position:fixed;inset:0;z-index:120;background:rgba(8,11,18,.62);display:flex;align-items:center;justify-content:center;padding:20px}
+.inputReqDialog{width:100%;max-width:560px;max-height:86vh;overflow:auto;display:flex;flex-direction:column;gap:12px;padding:18px;border:1px solid var(--line);border-radius:var(--r-lg);background:var(--panel);box-shadow:0 22px 60px rgba(0,0,0,.42)}
+.inputReqHead{display:flex;align-items:flex-start;gap:10px}
+.inputReqHeadIcon{flex:none;display:flex;align-items:center;margin-top:2px;color:var(--accent)}
+.inputReqHead h3{flex:1;margin:0;font-size:var(--fs-md);line-height:1.45;font-weight:700}
+.inputReqClose{flex:none;border:none;background:transparent;color:var(--muted);padding:5px;display:flex;border-radius:var(--r-sm);cursor:pointer}
+.inputReqClose:hover{background:var(--panel2);color:var(--danger)}
+.inputReqBody{display:flex;flex-direction:column;gap:8px}
+.inputReqField{display:flex;flex-direction:column;gap:5px}
+.inputReqLabel{font-size:var(--fs-2xs);font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}
+.inputReqField textarea{resize:vertical;min-height:88px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel2);color:var(--text);font:inherit;font-size:var(--fs-sm);padding:10px 12px}
+.inputReqField textarea:focus{outline:none;border-color:var(--accent)}
+.inputReqHint{margin:0;font-size:var(--fs-2xs);color:var(--muted)}
+.inputReqOptions{display:flex;flex-direction:column;gap:8px}
+.inputReqOption{display:flex;align-items:flex-start;gap:10px;text-align:left;padding:11px 13px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel2);color:var(--text);cursor:pointer}
+.inputReqOption:hover{border-color:var(--accent)}
+.inputReqOption.sel{border-color:var(--accent);background:rgba(79,140,255,.12)}
+.inputReqOption:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.inputReqOptionMark{flex:none;width:18px;height:18px;margin-top:1px;border:1px solid var(--line);border-radius:50%;display:flex;align-items:center;justify-content:center;color:var(--accent)}
+.inputReqOption.sel .inputReqOptionMark{border-color:var(--accent)}
+.inputReqOptionText{min-width:0;display:flex;flex-direction:column;gap:2px}
+.inputReqOptionText b{font-size:var(--fs-sm)}
+.inputReqOptionText small{font-size:var(--fs-xs);color:var(--muted);line-height:1.4}
+.inputReqError{min-height:16px;font-size:var(--fs-xs);color:var(--danger);font-weight:600}
+.inputReqActions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+.inputReqActions button{display:flex;align-items:center;gap:7px;font-size:var(--fs-sm);font-weight:700;padding:10px 16px;border-radius:var(--r-md);cursor:pointer}
+.inputReqSecondary{border:1px solid var(--line);background:var(--panel2);color:var(--text)}
+.inputReqSecondary:hover{border-color:var(--accent);color:var(--accent)}
+@media(max-width:720px){
+  .inputReqDialog{max-width:none;max-height:92vh}
+  .inputReqActions button{flex:1;justify-content:center}
+}
+@media(prefers-reduced-motion:reduce){
+  .chatJump,.execLine,.inputReqCard{transition:none}
+}
+
+/* Pré-voo da publicação no GitHub (painel do Modo Desenvolvedor): cada condição
+   aparece separada, com a CAUSA real de um bloqueio. */
+.devPreflight{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+.devPreflight li{display:flex;align-items:baseline;gap:8px;font-size:var(--fs-xs);padding:4px 0;border-bottom:1px dashed var(--line)}
+.devPreflight li:last-child{border-bottom:none}
+.devPreflight li span{flex:none;min-width:112px;color:var(--muted)}
+.devPreflight li b{flex:1;min-width:0;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.devPreflight li.yes b{color:var(--text)}
+.devPreflight li.no b{color:var(--muted);opacity:.9}
+.devPreflightWhy{display:flex;align-items:flex-start;gap:7px;margin:8px 0 0;font-size:var(--fs-xs);color:var(--muted);line-height:1.45}
+.devPreflightWhy svg{flex:none;margin-top:2px}
+.devPreflightActions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+.devPreflightActions .primary{display:flex;align-items:center;gap:7px}
+.devPreflightOk{display:flex;align-items:center;gap:6px;font-size:var(--fs-xs);font-weight:700;color:var(--accent)}
+/* Selo da publicação na barra da sessão de desenvolvimento: autorização e
+   disponibilidade da ferramenta são coisas diferentes, e a barra diz qual. */
+.devPubPill{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;font-size:var(--fs-2xs);font-weight:700;border:1px solid var(--line);color:var(--muted)}
+.devPubPill.on{border-color:var(--accent);color:var(--accent)}
+
+/* ── A COLUNA DO CHAT É LIMITADA PELA JANELA ────────────────────────────────
+   Sem isto, `.app` (grid com `height:100vh`) tinha UMA linha de tamanho
+   automático: numa conversa longa a linha crescia com o conteúdo, `.messages`
+   (flex:1, overflow:auto) nunca precisava rolar — a PÁGINA rolava — e o
+   compositor era empurrado para fora da tela.
+
+   O sintoma ficava escondido porque a rolagem antiga usava
+   `endRef.scrollIntoView()`, que rola qualquer ancestral, inclusive o body.
+   Com o Smart Auto-scroll rolando o CONTÊINER (o certo — mexer na janela
+   deslocaria cabeçalho, terminal e compositor), a falha apareceu: o teste de
+   navegador mediu `scrollHeight - clientHeight === 0` em `.messages` com nove
+   parágrafos passando do rodapé.
+
+   `minmax(0, 1fr)` + `min-height: 0` são o par canônico: a linha não passa da
+   altura da janela e o item de conteúdo pode encolher abaixo do próprio
+   conteúdo, deixando `.messages` ser o único elemento que rola. */
+.app{grid-template-rows:minmax(0,1fr)}
+.chat{min-height:0;overflow:hidden}

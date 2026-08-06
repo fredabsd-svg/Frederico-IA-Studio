@@ -2,18 +2,22 @@
    Estilos isolados para não interferir no resto do app. As animações respeitam
    o nível escolhido (.anim-reduzido reduz, .anim-nenhum desliga). */
 
-/* O personagem pousa ACIMA do compositor, nunca sobre ele.
-   `--composer-h` é a altura real do compositor, publicada por
-   useComposerHeight (o compositor cresce conforme o texto, então um número
-   fixo aqui erraria). Sem a variável — telas que não têm compositor — o
-   fallback devolve os 22px originais do canto.
+/* O personagem pousa ACIMA do rodapé do chat, nunca sobre ele.
+   `--composer-h` é a altura real do compositor e `--dock-h` a do terminal
+   inferior de execução — as duas publicadas por useComposerHeight (ambos crescem:
+   o compositor conforme o texto, o terminal conforme o usuário o expande, então
+   um número fixo aqui erraria). Sem as variáveis — telas que não têm compositor
+   nem terminal — o fallback devolve os 22px originais do canto.
    Motivo: medido com navegador real, o mascote cobria o botão de enviar em
    1280px e, de 1100px para baixo, o cobria por inteiro; no celular, tocar em
-   "enviar" acertava o mascote. Ver e2e/tests/layout.spec.js. */
+   "enviar" acertava o mascote. Depois, com o terminal inferior, ele passou a
+   interceptar os cliques de recolher/expandir do terminal — mesma classe de
+   defeito, outra faixa. Ver e2e/tests/layout.spec.js e
+   e2e/tests/modo-desenvolvedor.spec.js. */
 .companionRoot {
   position: fixed;
   right: 22px;
-  bottom: calc(var(--composer-h, 6px) + 16px);
+  bottom: calc(var(--composer-h, 6px) + var(--dock-h, 0px) + 16px);
   z-index: 1200;
   display: flex;
   flex-direction: column-reverse;
@@ -135,7 +139,7 @@ body:not(.dark) .companionPanel {
 .app.theme-light .cmpMinBubble { background: rgba(0, 0, 0, 0.04); color: #1e293b; border-color: rgba(0, 0, 0, 0.1); }
 
 @media (max-width: 560px) {
-  .companionRoot { right: 12px; bottom: calc(var(--composer-h, 0px) + 12px); }
+  .companionRoot { right: 12px; bottom: calc(var(--composer-h, 0px) + var(--dock-h, 0px) + 12px); }
   .companionPanel { width: calc(100vw - 24px); }
 }
 

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, lazy, Suspense } from 'react';
+import React, { useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
@@ -6,7 +6,12 @@ import { Download, FileText, FileSpreadsheet, FilePenLine, Plus, ArrowUp, Upload
 import { API, TOOL_INFO, TEMPLATES, QUICK_ACTIONS, THEMES, WORKSPACES, EFFORTS, EFFORT_DESC, ASSISTANT_ICONS, ASSISTANT_COLORS, isAssistantIcon, DEV_WORK_MODES, MAX_ASSISTANT_PROFILE_CHARS } from './constants.js';
 import { signOut } from './authClient.js';
 import { Slider, Modal, Drawer, Collapsible, useAppDialog, ModelPicker } from './components.jsx';
-import { ExecutionSession } from './components/ExecutionSession.jsx';
+import { ExecutionSessionLine } from './components/ExecutionSessionLine.jsx';
+import { ChatJumpToBottom } from './components/ChatJumpToBottom.jsx';
+import { UserInputRequestCard } from './components/UserInputRequest.jsx';
+import { collectExecutionSessions, pendingInputRequest, pickTerminalSession } from './executionSessions.js';
+import { chatContentKey } from './chatScroll.js';
+import { useSmartAutoScroll } from './hooks/useSmartAutoScroll.js';
 import { Sidebar } from './Sidebar.jsx';
 import { DevProjectRail } from './components/DevProjectRail.jsx';
 import { DevActivityRail } from './components/DevActivityRail.jsx';
@@ -60,6 +65,13 @@ const LazyDesignPanel = lazy(() => import('./components/DesignPanel.jsx').then(m
 const LazySettingsHub = lazy(() => import('./components/SettingsHub.jsx').then(m => ({ default: m.SettingsHub })));
 const LazyMultiModelBoard = lazy(() => import('./components/MultiModelBoard.jsx').then(m => ({ default: m.MultiModelBoard })));
 const LazyMemoryTrace = lazy(() => import('./components/MemoryTrace.jsx').then(m => ({ default: m.MemoryTrace })));
+// Terminal inferior, janela em tela cheia da execução e modal da pergunta
+// interativa: nenhum dos três existe na primeira pintura (só aparecem quando há
+// execução ou pergunta), então ficam em chunks próprios. Sem isto, os três
+// somavam ~21 KB ao pacote de entrada — que já estava a 2 KB do teto.
+const LazyExecutionTerminalDock = lazy(() => import('./components/ExecutionTerminalDock.jsx').then(m => ({ default: m.ExecutionTerminalDock })));
+const LazyExecutionWorkspace = lazy(() => import('./components/ExecutionSession.jsx').then(m => ({ default: m.ExecutionWorkspace })));
+const LazyUserInputRequest = lazy(() => import('./components/UserInputRequestDialog.jsx').then(m => ({ default: m.UserInputRequest })));
 
 // Fallback leve para os chunks lazy — aparece só durante o download do
 // módulo (centenas de ms na primeira vez; imperceptível depois). Evita o
@@ -71,7 +83,7 @@ import { useSpeech } from './hooks/useSpeech.js';
 import { useFileUploads } from './hooks/useFileUploads.js';
 import { useChat } from './hooks/useChat.js';
 import { useTasks } from './hooks/useTasks.js';
-import { useDevProjects, projectContextText, developerSessionForConversation } from './hooks/useDevProjects.js';
+import { useDevProjects, projectContextText, developerSessionForConversation, githubWritePermissionFor } from './hooks/useDevProjects.js';
 import { useComposerHeight } from './hooks/useComposerHeight.js';
 
 const QUICK_ACTION_ICON = {
@@ -203,10 +215,21 @@ export default function App({ user } = {}) {
   const [exporting, setExporting] = useState(false);
   const [filesDrawerOpen, setFilesDrawerOpen] = useState(false);
   const [topActionsOpen, setTopActionsOpen] = useState(false);
-  const endRef = useRef(null);
   const messagesRef = useRef(null);
-  const lastScrollConv = useRef(null);
   const inputRef = useRef(null);
+  // Terminal inferior: sessão fixada pelo usuário ("Ver detalhes" no histórico) e
+  // overlay em tela cheia (visualização secundária).
+  const [dockSessionId, setDockSessionId] = useState(null);
+  const [workspaceOpen, setWorkspaceOpen] = useState(false);
+  // Pergunta interativa da IA: o modal abre sozinho quando a solicitação chega e
+  // fechar não descarta (o cartão inline continua na mensagem).
+  const [inputRequestOpen, setInputRequestOpen] = useState(false);
+  const answeredRequestsRef = useRef(new Set());
+  // Resposta a uma pergunta interativa que precisa ser enviada no PRÓXIMO commit
+  // (ver `answerInputRequest`): a autorização de publicação é gravada antes, e o
+  // payload da mensagem tem de sair já com ela.
+  const pendingAnswerRef = useRef(null);
+  const [pendingAnswerTick, setPendingAnswerTick] = useState(0);
   // Mede o compositor e publica a altura em --composer-h, para o personagem do
   // copiloto (position: fixed) não pousar em cima do botão de enviar.
   const composerWrapRef = useComposerHeight();
@@ -249,6 +272,16 @@ export default function App({ user } = {}) {
   const uploads = files.filter(f => f.kind === 'upload');
   // Multimodelo só vale com 2+ modelos selecionados; senão o fluxo é o normal
   const effectiveMulti = multiModel?.enabled && (multiModel.config?.models?.length || 0) >= 2 ? multiModel.config : null;
+  // ---- SMART AUTO-SCROLL do chat ----
+  // A chave de conteúdo é derivada do que REALMENTE cresceu (tamanho do texto da
+  // última mensagem, etapas, progresso da ferramenta), não da identidade do array
+  // `messages` — que é trocada a cada delta e também a cada tique de relógio.
+  const chatKey = chatContentKey(messages);
+  const chatScroll = useSmartAutoScroll({
+    containerRef: messagesRef,
+    conversationId: current?.id || null,
+    contentKey: chatKey
+  });
   const {
     busy, busyRef, paused, statusText, controlPending, nowTick, runs, anyBusy, sendMessage, retrySend, resumeRun, control, cancelMultiSlot
   } = useChat({
@@ -261,11 +294,84 @@ export default function App({ user } = {}) {
     // projeto chegava ao servidor sem vínculo nenhum — e a recuperação de
     // contexto não tinha como priorizar as conversas desse projeto.
     activeDevProject: devProjects.active,
+    // Enviar força o acompanhamento uma vez — mesmo que a pessoa estivesse lendo
+    // uma parte antiga da conversa.
+    onMessageSent: chatScroll.forceFollowing,
     model, assistantId, webSearch, effort, multiModel: effectiveMulti, setNeedLogin, showToast,
     // Modo gratuito: status ao vivo (restante/renovação) e tela de limite
     onFreeEvent: ({ type, _seq, ...status }) => setFreeStatus(prev => ({ ...(prev || {}), ...status })),
     onFreeLimit: (info) => setFreeLimitInfo(info)
   });
+  // ---- SESSÕES DE EXECUÇÃO (fonte única lida pelo terminal e pelo histórico) ----
+  const executionSessions = useMemo(() => collectExecutionSessions(messages, { busy }), [messages, busy]);
+  const terminalSession = useMemo(() => pickTerminalSession(executionSessions, dockSessionId), [executionSessions, dockSessionId]);
+  // Estado da mensagem dona da sessão: é o backend que diz se a execução foi
+  // interrompida ou pausada (`run_state`). Deduzir isso da ausência de etapas em
+  // andamento faria "Concluído" aparecer numa execução que o usuário parou.
+  const terminalStopped = terminalSession
+    ? ['stopped', 'paused'].includes(messages[terminalSession.messageIndex]?.execution?.state)
+    : false;
+  // Trocar de conversa solta a sessão fixada: os ids pertencem à conversa antiga
+  // e o terminal precisa mostrar o que está acontecendo NESTA.
+  useEffect(() => { setDockSessionId(null); setWorkspaceOpen(false); }, [current?.id]);
+  // ---- PERGUNTA INTERATIVA DA IA ----
+  const pendingRequest = useMemo(() => pendingInputRequest(messages), [messages]);
+  const activeRequest = pendingRequest && !pendingRequest.resolved ? pendingRequest.request : null;
+  const awaitingUserReply = Boolean(activeRequest);
+  // Abre o modal UMA vez por solicitação nova. Sem o registro do id, todo render
+  // reabriria o modal que a pessoa acabou de fechar.
+  const shownRequestRef = useRef(null);
+  useEffect(() => {
+    if (!activeRequest) { setInputRequestOpen(false); shownRequestRef.current = null; return; }
+    if (shownRequestRef.current === activeRequest.id) return;
+    shownRequestRef.current = activeRequest.id;
+    if (!answeredRequestsRef.current.has(activeRequest.id)) setInputRequestOpen(true);
+  }, [activeRequest?.id]);
+  // Responder uma pergunta é uma mensagem normal da conversa: o próximo turno
+  // recebe a resposta pelo histórico, sem precisar manter o mesmo request SSE.
+  function answerInputRequest(text) {
+    if (!activeRequest) return;
+    answeredRequestsRef.current.add(activeRequest.id);
+    setInputRequestOpen(false);
+    // CONFIRMAÇÃO DE PUBLICAÇÃO NO GITHUB: quando o backend carimbou o escopo na
+    // solicitação (`authorize`), confirmar registra a autorização ESTRUTURADA no
+    // projeto — e o próximo turno já recebe `github_push`/`github_create_pr`.
+    // O escopo vem do backend, não do texto do modelo; e confirmar é aqui a única
+    // coisa que o clique faz além de responder. Recusar não registra nada.
+    const grant = activeRequest.authorize;
+    const confirmou = activeRequest.kind === 'confirm'
+      && String(text).trim() === String(activeRequest.confirmLabel || 'Sim').trim();
+    if (grant?.kind === 'github_write' && confirmou && devProjects.activeId) {
+      devProjects.authorizeGithubWrite(devProjects.activeId, {
+        repo: grant.repo, branch: grant.branch, base: grant.base, actions: grant.actions
+      });
+      // A sessão em curso passa a carregar a autorização recém-concedida: sem
+      // isto, a mensagem de resposta sairia ANTES de o projeto atualizado chegar
+      // ao payload e o turno seguinte ainda iria sem permissão.
+      setDeveloperSession(prev => prev ? {
+        ...prev,
+        permissions: {
+          githubWrite: true,
+          githubWriteConfirmedAt: new Date().toISOString(),
+          githubWriteScope: { repo: grant.repo, branch: grant.branch, base: grant.base || null, actions: grant.actions }
+        }
+      } : prev);
+      showToast('Publicação autorizada para esta branch. Pode continuar a tarefa.', 'ok');
+    }
+    // O ENVIO é adiado para o próximo commit de propósito: `sendMessage` monta o
+    // payload a partir do `developerSession` do render atual, e a autorização
+    // acabou de ser gravada. Enviar aqui mandaria a mensagem com o estado ANTIGO
+    // — sem a permissão — e o agente perguntaria de novo.
+    pendingAnswerRef.current = text;
+    setPendingAnswerTick(tick => tick + 1);
+  }
+  useEffect(() => {
+    const text = pendingAnswerRef.current;
+    if (!text) return;
+    pendingAnswerRef.current = null;
+    sendMessage(text);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingAnswerTick]);
   const { tasks, tasksOpen, setTasksOpen, tasksActive, pollTasks, sendAsTask, cancelTask } = useTasks({
     current, busyRef, openConversation, ensureConversation,
     input, setInput, listening, recognitionRef,
@@ -381,17 +487,6 @@ export default function App({ user } = {}) {
     const frame = window.requestAnimationFrame(resetSidebarScroll);
     return () => window.cancelAnimationFrame(frame);
   }, [workspace]);
-  useEffect(() => {
-    // Ao ABRIR/TROCAR de conversa, sempre desce até a última mensagem. Durante o
-    // STREAMING (mesma conversa), só acompanha se o usuário já está perto do fim
-    // — antes rolava a cada token (o array `messages` é trocado por delta),
-    // sequestrando a rolagem de quem subia para reler algo durante a resposta.
-    const convChanged = lastScrollConv.current !== (current?.id || null);
-    lastScrollConv.current = current?.id || null;
-    const el = messagesRef.current;
-    if (!convChanged && el && el.scrollHeight - el.scrollTop - el.clientHeight > 120) return;
-    endRef.current?.scrollIntoView({ behavior: convChanged ? 'auto' : 'smooth' });
-  }, [messages, current?.id]);
   // Fecha o painel da equipe ao clicar fora
   useEffect(() => {
     function onDoc(e) { if (topActionsRef.current && !topActionsRef.current.contains(e.target)) setTopActionsOpen(false); }
@@ -593,7 +688,15 @@ export default function App({ user } = {}) {
     // o backend espera. As regras + memória do projeto viajam pelo canal `rules`.
     const projectId = binding?.type === 'folder' ? (binding.folderId || null) : null;
     const github = binding?.type === 'github' && binding.repo ? { repo: binding.repo, branch: binding.branch || '' } : null;
-    setDeveloperSession({ mode, projectId, github, rules: projectContextText(project), devProjectId: project?.id || null, conversationId: null });
+    setDeveloperSession({
+      mode, projectId, github, rules: projectContextText(project),
+      devProjectId: project?.id || null,
+      conversationId: null,
+      // Autorização de publicação já registrada no projeto (e ainda válida para
+      // este vínculo). Sem ela no payload, `github_push`/`github_create_pr` não
+      // entram no inventário do agente.
+      permissions: githubWritePermissionFor(project)
+    });
     setInput(brief);
     setDeveloperOpen(false);
     setWorkspace('developer'); // revela o ambiente de desenvolvimento (colunas do IDE)
@@ -1021,16 +1124,22 @@ export default function App({ user } = {}) {
               ? null
               : m.blocks
               ? (() => {
-                  // Todas as chamadas de ferramenta da resposta são agrupadas numa
-                  // única "sessão de execução" (o Ambiente de Trabalho da IA), em vez
-                  // de virarem dezenas de cartões soltos. O texto continua no lugar.
-                  const toolSteps = m.blocks.filter(b => b.type === 'tool');
+                  // As ferramentas da resposta continuam agrupadas numa única
+                  // sessão de execução, mas o TRABALHO AO VIVO passou para o
+                  // terminal inferior: no balão fica apenas uma linha compacta
+                  // com o resumo e o atalho para carregar a sessão no terminal.
+                  // Antes, o cartão grande crescia dentro da mensagem, empurrava
+                  // o texto para fora da tela e brigava com a rolagem.
                   const firstToolIdx = m.blocks.findIndex(b => b.type === 'tool');
-                  const sessionLive = (busy && idx === messages.length - 1) || toolSteps.some(s => s.status === 'running');
+                  const session = executionSessions.find(s => s.id === (m._key || m.id || `msg-${idx}`));
                   return m.blocks.map((b, i) => {
                     if (b.type === 'tool') {
-                      return i === firstToolIdx
-                        ? <ExecutionSession key="exec" steps={toolSteps} live={sessionLive} conversationId={current?.id}/>
+                      return i === firstToolIdx && session
+                        ? <ExecutionSessionLine
+                            key="exec"
+                            session={session}
+                            awaitingUser={m.execution?.state === 'awaiting_user'}
+                            onOpenInDock={(id) => { setDockSessionId(id); setWorkspaceOpen(false); }}/>
                         : null;
                     }
                     return <MessageText key={i} text={b.content}/>;
@@ -1039,6 +1148,13 @@ export default function App({ user } = {}) {
               : (m.role === 'user'
                 ? <Collapsible text={m.content}>{t => <MessageText text={t}/>}</Collapsible>
                 : <MessageText text={m.content}/>)}
+            {/* PERGUNTA DA IA — pedido de decisão, não erro: o cartão fica na
+                mensagem (mesmo depois de fechar o modal) e desaparece quando já
+                houver resposta do usuário depois dela. */}
+            {m.role === 'assistant' && pendingRequest?.messageIndex === idx && <UserInputRequestCard
+              request={pendingRequest.request}
+              resolved={pendingRequest.resolved}
+              onOpen={() => setInputRequestOpen(true)}/>}
             {m.role === 'assistant' && m.resumable && !busy && <button className="retryBtn resumeBtn" onClick={() => resumeRun(current?.id)} title="Retoma a tarefa exatamente de onde parou, sem refazer o que já foi feito"><Play size={14}/> Continuar de onde parei</button>}
             {m.role === 'assistant' && m.failed && <button className="retryBtn" onClick={() => retrySend(idx, m.retryText)}><RefreshCw size={14}/> Reenviar</button>}
             {m.role === 'assistant' && <Suspense fallback={<PanelFallback/>}><LazyMemoryTrace memory={m.memory} onOpenMemory={() => setMemoryOpen(true)}/></Suspense>}
@@ -1071,12 +1187,39 @@ export default function App({ user } = {}) {
             <button className="stopBtn" onClick={() => control('stop')} title="Parar o processamento" disabled={controlPending}><Square size={13}/> Parar</button>
           </div>
         </div>}
-        <div ref={endRef}/>
       </section>
+      {/* "Ir para o final": fora da área rolável e ACIMA do terminal e do
+          compositor — não cobre mensagem, botão de enviar nem modal. */}
+      <ChatJumpToBottom
+        visible={!chatScroll.isNearBottom && (chatScroll.hasNewContentBelow || !busy)}
+        streaming={busy && chatScroll.hasNewContentBelow}
+        onClick={chatScroll.resumeFollowing}/>
+      {/* TERMINAL INFERIOR: filho normal do layout, entre as mensagens e o
+          compositor. Reserva a própria altura em vez de flutuar por cima. */}
+      {terminalSession && <Suspense fallback={<PanelFallback/>}>
+        <LazyExecutionTerminalDock
+          session={terminalSession}
+          conversationId={current?.id}
+          awaitingUser={awaitingUserReply}
+          stopped={terminalStopped}
+          onStop={busy ? () => control('stop') : null}
+          stopDisabled={controlPending}
+          onOpenWorkspace={() => setWorkspaceOpen(true)}/>
+      </Suspense>}
       <footer className="composerWrap" ref={composerWrapRef}>
         {developerSession && (!developerSession.conversationId || developerSession.conversationId === current?.id) && <div className="devSessionBar">
           <Code2 size={15}/><span>Modo desenvolvedor</span><b>{DEV_WORK_MODES.find(m => m.id === developerSession.mode)?.label || 'Ativo'}</b>
           {developerSession.github?.repo && <span className="muted" title={`Repositório GitHub${developerSession.github.branch ? ` · branch ${developerSession.github.branch}` : ''}`}>· {developerSession.github.repo}{developerSession.github.branch ? ` (${developerSession.github.branch})` : ''}</span>}
+          {/* AUTORIZAÇÃO ≠ DISPONIBILIDADE: a barra diz qual das duas está em
+              questão, em vez de sugerir que o push está liberado só porque o
+              modo é de escrita. */}
+          {developerSession.github?.repo && <span className={`devPubPill ${developerSession.permissions?.githubWrite ? 'on' : 'off'}`}
+            title={developerSession.permissions?.githubWrite
+              ? 'Enviar a branch e abrir Pull Request estão autorizados nesta tarefa'
+              : 'A publicação ainda não foi autorizada — autorize no painel do Modo desenvolvedor'}>
+            {developerSession.permissions?.githubWrite ? <Unlock size={12}/> : <Lock size={12}/>}
+            {developerSession.permissions?.githubWrite ? 'Publicação autorizada' : 'Publicação não autorizada'}
+          </span>}
           {developerSession.github?.repo && <div className="devGhActions">
             <button className="devGhBtn" onClick={devGithubClone} disabled={devGitBusy !== null}
               title="Clonar ou atualizar o repositório nesta conversa">
@@ -1191,6 +1334,26 @@ export default function App({ user } = {}) {
       </div>
       {docling.enabled && <DoclingPanel docs={docling.docs} onReprocess={docling.reprocess} onCancel={docling.cancel} onPurge={docling.purge} isAdmin={docling.isAdmin} config={docling.config} health={docling.health} onSaveConfig={docling.saveConfig} />}
     </Drawer>}
+
+    {/* Modal da pergunta interativa. Fechar NÃO descarta: o cartão inline
+        continua na mensagem com o botão "Responder". */}
+    {inputRequestOpen && activeRequest && <Suspense fallback={<PanelFallback/>}>
+      <LazyUserInputRequest
+        request={activeRequest}
+        submitting={busy}
+        onSubmit={answerInputRequest}
+        onClose={() => setInputRequestOpen(false)}/>
+    </Suspense>}
+
+    {/* Visualização SECUNDÁRIA da execução: a janela em tela cheia, agora aberta
+        pelo terminal inferior (que é a experiência principal). */}
+    {workspaceOpen && terminalSession && <Suspense fallback={<PanelFallback/>}>
+      <LazyExecutionWorkspace
+        steps={terminalSession.steps}
+        live={terminalSession.live}
+        conversationId={current?.id}
+        onClose={() => setWorkspaceOpen(false)}/>
+    </Suspense>}
 
     {toast && <div className={`toast ${toast.kind || 'err'}`} role="alert">{toast.text}<button onClick={() => setToast(null)} aria-label="Fechar aviso"><X size={14}/></button></div>}
 

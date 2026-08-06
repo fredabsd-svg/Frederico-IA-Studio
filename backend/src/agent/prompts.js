@@ -10,6 +10,7 @@ import { isValidRepoFullName, repoDirName } from '../connectors/github.js';
 import { COMPLETION_PROTOCOL, promptMeta } from './promptRegistry.js';
 import { allowedAssistantToolNames } from './assistantPolicy.js';
 import { IMMUTABLE_CORE_PROMPT, assistantProfileBlock, profileMeta } from './promptPolicy.js';
+import { ASK_USER_NOTE, ASK_USER_TOOL_NAME } from './userInputRequest.js';
 
 // Esforço da IA: controla o raciocínio (reasoning effort — funciona de verdade
 // nos modelos que raciocinam, via OpenRouter), o número máximo de etapas do
@@ -360,7 +361,7 @@ export function developerTeamContextFor(request, userId) {
   ].filter(Boolean).join('\n\n');
 }
 
-export function toolAvailabilityNote(tools, { includeInventory = false, sandboxNetworkEnabled = false } = {}) {
+export function toolAvailabilityNote(tools, { includeInventory = false, sandboxNetworkEnabled = false, githubNote = null } = {}) {
   const names = new Set(tools.map(t => t.function.name));
   const lines = ['FERRAMENTAS E AMBIENTE DISPONÍVEIS NESTA CHAMADA:'];
   lines.push('Arquivos da conversa: uploads do usuário em /workspace/uploads; salve as entregas em /workspace/outputs — só esse caminho vira cartão de download no chat, e o app cria o cartão sozinho (não use sandbox:/mnt/user-data/outputs, /mnt/user-data/outputs nem links markdown inventados).');
@@ -382,12 +383,15 @@ export function toolAvailabilityNote(tools, { includeInventory = false, sandboxN
   if (names.has('web_search')) lines.push('- web_search: pesquisar na internet pelo backend quando o globo estiver ativado.');
   if (names.has('web_fetch')) lines.push('- web_fetch: abrir uma página da internet encontrada na pesquisa.');
   if (names.has('github_clone')) lines.push('- github_clone: clonar/atualizar um repositório GitHub da conta conectada para /workspace/repo/<nome>. A autenticação é do app — nunca peça token ao usuário. Se o clone FALHAR, NÃO tente contornar: "git clone"/"git pull" pelo bash (o sandbox não tem rede nem credenciais), GIT_SSL_NO_VERIFY e abrir github.com no navegador (web_fetch) NÃO funcionam — relate a falha ao usuário e pare.');
-  if (names.has('github_push')) lines.push('- github_push: commitar (opcional) e enviar as mudanças do repositório clonado para o GitHub. git push pelo bash NÃO funciona (sem credenciais no sandbox) — use sempre esta ferramenta.');
-  // Sem a ferramenta de push (publicação não autorizada nesta tarefa): impede o
-  // modelo de tentar "git push" pelo bash — que sempre falha (sandbox sem rede).
-  if (names.has('github_clone') && !names.has('github_push')) lines.push('- PUBLICAÇÃO NÃO AUTORIZADA nesta tarefa: você NÃO tem github_push/github_create_pr. NUNCA rode git push/pull/fetch/clone pelo bash (o sandbox não tem rede nem credenciais — sempre falha). Deixe o commit local pronto e PARE, pedindo ao usuário que autorize a publicação (ele pode dizer, por exemplo, "pode publicar/commitar/enviar") para as ferramentas de push serem liberadas.');
-  if (names.has('github_create_pr')) lines.push('- github_create_pr: abrir um Pull Request no GitHub (faça github_push antes).');
+  if (names.has('github_push')) lines.push('- github_push: commitar (opcional) e enviar as mudanças do repositório clonado para o GitHub. git push pelo bash NÃO funciona (o backend bloqueia e o sandbox não tem credencial) — use sempre esta ferramenta.');
+  if (names.has('github_create_pr')) lines.push('- github_create_pr: abrir um Pull Request no GitHub (faça github_push antes). Só informe o número e o link do PR depois que a ferramenta devolver a URL.');
   if (names.has('github_list_repos')) lines.push('- github_list_repos: listar os repositórios GitHub da conta conectada.');
+  // Estado REAL da publicação (githubAccess.js): quando ela não está liberada, o
+  // modelo recebe a CAUSA — e não um "a ferramenta não está habilitada" genérico,
+  // que era exatamente o que ele repassava ao usuário como se fosse um limite do
+  // aplicativo. Também é aqui que a proibição de contornar pelo bash aparece.
+  if (githubNote) lines.push(`- ${githubNote}`);
+  if (names.has(ASK_USER_TOOL_NAME)) lines.push(ASK_USER_NOTE);
   // Delegação: o modelo precisa saber que o sub-agente NÃO vê a conversa, senão
   // manda "continue a análise" e o filho não tem contexto nenhum para trabalhar.
   if (names.has('delegar_subagente')) lines.push('- delegar_subagente: delegar uma subtarefa AUTOCONTIDA a um sub-agente com contexto próprio, que executa ferramentas e devolve só o resultado. GATILHO: pedido com TRÊS OU MAIS entregas independentes entre si — delegue as isoláveis, UMA chamada por entrega (as do mesmo lote correm em paralelo), em vez de executar todas em linha. Vale também para subtarefa única e pesada (varrer muitos arquivos, ler um documento longo, apurar um ponto específico). Ele NÃO enxerga o histórico daqui: escreva a tarefa inteira, com caminhos, números e regras. Fica com você o que é curto, o que depende deste contexto e a integração final das partes.');

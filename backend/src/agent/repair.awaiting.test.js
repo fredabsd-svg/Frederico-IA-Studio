@@ -38,3 +38,27 @@ test('vazio/nulo não conta', () => {
 test('aviso padronizado do sistema anexado após a pergunta não esconde a pergunta', () => {
   assert.equal(endsAwaitingUserReply(`Prefere que eu use qual formato?${MISSING_OUTPUT_NOTICE}`), true);
 });
+
+// FECHAMENTOS SEM "?" — a ferramenta `ask_user` é o caminho principal, mas
+// modelos menores continuam perguntando no texto, e nem sempre com interrogação.
+// Sem isto, "Aguardo sua confirmação para prosseguir." seguia como execução
+// incompleta (e virava erro na tela) em vez de aguardar a pessoa.
+test('fechamento pedindo confirmação, sem "?", conta como pergunta', () => {
+  assert.equal(endsAwaitingUserReply('Deixei o commit local pronto.\n\nAguardo sua confirmação para publicar.'), true);
+  assert.equal(endsAwaitingUserReply('Há duas estratégias possíveis.\n\nEscolha uma opção para eu seguir.'), true);
+  assert.equal(endsAwaitingUserReply('As alterações foram validadas. Preciso da sua autorização para continuar.'), true);
+  assert.equal(endsAwaitingUserReply('Não consigo decidir sozinho. Informe qual formato devo usar.'), true);
+  assert.equal(endsAwaitingUserReply('Fico no aguardo da sua decisão.'), true);
+});
+
+test('entrega concluída que MENCIONA confirmação no meio não conta', () => {
+  const texto = 'Aguardo sua confirmação, disse o cliente no e-mail. '
+    + 'Conferi o documento, apliquei a correção e o arquivo está em outputs/relatorio.xlsx.';
+  assert.equal(endsAwaitingUserReply(texto), false);
+});
+
+test('respostas conclusivas comuns continuam fora', () => {
+  assert.equal(endsAwaitingUserReply('Pronto: 3 arquivos alterados e os testes passaram.'), false);
+  assert.equal(endsAwaitingUserReply('Escolhi a opção mais conservadora e apliquei.'), false);
+  assert.equal(endsAwaitingUserReply('A escolha da opção B foi registrada no CONTINUIDADE.md.'), false);
+});

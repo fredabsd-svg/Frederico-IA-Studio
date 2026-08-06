@@ -42,6 +42,11 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
                           ensureConversation, fetchConversations, loadFiles, waitForUploads,
                           developerSession, setDeveloperSession, followActiveRef,
                           activeDevProject = null,
+                          // Smart Auto-scroll: ENVIAR uma mensagem força o
+                          // acompanhamento uma vez, mesmo que a pessoa estivesse
+                          // lendo lá em cima — ela acabou de agir, a interação
+                          // nova tem de aparecer.
+                          onMessageSent = null,
                           model, assistantId, webSearch, effort, multiModel, setNeedLogin, showToast,
                           onFreeEvent, onFreeLimit }) {
   // ---- MULTICONVERSA: estado de execução POR CONVERSA ----
@@ -255,7 +260,24 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
         }
         if (ev.type === 'free_status') onFreeEvent?.(ev);
         if (ev.type === 'memory_context') update(m => ({ ...m, memory: ev.memory }));
-        if (ev.type === 'run_state') update(m => ({ ...m, execution: ev.execution }));
+        // O estado da execução carrega, quando existe, a solicitação de decisão
+        // do usuário (`inputRequest`). Espelhamos no topo da mensagem para a
+        // interface não precisar saber de qual dos dois caminhos ela veio (evento
+        // `input_required` ao vivo ou `execution_meta` recarregado do banco).
+        if (ev.type === 'run_state') update(m => ({
+          ...m,
+          execution: ev.execution,
+          ...(ev.execution?.inputRequest ? { inputRequest: ev.execution.inputRequest } : {})
+        }));
+        // PERGUNTA DA IA: pedido de decisão, não falha. Aplicar duas vezes (o
+        // replay da reconexão reenvia o evento) é inofensivo — a solicitação é
+        // identificada pelo `id` e sobrescreve a mesma chave.
+        if (ev.type === 'input_required' && ev.request?.id) update(m => ({
+          ...m,
+          inputRequest: ev.request,
+          failed: false,
+          execution: { ...(m.execution || {}), state: 'awaiting_user', terminal: true, inputRequest: ev.request }
+        }));
         if (ev.type === 'prompt_meta') update(m => ({ ...m, prompt: ev.prompt }));
         if (ev.type === 'delta') update(m => {
           const blocks = [...(m.blocks || [])];
@@ -481,6 +503,7 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
     // reprocessando o markdown. As mensagens vindas do servidor não têm _key e
     // seguem usando o id (também estável).
     setMessages(prev => [...prev, { _key: `u-${assistantMsgId}`, role: 'user', content: text, created_at: sentAt }, { _key: assistantMsgId, id: assistantMsgId, role: 'assistant', content: '', blocks: [], created_at: sentAt }]);
+    onMessageSent?.();
     // keyRef é mutável e compartilhado com consumeChatStream/reconnectLiveRun:
     // quando o servidor manda "saved", a chave passa a apontar para o id real.
     const keyRef = { key: assistantMsgId };
@@ -516,7 +539,14 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
             mode: activeDeveloper.mode,
             projectId: activeDeveloper.projectId,
             github: activeDeveloper.github || null,
-            rules: activeDeveloper.rules
+            rules: activeDeveloper.rules,
+            // AUTORIZAÇÃO ESTRUTURADA de publicação no GitHub (repositório,
+            // branch, base e ações). É o que faz `github_push` e
+            // `github_create_pr` continuarem no inventário em turnos seguintes,
+            // em vez de depender de uma regex no texto do turno atual. O backend
+            // re-valida tudo (agent/githubAccess.js) — isto só transporta a
+            // decisão que o usuário tomou na interface.
+            ...(activeDeveloper.permissions ? { permissions: activeDeveloper.permissions } : {})
           } : {}),
           ...(activeDevProject ? {
             devProjectId: activeDevProject.id,

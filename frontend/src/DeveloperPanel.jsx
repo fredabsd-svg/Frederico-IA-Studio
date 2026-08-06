@@ -4,9 +4,9 @@ import {
   MessageCircleQuestion, ListChecks, Hammer, Bug, ShieldCheck, Bot, Plus, Trash2, FolderGit2
 } from 'lucide-react';
 import { API, DEV_WORK_MODES } from './constants.js';
-import { Drawer } from './components.jsx';
+import { Drawer, useAppDialog } from './components.jsx';
 import { GitHubIcon } from './ConnectorsPanel.jsx';
-import { newDevProject } from './hooks/useDevProjects.js';
+import { githubWritePermissionFor, newDevProject } from './hooks/useDevProjects.js';
 
 // Ícones de cada modo de trabalho (DEV_WORK_MODES.icon → componente lucide).
 export const DEV_MODE_ICON = {
@@ -25,14 +25,33 @@ function bindingToValue(binding) {
   return '';
 }
 
+// Rótulos dos motivos de bloqueio da publicação. Espelham o enum do backend
+// (`agent/githubAccess.js` → GITHUB_BLOCK_REASONS). O backend também manda a
+// frase pronta em `blockingMessage`; esta tabela é o fallback quando o pré-voo
+// ainda não respondeu — e a garantia de que a interface nunca cai num genérico
+// "a ferramenta não está habilitada".
+const BLOCK_LABEL = {
+  github_not_connected: 'GitHub não conectado — conecte a conta em Configurações → Conectores.',
+  repository_not_bound: 'Nenhum repositório vinculado a este projeto.',
+  read_only_mode: 'Modo somente leitura — escolha Implementar, Corrigir ou Autônomo para publicar.',
+  write_not_confirmed: 'Publicação ainda não autorizada para esta branch.',
+  invalid_branch: 'Selecione uma branch de trabalho válida.',
+  scope_mismatch: 'A autorização registrada pertence a outro repositório, branch ou destino.',
+  action_not_authorized: 'As ações autorizadas não incluem publicar e abrir Pull Request.',
+  subagent_not_allowed: 'Sub-agentes não publicam.',
+  low_signal_turn: 'Turno conversacional — nenhuma ferramenta remota é oferecida.'
+};
+
 export function DeveloperPanel({ devProjects, onStart, onManageFolders, onOpenConnectors, onClose, initialMode, team = false }) {
-  const { projects, active, activeId, setActiveId, createProject, updateProject, deleteProject } = devProjects;
+  const { projects, active, activeId, setActiveId, createProject, updateProject, deleteProject, authorizeGithubWrite, revokeGithubWrite } = devProjects;
 
   const [folders, setFolders] = useState(null);
   const [githubRepos, setGithubRepos] = useState(null); // null = carregando; [] = sem conector/sem repos
   const [githubConnected, setGithubConnected] = useState(false);
   const [branches, setBranches] = useState(null);
   const [brief, setBrief] = useState('');
+  const [preflight, setPreflight] = useState(null); // estado REAL da publicação
+  const { askConfirm, dialog: publishDialog } = useAppDialog();
 
   // Se não há projeto ativo ao abrir, começamos um rascunho na tela para o
   // usuário criar o primeiro projeto sem fricção.
@@ -86,6 +105,49 @@ export function DeveloperPanel({ devProjects, onStart, onManageFolders, onOpenCo
 
   const mode = DEV_WORK_MODES.find(m => m.id === project?.mode) || DEV_WORK_MODES[1];
   const canWriteProject = mode.write && (githubRepoName ? true : !!folder?.writable);
+  // Branch base (destino do Pull Request): a branch padrão do repositório.
+  const baseBranch = githubRepo?.default_branch || 'main';
+  // Autorização já registrada e AINDA VÁLIDA para o vínculo atual (mudar de
+  // repositório, branch ou destino invalida — e a interface volta a pedir).
+  const grant = githubWritePermissionFor(project, { base: baseBranch });
+
+  // ── PRÉ-VOO DA PUBLICAÇÃO ─────────────────────────────────────────────────
+  // A mesma função que o loop do agente usa para montar o inventário responde
+  // aqui (GET /connectors/github/preflight). Antes, este painel mostrava "Pode
+  // enviar (push)" só porque o modo era de escrita, enquanto o executor não
+  // recebia `github_push` — a divergência que fazia o agente dizer que "a
+  // ferramenta não está habilitada nesta sessão".
+  useEffect(() => {
+    if (!githubRepoName) { setPreflight(null); return undefined; }
+    let alive = true;
+    const params = new URLSearchParams({
+      repo: githubRepoName,
+      branch: binding.branch || '',
+      base: baseBranch,
+      mode: mode.id
+    });
+    if (grant) params.set('authorization', JSON.stringify(grant));
+    (async () => {
+      try {
+        const data = await (await fetch(`${API}/api/connectors/github/preflight?${params}`)).json();
+        if (alive) setPreflight(data && typeof data === 'object' ? data : null);
+      } catch { if (alive) setPreflight(null); }
+    })();
+    return () => { alive = false; };
+    // `grant` entra como string para o efeito não re-disparar por identidade de objeto.
+  }, [githubRepoName, binding.branch, baseBranch, mode.id, JSON.stringify(grant)]);
+
+  async function autorizarPublicacao() {
+    if (!githubRepoName || !project?.id) return;
+    // A confirmação MOSTRA o escopo exato — repositório, branch, destino e ações.
+    const ok = await askConfirm({
+      title: 'Autorizar publicação no GitHub',
+      message: `Repositório: ${githubRepoName}\nBranch de trabalho: ${binding.branch || '(padrão do repositório)'}\nDestino do Pull Request: ${baseBranch}\nAções autorizadas: enviar (push) e abrir Pull Request\n\nA autorização vale só para este repositório e esta branch. Trocar de branch ou de repositório pede uma nova confirmação.`,
+      confirmLabel: 'Autorizar publicação'
+    });
+    if (!ok) return;
+    authorizeGithubWrite(project.id, { repo: githubRepoName, branch: binding.branch || '', base: baseBranch });
+  }
 
   // Branches do repositório GitHub vinculado (a padrão vem pré-selecionada).
   useEffect(() => {
@@ -184,7 +246,7 @@ export function DeveloperPanel({ devProjects, onStart, onManageFolders, onOpenCo
       </div>}
       {githubRepoName && <div className="devProjectStatus">
         <GitHubIcon size={15}/><span title={githubRepoName}>{githubRepoName}</span>
-        <b className={canWriteProject ? 'write' : 'read'}>{canWriteProject ? <Unlock size={13}/> : <Lock size={13}/>}{canWriteProject ? 'Pode enviar (push)' : 'Só leitura'}</b>
+        <b className={canWriteProject ? 'write' : 'read'}>{canWriteProject ? <Unlock size={13}/> : <Lock size={13}/>}{canWriteProject ? 'Modo escrita' : 'Só leitura'}</b>
       </div>}
       {githubRepoName && team && <div className="devTeamHint">
         <Info size={15}/>
@@ -205,6 +267,54 @@ export function DeveloperPanel({ devProjects, onStart, onManageFolders, onOpenCo
           </select>}
       {mode.write && <p className="muted small" style={{ margin: '2px 0 0' }}>As mudanças vão para esta branch. Prefere não mexer na principal? Peça na missão (ex.: "crie uma branch ajuste-login e abra um Pull Request").</p>}
     </div>}
+
+    {/* ── Pré-voo da publicação ───────────────────────────────────────────────
+        Cada condição aparece SEPARADA. Antes havia só um "Pode enviar (push)"
+        derivado do modo — que dizia "sim" enquanto o executor não recebia
+        `github_push`, e era daí que saía o "a ferramenta não está habilitada". */}
+    {githubRepoName && <div className="devField">
+      <div className="devFieldHead"><span><ShieldCheck size={14}/> Publicação</span></div>
+      <ul className="devPreflight">
+        <li className={preflight?.connected === false ? 'no' : 'yes'}>
+          <span>GitHub</span><b>{preflight?.connected === false ? 'não conectado' : 'conectado'}</b>
+        </li>
+        <li className="yes"><span>Repositório</span><b>{githubRepoName}</b></li>
+        <li className={binding.branch ? 'yes' : 'no'}><span>Branch</span><b>{binding.branch || 'nenhuma selecionada'}</b></li>
+        <li className="yes"><span>Destino do PR</span><b>{preflight?.base || baseBranch}</b></li>
+        <li className={canWriteProject ? 'yes' : 'no'}><span>Modo</span><b>{canWriteProject ? 'escrita' : 'leitura'}</b></li>
+        <li className={preflight?.writeAuthorized ? 'yes' : 'no'}>
+          <span>Publicação</span><b>{preflight?.writeAuthorized ? 'autorizada' : 'não autorizada'}</b>
+        </li>
+        <li className={preflight?.tools?.push ? 'yes' : 'no'}>
+          <span>Ferramentas</span>
+          <b>{[
+            preflight?.tools?.clone ? 'clone' : null,
+            preflight?.tools?.push ? 'push' : null,
+            preflight?.tools?.createPr ? 'Pull Request' : null
+          ].filter(Boolean).join(', ') || 'nenhuma'}</b>
+        </li>
+      </ul>
+      {/* Causa REAL do bloqueio, vinda do backend. */}
+      {preflight && !preflight.writeAuthorized && <p className="devPreflightWhy">
+        <Info size={14}/> <span>{preflight.blockingMessage || BLOCK_LABEL[preflight.blockingReason] || 'Publicação indisponível nesta configuração.'}</span>
+      </p>}
+      {preflight?.writeAuthorized
+        ? <div className="devPreflightActions">
+            <span className="devPreflightOk"><ShieldCheck size={14}/> Autorizado{grant?.githubWriteConfirmedAt ? ` em ${new Date(grant.githubWriteConfirmedAt).toLocaleString('pt-BR')}` : ''}</span>
+            <button type="button" className="devIconBtn danger" onClick={() => revokeGithubWrite(project?.id)}>Revogar</button>
+          </div>
+        : <div className="devPreflightActions">
+            <button type="button" className="primary" onClick={autorizarPublicacao}
+              disabled={isDraft || !canWriteProject || !binding.branch || preflight?.connected === false}
+              title={isDraft
+                ? 'Salve o projeto (abra uma tarefa) antes de autorizar a publicação'
+                : 'Autoriza enviar a branch e abrir o Pull Request neste repositório'}>
+              <ShieldCheck size={15}/> Autorizar publicação
+            </button>
+            {isDraft && <span className="muted small">Disponível depois de o projeto ser criado.</span>}
+          </div>}
+    </div>}
+    {publishDialog}
 
     {/* ── Modo de trabalho ──────────────────────────────────────── */}
     <div className="devField">

@@ -29,7 +29,12 @@ const byteLen = (obj) => Buffer.byteLength(JSON.stringify(obj), 'utf8');
 // Falhas de QUALIDADE (degeneração, protocolo malformado) NÃO entram: ali o
 // certo é reenviar do zero, não continuar o mesmo array problemático. É o MESMO
 // mecanismo central para o limite de ciclos E para o watchdog (requisito 8).
-const RESUMABLE_REASONS = new Set(['step_limit', 'provider_failure', 'stalled', 'stopped']);
+// 'awaiting_user' entra porque uma PERGUNTA ao usuário (ask_user) também
+// interrompe uma tarefa que estava rendendo — e é o caso em que o progresso mais
+// importa: quem confirma "pode publicar" depois de 80 etapas de trabalho não
+// pode ter de repetir a missão. A resposta em si chega como mensagem nova (turno
+// novo), mas o checkpoint fica disponível para a retomada explícita.
+const RESUMABLE_REASONS = new Set(['step_limit', 'provider_failure', 'stalled', 'stopped', 'awaiting_user']);
 export function isResumableReason(reason) { return RESUMABLE_REASONS.has(String(reason || '')); }
 
 // Nota que orienta o modelo a CONTINUAR (não recomeçar) ao retomar. Anexada

@@ -29,7 +29,10 @@ export async function processTasks() {
           if (ev.type === 'status') setProg(ev.content);
           else if (ev.type === 'tool_start') setProg(`Executando ${ev.name}...`);
         };
-        const result = await runAgent({ userId: t.user_id, conversationId: t.conversation_id, userText: t.prompt, model: t.model, assistant, webSearch: !!t.web_search, onEvent });
+        // `interactive: false`: a tarefa roda em segundo plano, sem ninguém na
+        // tela para responder. A ferramenta `ask_user` fica fora do inventário —
+        // uma pergunta aqui deixaria a tarefa pendurada para sempre.
+        const result = await runAgent({ userId: t.user_id, conversationId: t.conversation_id, userText: t.prompt, model: t.model, assistant, webSearch: !!t.web_search, interactive: false, onEvent });
         if (result?.usage) {
           await recordUsage({
             userId: t.user_id,
