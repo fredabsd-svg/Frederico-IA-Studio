@@ -345,7 +345,7 @@ export async function runAgent({ userId, conversationId, userText, model, assist
     if (!isSubagent) {
       const assistantMessageId = await saveMessage(userId, conversationId, 'assistant', finalText, { executionMeta: execution });
       onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId });
-      indexAfterReply(userId, conversationId).catch(() => {});
+      indexAfterReply(userId, conversationId, chosenModel).catch(() => {});
     }
     return {
       text: finalText,
@@ -1454,7 +1454,7 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
     onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId: msgId });
   }
   // Memória: indexa a troca e extrai fatos em segundo plano (não bloqueia)
-  if (!stopped && shouldPersistReply) indexAfterReply(userId, conversationId).catch(() => {});
+  if (!stopped && shouldPersistReply) indexAfterReply(userId, conversationId, chosenModel).catch(() => {});
   return { text: finalText, usage, model: chosenModel, stopped, providerFailure, incomplete, failureMessage, resumable, execution, files: newFiles, checks, messageId: msgId };
   } finally {
     // Mantém a conversa marcada como ativa até o card de download ter sido
