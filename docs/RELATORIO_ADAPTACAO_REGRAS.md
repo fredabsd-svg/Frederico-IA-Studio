@@ -1,17 +1,16 @@
 # RELATÓRIO DE ADAPTAÇÃO DAS REGRAS — Frederico IA Studio
 
 > **Nota de publicação (2026-08-05).** Este relatório entrou no repositório como
-> documento histórico, no formato em que foi entregue. Duas ressalvas, para que
-> ninguém o leia como retrato do presente:
+> documento histórico, no formato em que foi entregue. Os cinco artefatos listados
+> na seção 5 foram publicados em duas etapas:
 >
-> - Dos cinco arquivos listados na seção 5, **dois** foram publicados:
->   [`REGRAS-DO-PROJETO.md`](../REGRAS-DO-PROJETO.md) e este relatório. O
->   template de Pull Request, o ADR `0001` e o patch **não** acompanharam a
->   entrega e não existem no repositório — a seção 5 descreve o pacote que foi
->   preparado, não o que está publicado.
-> - A limitação da seção 6 (`403 — Resource not accessible by integration`)
->   está superada: a publicação foi feita por branch e Pull Request, sem
->   alteração direta na `main`.
+> - Na primeira, **dois**: [`REGRAS-DO-PROJETO.md`](../REGRAS-DO-PROJETO.md) e
+>   este relatório.
+> - Na segunda (2026-08-05, Frente 2), **mais dois**: o template de Pull Request
+>   (`.github/pull_request_template.md`) e o ADR
+>   [`0001-adocao-das-regras-do-projeto.md`](decisions/0001-adocao-das-regras-do-projeto.md).
+>   O patch não foi publicado — a aplicação foi feita por branch e Pull Request,
+>   sem arquivo de patch intermediário.
 >
 > O documento vigente é o `REGRAS-DO-PROJETO.md`. Este arquivo registra por que
 > as regras ficaram como ficaram.

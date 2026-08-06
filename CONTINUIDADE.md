@@ -24,7 +24,16 @@ que ainda segura o verde é o **pipeline multimodelo retomável**: o F-15 entreg
 tabela e as primitivas, mas o `runMultiModel` ainda não as usa, então o reinício continua
 sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** as **regras do projeto entraram no repositório**: o
+- **Último trabalho:** a **Frente 2 — Template de PR + ADR 0001** entrou no
+  repositório: o `.github/pull_request_template.md` espelha os 11 itens da
+  Regra 10.3 (objetivo, implementado, arquivos/áreas, impacto documental,
+  decisões/ADRs, segurança e privacidade, migrations, testes, limitações,
+  riscos, próxima etapa) e o ADR
+  `docs/decisions/0001-adocao-das-regras-do-projeto.md` registra a adoção das
+  regras em 2026-08-05 no formato da Regra 11.2 (Contexto / Decisão /
+  Alternativas descartadas / Consequências). A nota do relatório de adaptação
+  foi atualizada para refletir que os artefatos agora existem.
+  Antes dela, as **regras do projeto entraram no repositório**: o
   `REGRAS-DO-PROJETO.md` passou a ser a constituição de engenharia — vale para pessoas,
   agentes de IA e automações — e o `CLAUDE.md` ficou explicitamente subordinado a ele
   (onde divergirem, as regras prevalecem). Antes dele, a
@@ -98,13 +107,11 @@ não pular teste com banco disponível, não devolver o socket do Docker, isolar
 por usuário, não declarar sucesso falso. O ganho não é mudança de
 comportamento, é passar a ser **verificável por quem chega depois**.
 
-**O que ficou de fora, e está registrado:** o relatório de adaptação listava
-cinco artefatos; dois vieram. O **template de Pull Request**
-(`.github/pull_request_template.md`) e o **ADR 0001** não acompanharam a entrega
-e não existem no repositório. Isso vale anotar porque a Regra 10.3 enumera o que
-todo PR precisa informar e a Regra 11 exige ADR para decisão estrutural — as
-duas funcionam sem os arquivos, mas o template tornaria a 10.3 automática.
-A nota no topo do relatório registra a discrepância para quem o ler depois.
+**O que ficou de fora, e está resolvido:** o template de Pull Request
+(`.github/pull_request_template.md`) e o ADR 0001
+(`docs/decisions/0001-adocao-das-regras-do-projeto.md`) foram criados na
+Frente 2 (2026-08-05). O patch de aplicação nunca existiu — a aplicação foi
+feita por branch e Pull Request, sem arquivo de patch intermediário.
 
 ---
 
@@ -1266,26 +1273,16 @@ antes do aviso.
 
 ## Próximos passos (em ordem)
 
-1. **F-15, a integração que falta.** O coordenador durável de pipelines entrou como
-   **infraestrutura**: a tabela `pipeline_runs` e as primitivas de save/load/complete
-   estão provadas, mas `runMultiModel` ainda não atualiza o `currentStage` entre
-   estágios nem retoma no boot. Sem isso, o risco que o F-15 descreve segue de pé na
-   prática — só que agora com o banco pronto para recebê-lo.
-3. **F-21, o que sobrou.** O `React.lazy` nos painéis pesados está feito (o chunk
-   principal caiu para ~920 KB, abaixo do teto de 1.000 KB do CI), mas o `App.jsx`
-   continua com dezenas de `useState`. Extrair por etapas: shell → estado da conversa →
-   estado da execução → drawers/configurações. Repare que o `MultiModelBoard` é
-   importado de forma dinâmica pelo `App.jsx` e **estática** pelo `Landing.jsx` e pelo
-   `MultiModelPicker.jsx` — enquanto isso valer, ele não sai do chunk principal (o build
-   avisa: `INEFFECTIVE_DYNAMIC_IMPORT`).
-4. **Modo Design, o que sobrou (opcional, sem risco aberto)** — edição inline e
-   controles de ajuste estão **feitos**; falta imagens no artefato (a geração de
-   imagens já existe no app) e a tela de compartilhamento público sobre o token
-   de prévia que já existe.
-5. **Sub-agentes, o que sobrou dos P1/P2.** Orçamento por delegação, `outputs/` isolado
-   e catálogo persistido de tool calling entraram (F-24/F-25). Falta o controle na
-   interface — "Usar sub-agentes: automático / desligado / obrigatório" — e o motivo de
-   indisponibilidade aparecendo para o usuário.
+1. **Frente 3 — Integrar o coordenador durável no `runMultiModel` (F-15, risco 🟠).**
+   A tabela `pipeline_runs` e as primitivas de save/load/complete estão provadas, mas
+   `runMultiModel` ainda não atualiza o `currentStage` entre estágios nem retoma no
+   boot. Sem isso, o risco que o F-15 descreve segue de pé na prática — só que agora
+   com o banco pronto para recebê-lo.
+2. **Frente 4 — Vulnerabilidades de dependências.** O CI acusa `3 vulnerabilities
+   (2 moderate, 1 high)` no backend e `1 high` no frontend em todo `npm ci`.
+3. **Frente 5 — IPv6 + `git` na allowlist de egress do sandbox.** `parseAllowlistEntry`
+   declara que IPv6 ficou de fora; `extractHostCandidates` não varre `git`.
+4. **Frentes seguintes** conforme o backlog ordenado registrado no plano de melhorias.
 
 ---
 
