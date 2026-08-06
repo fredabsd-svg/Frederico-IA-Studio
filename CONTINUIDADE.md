@@ -107,13 +107,11 @@ não pular teste com banco disponível, não devolver o socket do Docker, isolar
 por usuário, não declarar sucesso falso. O ganho não é mudança de
 comportamento, é passar a ser **verificável por quem chega depois**.
 
-**O que ficou de fora, e está registrado:** o relatório de adaptação listava
-cinco artefatos; dois vieram. O **template de Pull Request**
-(`.github/pull_request_template.md`) e o **ADR 0001** não acompanharam a entrega
-e não existem no repositório. Isso vale anotar porque a Regra 10.3 enumera o que
-todo PR precisa informar e a Regra 11 exige ADR para decisão estrutural — as
-duas funcionam sem os arquivos, mas o template tornaria a 10.3 automática.
-A nota no topo do relatório registra a discrepância para quem o ler depois.
+**O que ficou de fora, e está resolvido:** o template de Pull Request
+(`.github/pull_request_template.md`) e o ADR 0001
+(`docs/decisions/0001-adocao-das-regras-do-projeto.md`) foram criados na
+Frente 2 (2026-08-05). O patch de aplicação nunca existiu — a aplicação foi
+feita por branch e Pull Request, sem arquivo de patch intermediário.
 
 ---
 
