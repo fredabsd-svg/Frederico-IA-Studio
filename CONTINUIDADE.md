@@ -60,6 +60,27 @@ sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md
   `App.jsx` de 1550 para ~1480 linhas. Comportamento idêntico: 77 testes
   passam, build OK. As próximas etapas (estado da conversa, estado da
   execução, drawers/configurações) estão registradas abaixo.
+- **Último trabalho:** a **Frente 11 — Inventário e poda do CSS (F-21)** fechou
+  a dívida do CSS solto: o `frontend/scripts/cssInventory.mjs` (plugado em
+  `npm run check`) varre os `frontend/src/*.css` por classes realmente usadas
+  nos JSX/JS/HTML — literal, template string, classNames() e concatenação —
+  e classifica cada regra como viva, morta-removível ou mista (mortas
+  combinadas com vivas). A catraca: o número de regras mortas removíveis NÃO
+  pode subir em relação ao snapshot em
+  `frontend/scripts/cssInventory.snapshot.json`, lido em todo check.
+  A poda removeu os arquivos `promptcoach.css` (3,4 KB, 90% morto — o módulo
+  `promptCoach.js` existe mas o componente UI nunca foi escrito) e
+  `dev-handoff.css` (10,2 KB, ancorado em `.workspace-developer` que nenhum
+  JSX aplica) e mais 84 regras mortas dos demais arquivos. Resultado:
+  CSS fonte caiu de 248.813 para 226.903 bytes (-22 KB / -9%); o bundle
+  final minificado caiu de **206,08 KB para 186,96 KB (-19,12 KB / -9,3%)**.
+  O estado pós-poda: 10 arquivos CSS, 2.117 regras, 3 removíveis
+  (vs. 117 antes da poda), 123 mistas (mortas combinadas com vivas — não
+  tocadas), 1.963 vivas. 81/81 testes do frontend passam, lint limpo, build
+  dentro do orçamento. As 123 regras mistas ficam para frente futura com
+  E2E ponta a ponta — o ambiente deste sandbox não tem servidor Postgres
+  nem `/opt/pw-browsers/`, então a prova visual de UI ficou fora. A
+  catraca impede regredir; o detector é determinístico.
 - **Último trabalho:** a **Frente 10 — MultiModelBoard fora do chunk principal**
   moveu `MULTI_MODE_LABEL` para `constants.js`, eliminando o import estático do
   `MultiModelBoard` no `Landing.jsx` e `MultiModelPicker.jsx`. O aviso
@@ -117,14 +138,13 @@ sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md
   (o Nino cobrindo o botão de enviar), **[#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)**
   (Playwright + suíte ponta a ponta) e **[#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)**
   (as sete falhas P0 dos sub-agentes).
-- **Última validação:** 2026-08-05 — **1219 testes**, com o backend em **1008/1008 e
-  NADA pulado**: o PostgreSQL 16 subiu **neste contêiner** (binários locais, sem Docker
-  e sem a extensão `vector` — nenhuma migration usa o tipo). Mais **frontend 77/77**
-  (lint + testes + build), **guarda do Docker 49/49** e os **26 ponta a ponta em
-  navegador real** (`E2E_CHROMIUM_PATH` apontando o Chromium do contêiner): 26/26. Os
-  **59 do sandbox Python** pulam aqui por falta da imagem do sandbox — quem os roda é o
-  CI. A contagem vem de `cd backend && npm run test:count` — não a escreva à mão.
-  Sem banco, o backend passa 916 e pula 92 — o esperado.
+- **Última validação:** 2026-08-06 — **frontend 81/81** (lint + 81 testes +
+  build + budget + css:inventory — todos verdes neste sandbox). O backend
+  não foi tocado nesta frente, então a linha de base anterior permanece
+  (1008/1008 com Postgres em 2026-08-05, 916/916 sem banco). Os 26 E2E
+  ponta a ponta exigem Postgres + Chromium do contêiner (`/opt/pw-browsers/`)
+  e ficaram fora do escopo desta frente — a poda é conservadora e a
+  catraca impede regredir.
   Repare em um job do CI: **"Artefatos (Excel real)"** roda os testes dos kits no runner
   do GitHub, que **não tem as mesmas fontes** do sandbox. Ou seja, o caminho de
   degradação do `pdfpro` (sem TrueType, caindo para as Type1 base-14) é exercitado a
@@ -1361,33 +1381,33 @@ antes do aviso.
 
 ## Próximos passos (em ordem)
 
-1. **Frente 5 — IPv6 + `git` na allowlist de egress do sandbox.**
-   `parseAllowlistEntry` declara que IPv6 ficou de fora; `extractHostCandidates`
-   não varre `git`.
-1. **Frente 6 — Extração de memória usa o modelo da conversa.** Em E2E aparece
-   `[memória] extração falhou (segue sem): 404 Modelo não faz parte deste
-   provedor falso` — a extração de memória usa o default do app em vez do modelo
-   ativo da conversa.
-1. **Frente 7 — Reconciliação de sandbox ligada por padrão.** `SANDBOX_RECONCILE_ON_BOOT=false`
-   desliga a coleta de containers órfãos; em produção, crash deixa lixo.
-1. **Frente 8 — Retomada real pós-kill-9.** Teste de integração com `child_process`: 
-   processo A grava checkpoint mid-run e leva SIGKILL; processo B lê e retoma sem
-   duplicar ferramentas. Fecha o F-14 de verdade.
-1. **Frente 9 — Desmontar o App.jsx (etapa 1: shell).** Extrair shell (layout,
-   sidebar, drawers de abertura) para componentes próprios, sem mudar comportamento.
-1. **Frente 11 — Inventário e poda do CSS.** ~206 KB de CSS num arquivo único
-   (`styles.css`), dívida declarada do F-21.
-2. **Frentes seguintes** conforme o backlog ordenado.
-1. **Frente 9 — Desmontar o App.jsx (etapas 2-4):** a etapa 1 (shell/sidebar)
-   está feita nesta PR. Faltam: etapa 2 (estado da conversa), etapa 3 (estado
-   da execução), etapa 4 (drawers/configurações). O plano completo está
-   registrado em `docs/ARCHITECTURE.md`.
-2. **Frente 10 — `MultiModelBoard` fora do chunk principal.** O build avisa
-   `INEFFECTIVE_DYNAMIC_IMPORT`: o `MultiModelBoard` é importado dinâmico no
-   `App.jsx` e estático no `Landing.jsx` e `MultiModelPicker.jsx`.
-3. **Frentes seguintes** conforme o backlog ordenado.
-
----
+1. **Frente 12 — Modo Design: imagens no artefato.** A geração de imagens já
+   existe no app; o Modo Design não a usa. Permitir que o artefato inclua
+   imagens geradas (respeitando o sandbox de prévia com origem opaca — Regra
+   6.6); `docs/DESIGN_STUDIO.md` documenta. Aceite: E2E pedindo site com
+   imagem e a prévia renderiza.
+2. **Frente 13 — Modo Design: compartilhamento público.** O token de prévia
+   já existe; falta a tela pública sobre ele. Rota pública mínima (Regra 2.2)
+   servindo a prévia por token, sem sessão; revogação. Testes de autorização
+   (válido/inválido/revogado); `docs/SECURITY.md`.
+3. **Frente 14 — Sub-agentes: controle na interface.** Backend pronto; falta
+   o controle "automático / desligado / obrigatório" e o motivo de
+   indisponibilidade visível. `shouldOfferSubagentTool` respeita a
+   preferência.
+4. **Frente 15 — Sonda de tool calling na primeira delegação.** O catálogo
+   persistido (`model_tool_capability_cache`) registra capacidade DEPOIS da
+   falha — a primeira delegação a um modelo sem suporte é desperdiçada.
+   Sonda barata; resultado vai ao catálogo.
+5. **Frente 9 — Desmontar o `App.jsx` (etapas 2-4):** a etapa 1 (shell/sidebar)
+   está feita. Faltam: etapa 2 (estado da conversa), etapa 3 (estado da
+   execução), etapa 4 (drawers/configurações). Plano completo em
+   `docs/ARCHITECTURE.md`.
+6. **Pendência conhecida — 123 regras mistas no inventário CSS:** regras
+   que combinam classes mortas com classes vivas (ex.: `.morta .viva`,
+   `.morta.viva`). Não foram tocadas nesta frente porque a remoção segura
+   depende de validação visual com E2E ponta a ponta, indisponível neste
+   sandbox (sem Postgres + `/opt/pw-browsers/`). Ficam para frente futura
+   com ambiente completo. O detector já as expõe em `dist/cssInventory.json`.
 
 ## Como retomar o desenvolvimento
 

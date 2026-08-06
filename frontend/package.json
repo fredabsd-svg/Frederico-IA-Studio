@@ -11,7 +11,8 @@
     "test:unit": "node scripts/run-tests.mjs",
     "test:all": "npm run lint && npm test",
     "budget": "node scripts/bundleBudget.mjs",
-    "check": "npm run lint && npm test && npm run build && npm run budget"
+    "css:inventory": "node scripts/cssInventory.mjs",
+    "check": "npm run lint && npm test && npm run build && npm run budget && npm run css:inventory"
   },
   "dependencies": {
     "better-auth": "^1.6.23",

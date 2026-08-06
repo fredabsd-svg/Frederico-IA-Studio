@@ -48,7 +48,6 @@
 .camPrimary:hover { filter: brightness(1.08); border-color: var(--accent); }
 
 /* Botão de câmera no campo de digitação (mesmo visual do clipe de anexo) */
-.camTrigger { }
 
 @media (max-width: 560px) {
   .camControls .camBtn { flex: 1 1 auto; justify-content: center; }

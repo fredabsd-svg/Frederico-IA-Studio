@@ -410,7 +410,7 @@ main.jsx → AuthGate → App.jsx (1.497 linhas)
   ├─ componentes de painel: SettingsHub, DeveloperPanel, MemoryPanel, ProviderPanel,
   │          MultiModelBoard/Picker, DoclingPanel, CopilotWorkspace, Companion, ...
   └─ CSS: styles.css + v2.css + 8 arquivos temáticos (auth, camera, companion,
-          copilot, dev-handoff, docling, landing, nino, promptcoach)
+          copilot, docling, landing, nino, design)
 ```
 
 **Medições de 2026-07-25** (não corrigidas nesta auditoria):
@@ -420,6 +420,20 @@ main.jsx → AuthGate → App.jsx (1.497 linhas)
 - Sem virtualização de listas; Markdown reparseado durante o streaming.
 - **Catraca no CI:** teto de 1.000 KB — impede crescimento silencioso enquanto a
   decomposição não é feita. Ver F-20 e F-21.
+
+**CSS inventariado (Frente 11 — F-21, 2026-08-06).** Os arquivos em
+`frontend/src/*.css` são varridos por `frontend/scripts/cssInventory.mjs`
+(plugado em `npm run check`). O detector varre JSX/JS/HTML por uso literal,
+template strings, classNames() e concatenação; uma classe morta é REMOVÍVEL
+quando não aparece em código nem como ancestral de classe viva. A catraca
+fala: o número de regras mortas removíveis NÃO pode subir em relação ao
+snapshot em `frontend/scripts/cssInventory.snapshot.json` (lido em todo
+`npm run check`). Artefato gerado: `frontend/dist/cssInventory.json`.
+
+Estado atual (2026-08-06): 10 arquivos CSS, 2.117 regras, 226.903 bytes
+brutos — 3 removíveis, 123 mistas (mortas combinadas com vivas — não
+tocadas), 1.963 vivas. Bundle final minificado: **186,96 KB** (vs. 206,08 KB
+antes da poda).
 
 ---
 

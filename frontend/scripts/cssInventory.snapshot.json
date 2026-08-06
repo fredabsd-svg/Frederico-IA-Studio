@@ -1,0 +1,59 @@
+{
+  "baselineRemoveCount": 3,
+  "baselineTotalRules": 2117,
+  "baselineTotalBytes": 226904,
+  "generatedAt": "2026-08-06T19:09:42.207Z",
+  "files": {
+    "src/auth.css": {
+      "removeCount": 0,
+      "sizeBytes": 6104,
+      "totalRules": 46
+    },
+    "src/camera.css": {
+      "removeCount": 0,
+      "sizeBytes": 2275,
+      "totalRules": 16
+    },
+    "src/companion.css": {
+      "removeCount": 1,
+      "sizeBytes": 27853,
+      "totalRules": 248
+    },
+    "src/copilot.css": {
+      "removeCount": 0,
+      "sizeBytes": 8504,
+      "totalRules": 78
+    },
+    "src/design.css": {
+      "removeCount": 0,
+      "sizeBytes": 22693,
+      "totalRules": 174
+    },
+    "src/docling.css": {
+      "removeCount": 0,
+      "sizeBytes": 7463,
+      "totalRules": 59
+    },
+    "src/landing.css": {
+      "removeCount": 0,
+      "sizeBytes": 13431,
+      "totalRules": 142
+    },
+    "src/nino.css": {
+      "removeCount": 0,
+      "sizeBytes": 5737,
+      "totalRules": 44
+    },
+    "src/styles.css": {
+      "removeCount": 2,
+      "sizeBytes": 116279,
+      "totalRules": 1184
+    },
+    "src/v2.css": {
+      "removeCount": 0,
+      "sizeBytes": 16565,
+      "totalRules": 126
+    }
+  },
+  "note": "Catraca: removíveis não pode subir em relação a este snapshot. Linha de base pós-poda da Frente 11."
+}
