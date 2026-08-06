@@ -1,11 +1,10 @@
 // F-05b: allowlist de egress no sandbox. Cobre as primitivas puras:
 // - compileNetworkAllowlist/parseAllowlistEntry — formato e tipos
 // - hostMatchesAllowlist — matching (domínio/sufixo/IP/CIDR/porta)
-// - extractHostCandidates — extração de hosts em comandos reais
+// - extractHostCandidates — extração de hosts em comandos reais (inclui git e IPv6)
 // - guardNetworkEgress — bloqueio real (integração com guardCommand)
-//
-// A defesa real continua sendo a rede do Docker; esta camada é o que o
-// usuário vê quando tenta falar com um destino proibido.
+// - IPv6 literal bloqueado (fail-closed)
+// - git clone/push/pull/fetch/remote extraídos e conferidos contra allowlist
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -166,4 +165,80 @@ test('guardCommand com networkAllowlist aplicado via guardContext', () => {
     pcWriteAuthorized: false,
     networkAllowlist: ['api.permitido.com']
   });
+});
+
+// ---- F-05b: IPv6 literal (fail-closed) ----
+// IPv6 em colchetes ([::1], [2001:db8::1]) é sempre bloqueado quando há
+// allowlist ativa — a sintaxe é diferente e não casa com as regras IPv4.
+
+test('guardNetworkEgress: IPv6 literal [::1] é bloqueado (fail-closed)', () => {
+  assert.throws(
+    () => guardNetworkEgress('curl http://[::1]:8080/status', { allowlist: ['api.exemplo.com'] }),
+    /endereço IPv6 literal/
+  );
+});
+
+test('guardNetworkEgress: IPv6 literal [2001:db8::1] é bloqueado', () => {
+  assert.throws(
+    () => guardNetworkEgress('wget https://[2001:db8::1]/file', { allowlist: ['api.exemplo.com'] }),
+    /endereço IPv6 literal/
+  );
+});
+
+test('extractHostCandidates: IPv6 literal é extraído e marcado como v6', () => {
+  const hosts = extractHostCandidates('curl http://[::1]:8080/status');
+  const v6host = hosts.find(h => h.v6);
+  assert.ok(v6host, 'deve ter um host IPv6 marcado');
+  assert.ok(v6host.host.includes('::1'), 'host deve conter o endereço IPv6');
+  assert.equal(v6host.port, 8080);
+});
+
+// ---- F-05b: git na extração de hosts ----
+// git clone/push/pull/fetch com URLs HTTPS ou SSH geram tráfego de rede
+// arbitrário — devem ser varridos pela allowlist como qualquer outro comando.
+
+test('extractHostCandidates: git clone HTTPS extrai o host', () => {
+  const hosts = extractHostCandidates('git clone https://github.com/user/repo.git');
+  assert.ok(hosts.some(h => h.host === 'github.com'), 'deve extrair github.com do git clone HTTPS');
+});
+
+test('extractHostCandidates: git clone SSH extrai o host', () => {
+  const hosts = extractHostCandidates('git clone git@github.com:user/repo.git');
+  assert.ok(hosts.some(h => h.host === 'github.com'), 'deve extrair github.com do git clone SSH');
+});
+
+test('extractHostCandidates: git push extrai o host', () => {
+  const hosts = extractHostCandidates('git push origin main');
+  // git push sem URL explícita não contém host — usa o remote já configurado.
+  // Mas git push COM URL explícita deve ser extraído.
+  const hosts2 = extractHostCandidates('git push https://github.com/user/repo.git main');
+  assert.ok(hosts2.some(h => h.host === 'github.com'), 'deve extrair github.com do git push com URL');
+});
+
+test('extractHostCandidates: git remote add extrai o host', () => {
+  const hosts = extractHostCandidates('git remote add origin https://gitlab.com/user/repo.git');
+  assert.ok(hosts.some(h => h.host === 'gitlab.com'), 'deve extrair gitlab.com do git remote add');
+});
+
+test('extractHostCandidates: git fetch extrai o host', () => {
+  const hosts = extractHostCandidates('git fetch https://github.com/user/repo.git');
+  assert.ok(hosts.some(h => h.host === 'github.com'), 'deve extrair github.com do git fetch');
+});
+
+test('guardNetworkEgress: git clone para host não autorizado é bloqueado', () => {
+  assert.throws(
+    () => guardNetworkEgress('git clone https://github.com/user/repo.git', { allowlist: ['gitlab.com'] }),
+    /destino 'github\.com'/
+  );
+});
+
+test('guardNetworkEgress: git clone para host autorizado passa', () => {
+  guardNetworkEgress('git clone https://github.com/user/repo.git', { allowlist: ['github.com'] });
+});
+
+test('extractHostCandidates: comando git sem URL não extrai hosts fantasmas', () => {
+  // git status, git log, git diff não têm URL — não devem gerar hosts.
+  assert.deepEqual(extractHostCandidates('git status'), []);
+  assert.deepEqual(extractHostCandidates('git log --oneline'), []);
+  assert.deepEqual(extractHostCandidates('git diff HEAD~1'), []);
 });

@@ -24,7 +24,15 @@ que ainda segura o verde é o **pipeline multimodelo retomável**: o F-15 entreg
 tabela e as primitivas, mas o `runMultiModel` ainda não as usa, então o reinício continua
 sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** a **Frente 3 — Integração do coordenador durável no
+- **Último trabalho:** a **Frente 5 — IPv6 + `git` na allowlist de egress do
+  sandbox** fechou duas lacunas do F-05b: endereços IPv6 literais (`[::1]`,
+  `[2001:db8::1]`) são bloqueados com mensagem clara quando a allowlist está
+  ativa (fail-closed), e comandos `git` (clone/push/pull/fetch/remote)
+  passaram a ser varridos pela extração de hosts. 10 testes novos; casos
+  existentes intactos.
+  Antes dela, a **Frente 4 — Vulnerabilidades de dependências** (#173) zerou
+  as 4 vulnerabilidades com overrides em `package.json`.
+  Antes dela, a **Frente 3 — Integração do coordenador durável no
   `runMultiModel`** fechou o risco F-15: o pipeline multimodelo agora persiste
   o `currentStage` e o `state_json` entre etapas na tabela `pipeline_runs`
   (migration 027), retoma do estágio correto pelo `/resume`, completa runs como
@@ -1277,12 +1285,11 @@ antes do aviso.
 
 ## Próximos passos (em ordem)
 
-1. **Frente 4 — Vulnerabilidades de dependências.** O CI acusa `3 vulnerabilities
-   (2 moderate, 1 high)` no backend e `1 high` no frontend em todo `npm ci`.
-2. **Frente 5 — IPv6 + `git` na allowlist de egress do sandbox.**
-   `parseAllowlistEntry` declara que IPv6 ficou de fora; `extractHostCandidates`
-   não varre `git`.
-3. **Frentes seguintes** conforme o backlog ordenado.
+1. **Frente 6 — Extração de memória usa o modelo da conversa.** Em E2E aparece
+   `[memória] extração falhou (segue sem): 404 Modelo não faz parte deste
+   provedor falso` — a extração de memória usa o default do app em vez do modelo
+   ativo da conversa.
+2. **Frentes seguintes** conforme o backlog ordenado.
 
 ---
 

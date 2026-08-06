@@ -116,18 +116,26 @@ export function guardCommand(command, { pcWriteAuthorized = false, networkAllowl
 //   - resoluções DNS explícitas: nslookup/dig/host
 //   - IPs literais com porta: 1.2.3.4:8080
 //   - pings: ping api.exemplo.com
+//   - git: git clone/push/pull/fetch/remote (HTTPS e SSH)
 // Não cobre caminhos hardcoded via variáveis, composição em múltiplos
 // comandos, ou ferramentas próprias — limitações aceitas (defesa em profundidade).
 const HOST_HINT_PATTERNS = [
   // Hostnames + IP opcional. Captura o domínio/IP com captura OPCIONAL
   // da porta: a parte `:NNNN` está dentro do mesmo grupo, então a regex
   // retorna o conjunto completo (host:porta) numa só captura.
-  /\b(?:curl|wget|http(?:ie)?|fetch|invoke-webrequest|nc|netcat|ncat|nslookup|dig|host|traceroute|mtr|nmap|telnet|ssh|scp|rsync|ping|curl\s+-)\b[^|;&\n]*?(?:\b(?:--url|-u|--host)\s+|(?:["'`]))?((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+|\d{1,3}(?:\.\d{1,3}){3})(?::\d{1,5})?)/gi
+  // Inclui `git` (clone/push/fetch/pull/remote/ls-remote) e `go` (go get/etc.)
+  // como comandos que geram tráfego de rede arbitrário.
+  /\b(?:curl|wget|http(?:ie)?|fetch|invoke-webrequest|nc|netcat|ncat|nslookup|dig|host|traceroute|mtr|nmap|telnet|ssh|scp|rsync|ping|git|go\s+(?:get|install|mod|list))\b[^|;&\n]*?(?:\b(?:--url|-u|--host)\s+|(?:["'`]))?((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+|\d{1,3}(?:\.\d{1,3}){3})(?::\d{1,5})?)/gi,
+  // IPv6 literal em colchetes: [::1], [2001:db8::1], [fe80::1%25eth0].
+  // A captura inclui a porta opcional para consistência com o formato de
+  // extractHostCandidates. IPv6 não é suportado na allowlist — estes hosts
+   // são sempre bloqueados (fail-closed, ver guardNetworkEgress).
+  /\[([0-9a-f:]+(?:%[a-z0-9]+)?)\](?::(\d{1,5}))?/gi
 ];
 
-// CIDR simples: suporta IPv4 (a maioria dos casos em sandbox). IPv6 fica
-// para uma frente posterior — a sintaxe é diferente e o volume de teste
-// real aqui é baixo.
+// CIDR simples: suporta IPv4. IPv6 literal é bloqueado antes de chegar
+// aqui (guardNetworkEgress rejeita qualquer host IPv6 — fail-closed, ver
+// extractHostCandidates e o padrão de colchetes nos HOST_HINT_PATTERNS).
 function ipv4ToInt(ip) {
   const parts = ip.split('.');
   if (parts.length !== 4) return null;
@@ -251,15 +259,18 @@ export function extractHostCandidates(command) {
     re.lastIndex = 0;
     let m;
     while ((m = re.exec(command || '')) !== null) {
-      const raw = String(m[1] || '');
+      // O regex de IPv6 captura o hex em m[1] e a porta em m[2] (ou undefined).
+      // O regex de hostname captura host:porta opcional junto em m[1].
+      // Detecta IPv6 pelo match completo (m[0]) que contém colchetes [::1].
+      const isV6 = String(m[0] || '').startsWith('[');
+      const raw = String(m[2] !== undefined ? `[${m[1]}]:${m[2]}` : (isV6 ? `[${m[1]}]` : (m[1] || '')));
       // `:NNNN` é a porta se vier ANTES de qualquer `/` ou `?` (separador
       // de path/query). Aceita só dígitos (1-5) para não confundir com
-      // literais que porventura tenham `:` no domínio (IPv6 fica para
-      // outra frente — o regex principal nem captura IPv6).
+      // literais que porventura tenham `:` no domínio.
       const portMatch = raw.match(/:(\d{1,5})(?=[/?#]|$)/);
       const host = portMatch ? raw.slice(0, -portMatch[0].length) : raw;
       const port = portMatch ? Number(portMatch[1]) : null;
-      out.add(JSON.stringify({ host, port }));
+      out.add(JSON.stringify({ host, port, v6: isV6 }));
     }
   }
   return [...out].map(s => JSON.parse(s));
@@ -272,7 +283,14 @@ export function guardNetworkEgress(command, { allowlist } = {}) {
   const compiled = compileNetworkAllowlist(allowlist);
   const hosts = extractHostCandidates(command);
   if (!hosts.length) return true; // nada de rede detectado no comando
-  for (const { host, port } of hosts) {
+  for (const { host, port, v6 } of hosts) {
+    // IPv6 literal NÃO é suportado na allowlist: a sintaxe é diferente
+    // (notação hex com `:`) e a complexidade adicional não se justifica
+    // pelo volume de uso real em sandbox. Fail-closed: bloqueia com
+    // mensagem clara para o modelo/usuário ajustar o pedido.
+    if (v6) {
+      throw new BlockedExecutionError(`acesso à rede bloqueado: endereço IPv6 literal '${host}' não é suportado na allowlist do sandbox`);
+    }
     if (!hostMatchesAllowlist(host, port, compiled)) {
       // Mensagem aponta o destino não autorizado — feedback para o modelo
       // ajustar o pedido (ou para o usuário revisar a allowlist).
