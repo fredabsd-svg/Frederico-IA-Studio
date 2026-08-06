@@ -8,6 +8,7 @@ import { sanitizeToolProtocolText } from '../toolProtocol.js';
 import { untrustedContext } from '../agent/promptRegistry.js';
 import { openRouterRouting } from '../agent/provider.js';
 import { resolveDefaultModelRef } from '../defaults.js';
+import { rawModelId } from '../modelRef.js';
 
 // Indexa conversas (chunks + resumo) e extrai fatos importantes para a
 // memória de longo prazo. Roda em segundo plano, sem atrasar as respostas.
@@ -124,7 +125,12 @@ export async function indexAfterReply(userId, conversationId, modelRef = null) {
     const recent = msgs.slice(-6).map(m => `${m.role === 'user' ? 'Usuário' : 'Assistente'}: ${m.content.slice(0, 700)}`).join('\n');
     const input = `Resumo atual da conversa: ${conv.summary_short || '(nenhum)'}\nTotal de mensagens: ${msgs.length}\n\nTrecho recente:\n${recent}`;
     const completion = await provider.client.chat.completions.create({
-      model: resolveExtractModel(modelRef),
+      // `rawModelId` é obrigatório: o modelRef da conversa vem na forma
+      // completa `<provedor>::<modelo>` e o provedor não conhece esse
+      // prefixo — mandá-lo inteiro devolve exatamente o 404 de "modelo
+      // não pertence a este provedor" que esta frente veio corrigir.
+      // É o que o caminho principal faz em loop.js.
+      model: rawModelId(resolveExtractModel(modelRef)),
       messages: [{ role: 'system', content: EXTRACT_PROMPT }, { role: 'user', content: untrustedContext('memory-extraction-input', input) }],
       temperature: 0,
       // Mesma política de qualidade das respostas principais: mesmo sendo uma

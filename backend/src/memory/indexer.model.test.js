@@ -4,6 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { resolveExtractModel, estimateTokens } from './indexer.js';
+import { rawModelId } from '../modelRef.js';
 import { resolveDefaultModelRef } from '../defaults.js';
 
 test('resolveExtractModel: EXTRACT_MODEL tem precedência sobre modelRef e default', () => {
@@ -50,4 +51,20 @@ test('estimateTokens: CJK consome mais tokens que ASCII de mesmo tamanho', () =>
 test('estimateTokens: nunca abaixo do piso', () => {
   assert.equal(estimateTokens(''), 1);
   assert.equal(estimateTokens('a'), 1);
+});
+
+// Regressão: a conversa entrega o modelo na forma COMPLETA (`<provedor>::<modelo>`
+// — é o `chosenModel` do loop). O provedor não conhece esse prefixo; mandá-lo
+// inteiro devolve o mesmo 404 de "modelo não pertence a este provedor" que esta
+// frente veio corrigir. Quem chama precisa passar por `rawModelId` antes da API,
+// como o caminho principal faz em loop.js.
+test('o modelRef da conversa vem com prefixo de provedor, e a API recebe só o modelo', () => {
+  const daConversa = 'prov_abc123::deepseek/deepseek-chat';
+  assert.equal(resolveExtractModel(daConversa), daConversa, 'a resolução preserva a referência completa');
+  assert.equal(rawModelId(resolveExtractModel(daConversa)), 'deepseek/deepseek-chat',
+    'o que vai para o provedor não pode carregar o prefixo');
+});
+
+test('modelo sem prefixo atravessa rawModelId inalterado', () => {
+  assert.equal(rawModelId(resolveExtractModel('deepseek/deepseek-chat')), 'deepseek/deepseek-chat');
 });
