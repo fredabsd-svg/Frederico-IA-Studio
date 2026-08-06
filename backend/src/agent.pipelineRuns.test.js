@@ -219,3 +219,29 @@ t('config_json preserva a configuração completa entre save/load', async () => 
   assert.deepEqual(loaded.config, fullConfig, 'config deve ser preservado integralmente');
   await completePipelineRun(id, { status: 'done' });
 });
+
+t('run órfão em running NUNCA é varrido pelo sweeper — o fechamento explícito é obrigatório', async () => {
+  // Um kill-9 no meio de um pipeline deixa o run em `running` sem completed_at.
+  // O sweeper só apaga runs TERMINAIS, de propósito (apagar um running seria
+  // destruir uma execução viva). Consequência: se nada fechar o órfão, ele
+  // fica `running` para sempre e `loadPipelineRun` o devolve para qualquer
+  // mensagem futura — o sequestro que `runMultiModel` evita fechando o órfão
+  // como `error` quando chega mensagem NOVA (retomar é papel exclusivo do
+  // /resume, que passa `pipelineResume` explicitamente).
+  const conv = nextConv();
+  const id = await createPipelineRun({
+    conversationId: conv, userId: USER,
+    mode: 'pipeline', totalStages: 3, config: { mode: 'pipeline', models: [] }
+  });
+
+  // Mesmo com uma janela de carência gigante, o running sobrevive ao sweeper.
+  await sweepStalePipelineRuns({ olderThanMs: 0, nowMs: Date.now() + 86_400_000 });
+  const aindaVivo = await loadPipelineRun(conv);
+  assert.equal(aindaVivo?.id, id, 'o sweeper não pode apagar um run em running');
+
+  // O caminho da mensagem nova: fecha como error e o run some do "ativo".
+  await completePipelineRun(id, { status: 'error' });
+  assert.equal(await loadPipelineRun(conv), null, 'órfão fechado não é mais herdado');
+  const terminal = await loadPipelineRun(conv, { includeTerminal: true });
+  assert.equal(terminal.status, 'error');
+});

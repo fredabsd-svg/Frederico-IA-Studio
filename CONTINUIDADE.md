@@ -27,10 +27,15 @@ sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md
 - **Último trabalho:** a **Frente 3 — Integração do coordenador durável no
   `runMultiModel`** fechou o risco F-15: o pipeline multimodelo agora persiste
   o `currentStage` e o `state_json` entre etapas na tabela `pipeline_runs`
-  (migration 027), retoma do estágio correto após boot (via `/resume` ou novo
-  `/chat`), completa runs como `done`/`stopped`/`error` sem deixar órfãos, e
-  tem sweeper ligado no boot. Testes de integração (4 novos) provam a retomada
-  com pool novo e a ausência de órfãos em cancelamento/falha.
+  (migration 027), retoma do estágio correto pelo `/resume`, completa runs como
+  `done`/`stopped`/`error` sem deixar órfãos, e tem sweeper ligado no boot.
+  Testes de integração (5 novos) provam a retomada
+  com pool novo e a ausência de órfãos em cancelamento/falha. **A retomada é
+  explícita:** só o `/resume` retoma um run pendente. Mensagem NOVA numa
+  conversa com run órfão (deixado em `running` por um crash) fecha o órfão
+  como `error` e parte do zero — o sweeper só varre runs terminais, então
+  herdar o órfão o faria sequestrar a resposta seguinte, costurando-a sobre
+  as etapas da tarefa antiga.
   Antes dela, a **Frente 2 — Template de PR + ADR 0001** (#171) criou o
   `.github/pull_request_template.md` e o `docs/decisions/0001-adocao-das-regras-do-projeto.md`.
   Antes dela, as **regras do projeto entraram no repositório**: o
@@ -949,8 +954,11 @@ CADA chamada de modelo, pagando o custo em tokens e segundos novamente.
 **Etapa 2 (2026-08-05) — integração (esta frente):**
 - **`multiModel.js`**: `createPipelineRun` na entrada do pipeline;
   `updatePipelineRun` (currentStage + state_json) após cada etapa;
-  `completePipelineRun` (done/stopped/error) na saída e no finally;
-  detecção de run ativo no início (resume automático em novo /chat).
+  `completePipelineRun` (done/stopped/error) na saída e no finally.
+  A retomada é EXPLÍCITA: só o `/resume` a dispara (passa `pipelineResume`).
+  Mensagem nova numa conversa com run órfão fecha o órfão como `error` —
+  herdá-lo faria a resposta nova sair costurada sobre a tarefa antiga, e o
+  sweeper nunca o removeria (ele só varre terminais).
 - **`conversations.js`**: rota `/resume` detecta `pipeline_runs` ativo
   antes do checkpoint, reconstrói config e chama `runMultiModel` com
   `pipelineResume`.
@@ -958,12 +966,14 @@ CADA chamada de modelo, pagando o custo em tokens e segundos novamente.
 - **`docs/MULTIMODEL.md`**: seção 5 reescrita com o estado implementado.
 
 **Validação:**
-- `backend/src/agent.pipelineRuns.test.js`: 11 testes (7 originais +
-  4 de integração) — retomada do estágio correto após boot simulado
+- `backend/src/agent.pipelineRuns.test.js`: 12 testes (7 originais +
+  5 de integração) — retomada do estágio correto após boot simulado
   (pool novo), cancelamento sem órfão, falha completa run como error,
-  config_json preservado integralmente entre save/load.
-- `cd backend && npm run check`: (aguardando execução)
-- `cd frontend && npm run check`: (aguardando execução)
+  config_json preservado integralmente entre save/load, e o órfão em
+  `running` sobrevivendo ao sweeper (o que obriga o fechamento explícito).
+- `cd backend && npm run check`: **1032/1032** com PostgreSQL 16 real
+  recém-criado, nada pulado.
+- `cd frontend && npm run check`: **77/77** + lint + build.
 
 ### F-14 — Teste de retomada após interrupção real do processo (2026-08-04)
 

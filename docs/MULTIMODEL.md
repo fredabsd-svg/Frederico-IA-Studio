@@ -105,18 +105,27 @@ com texto, caminhos de artefato e config original) na tabela `pipeline_runs`
 
 **Retomada (boot ou `/resume`):**
 
-1. No boot, `sweepStalePipelineRuns()` remove runs terminais antigos (90s de
-   carência, mesma janela do liveStream). Nenhum run `running` órfão sobrevive
-   indefinidamente.
+1. No boot, `sweepStalePipelineRuns()` remove runs **terminais** antigos
+   (`done`/`stopped`/`error`, 90s de carência, mesma janela do liveStream).
+   Repare no limite: o sweeper **não** toca em `running`, de propósito — apagar
+   um run `running` destruiria uma execução viva. A consequência é que um órfão
+   deixado por um kill-9 não expira sozinho; quem o fecha é o item 3.
 2. Na rota `POST /conversations/:id/resume`, o sistema verifica primeiro se há
    um `pipeline_runs` ativo. Se houver, reconstrói a configuração multimodelo do
    `config_json` e chama `runMultiModel` com `pipelineResume`, que pula os
-   estágios já concluídos (`currentStage`) e continua do próximo.
-3. Se um novo `POST /chat` chega para uma conversa com pipeline run ativo,
-   `runMultiModel` também detecta e retoma — o `loadPipelineRun` é chamado no
-   início de toda execução pipeline.
+   estágios já concluídos (`currentStage`) e continua do próximo. **Esta é a
+   única porta de retomada.**
+3. Uma mensagem NOVA (`POST /chat`) numa conversa com run órfão **não** o
+   retoma: `runMultiModel` fecha o órfão como `error` e parte do zero. Herdá-lo
+   seria pior que perdê-lo — a resposta nova sairia costurada sobre as etapas
+   de uma tarefa antiga, começando do meio, e o usuário não pediu isso. É
+   também o que impede o órfão de ficar `running` para sempre (item 1).
 4. O `finally` de `runMultiModel` garante que qualquer saída anormal
    (exceção não tratada) completa o run como `error` — sem órfãos.
+5. Uma etapa que para no meio por orçamento ou checkpoint (`resumable`) fecha o
+   run como `stopped`, não `done`: o pipeline não terminou, e o histórico não
+   pode dizer que terminou. A retomada dessa etapa específica continua sendo do
+   checkpoint de agente único — limitação conhecida.
 
 **Arquivos envolvidos:**
 - `backend/src/agent/pipelineRuns.js` — primitivas (create/update/load/complete/sweep)

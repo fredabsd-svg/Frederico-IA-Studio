@@ -202,19 +202,25 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
   const registry = { cancelled: new Set(), requests: new Map() };
   slotRegistries.set(conversationId, registry);
   const startedAt = Date.now();
-  // Coordenador durável (F-15): detecta pipeline run ativo e retoma do
-  // estágio pendente. A rota /resume passa pipelineResume carregado; na
-  // ausência dele, tenta carregar um run ativo da conversa (cenário de
-  // boot após crash — novo POST /chat pode herdar o run pendente).
-  const priorPipelineRun = pipelineResume || await loadPipelineRun(conversationId);
+  // Coordenador durável (F-15): a RETOMADA é sempre explícita — só acontece
+  // quando a rota /resume carrega o run ativo e o passa em `pipelineResume`.
+  // Um run deixado em `running` por um crash NÃO pode ser herdado por uma
+  // mensagem NOVA: o sweeper só varre runs terminais, então o órfão ficaria
+  // `running` para sempre e sequestraria o próximo pedido de pipeline da
+  // conversa — a resposta nova sairia costurada sobre as etapas da tarefa
+  // ANTIGA, começando do meio. Mensagem nova fecha o órfão como `error`
+  // (interrompido e não retomado) e parte do zero.
   let pipelineRunId = null;
   let resumeFromStage = 0;
   let resumedState = null;
-  if (priorPipelineRun && config.mode === 'pipeline') {
-    pipelineRunId = priorPipelineRun.id;
-    resumeFromStage = priorPipelineRun.currentStage || 0;
-    resumedState = priorPipelineRun.state || null;
-    if (resumeFromStage >= priorPipelineRun.totalStages) resumeFromStage = 0;
+  if (pipelineResume && config.mode === 'pipeline') {
+    pipelineRunId = pipelineResume.id;
+    resumeFromStage = pipelineResume.currentStage || 0;
+    resumedState = pipelineResume.state || null;
+    if (resumeFromStage >= pipelineResume.totalStages) resumeFromStage = 0;
+  } else {
+    const orphan = await loadPipelineRun(conversationId);
+    if (orphan) await completePipelineRun(orphan.id, { status: 'error' });
   }
   let pipelineClosedCleanly = false;
   try {
@@ -708,7 +714,7 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
           setStatus(state, executorResult.stopped ? STATUS.stopped : (stageFailed ? STATUS.error : STATUS.done));
           previousOutputs.push({ name: state.name, roleLabel: state.roleLabel, text: state.text });
           await persistPipelineProgress(executableIndex + 1);
-          if (executorResult.stopped || executorResult.resumable) { await persistPipelineProgress(executableIndex + 1); break; }
+          if (executorResult.stopped || executorResult.resumable) break;
           continue;
         }
         const extra = prior ? `${prior}\n\nAgora execute a SUA função (${state.roleLabel}) sobre esse material e o pedido original.` : null;
@@ -746,7 +752,11 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
           await db.prepare('UPDATE messages SET multi_meta=? WHERE id=? AND conversation_id=?')
             .run(JSON.stringify(meta), executorResult.messageId, conversationId);
         }
-        await completePipelineRun(pipelineRunId, { status: executorResult.stopped ? 'stopped' : 'done' });
+        // `resumable` = a etapa parou no meio (orçamento/checkpoint do agente):
+        // o pipeline NÃO terminou — registrar `done` seria sucesso falso no
+        // histórico. `stopped` é o rótulo honesto; a retomada da etapa em si
+        // segue pelo checkpoint de agente único (limitação pré-existente).
+        await completePipelineRun(pipelineRunId, { status: (executorResult.stopped || executorResult.resumable) ? 'stopped' : 'done' });
         pipelineClosedCleanly = true;
         return { delegated: true, value: { ...executorResult, usage } };
       }
