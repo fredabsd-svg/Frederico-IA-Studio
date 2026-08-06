@@ -195,21 +195,19 @@ jobs:
       # mão e os outros 4 nunca rodavam no CI.
       - run: npm test
       - run: npm run build
+      # A regra mora em `frontend/scripts/bundleBudget.mjs` (e roda no
+      # `npm run check`), não aqui: o portão que só existe no CI é descoberto
+      # tarde demais — dois PRs de code splitting chegaram vermelhos por isso.
+      # São DOIS tetos: a primeira pintura (que o splitting deve reduzir) e o
+      # total emitido (que ele não reduz, e serve de alarme para dependência
+      # nova). Ver o cabeçalho do script.
       - name: Orçamento do bundle (catraca de desempenho)
         run: |
-          # Medido em 2026-07-25: 932 KB de JS num único chunk (287 KB gzip).
-          # O teto é uma CATRACA — impede o crescimento silencioso enquanto o
-          # code splitting do App.jsx não é feito (ver docs/ARCHITECTURE.md,
-          # "Desempenho"). Ao reduzir de verdade, baixe o teto junto.
-          TETO_KB=1000
-          TOTAL_KB=$(du -sk dist/assets/*.js | awk '{s+=$1} END {print s}')
-          GZIP_KB=$(cat dist/assets/*.js | gzip -9 | wc -c | awk '{print int($1/1024)}')
-          echo "JS em dist/assets: ${TOTAL_KB} KB (${GZIP_KB} KB gzip) — teto ${TETO_KB} KB"
-          echo "- Bundle JS: **${TOTAL_KB} KB** (${GZIP_KB} KB gzip), teto ${TETO_KB} KB" >> $GITHUB_STEP_SUMMARY
-          if [ "$TOTAL_KB" -gt "$TETO_KB" ]; then
-            echo "::error::o bundle passou do orçamento (${TOTAL_KB} KB > ${TETO_KB} KB). Faça code splitting ou reveja a dependência nova."
-            exit 1
-          fi
+          node scripts/bundleBudget.mjs | tee /tmp/bundle.txt
+          {
+            echo "- Bundle — $(grep -o 'entrada (primeira pintura): .*' /tmp/bundle.txt)"
+            echo "- Bundle — $(grep -o 'total emitido: .*' /tmp/bundle.txt)"
+          } >> $GITHUB_STEP_SUMMARY
 
   e2e:
     name: Ponta a ponta (navegador real)
