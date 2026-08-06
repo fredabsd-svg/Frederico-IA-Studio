@@ -30,6 +30,61 @@ sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md
   code splitting (cada chunk novo soma invólucro), reprovando o PR da Frente 10 que
   BAIXOU a primeira pintura de 909 para 896 KB. Agora são dois tetos — entrada
   (920 KB) e total (1.100 KB) — e a regra roda no `npm run check`, não só no CI.
+- **Último trabalho:** a **Frente 5 — IPv6 + `git` na allowlist de egress do
+  sandbox** fechou duas lacunas do F-05b: endereços IPv6 literais (`[::1]`,
+  `[2001:db8::1]`) são bloqueados com mensagem clara quando a allowlist está
+  ativa (fail-closed), e comandos `git` (clone/push/pull/fetch/remote)
+  passaram a ser varridos pela extração de hosts. 10 testes novos; casos
+  existentes intactos.
+  Antes dela, a **Frente 4 — Vulnerabilidades de dependências** (#173) zerou
+  as 4 vulnerabilidades com overrides em `package.json`.
+  Antes dela, a **Frente 3 — Integração do coordenador durável no
+  `runMultiModel`** fechou o risco F-15: o pipeline multimodelo agora persiste
+  o `currentStage` e o `state_json` entre etapas na tabela `pipeline_runs`
+  (migration 027), retoma do estágio correto pelo `/resume`, completa runs como
+  `done`/`stopped`/`error` sem deixar órfãos, e tem sweeper ligado no boot.
+  Testes de integração (5 novos) provam a retomada
+  com pool novo e a ausência de órfãos em cancelamento/falha. **A retomada é
+  explícita:** só o `/resume` retoma um run pendente. Mensagem NOVA numa
+  conversa com run órfão (deixado em `running` por um crash) fecha o órfão
+  como `error` e parte do zero — o sweeper só varre runs terminais, então
+  herdar o órfão o faria sequestrar a resposta seguinte, costurando-a sobre
+  as etapas da tarefa antiga.
+  Antes dela, a **Frente 2 — Template de PR + ADR 0001** (#171) criou o
+  `.github/pull_request_template.md` e o `docs/decisions/0001-adocao-das-regras-do-projeto.md`.
+  Antes dela, as **regras do projeto entraram no repositório**: o
+  `REGRAS-DO-PROJETO.md` passou a ser a constituição de engenharia — vale para pessoas,
+  agentes de IA e automações — e o `CLAUDE.md` ficou explicitamente subordinado a ele
+  (onde divergirem, as regras prevalecem). Antes dele, a
+  **integração das 16 frentes abertas** numa branch só (F-05b,
+  F-11 a F-26, geração de imagem por capacidade e o acionamento real dos sub-agentes).
+  Entre elas, o **modelo de IA por projeto no Modo Design** (frente abaixo):
+  o seletor saiu de trás do painel e passou a morar na barra do editor, e a escolha
+  virou coluna do projeto em vez de estado do app; e a **geração de imagem escolhendo a
+  chave por capacidade** (frente abaixo) — o "Nenhuma chave de API configurada" aparecia
+  com o chat respondendo na mesma tela. Antes deles, a
+  **identidade "Tinta & Latão"** nos três kits (frente abaixo):
+  o redesenho visual entrou POR CIMA da grade do PR #149, com os blocos que faltavam —
+  sumário, citação, linha do tempo, gráficos, assinaturas, contracapa, `confidencial=` e
+  a aba-painel do Excel. Antes dele, o
+  **PR [#149](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/149)** —
+  a **arquitetura de formatação dos documentos** (frente abaixo): os kits Word/Excel/PDF
+  passaram a ter uma grade única, o `pdfpro` audita o arquivo que gera e o prompt proíbe
+  diagramar fora do kit. Antes dele, o **copiloto (Nino)** deixou de ser um chat cego —
+  passou a levar o contexto do chat principal **por padrão** (auditado, e dispensável por
+  mensagem), ganhou memória própria, preferências com efeito real, base de conhecimento do
+  Studio e ações dentro do app. Antes dele, o **Modo Design**, v1 e v2 — espaço próprio
+  onde o usuário descreve um site, uma apresentação ou um documento visual e recebe um
+  rascunho renderizado ao vivo, refinado **por conversa, por clique no elemento ou por
+  sliders que não chamam a IA**, versionado e exportável (.html/.pdf/.pptx). Antes dele, a
+  estabilização do **ambiente de execução do agente**:
+  um timeout deixou de derrubar o sandbox, toda execução devolve estado estruturado
+  (ambiente × projeto), o reinício é anunciado com o que sobreviveu e o que se perdeu,
+  comandos longos transmitem a saída ao vivo, e o agente ganhou a ferramenta `ambiente`.
+  Antes deles, os **PR [#147](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/147)**
+  (o Nino cobrindo o botão de enviar), **[#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)**
+  (Playwright + suíte ponta a ponta) e **[#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)**
+  (as sete falhas P0 dos sub-agentes).
 - **Última validação:** 2026-08-05 — **1219 testes**, com o backend em **1008/1008 e
   NADA pulado**: o PostgreSQL 16 subiu **neste contêiner** (binários locais, sem Docker
   e sem a extensão `vector` — nenhuma migration usa o tipo). Mais **frontend 77/77**
@@ -1277,6 +1332,10 @@ antes do aviso.
 1. **Frente 5 — IPv6 + `git` na allowlist de egress do sandbox.**
    `parseAllowlistEntry` declara que IPv6 ficou de fora; `extractHostCandidates`
    não varre `git`.
+1. **Frente 6 — Extração de memória usa o modelo da conversa.** Em E2E aparece
+   `[memória] extração falhou (segue sem): 404 Modelo não faz parte deste
+   provedor falso` — a extração de memória usa o default do app em vez do modelo
+   ativo da conversa.
 2. **Frentes seguintes** conforme o backlog ordenado.
 
 ---
