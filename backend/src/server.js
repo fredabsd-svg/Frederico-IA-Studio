@@ -40,6 +40,7 @@ import doclingRouter from './routes/docling.js';
 import designRouter from './routes/design.js';
 import { healthMetrics } from './healthMetrics.js';
 import { sweepStaleUploadTemps } from './uploads.js';
+import { sweepStalePipelineRuns } from './agent/pipelineRuns.js';
 import { sweepExpiredArtifacts, RETENTION_DAYS as DOCLING_RETENTION_DAYS } from './docling/retention.js';
 import { isDoclingEnabled } from './docling/config.js';
 import { doclingHealth } from './docling/runner.js';
@@ -258,6 +259,10 @@ app.use((err, req, res, _next) => {
   // de cada rota — isto é a rede de segurança.
   sweepStaleUploadTemps();
   setInterval(() => { try { sweepStaleUploadTemps(); } catch {} }, 60 * 60 * 1000).unref();
+  // Pipeline runs órfãos (kill-9 no backend): completa como erro e a limpeza
+  // periódica remove os terminais antigos (mesma janela de carência do liveStream).
+  sweepStalePipelineRuns();
+  setInterval(() => { try { sweepStalePipelineRuns(); } catch {} }, 60 * 60 * 1000).unref();
   startSchedulers();
   startHealthSampling(); // amostragem de saúde (memória/CPU) para o copiloto
   setTimeout(() => processTasks().catch(() => {}), 2000);

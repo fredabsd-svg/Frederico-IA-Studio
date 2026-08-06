@@ -1,6 +1,6 @@
 # Multimodelo
 
-> Atualizado em **2026-07-25**. Descreve o que `backend/src/agent/multiModel.js`
+> Atualizado em **2026-08-05**. Descreve o que `backend/src/agent/multiModel.js`
 > **faz hoje**, com as lacunas marcadas. Complementa `docs/ARCHITECTURE.md` §5.
 
 ---
@@ -93,41 +93,55 @@ modelo com ferramentas para um sem). Ver F-13 em `docs/AUDITORIA_2026-07.md`.
 | Cartões por modelo (status, custo, texto) | `messages.multi_meta` | ✅ |
 | Versões de artefato | `.multimodel/<runId>/vNN/` em disco | ✅ |
 | Checkpoint da etapa em execução | `execution_checkpoints` (via `runAgent`) | ✅ |
-| **Estado do pipeline** (etapa atual, concluídas, pendentes) | variáveis locais de `runMultiModel` | ❌ |
+| **Estado do pipeline** (etapa atual, concluídas, pendentes) | `pipeline_runs` (PostgreSQL) | ✅ |
 
-### Lacuna crítica — F-15
+### Coordenador durável — F-15 (implementado em 2026-08-05)
 
-**Não existe coordenador durável do pipeline.** Se o backend reiniciar entre a etapa 2 e a
-3, o sistema **não** retoma a etapa 3: só o `runAgent` interno de uma etapa isolada tem
-checkpoint.
+O pipeline sobrevive a kill-9 do backend. A cada etapa concluída, o
+`runMultiModel` grava o `currentStage` e o `state_json` (estágios concluídos
+com texto, caminhos de artefato e config original) na tabela `pipeline_runs`
+(migration 027). Na saída normal, o run é marcado como `done`; em cancelamento,
+`stopped`; em erro, `error`.
 
-Proposta registrada (não implementada):
+**Retomada (boot ou `/resume`):**
 
-```sql
-CREATE TABLE pipeline_runs (
-  pipeline_run_id   TEXT PRIMARY KEY,
-  user_id           TEXT NOT NULL,
-  conversation_id   TEXT NOT NULL,
-  current_stage     INTEGER NOT NULL,
-  completed_stages  TEXT NOT NULL,   -- JSON
-  pending_stages    TEXT NOT NULL,   -- JSON
-  artifact_versions TEXT NOT NULL,   -- JSON
-  status            TEXT NOT NULL,   -- running | paused | done | failed
-  checkpoint        TEXT,
-  updated_at        TEXT NOT NULL
-);
-```
+1. No boot, `sweepStalePipelineRuns()` remove runs **terminais** antigos
+   (`done`/`stopped`/`error`, 90s de carência, mesma janela do liveStream).
+   Repare no limite: o sweeper **não** toca em `running`, de propósito — apagar
+   um run `running` destruiria uma execução viva. A consequência é que um órfão
+   deixado por um kill-9 não expira sozinho; quem o fecha é o item 3.
+2. Na rota `POST /conversations/:id/resume`, o sistema verifica primeiro se há
+   um `pipeline_runs` ativo. Se houver, reconstrói a configuração multimodelo do
+   `config_json` e chama `runMultiModel` com `pipelineResume`, que pula os
+   estágios já concluídos (`currentStage`) e continua do próximo. **Esta é a
+   única porta de retomada.**
+3. Uma mensagem NOVA (`POST /chat`) numa conversa com run órfão **não** o
+   retoma: `runMultiModel` fecha o órfão como `error` e parte do zero. Herdá-lo
+   seria pior que perdê-lo — a resposta nova sairia costurada sobre as etapas
+   de uma tarefa antiga, começando do meio, e o usuário não pediu isso. É
+   também o que impede o órfão de ficar `running` para sempre (item 1).
+4. O `finally` de `runMultiModel` garante que qualquer saída anormal
+   (exceção não tratada) completa o run como `error` — sem órfãos.
+5. Uma etapa que para no meio por orçamento ou checkpoint (`resumable`) fecha o
+   run como `stopped`, não `done`: o pipeline não terminou, e o histórico não
+   pode dizer que terminou. A retomada dessa etapa específica continua sendo do
+   checkpoint de agente único — limitação conhecida.
 
-Com ela, o boot varre `status='running'` e continua a **próxima etapa pendente**, e
-`POST /resume` consulta o pipeline antes do checkpoint do agente.
+**Arquivos envolvidos:**
+- `backend/src/agent/pipelineRuns.js` — primitivas (create/update/load/complete/sweep)
+- `backend/src/agent/multiModel.js` — integração no `runPipeline()`
+- `backend/src/routes/conversations.js` — rota `/resume` com detecção de pipeline
+- `backend/src/server.js` — sweeper no boot e varredura periódica
+- Migration 027: tabela `pipeline_runs`
 
 ---
 
 ## 6. Testes
 
 `backend/src/multiModel.test.js`, `backend/src/agent.developerTeam.test.js`,
-`backend/src/modelMatrix.test.js`, `backend/src/agent/prompts.dev.test.js`.
+`backend/src/agent.pipelineRuns.test.js`, `backend/src/modelMatrix.test.js`,
+`backend/src/agent/prompts.dev.test.js`.
 
-**Faltam** (ver `docs/TESTING.md` §6): retomada do pipeline após reinício (F-15),
-provedor HTTP simulado que permita exercitar os quatro modos ponta a ponta (F-13),
-e preservação do arquivo real entre revisores sob interrupção (F-23).
+**Faltam** (ver `docs/TESTING.md` §6): provedor HTTP simulado que permita exercitar os
+quatro modos ponta a ponta (F-13), e preservação do arquivo real entre revisores sob
+interrupção (F-23).

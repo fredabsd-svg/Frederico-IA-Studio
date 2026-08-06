@@ -5,6 +5,7 @@ import path from 'path';
 import { nanoid } from 'nanoid';
 import { db, now } from '../db.js';
 import { runAgent, runOrchestrator, runMultiModel, normalizeMultiModelConfig, cancelMultiModelSlot, setControl, isConversationActive, countActiveRunsForUser, friendlyApiError, loadCheckpoint, hasCheckpoint } from '../agent.js';
+import { loadPipelineRun } from '../agent/pipelineRuns.js';
 import { openLiveStream, getLiveStream } from '../liveStream.js';
 import { runTool } from '../tools.js';
 import { classifyTaskResult } from '../taskOutcome.js';
@@ -605,6 +606,76 @@ router.post('/conversations/:id/resume', async (req, res) => {
   if (!conv) return res.status(404).json({ error: 'Não encontrado' });
   if (isConversationActive(conversationId)) {
     return res.status(409).json({ error: 'Esta conversa já está processando. Aguarde terminar antes de continuar.' });
+  }
+  // Coordenador durável (F-15): pipeline run ativo tem precedência sobre
+  // checkpoint de agente único. Se o pipeline foi interrompido entre etapas,
+  // retoma do currentStage em vez de cair no erro "não há execução salva".
+  const activePipeline = await loadPipelineRun(conversationId);
+  if (activePipeline) {
+    // Reconstrói a execução multimodelo com o config salvo e a última mensagem
+    // de usuário da conversa (o pipeline run guarda o config, não o userText).
+    const lastUser = await db.prepare("SELECT content FROM messages WHERE conversation_id=? AND role='user' ORDER BY created_at DESC, seq DESC LIMIT 1").get(conversationId);
+    const userText = lastUser?.content || '';
+    // ...rota SSE e execução iguais ao /chat (a stream é a mesma)
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders?.();
+    let clientGone = false;
+    const runId = `resume_${nanoid(8)}`;
+    const live = openLiveStream(conversationId, runId);
+    const send = (event) => {
+      live.publish(event);
+      if (clientGone || res.writableEnded) return;
+      try { res.write(`data: ${JSON.stringify(event)}\n\n`); }
+      catch { clientGone = true; }
+    };
+    const heartbeat = setInterval(() => { if (!clientGone && !res.writableEnded) { try { res.write(': ping\n\n'); } catch { clientGone = true; } } }, 15000);
+    const cancelOnDisconnect = String(process.env.CANCEL_ON_DISCONNECT || '').toLowerCase() === 'true';
+    res.on('close', () => { clientGone = true; clearInterval(heartbeat); if (cancelOnDisconnect && !res.writableEnded) setControl(conversationId, 'stop'); });
+    try {
+      // Modo gratuito e limites iguais ao /chat
+      const pResume = await getUserProvider(req.userId);
+      if (pResume.source === 'free') {
+        const denial = await enforceFreeTierLimits(req.userId);
+        if (denial) {
+          logFreeTierEvent({ userId: req.userId, model: pResume.model, status: denial.code === 'free_blocked' ? 'blocked' : 'limited', detail: denial.code });
+          const st = denial.code === 'free_blocked' ? 403 : 429;
+          send({ type: 'error', content: denial.error });
+          send({ type: 'done' });
+          return res.status(st).end();
+        }
+      }
+      const config = activePipeline.config || {};
+      if (!config.models || !Array.isArray(config.models) || config.models.length < 2) {
+        send({ type: 'error', content: 'A configuração do pipeline salva está incompleta. Envie a mensagem novamente.' });
+        send({ type: 'done' });
+        return res.end();
+      }
+      const result = await runMultiModel({
+        userId: req.userId,
+        conversationId,
+        userText,
+        config,
+        pipelineResume: activePipeline,
+        saveUserMessage: false,
+        onEvent: send
+      });
+      if (result?.usage) {
+        await db.prepare('INSERT INTO usage (id,user_id,conversation_id,assistant_id,model,kind,prompt_tokens,completion_tokens,total_tokens,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
+          .run(nanoid(), req.userId, conversationId, null, result.model, 'multimodelo', result.usage.prompt_tokens, result.usage.completion_tokens, result.usage.total_tokens, now());
+      }
+      send({ type: 'done' });
+    } catch (err) {
+      console.error('[resume/pipeline]', err);
+      send({ type: 'error', content: friendlyApiError(err) });
+    } finally {
+      clearInterval(heartbeat);
+      live.finish();
+      res.end();
+    }
+    return; // pipeline resume tratado — não cai no caminho de runAgent abaixo
   }
   const checkpoint = await loadCheckpoint(req.userId, conversationId);
   if (!checkpoint) {

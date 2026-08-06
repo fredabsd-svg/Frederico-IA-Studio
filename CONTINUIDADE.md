@@ -24,15 +24,20 @@ que ainda segura o verde é o **pipeline multimodelo retomável**: o F-15 entreg
 tabela e as primitivas, mas o `runMultiModel` ainda não as usa, então o reinício continua
 sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** a **Frente 2 — Template de PR + ADR 0001** entrou no
-  repositório: o `.github/pull_request_template.md` espelha os 11 itens da
-  Regra 10.3 (objetivo, implementado, arquivos/áreas, impacto documental,
-  decisões/ADRs, segurança e privacidade, migrations, testes, limitações,
-  riscos, próxima etapa) e o ADR
-  `docs/decisions/0001-adocao-das-regras-do-projeto.md` registra a adoção das
-  regras em 2026-08-05 no formato da Regra 11.2 (Contexto / Decisão /
-  Alternativas descartadas / Consequências). A nota do relatório de adaptação
-  foi atualizada para refletir que os artefatos agora existem.
+- **Último trabalho:** a **Frente 3 — Integração do coordenador durável no
+  `runMultiModel`** fechou o risco F-15: o pipeline multimodelo agora persiste
+  o `currentStage` e o `state_json` entre etapas na tabela `pipeline_runs`
+  (migration 027), retoma do estágio correto pelo `/resume`, completa runs como
+  `done`/`stopped`/`error` sem deixar órfãos, e tem sweeper ligado no boot.
+  Testes de integração (5 novos) provam a retomada
+  com pool novo e a ausência de órfãos em cancelamento/falha. **A retomada é
+  explícita:** só o `/resume` retoma um run pendente. Mensagem NOVA numa
+  conversa com run órfão (deixado em `running` por um crash) fecha o órfão
+  como `error` e parte do zero — o sweeper só varre runs terminais, então
+  herdar o órfão o faria sequestrar a resposta seguinte, costurando-a sobre
+  as etapas da tarefa antiga.
+  Antes dela, a **Frente 2 — Template de PR + ADR 0001** (#171) criou o
+  `.github/pull_request_template.md` e o `docs/decisions/0001-adocao-das-regras-do-projeto.md`.
   Antes dela, as **regras do projeto entraram no repositório**: o
   `REGRAS-DO-PROJETO.md` passou a ser a constituição de engenharia — vale para pessoas,
   agentes de IA e automações — e o `CLAUDE.md` ficou explicitamente subordinado a ele
@@ -754,7 +759,6 @@ Novo job `e2e` no CI, com Postgres real e Chromium. Ver `e2e/README.md`.
 | ID | Risco | Severidade |
 | --- | --- | --- |
 | F-21 | `App.jsx` ainda concentra dezenas de `useState`; CSS em camadas sem inventário. O **bundle deixou de ser um chunk só** (`React.lazy` nos painéis pesados: principal ~920 KB contra o teto de 1.000 KB do CI), mas o `MultiModelBoard` segue no principal — é importado de forma estática pelo `Landing.jsx`. | 🟡 Média |
-| F-15 | O coordenador durável de pipelines entrou como **infraestrutura** (tabela + primitivas provadas); `runMultiModel` ainda não atualiza o estágio corrente nem retoma no boot, então o reinício continua sem retomar a próxima etapa pendente. | 🟠 Alta |
 
 ## Riscos fechados nesta sessão
 
@@ -927,7 +931,7 @@ no log — é melhor que nada, mas não é "à prova de modelo".
 - `cd backend && npm run check`: 946/946 (79 pulados por Postgres)
 - `cd frontend && npm run check`: lint + 70 testes + build OK
 
-### F-15 — Coordenador durável de pipelines multimodelo (infraestrutura) (2026-08-04)
+### F-15 — Coordenador durável de pipelines multimodelo (completo) (2026-08-05)
 
 O `runMultiModel` opera em estágios sequenciais (modo `pipeline`) ou em
 rodadas paralelas (`compare`/`council`/`debate`). Sem persistência, um
@@ -935,41 +939,41 @@ kill-9 ou restart no meio de uma execução descartava o progresso dos
 estágios anteriores — o usuário tinha de reenviar o pedido e refazer
 CADA chamada de modelo, pagando o custo em tokens e segundos novamente.
 
-A correção introduz a infraestrutura de coordenação durável:
+**Entregue em duas etapas:**
 
+**Etapa 1 (2026-08-04) — infraestrutura:**
 - **Migration 027**: tabela `pipeline_runs` com PK `pipeline_run_id`
   (`pipe_<nanoid>`), índices em `(conversation_id, status)` e
   `(user_id, status)`, e **UNIQUE INDEX parcial** em
   `(conversation_id) WHERE status='running'` — defesa em profundidade
   contra duas instâncias do backend inserirem a mesma linha em uma race.
 - **`agent/pipelineRuns.js`** exporta as primitivas:
-  - `createPipelineRun({ conversationId, userId, mode, totalStages, config, rounds })`
-    — insere a linha. Falha de DB NÃO derruba o fluxo: o run continua em
-    memória, só sem retomada.
-  - `updatePipelineRun(id, patch)` — atualiza `current_stage`,
-    `rounds_run`, `status`, `state_json` e/ou `completed_at` em uma
-    única chamada. Idempotente: o último estado gravado vale.
-  - `loadPipelineRun(conversationId, { includeTerminal })` — recupera
-    o run ativo (default) ou qualquer um (`includeTerminal: true`).
-  - `completePipelineRun(id, { status })` — fecha o ciclo.
-  - `sweepStalePipelineRuns({ olderThanMs })` — varre terminais antigos
-    (default: 90s de carência, mesma janela do liveStream).
+  - `createPipelineRun`, `updatePipelineRun`, `loadPipelineRun`,
+    `completePipelineRun`, `sweepStalePipelineRuns`.
+
+**Etapa 2 (2026-08-05) — integração (esta frente):**
+- **`multiModel.js`**: `createPipelineRun` na entrada do pipeline;
+  `updatePipelineRun` (currentStage + state_json) após cada etapa;
+  `completePipelineRun` (done/stopped/error) na saída e no finally.
+  A retomada é EXPLÍCITA: só o `/resume` a dispara (passa `pipelineResume`).
+  Mensagem nova numa conversa com run órfão fecha o órfão como `error` —
+  herdá-lo faria a resposta nova sair costurada sobre a tarefa antiga, e o
+  sweeper nunca o removeria (ele só varre terminais).
+- **`conversations.js`**: rota `/resume` detecta `pipeline_runs` ativo
+  antes do checkpoint, reconstrói config e chama `runMultiModel` com
+  `pipelineResume`.
+- **`server.js`**: `sweepStalePipelineRuns()` no boot e a cada hora.
+- **`docs/MULTIMODEL.md`**: seção 5 reescrita com o estado implementado.
 
 **Validação:**
-- `backend/src/agent.pipelineRuns.test.js`: 7/7 (todos pulam sem DB) —
-  cria run com id único, atualiza `currentStage` + state, `loadPipelineRun`
-  sem run ativo devolve null, `completePipelineRun` muda status e
-  seta `completedAt`, sweeper remove antigos mas preserva recentes,
-  patch vazio é no-op, `newPipelineRunId` gera 100 ids únicos
-- `cd backend && npm run check`: 923/923 (79 pulados por exigir Postgres)
-- `cd frontend && npm run check`: lint + 70 testes + build OK
-
-**O que ficou de fora (próxima frente):** integração no `runMultiModel`
-para chamar `createPipelineRun` na entrada, `updatePipelineRun`
-entre estágios, `completePipelineRun` na saída, e a rota `/resume`
-detectar `pipeline_runs` ativo e retomar do `currentStage`. Esta PR
-provê o substrato de banco + funções; a integração é mudança de
-comportamento que precisa de janela própria.
+- `backend/src/agent.pipelineRuns.test.js`: 12 testes (7 originais +
+  5 de integração) — retomada do estágio correto após boot simulado
+  (pool novo), cancelamento sem órfão, falha completa run como error,
+  config_json preservado integralmente entre save/load, e o órfão em
+  `running` sobrevivendo ao sweeper (o que obriga o fechamento explícito).
+- `cd backend && npm run check`: **1032/1032** com PostgreSQL 16 real
+  recém-criado, nada pulado.
+- `cd frontend && npm run check`: **77/77** + lint + build.
 
 ### F-14 — Teste de retomada após interrupção real do processo (2026-08-04)
 
@@ -1273,16 +1277,12 @@ antes do aviso.
 
 ## Próximos passos (em ordem)
 
-1. **Frente 3 — Integrar o coordenador durável no `runMultiModel` (F-15, risco 🟠).**
-   A tabela `pipeline_runs` e as primitivas de save/load/complete estão provadas, mas
-   `runMultiModel` ainda não atualiza o `currentStage` entre estágios nem retoma no
-   boot. Sem isso, o risco que o F-15 descreve segue de pé na prática — só que agora
-   com o banco pronto para recebê-lo.
-2. **Frente 4 — Vulnerabilidades de dependências.** O CI acusa `3 vulnerabilities
+1. **Frente 4 — Vulnerabilidades de dependências.** O CI acusa `3 vulnerabilities
    (2 moderate, 1 high)` no backend e `1 high` no frontend em todo `npm ci`.
-3. **Frente 5 — IPv6 + `git` na allowlist de egress do sandbox.** `parseAllowlistEntry`
-   declara que IPv6 ficou de fora; `extractHostCandidates` não varre `git`.
-4. **Frentes seguintes** conforme o backlog ordenado registrado no plano de melhorias.
+2. **Frente 5 — IPv6 + `git` na allowlist de egress do sandbox.**
+   `parseAllowlistEntry` declara que IPv6 ficou de fora; `extractHostCandidates`
+   não varre `git`.
+3. **Frentes seguintes** conforme o backlog ordenado.
 
 ---
 

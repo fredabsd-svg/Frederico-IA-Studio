@@ -32,6 +32,7 @@ import { loadCheckpoint } from './checkpoint.js';
 import { persistAssistantReply, saveMessage } from './persistence.js';
 import { MULTI_ARTIFACT_PROTOCOL, untrustedContext } from './promptRegistry.js';
 import { snapshotArtifactVersion } from './artifacts.js';
+import { createPipelineRun, updatePipelineRun, loadPipelineRun, completePipelineRun } from './pipelineRuns.js';
 import { nanoid } from 'nanoid';
 
 export const MULTI_MODES = ['compare', 'council', 'debate', 'pipeline'];
@@ -188,7 +189,7 @@ export function multiModelExecutionPolicy({ mode, requirement, developer = false
   };
 }
 
-export async function runMultiModel({ userId, conversationId, userText, config, webSearch = false, effort, developer = null, onEvent }) {
+export async function runMultiModel({ userId, conversationId, userText, config, webSearch = false, effort, developer = null, onEvent, pipelineResume = null, saveUserMessage = true }) {
   const memberProviders = await Promise.all(config.models.map(member => getUserProvider(userId, member.id)));
   const coordinatorProvider = await getUserProvider(userId, config.coordinator);
   config.models.forEach((member, index) => {
@@ -201,8 +202,35 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
   const registry = { cancelled: new Set(), requests: new Map() };
   slotRegistries.set(conversationId, registry);
   const startedAt = Date.now();
+  // Coordenador durável (F-15): a RETOMADA é sempre explícita — só acontece
+  // quando a rota /resume carrega o run ativo e o passa em `pipelineResume`.
+  // Um run deixado em `running` por um crash NÃO pode ser herdado por uma
+  // mensagem NOVA: o sweeper só varre runs terminais, então o órfão ficaria
+  // `running` para sempre e sequestraria o próximo pedido de pipeline da
+  // conversa — a resposta nova sairia costurada sobre as etapas da tarefa
+  // ANTIGA, começando do meio. Mensagem nova fecha o órfão como `error`
+  // (interrompido e não retomado) e parte do zero.
+  let pipelineRunId = null;
+  let resumeFromStage = 0;
+  let resumedState = null;
+  if (pipelineResume && config.mode === 'pipeline') {
+    pipelineRunId = pipelineResume.id;
+    resumeFromStage = pipelineResume.currentStage || 0;
+    resumedState = pipelineResume.state || null;
+    if (resumeFromStage >= pipelineResume.totalStages) resumeFromStage = 0;
+  } else {
+    const orphan = await loadPipelineRun(conversationId);
+    if (orphan) await completePipelineRun(orphan.id, { status: 'error' });
+  }
+  let pipelineClosedCleanly = false;
   try {
-    const userMsgId = await saveMessage(userId, conversationId, 'user', userText);
+    let userMsgId = saveUserMessage ? await saveMessage(userId, conversationId, 'user', userText) : null;
+    // Na retomada, o userMsgId não é gravado (já existe) — buscamos o id
+    // real para que os eventos 'saved' referenciem a mensagem correta.
+    if (!userMsgId) {
+      const row = await db.prepare("SELECT id FROM messages WHERE conversation_id=? AND role='user' ORDER BY created_at DESC, seq DESC LIMIT 1").get(conversationId);
+      userMsgId = row?.id || null;
+    }
     const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
     if (!coordinatorProvider.hasKey && !memberProviders.some(provider => provider.hasKey)) {
       // F-1: se algum provedor falhou por modelo não atribuível, o motivo real
@@ -569,19 +597,42 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
       // Em tarefas de artefato/desenvolvimento, TODAS as etapas operam no mesmo
       // workspace com ferramentas. Assim um revisor pode abrir, corrigir e
       // validar o resultado real da etapa anterior, em vez de apenas comentá-lo.
-      const artifactRunId = `pipeline_${nanoid(12)}`;
-      const previousOutputs = [];
-      const artifactOutputPaths = new Set();
+      const artifactRunId = resumedState?.artifactRunId || `pipeline_${nanoid(12)}`;
+      let previousOutputs = resumedState?.completedStages?.map(s => ({ name: s.name, roleLabel: s.roleLabel, text: s.text })) || [];
+      const artifactOutputPaths = new Set(resumedState?.artifactOutputPaths || []);
       let executorResult = null;
+      // Coordenador durável (F-15): cria o pipeline run na primeira execução.
+      if (!pipelineRunId && !resumeFromStage) {
+        pipelineRunId = await createPipelineRun({
+          conversationId, userId,
+          mode: 'pipeline',
+          totalStages: slots.length,
+          config: config,
+          rounds: 1
+        });
+      }
+      const persistPipelineProgress = async (stageIndex) => {
+        if (!pipelineRunId) return;
+        const state = {
+          artifactRunId,
+          completedStages: previousOutputs.map((p, i) => ({
+            slot: slots[i]?.slot ?? i, text: p.text, name: p.name, roleLabel: p.roleLabel
+          })),
+          artifactOutputPaths: [...artifactOutputPaths]
+        };
+        await updatePipelineRun(pipelineRunId, { currentStage: stageIndex, state });
+      };
       const executableStates = slots.filter(state => state.status !== STATUS.error && !registry.cancelled.has(state.slot));
       if (!executableStates.length) {
         const finalText = '_Nenhum modelo selecionado oferece as capacidades necessárias para executar esta tarefa._';
         onEvent({ type: 'delta', content: finalText });
         const assistantMessageId = await saveMessage(userId, conversationId, 'assistant', finalText);
         onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId });
+        if (pipelineRunId) await completePipelineRun(pipelineRunId, { status: 'error' });
+        pipelineClosedCleanly = true;
         return { text: finalText, usage, model: config.coordinator, incomplete: true, compatibility: 'tools' };
       }
-      for (let executableIndex = 0; executableIndex < executableStates.length; executableIndex++) {
+      for (let executableIndex = resumeFromStage; executableIndex < executableStates.length; executableIndex++) {
         const state = executableStates[executableIndex];
         if (control.stopped || await gate(control, onEvent)) break;
         if (budgetExceeded) { setStatus(state, STATUS.stopped); continue; }
@@ -662,6 +713,7 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
           const stageFailed = executorResult.incomplete || executorResult.providerFailure || executorResult.resumable;
           setStatus(state, executorResult.stopped ? STATUS.stopped : (stageFailed ? STATUS.error : STATUS.done));
           previousOutputs.push({ name: state.name, roleLabel: state.roleLabel, text: state.text });
+          await persistPipelineProgress(executableIndex + 1);
           if (executorResult.stopped || executorResult.resumable) break;
           continue;
         }
@@ -671,6 +723,7 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
           const output = { name: state.name, roleLabel: state.roleLabel, text: state.text };
           previousOutputs.push(output);
         }
+        await persistPipelineProgress(executableIndex + 1);
       }
       if (executorResult) {
         // O orçamento, um cancelamento de slot ou uma incompatibilidade podem
@@ -699,12 +752,20 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
           await db.prepare('UPDATE messages SET multi_meta=? WHERE id=? AND conversation_id=?')
             .run(JSON.stringify(meta), executorResult.messageId, conversationId);
         }
+        // `resumable` = a etapa parou no meio (orçamento/checkpoint do agente):
+        // o pipeline NÃO terminou — registrar `done` seria sucesso falso no
+        // histórico. `stopped` é o rótulo honesto; a retomada da etapa em si
+        // segue pelo checkpoint de agente único (limitação pré-existente).
+        await completePipelineRun(pipelineRunId, { status: (executorResult.stopped || executorResult.resumable) ? 'stopped' : 'done' });
+        pipelineClosedCleanly = true;
         return { delegated: true, value: { ...executorResult, usage } };
       }
       const last = [...slots].reverse().find(s => s.text);
       const text = last
         ? `${slots.length > 1 ? `_Execução sequencial: ${slots.map(s => s.name).join(' → ')}_\n\n` : ''}${last.text}`
         : '_Nenhuma etapa da sequência produziu resposta._';
+      await completePipelineRun(pipelineRunId, { status: 'done' });
+      pipelineClosedCleanly = true;
       return { text };
     }
 
@@ -747,6 +808,9 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
     indexAfterReply(userId, conversationId).catch(() => {});
     return { text: finalText, usage, model: config.coordinator, stopped: control.stopped };
   } finally {
+    if (pipelineRunId && !pipelineClosedCleanly) {
+      await completePipelineRun(pipelineRunId, { status: control.stopped ? 'stopped' : 'error' });
+    }
     slotRegistries.delete(conversationId);
     releaseConversationControl(conversationId, control);
   }
