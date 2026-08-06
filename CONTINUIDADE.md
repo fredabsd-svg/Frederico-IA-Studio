@@ -50,6 +50,16 @@ sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md
   órfãos no boot); em teste, DESLIGADA (a suíte não tem Docker). O boot
   agora sempre relata o resultado da reconciliação (mesmo sem órfãos).
   5 testes de política pura cobrem todos os cenários.
+- **Último trabalho:** a **Frente 8 — Retomada real pós-kill-9** fecha o F-14
+  de verdade: teste de integração com `child_process` onde o processo A grava
+  checkpoint com tool calls e encerra (simulando SIGKILL), e o processo B
+  carrega e reconstrói via `buildResumeMessages` sem duplicar ferramentas.
+  Pula com a mensagem padrão sem PostgreSQL; com banco, exerce o caminho real.
+  Antes dela, a **Frente 4 — Vulnerabilidades de dependências** zerou
+  as 4 vulnerabilidades do `npm audit`: no backend, o override `uuid: ^11.1.1`
+  corrigiu o dockerode (moderate) e o `npm audit fix` atualizou `ip-address`
+  (high); no frontend, o override `postcss: ^8.5.23` corrigiu a vulnerabilidade
+  de path traversal. Suítes verdes nos dois lados.
   Antes dela, a **Frente 3 — Integração do coordenador durável no
   `runMultiModel`** fechou o risco F-15: o pipeline multimodelo agora persiste
   o `currentStage` e o `state_json` entre etapas na tabela `pipeline_runs`
@@ -1353,6 +1363,8 @@ antes do aviso.
 1. **Frente 8 — Retomada real pós-kill-9.** Teste de integração com `child_process`: 
    processo A grava checkpoint mid-run e leva SIGKILL; processo B lê e retoma sem
    duplicar ferramentas. Fecha o F-14 de verdade.
+1. **Frente 9 — Desmontar o App.jsx (etapa 1: shell).** Extrair shell (layout,
+   sidebar, drawers de abertura) para componentes próprios, sem mudar comportamento.
 2. **Frentes seguintes** conforme o backlog ordenado.
 
 ---
