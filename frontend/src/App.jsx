@@ -1461,6 +1461,7 @@ export default function App({ user } = {}) {
       onApplyDraft={setInput}
       conversationId={current?.id || null}
       conversationTitle={current?.title || ''}
+      rightInset={workspace === 'developer' ? (devRightCollapsed ? 58 : 286) : 22}
       showToast={showToast}
     />}
     {copilotOpen && <Suspense fallback={<PanelFallback/>}><LazyCopilotPanel copilot={copilot} onClose={() => setCopilotOpen(false)} /></Suspense>}

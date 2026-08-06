@@ -23,6 +23,12 @@
   user-select: none;
 }
 
+/* Em telas largas do Modo Desenvolvedor, reserva a coluna Atividade. Abaixo de
+   1181px as colunas laterais somem e o recuo padrão volta a valer. */
+@media (min-width: 1181px) {
+  .companionRoot { right: var(--companion-right, 22px); }
+}
+
 .cmpBadge {
   position: absolute;
   top: -2px;

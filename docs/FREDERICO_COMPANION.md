@@ -141,3 +141,12 @@ A aba **Ações** expõe ferramentas separadas e auditáveis:
 Os resultados são apoio à decisão, não certificação legal ou garantia contábil.
 Valores sensíveis não entram no log de auditoria; o log registra apenas categoria,
 quantidade e resultado da verificação.
+
+### Recuperação de visibilidade
+
+A posição arrastada do Nino é salva no navegador. Ao abrir o aplicativo ou mudar
+o tamanho da janela, essa posição é validada e ajustada para permanecer dentro da
+área útil, inclusive sem ficar atrás da coluna **Atividade** do Modo Desenvolvedor.
+Em **Configurações › Agente › Copiloto — Personalização**, a ação **Restaurar na
+tela** remove a posição e o estado minimizado salvos e reativa o personagem ao
+salvar.
