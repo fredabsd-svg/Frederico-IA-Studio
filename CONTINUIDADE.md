@@ -1393,7 +1393,24 @@ antes do aviso.
 
 ## Próximos passos (em ordem)
 
-0. **Frente 14 — Métricas operacionais reais no painel admin (mergeada).**
+0. **Frente 15 — Sonda controlada de tool calling (mergeada).**
+   Branch `t6-frente-15-tool-call-probe`. Componentes novos em
+   `backend/src/tools/probe/`: 5 cenários canônicos (`scenarios.js`),
+   3 schemas didáticos (`schemas.js`), classificador com 4 modos de
+   parse (`classifier.js`: nativo → `json_block` → `xml_block` →
+   fallback), agregador com 6 vereditos categóricos (`results.js`:
+   `native_supported` ≥80%, `text_only` 100% fallback, `json_block`/
+   `xml_block` maioria em um modo, `unreliable` mistura, `no_capability`
+   >50% provider error), orquestrador com timeout 30s + concorrência 2
+   (`probeRunner.js`), JSON seguro (`parseFallback.js`). CLI
+   `scripts/run-tool-probe.mjs` com flag `--live` para chamar provider
+   real. Rota admin `POST /api/admin/tool-probe` (registra em
+   `admin_audit`). Diretório `tools/probe-results/` para histórico por
+   modelo (formato `probe-<modelo>-<YYYY-MM-DD>.{json,md}`). Testes:
+   28 do classificador + agregador + scenarios + JSONAttempt, 2 do
+   router; lint limpo em 253 arquivos; 85 do Design intactos, 10 do
+   routes/, 81 do frontend. Doc: `docs/TOOL_CALLING_PROBE.md`.
+1. **Frente 14 — Métricas operacionais reais no painel admin (mergeada).**
    Branch `t6-frente-14-operational-metrics`. Migration 031 adiciona
    `feature` (TEXT) e `cost_usd` (NUMERIC(10,6)) em `usage`, com 2
    índices para agregação. Helper `recordUsage()` em `src/usage.js`
@@ -1409,31 +1426,37 @@ antes do aviso.
    Testes: 4 do helper (cost, feature desconhecida, sem userId) e 4
    do dashboard (startOfUtcDay, lista canônica, exports, quotaPressure
    sem env). Doc: `docs/OBSERVABILITY.md`.
-1. **Frente 13 (antiga, renumerada) — Modo Design: compartilhamento público.** O token de prévia
+2. **Frente 16 — Preencher `model_tool_capability_cache` com a sonda.** Após
+   a Frente 15, rodar `node scripts/run-tool-probe.mjs --live --out
+   tools/probe-results/probe-<modelo>-<data>.json` contra cada modelo
+   candidato do catálogo. Resultados alimentam a capacidade do cache antes
+   da primeira delegação — sem desperdiçar 1 chamada na falha.
+3. **Frente 17 — UI admin consumindo `/api/admin/usage/dashboard`.** A
+   rota existe (Frente 14) mas é só via API/curl. Falta a tela simples
+   com KPIs + sparkline (sem gráfico pesado).
+4. **Frente 18 — Calibração do `FREE_TIER_DAILY_LIMIT` com dado real.**
+   Agora temos `tokens_30d` por tier (Frente 14). O limite sai do
+   percentil 95 dos usuários ativos para não cortar cauda longa.
+5. **Frente 19 — Loop de tool calling em produção (depende do veredito).**
+   Se Frente 15 = `native_supported`, ligar `tools` no `chat.js` e no
+   copilot. Se `json_block`/`xml_block`, adicionar parser dedicado antes
+   do loop. Se `text_only`/`unreliable`, prompt reforçado + fallback. Plano
+   completo em `docs/TOOL_CALLING_PROBE.md` §"Quando re-rodar".
+6. **Frente 13 (antiga, renumerada) — Modo Design: compartilhamento público.** O token de prévia
    já existe; falta a tela pública sobre ele. Rota pública mínima (Regra 2.2)
    servindo a prévia por token, sem sessão; revogação. Testes de autorização
    (válido/inválido/revogado); `docs/SECURITY.md`.
-2. **Frente 15 — Sonda de tool calling na primeira delegação.** O catálogo
-   persistido (`model_tool_capability_cache`) registra capacidade DEPOIS da
-   falha — a primeira delegação a um modelo sem suporte é desperdiçada.
-   Sonda barata; resultado vai ao catálogo.
-3. **Frente 16 — UI admin consumindo `/api/admin/usage/dashboard`.** A
-   rota existe (Frente 14) mas é só via API/curl. Falta a tela simples
-   com KPIs + sparkline (sem gráfico pesado).
-4. **Frente 17 — Calibração do `FREE_TIER_DAILY_LIMIT` com dado real.**
-   Agora temos `tokens_30d` por tier (Frente 14). O limite sai do
-   percentil 95 dos usuários ativos para não cortar cauda longa.
-5. **Frente 9 — Desmontar o `App.jsx` (etapas 2-4):** a etapa 1 (shell/sidebar)
+7. **Frente 9 — Desmontar o `App.jsx` (etapas 2-4):** a etapa 1 (shell/sidebar)
    está feita. Faltam: etapa 2 (estado da conversa), etapa 3 (estado da
    execução), etapa 4 (drawers/configurações). Plano completo em
    `docs/ARCHITECTURE.md`.
-6. **Pendência conhecida — 123 regras mistas no inventário CSS:** regras
+8. **Pendência conhecida — 123 regras mistas no inventário CSS:** regras
    que combinam classes mortas com classes vivas (ex.: `.morta .viva`,
    `.morta.viva`). Não foram tocadas na frente 11 porque a remoção segura
    depende de validação visual com E2E ponta a ponta, indisponível neste
    sandbox (sem Postgres + `/opt/pw-browsers/`). Ficam para frente futura
    com ambiente completo. O detector já as expõe em `dist/cssInventory.json`.
-7. **Pendência da Frente 12 — refinamentos do "Imagem no artefato":**
+9. **Pendência da Frente 12 — refinamentos do "Imagem no artefato":**
    a frente entregou o caminho mínimo (gerar via diálogo + aplicar via
    prompt). **(d) compressão/otimização antes de gravar → entregue na
    Frente 13.** Restam para frente futura: (a) geração automática via

@@ -1,0 +1,8 @@
+# Este diretório guarda o histórico de execuções da sonda de tool calling.
+# Cada arquivo deve ter o nome no formato:
+#   probe-<modelo>-<YYYY-MM-DD>.json
+#   probe-<modelo>-<YYYY-MM-DD>.md
+# Os arquivos são gerados pelo CLI (scripts/run-tool-probe.mjs --out/--md).
+# NÃO commitar resultados individuais a cada execução — só quando forem
+# relevantes para tomada de decisão (ex.: mudou o veredito de 'text_only'
+# para 'native_supported').
