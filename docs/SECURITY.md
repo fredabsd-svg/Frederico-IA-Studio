@@ -356,3 +356,20 @@ Ver `backend/src/privacy.js`.
 - [ ] `docker-guard` no ar e `/api/health` mostrando `sandbox.docker.modo = "guarda"`
 - [ ] `GUARD_ALLOW_PC_FOLDERS=false` (a menos que seja instalação pessoal)
 - [ ] `/api/health` monitorado (antivírus degradado, órfãos de sandbox, `unhandledRejections`)
+
+## Ferramentas executivas do Nino
+
+Verificado contra o código em: 2026-08-06
+
+- As análises de LGPD e integridade recebem somente conteúdo autorizado pela
+  sessão ou um `documentId` resolvido com `user_id`; valores detectados não são
+  devolvidos nem escritos em `companion_audit`.
+- Conteúdo enviado às ações baseadas em modelo é delimitado como dado não
+  confiável e não pode substituir o prompt de sistema.
+- A revisão de memória é somente leitura. Exclusão ou consolidação continua sob
+  controle do usuário.
+- A criação de rotina exige `confirmed: true`, a capacidade sensível
+  `criar_rotinas` e trilha de auditoria. Parada de emergência e modo somente
+  leitura continuam prevalecendo.
+- A detecção por expressões regulares é heurística: falso positivo e falso
+  negativo são esperados. O resultado não substitui avaliação jurídica.

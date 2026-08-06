@@ -5,6 +5,26 @@
 
 const RULES = [
   {
+    id: 'csv_next_step',
+    test: (c) => c.files.some(f => /\.csv$/i.test(f)),
+    suggestion: (c) => /finan|venda|receita|despesa|fluxo|2025/i.test(c.files.join(' '))
+      ? 'Notei uma planilha CSV que parece conter dados financeiros. Quer um relatório executivo em PDF no padrão Tinta & Latão ou um dashboard de gráficos interativos no Modo Design?'
+      : 'Notei uma planilha CSV. Posso primeiro auditar colunas e consistência e, depois, sugerir relatório, limpeza ou dashboard.',
+    severity: 'info',
+  },
+  {
+    id: 'pdf_docling',
+    test: (c) => c.files.some(f => /\.pdf$/i.test(f)),
+    suggestion: 'Você anexou um PDF. Se ele for escaneado ou tiver tabelas, posso usar o Docling/OCR para reduzir perdas na extração antes da análise.',
+    severity: 'info',
+  },
+  {
+    id: 'delegate_campaign',
+    test: (c) => /campanha de marketing|lan[cç]amento de produto|plano de marketing/i.test(c.text),
+    suggestion: 'Esta entrega se beneficia de delegação: pesquisa de público, redação das peças e uma auditoria final de consistência pelo Nino.',
+    severity: 'info',
+  },
+  {
     id: 'backup_migration',
     test: (c) => /migration|migrate|alter table|schema/i.test(c.text) || (c.files || []).some(f => /migration/i.test(f)),
     suggestion: 'Esta ação envolve migração de banco. Recomendo fazer um backup/checkpoint antes de aplicar.',
@@ -60,7 +80,7 @@ export function contextualSuggestions(ctx = {}) {
   const c = {
     text,
     words: text ? text.trim().split(/\s+/).filter(Boolean).length : 0,
-    files: Array.isArray(ctx.files) ? ctx.files : [],
+    files: (Array.isArray(ctx.files) ? ctx.files : []).map(f => typeof f === 'string' ? f : String(f?.name || f?.path || '')),
     changedCount: Number(ctx.changedCount || (Array.isArray(ctx.files) ? ctx.files.length : 0)),
     promptTokens: Number(ctx.promptTokens || 0),
   };
@@ -68,7 +88,7 @@ export function contextualSuggestions(ctx = {}) {
   const seen = new Set();
   for (const r of RULES) {
     try {
-      if (r.test(c) && !seen.has(r.id)) { seen.add(r.id); out.push({ id: r.id, suggestion: r.suggestion, severity: r.severity }); }
+      if (r.test(c) && !seen.has(r.id)) { seen.add(r.id); out.push({ id: r.id, suggestion: typeof r.suggestion === 'function' ? r.suggestion(c) : r.suggestion, severity: r.severity }); }
     } catch { /* regra robusta: nunca derruba */ }
   }
   return out;

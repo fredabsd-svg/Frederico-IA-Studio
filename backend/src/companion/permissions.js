@@ -10,7 +10,7 @@ export const CAPABILITIES = [
   'observar', 'ler_arquivos', 'criar_arquivos', 'editar_arquivos', 'excluir_arquivos',
   'executar_seguros', 'instalar_deps', 'reiniciar_servicos', 'gerenciar_containers',
   'alterar_config', 'acessar_internet', 'consultar_git', 'criar_commits', 'abrir_prs',
-  'notificar', 'acessar_logs', 'acessar_env',
+  'notificar', 'acessar_logs', 'acessar_env', 'criar_rotinas',
 ];
 
 // Capacidades concedidas por NÍVEL (padrão). Níveis altos incluem os baixos.
@@ -19,13 +19,13 @@ export const CAPABILITIES = [
 const LEVEL_CAPS = {
   1: ['observar', 'ler_arquivos', 'acessar_logs', 'consultar_git'],
   2: ['criar_arquivos', 'editar_arquivos', 'notificar'],
-  3: ['executar_seguros', 'acessar_internet', 'criar_commits'],
+  3: ['executar_seguros', 'acessar_internet', 'criar_commits', 'criar_rotinas'],
   4: ['instalar_deps', 'reiniciar_servicos', 'gerenciar_containers', 'abrir_prs', 'alterar_config'],
   5: ['excluir_arquivos', 'acessar_env'],
 };
 
 // Capacidades SENSÍVEIS: sempre exigem confirmação explícita, mesmo no nível 5.
-export const SENSITIVE = new Set(['excluir_arquivos', 'instalar_deps', 'reiniciar_servicos', 'gerenciar_containers', 'alterar_config', 'acessar_env', 'abrir_prs']);
+export const SENSITIVE = new Set(['excluir_arquivos', 'instalar_deps', 'reiniciar_servicos', 'gerenciar_containers', 'alterar_config', 'acessar_env', 'abrir_prs', 'criar_rotinas']);
 
 export function capabilitiesForLevel(level) {
   const n = Math.min(5, Math.max(1, Number(level) || 1));
@@ -87,7 +87,7 @@ export function decide(perms, capability, { command = null } = {}) {
   const p = perms || DEFAULTS;
   if (p.emergencyStop) return { allowed: false, requiresConfirmation: false, reason: 'Parada de emergência ativa — nenhuma ação é executada.' };
 
-  const writeCaps = new Set(['criar_arquivos', 'editar_arquivos', 'excluir_arquivos', 'executar_seguros', 'instalar_deps', 'reiniciar_servicos', 'gerenciar_containers', 'alterar_config', 'criar_commits', 'abrir_prs']);
+  const writeCaps = new Set(['criar_arquivos', 'editar_arquivos', 'excluir_arquivos', 'executar_seguros', 'instalar_deps', 'reiniciar_servicos', 'gerenciar_containers', 'alterar_config', 'criar_commits', 'abrir_prs', 'criar_rotinas']);
   if (p.readOnly && writeCaps.has(capability)) {
     return { allowed: false, requiresConfirmation: false, reason: 'Modo somente-leitura — apenas observação/leitura é permitida.' };
   }

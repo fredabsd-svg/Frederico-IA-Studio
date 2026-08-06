@@ -91,3 +91,12 @@
 .sandboxWarn { display: flex; gap: 10px; align-items: flex-start; font-size: 12.5px; line-height: 1.5; color: #fcd9a5; background: rgba(245,158,11,0.12); border: 1px solid rgba(245,158,11,0.34); border-radius: 11px; padding: 12px; margin-top: 14px; }
 .sandboxWarn svg { flex: none; margin-top: 1px; color: #f59e0b; }
 .sandboxSaved { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #34c77b; margin-top: 12px; }
+.cwExecutive{display:flex;flex-direction:column;gap:12px;padding:12px;overflow:auto}
+.cwExecutive>textarea{width:100%;min-height:130px;resize:vertical;border:1px solid var(--line);border-radius:12px;background:var(--panel2);color:var(--text);padding:12px;font:inherit;box-sizing:border-box}
+.cwExecutiveGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.cwExecutiveGrid button{display:flex;align-items:center;gap:7px;justify-content:flex-start;text-align:left;border:1px solid var(--line);border-radius:10px;background:var(--panel2);color:var(--text);padding:10px;cursor:pointer}
+.cwExecutiveGrid button:hover:not(:disabled){border-color:var(--accent);background:var(--panel)}
+.cwExecutiveGrid button:disabled{opacity:.5;cursor:not-allowed}
+.cwExecutiveResult{white-space:pre-wrap;overflow-wrap:anywhere;margin:0;border:1px solid var(--line);border-radius:10px;background:var(--panel2);padding:12px;font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;max-height:320px;overflow:auto}
+.cwDim{font-size:12px;color:var(--muted)}
+@media(max-width:560px){.cwExecutiveGrid{grid-template-columns:1fr}}

@@ -42,6 +42,14 @@ test('capacidade sensível dentro do nível ainda exige confirmação', () => {
   assert.ok(SENSITIVE.has('excluir_arquivos'));
 });
 
+test('criar rotina exige nível 3 e confirmação explícita', () => {
+  const low = decide({ level: 1, grant: [], revoke: [] }, 'criar_rotinas');
+  assert.equal(low.allowed, false);
+  const allowed = decide({ level: 3, grant: [], revoke: [] }, 'criar_rotinas');
+  assert.equal(allowed.allowed, true);
+  assert.equal(allowed.requiresConfirmation, true);
+});
+
 test('comando destrutivo exige confirmação; blockList bloqueia', () => {
   assert.ok(isDestructiveCommand('rm -rf /'));
   const d = decide({ level: 5 }, 'executar_seguros', { command: 'rm -rf build' });

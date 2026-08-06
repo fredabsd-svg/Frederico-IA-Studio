@@ -189,11 +189,35 @@ export function useCopilotChat() {
     } catch { setError('Falha de conexão. Tente de novo.'); return null; }
   }, []);
 
+  // Ferramentas executivas do Nino. Todas passam pelo backend para manter
+  // autorização, escopo por usuário e trilha de auditoria.
+  const runExecutiveTool = useCallback(async (tool, payload = {}) => {
+    setError(null);
+    try {
+      const r = await fetch(`${API}/api/copilot/tools/${encodeURIComponent(tool)}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) { setError(data.error || 'Não consegui executar a análise.'); return null; }
+      return data;
+    } catch {
+      setError('Falha de conexão. Tente de novo.');
+      return null;
+    }
+  }, []);
+
+  const runExecutiveAction = useCallback(
+    (action, content) => runExecutiveTool('executive-action', { action, content }),
+    [runExecutiveTool]
+  );
+
   return {
     messages, documents, notes, prefs, prefsOptions,
     sending, loading, docsLoading, memoryLoading, error, loaded,
     loadChat, send, clearChat, loadDocuments, deleteDocument,
     loadMemory, savePrefs, addNote, updateNote, deleteNote,
-    saveAsTemplate, saveAsDocument, summarizeChat, setError,
+    saveAsTemplate, saveAsDocument, summarizeChat,
+    runExecutiveTool, runExecutiveAction, setError,
   };
 }
