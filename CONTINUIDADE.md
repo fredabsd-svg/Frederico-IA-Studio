@@ -24,58 +24,12 @@ que ainda segura o verde é o **pipeline multimodelo retomável**: o F-15 entreg
 tabela e as primitivas, mas o `runMultiModel` ainda não as usa, então o reinício continua
 sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** a **Frente 4 — Vulnerabilidades de dependências** zerou
-  as 4 vulnerabilidades do `npm audit`: no backend, o override `uuid: ^11.1.1`
-  corrigiu o dockerode (moderate) e o `npm audit fix` atualizou `ip-address`
-  (high); no frontend, o override `postcss: ^8.5.23` corrigiu a vulnerabilidade
-  de path traversal. Suítes verdes nos dois lados.
-  Antes dela, a **Frente 3 — Integração do coordenador durável no
-  `runMultiModel`** fechou o risco F-15: o pipeline multimodelo agora persiste
-  o `currentStage` e o `state_json` entre etapas na tabela `pipeline_runs`
-  (migration 027), retoma do estágio correto pelo `/resume`, completa runs como
-  `done`/`stopped`/`error` sem deixar órfãos, e tem sweeper ligado no boot.
-  Testes de integração (5 novos) provam a retomada
-  com pool novo e a ausência de órfãos em cancelamento/falha. **A retomada é
-  explícita:** só o `/resume` retoma um run pendente. Mensagem NOVA numa
-  conversa com run órfão (deixado em `running` por um crash) fecha o órfão
-  como `error` e parte do zero — o sweeper só varre runs terminais, então
-  herdar o órfão o faria sequestrar a resposta seguinte, costurando-a sobre
-  as etapas da tarefa antiga.
-  Antes dela, a **Frente 2 — Template de PR + ADR 0001** (#171) criou o
-  `.github/pull_request_template.md` e o `docs/decisions/0001-adocao-das-regras-do-projeto.md`.
-  Antes dela, as **regras do projeto entraram no repositório**: o
-  `REGRAS-DO-PROJETO.md` passou a ser a constituição de engenharia — vale para pessoas,
-  agentes de IA e automações — e o `CLAUDE.md` ficou explicitamente subordinado a ele
-  (onde divergirem, as regras prevalecem). Antes dele, a
-  **integração das 16 frentes abertas** numa branch só (F-05b,
-  F-11 a F-26, geração de imagem por capacidade e o acionamento real dos sub-agentes).
-  Entre elas, o **modelo de IA por projeto no Modo Design** (frente abaixo):
-  o seletor saiu de trás do painel e passou a morar na barra do editor, e a escolha
-  virou coluna do projeto em vez de estado do app; e a **geração de imagem escolhendo a
-  chave por capacidade** (frente abaixo) — o "Nenhuma chave de API configurada" aparecia
-  com o chat respondendo na mesma tela. Antes deles, a
-  **identidade "Tinta & Latão"** nos três kits (frente abaixo):
-  o redesenho visual entrou POR CIMA da grade do PR #149, com os blocos que faltavam —
-  sumário, citação, linha do tempo, gráficos, assinaturas, contracapa, `confidencial=` e
-  a aba-painel do Excel. Antes dele, o
-  **PR [#149](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/149)** —
-  a **arquitetura de formatação dos documentos** (frente abaixo): os kits Word/Excel/PDF
-  passaram a ter uma grade única, o `pdfpro` audita o arquivo que gera e o prompt proíbe
-  diagramar fora do kit. Antes dele, o **copiloto (Nino)** deixou de ser um chat cego —
-  passou a levar o contexto do chat principal **por padrão** (auditado, e dispensável por
-  mensagem), ganhou memória própria, preferências com efeito real, base de conhecimento do
-  Studio e ações dentro do app. Antes dele, o **Modo Design**, v1 e v2 — espaço próprio
-  onde o usuário descreve um site, uma apresentação ou um documento visual e recebe um
-  rascunho renderizado ao vivo, refinado **por conversa, por clique no elemento ou por
-  sliders que não chamam a IA**, versionado e exportável (.html/.pdf/.pptx). Antes dele, a
-  estabilização do **ambiente de execução do agente**:
-  um timeout deixou de derrubar o sandbox, toda execução devolve estado estruturado
-  (ambiente × projeto), o reinício é anunciado com o que sobreviveu e o que se perdeu,
-  comandos longos transmitem a saída ao vivo, e o agente ganhou a ferramenta `ambiente`.
-  Antes deles, os **PR [#147](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/147)**
-  (o Nino cobrindo o botão de enviar), **[#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)**
-  (Playwright + suíte ponta a ponta) e **[#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)**
-  (as sete falhas P0 dos sub-agentes).
+- **Último trabalho:** o **portão de bundle passou a medir a coisa certa**. Ele somava
+  todo o JS contra um teto único de 1.000 KB — e a `main` estava exatamente em 1.000,
+  com 100% do orçamento consumido: qualquer PR de frontend reprovava. Pior, ele punia
+  code splitting (cada chunk novo soma invólucro), reprovando o PR da Frente 10 que
+  BAIXOU a primeira pintura de 909 para 896 KB. Agora são dois tetos — entrada
+  (920 KB) e total (1.100 KB) — e a regra roda no `npm run check`, não só no CI.
 - **Última validação:** 2026-08-05 — **1219 testes**, com o backend em **1008/1008 e
   NADA pulado**: o PostgreSQL 16 subiu **neste contêiner** (binários locais, sem Docker
   e sem a extensão `vector` — nenhuma migration usa o tipo). Mais **frontend 77/77**
@@ -91,6 +45,44 @@ sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md
   do matplotlib.
   **O LibreOffice deste contêiner não converte nada** (falha até com um `.txt` de uma
   linha), então a conferência do `.docx` foi estrutural — OOXML sobre o arquivo reaberto.
+
+---
+
+## O portão de bundle media a coisa errada (2026-08-06)
+
+Dois PRs de code splitting (Frentes 9 e 10) chegaram com a CI vermelha, ambos
+no mesmo job. Investigando, o defeito não estava neles.
+
+O portão somava **todo** o JS de `dist/assets` contra um teto único de 1.000 KB.
+Duas coisas estavam erradas nisso:
+
+1. **A `main` já marcava 1.000 KB** — 100% do orçamento consumido. Não era um
+   teto com folga: era uma parede. Qualquer PR que acrescentasse um byte de
+   frontend reprovava, o que bloqueava as Frentes 9, 10 e 11 inteiras.
+2. **A soma punia exatamente o trabalho que a catraca dizia esperar.** O
+   comentário do job dizia que o teto existia "enquanto o code splitting do
+   `App.jsx` não é feito" — mas cada `React.lazy` novo tira bytes da primeira
+   pintura e ACRESCENTA alguns KB ao total, porque cada chunk carrega seu
+   invólucro. O PR da Frente 10 é o caso exemplar: baixou a primeira pintura de
+   909 para 896 KB (melhora real para o usuário) e foi reprovado.
+
+Parte do "crescimento" nem era real: o `du -sk` arredonda por bloco, então um
+build com 11 arquivos parecia maior que um com 9 mesmo com menos bytes.
+
+**Agora são duas perguntas, dois números:** a **entrada** (script inicial mais o
+que o HTML manda pré-carregar) é o que o usuário espera antes da primeira
+pintura, e é o número que o splitting deve baixar; o **total emitido** não
+encolhe com splitting e serve de alarme para dependência nova entrando de
+carona. Por isso o teto do total é folgado — ele não é meta, é alarme.
+
+**A regra saiu do YAML e virou `frontend/scripts/bundleBudget.mjs`, ligada ao
+`npm run check`.** Era a causa de os dois PRs terem sido enviados vermelhos de
+boa-fé: eles rodaram `npm run check`, que passou, porque o portão só existia no
+CI. Portão que só existe no CI é descoberto tarde demais.
+
+Conferido nos dois sentidos: com teto artificialmente baixo o script sai com
+código 1 e a mensagem certa; restaurado, sai 0. Sem `dist`, avisa para rodar o
+build em vez de estourar.
 
 ---
 

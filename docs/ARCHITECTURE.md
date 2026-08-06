@@ -452,7 +452,8 @@ reexecução no-op → 30 tabelas essenciais → escrita/leitura/cascade.
 
 | Métrica | Valor em 2026-07-25 | Orçamento adotado |
 | --- | --- | --- |
-| JS do frontend | 932 KB (287 KB gzip), 1 chunk | ≤ 1.000 KB (catraca no CI) |
+| JS na primeira pintura | 909 KB em 2026-08-06 (entrada + `modulepreload`) | ≤ 920 KB (catraca) |
+| JS total emitido | 987 KB em 2026-08-06, 9 chunks | ≤ 1.100 KB (alarme de dependência) |
 | CSS | 183 KB (31 KB gzip) | sem teto ainda |
 | Suíte backend | ~5 s (495 casos) | ≤ 60 s |
 | Suíte frontend | ~0,3 s (34 casos) | ≤ 30 s |
@@ -461,6 +462,17 @@ reexecução no-op → 30 tabelas essenciais → escrita/leitura/cascade.
 | Runs simultâneos por usuário | 5 (`MAX_ACTIVE_RUNS_PER_USER`) | — |
 | Uploads simultâneos por usuário | 2 (`UPLOAD_MAX_CONCURRENT_PER_USER`) | — |
 | RAM por requisição de upload | ~0 (streaming) — era até ~1 GB | — |
+
+**Por que dois tetos, desde 2026-08-06.** Até então o CI somava todo o JS contra
+um teto único. Isso funcionava com um chunk só, mas passou a reprovar exatamente
+o trabalho de code splitting que a catraca dizia estar esperando: cada
+`React.lazy` novo tira bytes da primeira pintura e ACRESCENTA alguns KB ao total
+(cada chunk tem seu invólucro). Agora a **entrada** — o script inicial mais o que
+o HTML manda pré-carregar — é o número que o usuário sente e que o splitting deve
+baixar; o **total** não encolhe com splitting e serve de alarme para dependência
+nova entrando de carona. A regra vive em `frontend/scripts/bundleBudget.mjs` e
+roda no `npm run check`, não só no CI: portão que só existe no CI é descoberto
+tarde demais.
 
 Não medidos nesta auditoria: tempo de carregamento inicial no navegador, tempo para abrir
 uma conversa longa, consultas lentas do Postgres, RAM do backend sob carga. Ver F-22.
