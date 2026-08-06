@@ -123,16 +123,39 @@ const HOST_HINT_PATTERNS = [
   // Hostnames + IP opcional. Captura o domínio/IP com captura OPCIONAL
   // da porta: a parte `:NNNN` está dentro do mesmo grupo, então a regex
   // retorna o conjunto completo (host:porta) numa só captura.
-  // Inclui `git` (clone/push/fetch/pull/remote/ls-remote) e `go` (go get/etc.)
-  // como comandos que geram tráfego de rede arbitrário.
-  /\b(?:curl|wget|http(?:ie)?|fetch|invoke-webrequest|nc|netcat|ncat|nslookup|dig|host|traceroute|mtr|nmap|telnet|ssh|scp|rsync|ping|git|go\s+(?:get|install|mod|list))\b[^|;&\n]*?(?:\b(?:--url|-u|--host)\s+|(?:["'`]))?((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+|\d{1,3}(?:\.\d{1,3}){3})(?::\d{1,5})?)/gi,
+  //
+  // `git` NÃO entra nesta lista de propósito — ver o padrão dedicado abaixo.
+  // O IPv6 vem PRIMEIRO de propósito: `extractHostCandidates` apaga os
+  // trechos que ele casa antes de rodar os demais, senão o padrão de
+  // hostname colhe lixo de dentro dos colchetes (`2001:db8:` em
+  // `https://[2001:db8::1]/f`) e reporta um destino que não existe.
   // IPv6 literal em colchetes: [::1], [2001:db8::1], [fe80::1%25eth0].
-  // A captura inclui a porta opcional para consistência com o formato de
-  // extractHostCandidates. IPv6 não é suportado na allowlist — estes hosts
-   // são sempre bloqueados (fail-closed, ver guardNetworkEgress).
-  /\[([0-9a-f:]+(?:%[a-z0-9]+)?)\](?::(\d{1,5}))?/gi
-];
+  //
+  // DUAS âncoras, porque `[0-9a-f:]` sozinho é um filtro fraco demais:
+  // `lista[0:5]` (fatiamento de Python — uso diário do run_python) casava e
+  // virava "endereço IPv6 bloqueado".
+  //   1. contexto de rede: logo após `://` (forma de URL) ou após um comando
+  //      que recebe host direto (`ping [::1]`);
+  //   2. forma de IPv6 de verdade: precisa conter `::` ou ao menos dois `:`.
+  //      Um `[0:5]` tem um só.
+  // A porta opcional vem em captura separada (m[2]).
+  { v6: true, re: /(?:\/\/|\b(?:ping|ssh|scp|rsync|nc|netcat|ncat|telnet|traceroute|mtr|nmap|dig|host|nslookup)\s+)\[((?:[0-9a-f]{0,4}:){2,}[0-9a-f]{0,4}(?:%[a-z0-9]+)?)\](?::(\d{1,5}))?/gi },
 
+  { v6: false, re: /\b(?:curl|wget|http(?:ie)?|fetch|invoke-webrequest|nc|netcat|ncat|nslookup|dig|host|traceroute|mtr|nmap|telnet|ssh|scp|rsync|ping|go\s+(?:get|install|mod|list))\b[^|;&\n]*?(?:\b(?:--url|-u|--host)\s+|(?:["'`]))?((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+|\d{1,3}(?:\.\d{1,3}){3})(?::\d{1,5})?)/gi },
+
+  // `git` precisa de padrão PRÓPRIO, ancorado em URL. O padrão genérico acima
+  // varre tudo que parece domínio depois do comando — o que serve para o
+  // `curl` (que só recebe URL) e é desastroso para o `git`, que recebe texto
+  // livre: `git commit -m "corrige o site.com"` e `git config user.email
+  // joao@exemplo.com` viravam "acesso à rede bloqueado". Isso derrubaria o
+  // conector GitHub, que faz exatamente essas chamadas.
+  // Aqui só conta o que tem FORMA de endereço remoto: `https://host/...`,
+  // `ssh://host/...` ou `git@host:caminho`.
+  // O `user@host` do remoto SSH exige `:caminho` logo depois (o lookahead) —
+  // sem isso, `git config user.email joao@exemplo.com` casaria, porque e-mail
+  // e remoto SSH têm a mesma forma até o host.
+  { v6: false, re: /\bgit\b[^|;&\n]*?(?:(?:https?|ssh|git):\/\/(?:[^@\s/]+@)?|[a-z0-9._-]+@(?=[a-z0-9.-]+:))((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+)(?::\d{1,5})?)/gi }
+];
 // CIDR simples: suporta IPv4. IPv6 literal é bloqueado antes de chegar
 // aqui (guardNetworkEgress rejeita qualquer host IPv6 — fail-closed, ver
 // extractHostCandidates e o padrão de colchetes nos HOST_HINT_PATTERNS).
@@ -255,22 +278,34 @@ export function hostMatchesAllowlist(host, port, compiled) {
 // `host:8080:9090` ou `http://host:8080/path` (que o regex já trata).
 export function extractHostCandidates(command) {
   const out = new Set();
-  for (const re of HOST_HINT_PATTERNS) {
+  // O IPv6 é varrido PRIMEIRO e some do texto antes do padrão genérico rodar:
+  // `https://[2001:db8::1]/f` faria o padrão de hostname colher `2001:db8:` de
+  // dentro dos colchetes e reportar um destino que não existe.
+  let restante = String(command || '');
+  for (const { v6, re } of HOST_HINT_PATTERNS) {
     re.lastIndex = 0;
     let m;
-    while ((m = re.exec(command || '')) !== null) {
-      // O regex de IPv6 captura o hex em m[1] e a porta em m[2] (ou undefined).
-      // O regex de hostname captura host:porta opcional junto em m[1].
-      // Detecta IPv6 pelo match completo (m[0]) que contém colchetes [::1].
-      const isV6 = String(m[0] || '').startsWith('[');
-      const raw = String(m[2] !== undefined ? `[${m[1]}]:${m[2]}` : (isV6 ? `[${m[1]}]` : (m[1] || '')));
+    const trechosV6 = [];
+    while ((m = re.exec(restante)) !== null) {
+      // No padrão de IPv6 o hex vem em m[1] e a porta em m[2]; nos demais, o
+      // par host:porta vem junto em m[1].
+      const raw = v6
+        ? (m[2] !== undefined ? `[${m[1]}]:${m[2]}` : `[${m[1]}]`)
+        : String(m[1] || '');
+      if (v6) trechosV6.push([m.index, m.index + m[0].length]);
       // `:NNNN` é a porta se vier ANTES de qualquer `/` ou `?` (separador
       // de path/query). Aceita só dígitos (1-5) para não confundir com
       // literais que porventura tenham `:` no domínio.
       const portMatch = raw.match(/:(\d{1,5})(?=[/?#]|$)/);
       const host = portMatch ? raw.slice(0, -portMatch[0].length) : raw;
       const port = portMatch ? Number(portMatch[1]) : null;
-      out.add(JSON.stringify({ host, port, v6: isV6 }));
+      out.add(JSON.stringify({ host, port, v6 }));
+    }
+    if (v6 && trechosV6.length) {
+      // Substitui por espaços (preserva índices) para o próximo padrão não ver.
+      const chars = [...restante];
+      for (const [ini, fim] of trechosV6) for (let i = ini; i < fim; i++) chars[i] = ' ';
+      restante = chars.join('');
     }
   }
   return [...out].map(s => JSON.parse(s));

@@ -242,3 +242,40 @@ test('extractHostCandidates: comando git sem URL não extrai hosts fantasmas', (
   assert.deepEqual(extractHostCandidates('git log --oneline'), []);
   assert.deepEqual(extractHostCandidates('git diff HEAD~1'), []);
 });
+
+// ---- Falsos positivos: o que a varredura NÃO pode confundir com destino ----
+//
+// A primeira versão desta frente varria qualquer coisa parecida com domínio
+// depois de `git`, e qualquer `[hex:hex]` como IPv6. Isso serve para o `curl`
+// (que só recebe URL) e é desastroso para os dois casos abaixo — nenhum deles
+// abre conexão, e os dois são uso diário do app.
+
+test('git com texto livre não vira destino de rede', () => {
+  // Estes três derrubariam o conector GitHub, que faz exatamente essas chamadas.
+  assert.deepEqual(extractHostCandidates('git config user.email joao@exemplo.com'), [],
+    'e-mail tem a mesma forma que remoto SSH até o host — o que separa os dois é o ":caminho"');
+  assert.deepEqual(extractHostCandidates('git commit -m "corrige o bug do site.com"'), [],
+    'mensagem de commit é texto livre, não destino');
+  assert.deepEqual(extractHostCandidates('git log --grep=api.exemplo.com'), [],
+    'padrão de busca é texto livre, não destino');
+});
+
+test('fatiamento de Python não vira endereço IPv6', () => {
+  // `[0:5]` e `[0:10:2]` casavam com `[0-9a-f:]+` e viravam "IPv6 bloqueado".
+  // O run_python usa fatiamento o tempo todo.
+  assert.deepEqual(extractHostCandidates('python -c "print(lista[0:5])"'), []);
+  assert.deepEqual(extractHostCandidates('python3 -c "print(x[0:10:2])"'), [],
+    'fatiamento com passo tem DOIS ":" — não basta contar dois-pontos, precisa do contexto de rede');
+  assert.deepEqual(extractHostCandidates('echo ${arr[0:2]}'), []);
+});
+
+test('IPv6 de verdade continua bloqueado, em URL e como argumento', () => {
+  assert.throws(() => guardNetworkEgress('curl http://[::1]:8080/', { allowlist: ['exemplo.com'] }), /IPv6/);
+  assert.throws(() => guardNetworkEgress('ping [2001:db8::1]', { allowlist: ['exemplo.com'] }), /IPv6/);
+});
+
+test('remoto SSH do git continua sendo conferido', () => {
+  assert.throws(() => guardNetworkEgress('git clone git@gitlab.com:user/repo.git', { allowlist: ['github.com'] }),
+    /destino 'gitlab\.com'/);
+  guardNetworkEgress('git clone git@github.com:user/repo.git', { allowlist: ['github.com'] });
+});
