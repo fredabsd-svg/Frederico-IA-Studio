@@ -24,7 +24,13 @@ que ainda segura o verde é o **pipeline multimodelo retomável**: o F-15 entreg
 tabela e as primitivas, mas o `runMultiModel` ainda não as usa, então o reinício continua
 sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** a **Frente 3 — Integração do coordenador durável no
+- **Último trabalho:** a **Frente 6 — Extração de memória usa o modelo da
+  conversa** corrigiu o ruído nos E2E. O `indexAfterReply` agora recebe o
+  `modelRef` da conversa (via `loop.js`, `multiModel.js`, `orchestrator.js`)
+  e o repassa ao `getUserProvider`, eliminando o 404 de "modelo não pertence a
+  este provedor" em contas multi-chave. O log virou `console.warn` com mensagem
+  mais informativa. 9 testes unitários cobrem a precedência.
+  Antes dela, a **Frente 3 — Integração do coordenador durável no
   `runMultiModel`** fechou o risco F-15: o pipeline multimodelo agora persiste
   o `currentStage` e o `state_json` entre etapas na tabela `pipeline_runs`
   (migration 027), retoma do estágio correto pelo `/resume`, completa runs como
@@ -1277,12 +1283,9 @@ antes do aviso.
 
 ## Próximos passos (em ordem)
 
-1. **Frente 4 — Vulnerabilidades de dependências.** O CI acusa `3 vulnerabilities
-   (2 moderate, 1 high)` no backend e `1 high` no frontend em todo `npm ci`.
-2. **Frente 5 — IPv6 + `git` na allowlist de egress do sandbox.**
-   `parseAllowlistEntry` declara que IPv6 ficou de fora; `extractHostCandidates`
-   não varre `git`.
-3. **Frentes seguintes** conforme o backlog ordenado.
+1. **Frente 7 — Reconciliação de sandbox ligada por padrão.** `SANDBOX_RECONCILE_ON_BOOT=false`
+   desliga a coleta de containers órfãos; em produção, crash deixa lixo.
+2. **Frentes seguintes** conforme o backlog ordenado.
 
 ---
 

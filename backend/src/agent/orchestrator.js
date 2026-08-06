@@ -344,7 +344,7 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
     }
     const doneMsgId = await saveMessage(userId, conversationId, 'assistant', finalText, { memoryMeta });
     onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId: doneMsgId });
-    indexAfterReply(userId, conversationId).catch(() => {});
+    indexAfterReply(userId, conversationId, coordModel).catch(() => {});
     return { text: finalText, usage, model: coordModel, stopped };
   } finally {
     releaseConversationControl(conversationId, control);

@@ -12,11 +12,16 @@ import { resolveDefaultModelRef } from '../defaults.js';
 // Indexa conversas (chunks + resumo) e extrai fatos importantes para a
 // memória de longo prazo. Roda em segundo plano, sem atrasar as respostas.
 
-// EXTRACT_MODEL tem precedência sobre DEEPSEEK_MODEL porque é uma chamada
-// barata de segundo plano (resumos, fatos) — quem configura quer fixar um
-// modelo menor, não usar o principal. O default final vem de
-// `resolveDefaultModelRef()`, mesma constante que seed/rotas usam.
-const EXTRACT_MODEL = () => process.env.EXTRACT_MODEL || resolveDefaultModelRef();
+// Modelo usado para extração de fatos. Se o chamador informar o modelRef
+// da conversa, a extração usa o MESMO provedor da resposta, evitando 404
+// de "modelo não pertence a este provedor" nos E2E e em contas multi-chave.
+// EXTRACT_MODEL (env) tem precedência para quem quer fixar um modelo menor;
+// modelRef da conversa é o fallback; resolveDefaultModelRef() é o último.
+function resolveExtractModel(modelRef) {
+  if (process.env.EXTRACT_MODEL) return process.env.EXTRACT_MODEL;
+  return modelRef || resolveDefaultModelRef();
+}
+export { resolveExtractModel };
 
 // Estimativa de tokens ciente de alfabeto. O fator plano len/3.5 é calibrado
 // para texto latino e SUBESTIMA 2–3× em japonês/chinês/coreano, árabe, cirílico
@@ -74,8 +79,9 @@ function parseExtraction(text) {
   };
 }
 
-// Chamado após cada resposta do assistente (fire-and-forget)
-export async function indexAfterReply(userId, conversationId) {
+// Chamado após cada resposta do assistente (fire-and-forget).
+// modelRef opcional: herdado da conversa para usar o provedor certo.
+export async function indexAfterReply(userId, conversationId, modelRef = null) {
   const s = getSettings();
   if (!s.memory_enabled) return;
   const conv = await db.prepare('SELECT * FROM conversations WHERE id=? AND user_id=?').get(conversationId, userId);
@@ -109,15 +115,16 @@ export async function indexAfterReply(userId, conversationId) {
   // local/grátis, continua sendo salvo sempre.
   if (!s.auto_memory) return;
   if (s.economy_mode && msgs.length % 4 !== 0) return;
-  // BYOK: a extração de fatos (LLM) usa a chave do próprio usuário; sem chave,
-  // pula a extração (o chunk local acima, grátis, já foi salvo).
-  const provider = await getUserProvider(userId);
+  // BYOK: a extração de fatos (LLM) usa a chave do próprio usuário — de
+  // preferência a do modelo que está na conversa (modelRef), para não dar
+  // 404 de "modelo não pertence a este provedor" em contas multi-chave.
+  const provider = await getUserProvider(userId, modelRef || undefined);
   if (!provider.client) return;
   try {
     const recent = msgs.slice(-6).map(m => `${m.role === 'user' ? 'Usuário' : 'Assistente'}: ${m.content.slice(0, 700)}`).join('\n');
     const input = `Resumo atual da conversa: ${conv.summary_short || '(nenhum)'}\nTotal de mensagens: ${msgs.length}\n\nTrecho recente:\n${recent}`;
     const completion = await provider.client.chat.completions.create({
-      model: EXTRACT_MODEL(),
+      model: resolveExtractModel(modelRef),
       messages: [{ role: 'system', content: EXTRACT_PROMPT }, { role: 'user', content: untrustedContext('memory-extraction-input', input) }],
       temperature: 0,
       // Mesma política de qualidade das respostas principais: mesmo sendo uma
@@ -160,7 +167,10 @@ export async function indexAfterReply(userId, conversationId) {
       else await addMemory(userId, payload);
     }
   } catch (err) {
-    console.error('[memória] extração falhou (segue sem):', err.message);
+    // A extração de memória é otimização (fire-and-forget): falha não
+    // bloqueia a conversa. Log único e informativo — sem stack trace
+    // para não poluir o output quando o provedor falso dos E2E recusa.
+    console.warn('[memória] extração de fatos indisponível (segue sem):', err.message);
   }
 }
 
@@ -263,7 +273,7 @@ export async function importConversations(userId, fileName, buffer, scope = 'glo
     if (!provider.client) continue;                        // sem chave: só os chunks (grátis)
     try {
       const completion = await provider.client.chat.completions.create({
-        model: EXTRACT_MODEL(),
+        model: resolveExtractModel(null),
         messages: [{ role: 'system', content: EXTRACT_PROMPT }, { role: 'user', content: untrustedContext('imported-conversation', `Conversa importada "${conv.title}":\n${body.slice(0, 5000)}`) }],
         temperature: 0,
         // Mesma política de qualidade das respostas principais (evita fp4 etc.).
