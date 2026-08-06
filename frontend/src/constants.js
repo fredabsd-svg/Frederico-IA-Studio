@@ -125,3 +125,14 @@ export const EFFORTS = [
 ];
 
 export const emptyForm = () => ({ id: null, name: '', emoji: 'bot', color: '', model: '', system_prompt: '', template: '', tools: TOOL_INFO.map(t => t.name), personality: { form: 50, det: 50, criat: 20 } });
+
+// Multimodelo: rótulos dos modos de colaboração (usado no MultiModelBoard,
+// Landing e MultiModelPicker). Extraído para constants para que Landing e
+// MultiModelPicker não importem o MultiModelBoard inteiro estaticamente,
+// anulando o code splitting do App.jsx.
+export const MULTI_MODE_LABEL = {
+  compare: 'Comparação',
+  council: 'Conselho de IAs',
+  debate: 'Debate',
+  pipeline: 'Especialistas em sequência'
+};

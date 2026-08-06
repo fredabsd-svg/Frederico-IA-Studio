@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Layers, Plus, X, Check, ChevronDown, Save, Trash2, Users, Coins } from 'lucide-react';
 import { API } from '../constants.js';
-import { MULTI_MODE_LABEL } from './MultiModelBoard.jsx';
+import { MULTI_MODE_LABEL } from '../constants.js';
 
 // Seletor MULTIMODELO da barra superior: liga/desliga o modo, escolhe os
 // modelos e a função de cada um, o modo de colaboração, o coordenador, o

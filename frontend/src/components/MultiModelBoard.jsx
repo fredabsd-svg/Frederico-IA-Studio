@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import { Copy, Check, Square, ArrowRightCircle, MessageSquareQuote, Layers, Coins, Clock3, AlertTriangle, ChevronDown, ChevronRight, Maximize2, X, GitCompare, Users, Swords, Workflow, Gavel } from 'lucide-react';
+import { MULTI_MODE_LABEL } from '../constants.js';
 
 // Quadro da execução MULTIMODELO. Cada MODO tem uma apresentação própria,
 // coerente com a sua lógica de execução:
@@ -11,13 +12,6 @@ import { Copy, Check, Square, ArrowRightCircle, MessageSquareQuote, Layers, Coin
 //   debate   — organizado por rodadas (crítica/réplica) + conclusão;
 //   pipeline — linha do tempo vertical numerada (cadeia); a última etapa é o
 //              "Resultado final da sequência", sem síntese extra.
-
-export const MULTI_MODE_LABEL = {
-  compare: 'Comparação',
-  council: 'Conselho de IAs',
-  debate: 'Debate',
-  pipeline: 'Especialistas em sequência'
-};
 
 const MODE_ICON = { compare: GitCompare, council: Users, debate: Swords, pipeline: Workflow };
 const MODE_HINT = {

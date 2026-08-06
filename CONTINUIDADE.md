@@ -60,6 +60,11 @@ sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md
   `App.jsx` de 1550 para ~1480 linhas. Comportamento idêntico: 77 testes
   passam, build OK. As próximas etapas (estado da conversa, estado da
   execução, drawers/configurações) estão registradas abaixo.
+- **Último trabalho:** a **Frente 10 — MultiModelBoard fora do chunk principal**
+  moveu `MULTI_MODE_LABEL` para `constants.js`, eliminando o import estático do
+  `MultiModelBoard` no `Landing.jsx` e `MultiModelPicker.jsx`. O aviso
+  `INEFFECTIVE_DYNAMIC_IMPORT` sumiu do build; chunk principal caiu de 922 para
+  907 KB; `MultiModelBoard` ganhou chunk próprio (13.82 KB).
   Antes dela, a **Frente 4 — Vulnerabilidades de dependências** zerou
   as 4 vulnerabilidades do `npm audit`: no backend, o override `uuid: ^11.1.1`
   corrigiu o dockerode (moderate) e o `npm audit fix` atualizou `ip-address`
@@ -1370,6 +1375,8 @@ antes do aviso.
    duplicar ferramentas. Fecha o F-14 de verdade.
 1. **Frente 9 — Desmontar o App.jsx (etapa 1: shell).** Extrair shell (layout,
    sidebar, drawers de abertura) para componentes próprios, sem mudar comportamento.
+1. **Frente 11 — Inventário e poda do CSS.** ~206 KB de CSS num arquivo único
+   (`styles.css`), dívida declarada do F-21.
 2. **Frentes seguintes** conforme o backlog ordenado.
 1. **Frente 9 — Desmontar o App.jsx (etapas 2-4):** a etapa 1 (shell/sidebar)
    está feita nesta PR. Faltam: etapa 2 (estado da conversa), etapa 3 (estado
