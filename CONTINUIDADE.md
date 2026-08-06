@@ -81,6 +81,18 @@ sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md
   E2E ponta a ponta — o ambiente deste sandbox não tem servidor Postgres
   nem `/opt/pw-browsers/`, então a prova visual de UI ficou fora. A
   catraca impede regredir; o detector é determinístico.
+- **Último trabalho:** a **Frente 14 — Métricas operacionais reais no painel admin**
+  instrumentou a tabela `usage` com `feature` (TEXT) e `cost_usd` (NUMERIC(10,6)),
+  centralizou os 7 INSERTs espalhados por 6 arquivos num único helper `recordUsage()`
+  com lista canônica de features (`chat`, `multimodel`, `design`, `design-image`,
+  `scheduled-task`), e expôs a rota admin `GET /api/admin/usage/dashboard` —
+  agregado por feature (hoje/7d/30d), custo mensal, top 5 usuários 30d, top 10
+  modelos no mês e pressão de cota contra `FREE_TIER_DAILY_LIMIT`. Falha no
+  INSERT é logada mas não propaga; custo estimado em USD só entra quando o
+  profile do modelo tem `pricingKnown`. Sem DB ativo no sandbox: 4 testes do
+  helper pulados, 4 testes do dashboard passam, 85/85 do Design intactos,
+  10/10 do routes/, 81/81 do frontend, lint limpo nos 243 arquivos do backend.
+  Doc: `docs/OBSERVABILITY.md`.
 - **Último trabalho:** a **Frente 10 — MultiModelBoard fora do chunk principal**
   moveu `MULTI_MODE_LABEL` para `constants.js`, eliminando o import estático do
   `MultiModelBoard` no `Landing.jsx` e `MultiModelPicker.jsx`. O aviso
@@ -1381,42 +1393,47 @@ antes do aviso.
 
 ## Próximos passos (em ordem)
 
-0. **Frente 13 — Modo Design: compressão automática de imagens (mergeada).**
-   Branch `t6-frente-13-design-image-compression`. Migration 030 adiciona
-   `original_mime/original_size/original_data/compressed_at` em
-   `design_images` (índice parcial para o purge). `design/compress.js`
-   re-encoda PNG > 1 MB em JPEG q=85 antes da checagem de cota;
-   preserva o original em colunas separadas por 30 dias.
-   `designAdmin.js` expõe métricas (`/admin/design/image-stats`) e o
-   purge (`POST /admin/design/purge-stale-image-originals?days=N`,
-   `requireAdmin` + `recordAdminAction`). Testes: `compress.test.js`
-   (puro, 7 casos incluindo fallback de input corrompido) e 3 novos
-   casos em `images.test.js` (compressão com auditoria, não-compressão
-   de imagens pequenas, listagem com metadados). Doc:
-   `docs/DESIGN_STUDIO.md` §Compressão automática.
+0. **Frente 14 — Métricas operacionais reais no painel admin (mergeada).**
+   Branch `t6-frente-14-operational-metrics`. Migration 031 adiciona
+   `feature` (TEXT) e `cost_usd` (NUMERIC(10,6)) em `usage`, com 2
+   índices para agregação. Helper `recordUsage()` em `src/usage.js`
+   centraliza os 7 INSERTs espalhados por 6 arquivos (`tasks.js`,
+   `conversations.js` ×3, `design.js`, `design/images.js`), com
+   `KNOWN_FEATURES` canônico (`chat`, `multimodel`, `design`,
+   `design-image`, `scheduled-task`) e estimativa automática de
+   `cost_usd` quando o profile tem `pricingKnown`. Rota admin nova:
+   `GET /api/admin/usage/dashboard` retorna agregado por feature
+   (hoje/7d/30d), custo mensal, top 5 usuários 30d, top 10 modelos
+   no mês e pressão de cota (`FREE_TIER_DAILY_LIMIT × 0.8`). Falha
+   no INSERT é logada mas NÃO propaga (cobrança é secundária).
+   Testes: 4 do helper (cost, feature desconhecida, sem userId) e 4
+   do dashboard (startOfUtcDay, lista canônica, exports, quotaPressure
+   sem env). Doc: `docs/OBSERVABILITY.md`.
 1. **Frente 13 (antiga, renumerada) — Modo Design: compartilhamento público.** O token de prévia
    já existe; falta a tela pública sobre ele. Rota pública mínima (Regra 2.2)
    servindo a prévia por token, sem sessão; revogação. Testes de autorização
    (válido/inválido/revogado); `docs/SECURITY.md`.
-2. **Frente 14 — Sub-agentes: controle na interface.** Backend pronto; falta
-   o controle "automático / desligado / obrigatório" e o motivo de
-   indisponibilidade visível. `shouldOfferSubagentTool` respeita a
-   preferência.
-3. **Frente 15 — Sonda de tool calling na primeira delegação.** O catálogo
+2. **Frente 15 — Sonda de tool calling na primeira delegação.** O catálogo
    persistido (`model_tool_capability_cache`) registra capacidade DEPOIS da
    falha — a primeira delegação a um modelo sem suporte é desperdiçada.
    Sonda barata; resultado vai ao catálogo.
-4. **Frente 9 — Desmontar o `App.jsx` (etapas 2-4):** a etapa 1 (shell/sidebar)
+3. **Frente 16 — UI admin consumindo `/api/admin/usage/dashboard`.** A
+   rota existe (Frente 14) mas é só via API/curl. Falta a tela simples
+   com KPIs + sparkline (sem gráfico pesado).
+4. **Frente 17 — Calibração do `FREE_TIER_DAILY_LIMIT` com dado real.**
+   Agora temos `tokens_30d` por tier (Frente 14). O limite sai do
+   percentil 95 dos usuários ativos para não cortar cauda longa.
+5. **Frente 9 — Desmontar o `App.jsx` (etapas 2-4):** a etapa 1 (shell/sidebar)
    está feita. Faltam: etapa 2 (estado da conversa), etapa 3 (estado da
    execução), etapa 4 (drawers/configurações). Plano completo em
    `docs/ARCHITECTURE.md`.
-5. **Pendência conhecida — 123 regras mistas no inventário CSS:** regras
+6. **Pendência conhecida — 123 regras mistas no inventário CSS:** regras
    que combinam classes mortas com classes vivas (ex.: `.morta .viva`,
    `.morta.viva`). Não foram tocadas na frente 11 porque a remoção segura
    depende de validação visual com E2E ponta a ponta, indisponível neste
    sandbox (sem Postgres + `/opt/pw-browsers/`). Ficam para frente futura
    com ambiente completo. O detector já as expõe em `dist/cssInventory.json`.
-6. **Pendência da Frente 12 — refinamentos do "Imagem no artefato":**
+7. **Pendência da Frente 12 — refinamentos do "Imagem no artefato":**
    a frente entregou o caminho mínimo (gerar via diálogo + aplicar via
    prompt). **(d) compressão/otimização antes de gravar → entregue na
    Frente 13.** Restam para frente futura: (a) geração automática via

@@ -23,6 +23,7 @@ import { validateAttachmentManifest } from '../attachments.js';
 import { kickProcessing, mimeForName } from '../docling/service.js';
 import { purgeIfOrphan } from '../docling/retention.js';
 import { resolveDefaultModelRef } from '../defaults.js';
+import { recordUsage } from '../usage.js';
 
 const router = makeRouter();
 
@@ -557,8 +558,16 @@ router.post('/conversations/:id/chat', validate(schemas.chat), async (req, res) 
     }
     // Registra o consumo de tokens para o painel de análises
     if (result?.usage) {
-      await db.prepare('INSERT INTO usage (id,user_id,conversation_id,assistant_id,model,kind,prompt_tokens,completion_tokens,total_tokens,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
-        .run(nanoid(), req.userId, req.params.id, usageAssistantId, result.model, kind, result.usage.prompt_tokens, result.usage.completion_tokens, result.usage.total_tokens, now());
+      await recordUsage({
+        userId: req.userId,
+        conversationId: req.params.id,
+        assistantId: usageAssistantId,
+        model: result.model,
+        kind,
+        feature: 'chat',
+        promptTokens: result.usage.prompt_tokens,
+        completionTokens: result.usage.completion_tokens,
+      });
     }
     // MODO GRATUITO: contabiliza no limite diário, registra o evento (auditoria/
     // painel admin) e manda o status atualizado (restante/renovação) ao front.
@@ -663,8 +672,16 @@ router.post('/conversations/:id/resume', async (req, res) => {
         onEvent: send
       });
       if (result?.usage) {
-        await db.prepare('INSERT INTO usage (id,user_id,conversation_id,assistant_id,model,kind,prompt_tokens,completion_tokens,total_tokens,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
-          .run(nanoid(), req.userId, conversationId, null, result.model, 'multimodelo', result.usage.prompt_tokens, result.usage.completion_tokens, result.usage.total_tokens, now());
+        await recordUsage({
+          userId: req.userId,
+          conversationId,
+          assistantId: null,
+          model: result.model,
+          kind: 'multimodelo',
+          feature: 'multimodel',
+          promptTokens: result.usage.prompt_tokens,
+          completionTokens: result.usage.completion_tokens,
+        });
       }
       send({ type: 'done' });
     } catch (err) {
@@ -756,8 +773,16 @@ router.post('/conversations/:id/resume', async (req, res) => {
     const chatOutcome = classifyTaskResult(result);
     if (chatOutcome.status === 'error') send({ type: 'execution_failed', content: chatOutcome.error });
     if (result?.usage) {
-      await db.prepare('INSERT INTO usage (id,user_id,conversation_id,assistant_id,model,kind,prompt_tokens,completion_tokens,total_tokens,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
-        .run(nanoid(), req.userId, conversationId, meta.assistantId || null, result.model, 'chat', result.usage.prompt_tokens, result.usage.completion_tokens, result.usage.total_tokens, now());
+      await recordUsage({
+        userId: req.userId,
+        conversationId,
+        assistantId: meta.assistantId || null,
+        model: result.model,
+        kind: 'chat',
+        feature: 'chat',
+        promptTokens: result.usage.prompt_tokens,
+        completionTokens: result.usage.completion_tokens,
+      });
     }
     if (freeMode) {
       const tokens = result?.usage?.total_tokens || 0;

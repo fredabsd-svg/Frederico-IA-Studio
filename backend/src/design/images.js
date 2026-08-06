@@ -21,6 +21,7 @@ import { nanoid } from 'nanoid';
 import { db, now } from '../db.js';
 import { resolveImageProvider } from '../imageProvider.js';
 import { compressIfWorthy } from './compress.js';
+import { recordUsage } from '../usage.js';
 
 // Limites. O teto por imagem é o que o OpenRouter costuma devolver; o teto por
 // projeto impede que um usuário gere 200 imagens de 5 MB e infle o banco.
@@ -193,11 +194,14 @@ export async function generateDesignImage({ userId, projectId, prompt, model = '
   );
 
   if (result.usage) {
-    await db.prepare(
-      `INSERT INTO usage (id,user_id,conversation_id,assistant_id,model,kind,prompt_tokens,completion_tokens,total_tokens,created_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?)`
-    ).run(nanoid(), userId, null, null, result.model || choice.model, 'design_image',
-      result.usage.prompt_tokens || 0, result.usage.completion_tokens || 0, result.usage.total_tokens || 0, t);
+    await recordUsage({
+      userId,
+      model: result.model || choice.model,
+      kind: 'design_image',
+      feature: 'design-image',
+      promptTokens: result.usage.prompt_tokens || 0,
+      completionTokens: result.usage.completion_tokens || 0,
+    });
   }
 
   return {

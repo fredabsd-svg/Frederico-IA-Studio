@@ -37,6 +37,7 @@ import {
   listDesignSystems, getDesignSystem, createDesignSystem, updateDesignSystem, deleteDesignSystem,
   serializeProject, serializeVersion,
 } from '../design/store.js';
+import { recordUsage } from '../usage.js';
 
 const router = makeRouter();
 
@@ -257,10 +258,14 @@ async function runGeneration(req, project, prompt) {
   );
 
   if (result.usage) {
-    await db.prepare(
-      'INSERT INTO usage (id,user_id,conversation_id,assistant_id,model,kind,prompt_tokens,completion_tokens,total_tokens,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)'
-    ).run(nanoid(), req.userId, null, null, result.model, 'design',
-      result.usage.prompt_tokens || 0, result.usage.completion_tokens || 0, result.usage.total_tokens || 0, now());
+    await recordUsage({
+      userId: req.userId,
+      model: result.model,
+      kind: 'design',
+      feature: 'design',
+      promptTokens: result.usage.prompt_tokens || 0,
+      completionTokens: result.usage.completion_tokens || 0,
+    });
   }
 
   return { ok: true, version: created };

@@ -39,6 +39,7 @@ import copilotRouter from './routes/copilot.js';
 import doclingRouter from './routes/docling.js';
 import designRouter from './routes/design.js';
 import designAdminRouter from './routes/designAdmin.js';
+import usageDashboardRouter from './routes/usageDashboard.js';
 import { healthMetrics } from './healthMetrics.js';
 import { sweepStaleUploadTemps } from './uploads.js';
 import { sweepStalePipelineRuns } from './agent/pipelineRuns.js';
@@ -176,6 +177,7 @@ app.use('/api', copilotRouter);
 app.use('/api', doclingRouter);
 app.use('/api', designRouter);
 app.use('/api', designAdminRouter);
+app.use('/api', usageDashboardRouter);
 
 // LGPD — retenção automática: com CONVERSATION_RETENTION_DAYS > 0, apaga
 // conversas paradas há mais de N dias (varredura a cada 6 h; desligada por padrão).

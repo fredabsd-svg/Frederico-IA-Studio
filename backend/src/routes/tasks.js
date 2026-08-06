@@ -1,6 +1,7 @@
 // Rotas de tasks — movidas do server.js na modularização (mesma lógica,
 // mesmo comportamento). Montado em /api pelo server.js.
 import { nanoid } from 'nanoid';
+import { recordUsage } from '../usage.js';
 import { db, now } from '../db.js';
 import { runAgent, setControl, isConversationActive, friendlyApiError } from '../agent.js';
 import { classifyTaskResult } from '../taskOutcome.js';
@@ -30,8 +31,16 @@ export async function processTasks() {
         };
         const result = await runAgent({ userId: t.user_id, conversationId: t.conversation_id, userText: t.prompt, model: t.model, assistant, webSearch: !!t.web_search, onEvent });
         if (result?.usage) {
-          await db.prepare('INSERT INTO usage (id,user_id,conversation_id,assistant_id,model,kind,prompt_tokens,completion_tokens,total_tokens,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
-            .run(nanoid(), t.user_id, t.conversation_id, t.assistant_id, result.model, 'tarefa', result.usage.prompt_tokens, result.usage.completion_tokens, result.usage.total_tokens, now());
+          await recordUsage({
+            userId: t.user_id,
+            conversationId: t.conversation_id,
+            assistantId: t.assistant_id,
+            model: result.model,
+            kind: 'tarefa',
+            feature: 'scheduled-task',
+            promptTokens: result.usage.prompt_tokens,
+            completionTokens: result.usage.completion_tokens,
+          });
         }
         const outcome = classifyTaskResult(result);
         await db.prepare("UPDATE tasks SET status=?, finished_at=?, result_text=?, progress_text=?, error=? WHERE id=?")
