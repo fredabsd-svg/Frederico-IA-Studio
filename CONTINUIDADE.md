@@ -44,6 +44,12 @@ sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md
   e o repassa ao `getUserProvider`, eliminando o 404 de "modelo não pertence a
   este provedor" em contas multi-chave. O log virou `console.warn` com mensagem
   mais informativa. 9 testes unitários cobrem a precedência.
+- **Último trabalho:** a **Frente 7 — Reconciliação de sandbox ligada por
+  padrão** ajustou a política de `SANDBOX_RECONCILE_ON_BOOT`: fora de
+  `NODE_ENV=test` a reconciliação é LIGADA por padrão (remove containers
+  órfãos no boot); em teste, DESLIGADA (a suíte não tem Docker). O boot
+  agora sempre relata o resultado da reconciliação (mesmo sem órfãos).
+  5 testes de política pura cobrem todos os cenários.
 - **Último trabalho:** a **Frente 9 — Desmontar o App.jsx (etapa 1: shell)**
   extraiu a sidebar (~70 linhas de JSX) para `Sidebar.jsx`, reduzindo o
   `App.jsx` de 1550 para ~1480 linhas. Comportamento idêntico: 77 testes
@@ -1354,6 +1360,9 @@ antes do aviso.
    ativo da conversa.
 1. **Frente 7 — Reconciliação de sandbox ligada por padrão.** `SANDBOX_RECONCILE_ON_BOOT=false`
    desliga a coleta de containers órfãos; em produção, crash deixa lixo.
+1. **Frente 8 — Retomada real pós-kill-9.** Teste de integração com `child_process`: 
+   processo A grava checkpoint mid-run e leva SIGKILL; processo B lê e retoma sem
+   duplicar ferramentas. Fecha o F-14 de verdade.
 2. **Frentes seguintes** conforme o backlog ordenado.
 1. **Frente 9 — Desmontar o App.jsx (etapas 2-4):** a etapa 1 (shell/sidebar)
    está feita nesta PR. Faltam: etapa 2 (estado da conversa), etapa 3 (estado
