@@ -30,6 +30,14 @@ sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md
   code splitting (cada chunk novo soma invólucro), reprovando o PR da Frente 10 que
   BAIXOU a primeira pintura de 909 para 896 KB. Agora são dois tetos — entrada
   (920 KB) e total (1.100 KB) — e a regra roda no `npm run check`, não só no CI.
+- **Último trabalho:** a **Frente 5 — IPv6 + `git` na allowlist de egress do
+  sandbox** fechou duas lacunas do F-05b: endereços IPv6 literais (`[::1]`,
+  `[2001:db8::1]`) são bloqueados com mensagem clara quando a allowlist está
+  ativa (fail-closed), e comandos `git` (clone/push/pull/fetch/remote)
+  passaram a ser varridos pela extração de hosts. 10 testes novos; casos
+  existentes intactos.
+  Antes dela, a **Frente 4 — Vulnerabilidades de dependências** (#173) zerou
+  as 4 vulnerabilidades com overrides em `package.json`.
 - **Último trabalho:** a **Frente 6 — Extração de memória usa o modelo da
   conversa** corrigiu o ruído nos E2E. O `indexAfterReply` agora recebe o
   `modelRef` da conversa (via `loop.js`, `multiModel.js`, `orchestrator.js`)
@@ -1330,6 +1338,10 @@ antes do aviso.
 1. **Frente 5 — IPv6 + `git` na allowlist de egress do sandbox.**
    `parseAllowlistEntry` declara que IPv6 ficou de fora; `extractHostCandidates`
    não varre `git`.
+1. **Frente 6 — Extração de memória usa o modelo da conversa.** Em E2E aparece
+   `[memória] extração falhou (segue sem): 404 Modelo não faz parte deste
+   provedor falso` — a extração de memória usa o default do app em vez do modelo
+   ativo da conversa.
 1. **Frente 7 — Reconciliação de sandbox ligada por padrão.** `SANDBOX_RECONCILE_ON_BOOT=false`
    desliga a coleta de containers órfãos; em produção, crash deixa lixo.
 2. **Frentes seguintes** conforme o backlog ordenado.
