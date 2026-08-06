@@ -13,7 +13,9 @@ import { getSettings } from '../memory/memoryService.js';
 import { isLowSignalTurn, LOW_SIGNAL_TURN_NOTE } from '../memory/retrievalPolicy.js';
 import { buildModelRuntimeState, isUnsupportedToolError, isUnsupportedVisionError, isModelUnavailableError, isToolChoiceReasoningConflictError, markModelCapabilityUnsupported, modelCompatibilityMessage } from '../modelCapabilities.js';
 import { createToolProtocolStreamGuard, parseTextToolCalls, sanitizeToolProtocolText } from '../toolProtocol.js';
-import { githubToolDefinitions, GITHUB_WRITE_TOOLS, hasGithubConnection } from '../connectors/github.js';
+import { hasGithubConnection } from '../connectors/github.js';
+import { githubPreflight, githubPreflightNote, githubToolsForContext, normalizeGithubWriteAuthorization } from './githubAccess.js';
+import { ASK_USER_TOOL_NAME, askUserToolDefinition, normalizeInputRequest, shouldOfferAskUser, textInputRequest } from './userInputRequest.js';
 import { effortCfg, promptFor, promptManifestFor, toolsFor, temperatureFor, developerContextFor, toolAvailabilityNote, ENVIRONMENT_QUERY_RE, verifiedEnvironmentNote, pcFoldersNote, uploadsNote, clipForBriefing, BRIEFING_CHAR_LIMIT, QUALITY_BAR, PLAN_DELEGATION_TOPIC } from './prompts.js';
 import { listOutputs, mentionsOutputPath, recoverAlternateOutputs, referencedOutputFiles, fileSignature, validateOutputs } from './outputs.js';
 import { OUTPUT_DELIVERY_REPAIR_NOTE, MISSING_OUTPUT_NOTICE, EXECUTION_COMPLETION_REPAIR_NOTE, EXECUTION_INCOMPLETE_NOTICE, TOOL_PROTOCOL_REPAIR_NOTE, TOOL_PROTOCOL_FAILURE_NOTICE, RESPONSE_TRUNCATED_REPAIR_NOTE, RESPONSE_TRUNCATED_NOTICE, EXECUTION_CONTRACT_NOTE, MACRO_REQUEST_RE, MACRO_LIMITATION_NOTE, DEGEN_CHECK_STEP, looksDegenerate, shouldRepairOutputDelivery, shouldRepairExecution, shouldContinueAfterTruncation, materializeTextOutput, endsAwaitingUserReply } from './repair.js';
@@ -68,7 +70,7 @@ export function buildOutputBaseline(files = [], { acceptAll = false, continuatio
 // um run interrompido — array de mensagens do agente, modelo ativo, cadeia de
 // failover já tentada e o objetivo. Com ele, o loop CONTINUA de onde parou (com
 // orçamento de ciclos NOVO), em vez de recomeçar do zero. Ver checkpoint.js.
-export async function runAgent({ userId, conversationId, userText, model, assistant, webSearch, effort, developer, onEvent, saveUserMessage = true, existingUserMessageId = null, executionBriefing = null, forceExecution = false, control: inheritedControl = null, resume = null, gitWriteAuthorization = null, persistReply = true, continuationOutputPaths = [], subagentDepth = 0, delegation = null, runIdOverride = null, outputsSubdir = null, subagentRunBudget = null }) {
+export async function runAgent({ userId, conversationId, userText, model, assistant, webSearch, effort, developer, onEvent, saveUserMessage = true, existingUserMessageId = null, executionBriefing = null, forceExecution = false, interactive = true, control: inheritedControl = null, resume = null, gitWriteAuthorization = null, persistReply = true, continuationOutputPaths = [], subagentDepth = 0, delegation = null, runIdOverride = null, outputsSubdir = null, subagentRunBudget = null }) {
   // Execução DELEGADA (sub-agente): compartilha a conversa e o workspace com o
   // pai, mas não é dona da conversa — não grava mensagem, não grava checkpoint
   // e não delega de novo. Quem responde ao usuário e é retomável é o pai.
@@ -133,16 +135,49 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   // desenvolvedor (para não instruir o clone quando não há conexão) quanto o
   // gate das ferramentas github_* mais abaixo.
   const githubConnected = await hasGithubConnection(userId);
-  const gitWriteAuthorized = gitWriteAuthorization == null
+  // AUTORIZAÇÃO DE PUBLICAÇÃO — duas fontes, nesta ordem:
+  //   1. estruturada, registrada por ação explícita do usuário e escopada a
+  //      repositório/branch/base/ações (`developer.permissions`). Sobrevive a
+  //      turnos seguintes e à retomada, porque viaja no checkpoint junto com
+  //      `developer`;
+  //   2. o texto DESTE turno ("faça o commit e abra o PR"), mantido por
+  //      compatibilidade — mas escopado ao vínculo, nunca global.
+  // O parâmetro `gitWriteAuthorization` continua aceito (chamadores internos e
+  // testes) e, quando vem `false`, VETA as duas fontes.
+  const structuredGithubAuthorization = normalizeGithubWriteAuthorization(developer?.permissions);
+  const turnAuthorizesGitWrite = gitWriteAuthorization == null
     ? explicitlyAuthorizesGitWrite(userText)
     : Boolean(gitWriteAuthorization);
+  const lowSignalTurn = isLowSignalTurn(userText);
   // O filho herda o contexto do Modo Desenvolvedor do pai INTEIRO (modo,
   // projeto, repositório, escopo de escrita). Sem isso, o pai rodava com
   // política `write:<projeto>` e o filho com `read-only`/`default`: na primeira
   // ferramenta o filho derrubava o container do pai e criava outro, o pai
   // devolvia o favor na ferramenta seguinte, e o resultado era comando morto no
   // meio, arquivo pela metade e falha impossível de reproduzir.
-  const developerContext = inherited ? inherited.developerContext : developerContextFor(developer, userId, { githubConnected, gitWriteAuthorized });
+  //
+  // A montagem é em DUAS passadas de propósito: o pré-voo do GitHub precisa
+  // conhecer o VÍNCULO (repositório/branch/modo) para decidir a publicação, e a
+  // nota do Modo Desenvolvedor precisa da DECISÃO do pré-voo para não anunciar
+  // "publicação autorizada" quando o executor não recebeu github_push. Antes, as
+  // duas coisas eram calculadas de fontes diferentes — e divergiam.
+  // `developerContextFor` é pura e barata (só lê os mounts do usuário).
+  const bindingContext = inherited
+    ? inherited.developerContext
+    : developerContextFor(developer, userId, { githubConnected, gitWriteAuthorized: false });
+  const githubState = githubPreflight({
+    githubConnected,
+    developerContext: bindingContext,
+    authorization: structuredGithubAuthorization,
+    turnAuthorizesWrite: turnAuthorizesGitWrite && gitWriteAuthorization !== false,
+    base: structuredGithubAuthorization?.base || null,
+    lowSignalTurn,
+    isSubagent
+  });
+  const gitWriteAuthorized = githubState.writeAuthorized;
+  const developerContext = inherited
+    ? inherited.developerContext
+    : developerContextFor(developer, userId, { githubConnected, gitWriteAuthorized });
   // Projeto do Modo Desenvolvedor: espelha o projeto do navegador no servidor e
   // carimba a conversa. Sem este vínculo, o Context Builder não consegue
   // priorizar "as últimas conversas deste projeto" num chat novo — que é o que
@@ -164,7 +199,6 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   } catch (err) {
     console.error('[memória] vínculo do projeto falhou (segue sem):', err.message);
   }
-  const lowSignalTurn = isLowSignalTurn(userText);
   // A política persistente (Configurações → Sandbox e rede) decide o padrão:
   // automático (só quando o pedido pede), sempre ligada ou sempre desligada.
   // Não toca nas chamadas dos modelos — essas saem do backend.
@@ -212,17 +246,15 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   let requestedTools = toolsFor(assistant);
   if (developerContext?.readOnlyProject) requestedTools = requestedTools.filter(tool => !['write_file', 'zip_outputs', 'generate_image'].includes(tool.function.name));
   if (webSearchActive) requestedTools = [...requestedTools, ...webToolDefinitions];
-  // Conector GitHub: as ferramentas github_* só são oferecidas a quem conectou
-  // a conta (Configurações → Conectores). Em plan/review, as de escrita
-  // (push/PR) ficam de fora — esses modos não alteram nada.
-  if (!lowSignalTurn && githubConnected) {
-    // Em modo desenvolvedor de leitura (ask/plan/review), as ferramentas de
-    // escrita do GitHub (push/PR) ficam de fora — esses modos não alteram nada.
-    const githubTools = (!developerContext?.canWrite || !gitWriteAuthorized)
-      ? githubToolDefinitions.filter(tool => !GITHUB_WRITE_TOOLS.has(tool.function.name))
-      : githubToolDefinitions;
-    requestedTools = [...requestedTools, ...githubTools];
-  }
+  // Conector GitHub: UMA decisão, em `githubAccess.js` (o pré-voo `githubState`
+  // acima). O inventário sai dele e a nota do prompt lê o MESMO objeto — assim o
+  // que o modelo acredita ter e o que o executor tem nunca divergem.
+  const githubTools = githubToolsForContext(githubState);
+  // Uma nota, montada a partir do pré-voo, reaproveitada em toda reconstrução da
+  // mensagem de inventário (fallback sem ferramentas, fim da pesquisa web, troca
+  // de modelo). Sem isto, o estado da publicação sumia do prompt no meio do run.
+  const githubNote = githubPreflightNote(githubState);
+  if (githubTools.length) requestedTools = [...requestedTools, ...githubTools];
   if (lowSignalTurn) requestedTools = [];
   // TETO DO PAI. O filho monta a lista dele a partir do perfil do especialista;
   // aqui ela é podada pelas ferramentas que o PAI de fato tinha. Sem esta poda,
@@ -245,6 +277,16 @@ export async function runAgent({ userId, conversationId, userText, model, assist
     // escolhe um id que existe em vez de inventar "Fiscal" ou "Revisor".
     requestedTools = [...requestedTools, subagentToolDefinitionFor(await listSubagentSpecialists(userId))];
   }
+  // PERGUNTAR AO USUÁRIO: ferramenta interna, interceptada antes do runTool (não
+  // roda no sandbox, não toca arquivo nem rede). Fora para sub-agente (o filho
+  // não fala com a pessoa) e para tarefa de segundo plano (não há quem responda).
+  const askUserOffered = shouldOfferAskUser({
+    lowSignalTurn,
+    isSubagent,
+    forceExecution: forceExecution || interactive === false,
+    hasTools: requestedTools.length > 0
+  });
+  if (askUserOffered) requestedTools = [...requestedTools, askUserToolDefinition];
   const subagentBudget = maxSubagentsPerRun();
   // Teto de delegações SIMULTÂNEAS (as do mesmo lote correm em paralelo).
   const delegationSlot = createSubagentLimiter();
@@ -376,7 +418,7 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   //   estático (breakpoint 2 cai sobre ela por ser a última e ser system).
   const messages = [
     { role: 'system', content: `${chosenPrompt}\n\n${QUALITY_BAR}` },
-    { role: 'system', content: toolAvailabilityNote(tools, { includeInventory: includeEnvironmentInventory, sandboxNetworkEnabled }) }
+    { role: 'system', content: toolAvailabilityNote(tools, { includeInventory: includeEnvironmentInventory, sandboxNetworkEnabled, githubNote }) }
   ];
   if (executionBriefing) messages.push({ role: 'user', content: untrustedContext('team-briefing', clipForBriefing(String(executionBriefing), BRIEFING_CHAR_LIMIT)) });
   if (environmentNote) messages.push({ role: 'user', content: untrustedContext('verified-environment-output', environmentNote) });
@@ -531,7 +573,7 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
     reasoningEffort = candidateRuntime.reasoningEffort;
     toolFallbackApplied = false;
     forceNativeToolCall = mustInspectUploads && executedToolCalls === 0;
-    messages[1] = { role: 'system', content: toolAvailabilityNote(tools, { includeInventory: includeEnvironmentInventory, sandboxNetworkEnabled }) };
+    messages[1] = { role: 'system', content: toolAvailabilityNote(tools, { includeInventory: includeEnvironmentInventory, sandboxNetworkEnabled, githubNote }) };
     if (!resume) {
       if (candidatePlan.capabilities?.vision === true) {
         visionApplied = attachImagesToLastUserMessage(messages, imageUploadParts(userId, conversationId));
@@ -648,6 +690,11 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
   let webResearchStop = '';
   let webResearchConclusionAttempted = false;
   let awaitingUserReply = false;
+  // Solicitação estruturada de decisão do usuário (`ask_user`) ou, no fallback,
+  // a pergunta que o modelo deixou no fim do texto. Vai para o evento SSE
+  // `input_required` e para o `execution_meta` da mensagem — é o que permite à
+  // interface reconstruir a pergunta depois de um reload ou de um replay.
+  let inputRequest = null;
   // Checkpoint: motivo da interrupção que JUSTIFICA salvar estado p/ retomar
   // (limite de ciclos, falha de provedor/stall exaurido, parada do usuário).
   // Falhas de QUALIDADE (degeneração, protocolo) NÃO viram checkpoint — ali o
@@ -837,7 +884,7 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
       }
       toolFallbackApplied = true;
       tools = [];
-      messages[1] = { role: 'system', content: toolAvailabilityNote(tools, { sandboxNetworkEnabled }) };
+      messages[1] = { role: 'system', content: toolAvailabilityNote(tools, { sandboxNetworkEnabled, githubNote }) };
       onEvent({ type: 'status', content: 'Este modelo não oferece ferramentas; respondendo em texto.' });
       step -= 1;
       continue;
@@ -1011,7 +1058,7 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
       if (webResearchStop && !webResearchConclusionAttempted) {
         webResearchConclusionAttempted = true;
         tools = tools.filter(tool => !WEB_TOOL_NAMES.has(tool.function.name));
-        messages[1] = { role: 'system', content: toolAvailabilityNote(tools, { sandboxNetworkEnabled }) };
+        messages[1] = { role: 'system', content: toolAvailabilityNote(tools, { sandboxNetworkEnabled, githubNote }) };
         messages.push({ role: 'system', content: webResearchFinalizationNote(webResearchStop) });
         onEvent({ type: 'status', content: 'Reunindo o que encontrei e cruzando as fontes...' });
         step -= 1;
@@ -1031,7 +1078,12 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
       // "responder a própria pergunta" e decidir sozinho, sem o usuário conseguir
       // intervir. Em tarefas de segundo plano (forceExecution) não há usuário
       // presente para responder — lá o comportamento antigo continua valendo.
-      awaitingUserReply = !forceExecution && !missingClaimedOutput && endsAwaitingUserReply(content);
+      awaitingUserReply = !forceExecution && interactive !== false && !missingClaimedOutput && endsAwaitingUserReply(content);
+      // FALLBACK textual: o modelo perguntou no texto em vez de usar `ask_user`
+      // (modelo pequeno, ou a ferramenta não estava na mesa). A interface recebe a
+      // MESMA solicitação estruturada — kind 'text', marcada como `fallback` —
+      // para o cartão de resposta aparecer nos dois caminhos.
+      if (awaitingUserReply && !inputRequest) inputRequest = textInputRequest(content);
       const incompleteExecution = !awaitingUserReply && shouldRepairExecution({
         requiresExecution: executionRequired,
         requiresOutput,
@@ -1159,6 +1211,59 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
       // conteúdo escrito (o resultado só traz o caminho) para o painel de detalhe
       // mostrar o que a IA de fato salvou. Limitado para não pesar no stream.
       const detail = name === 'write_file' ? String(args.content || '').slice(0, 4000) : '';
+      // ── ask_user: pedido de DECISÃO, não execução ───────────────────────────
+      // Interceptado ANTES de qualquer `tool_start`/`runTool`: nada roda no
+      // sandbox, nada toca arquivo ou rede. Uma pergunta não é etapa de execução,
+      // então também não vira cartão de ferramenta na interface.
+      if (name === ASK_USER_TOOL_NAME) {
+        const normalized = isToolCallAllowed(name, tools)
+          ? normalizeInputRequest(args)
+          : { error: 'Ferramenta não autorizada para esta chamada.' };
+        if (normalized.error) {
+          // O erro volta ao MODELO (não ao usuário): ele corrige a chamada na
+          // etapa seguinte, como em qualquer outra ferramenta. Nunca mostramos
+          // JSON de validação na conversa.
+          messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ error: normalized.error, code: 'ASK_USER_INVALID' }) });
+          continue;
+        }
+        if (inputRequest) {
+          // Duas perguntas no mesmo lote: só a primeira válida vale. A segunda
+          // recebe uma recusa explícita para o array de mensagens ficar íntegro.
+          messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ error: 'Já existe uma pergunta pendente neste turno; aguarde a resposta do usuário.', code: 'ASK_USER_PENDING' }) });
+          continue;
+        }
+        inputRequest = normalized.request;
+        // CONFIRMAÇÃO DE PUBLICAÇÃO: quando o que falta é exatamente a
+        // autorização do GitHub, o BACKEND carimba o escopo na solicitação
+        // (repositório, branch, base e ações, tirados do vínculo — nunca do texto
+        // do modelo). Ao confirmar, a interface registra a autorização
+        // estruturada e as ferramentas de escrita entram no inventário do turno
+        // seguinte. Sem isto, um "sim" solto não autoriza nada e o agente ficaria
+        // preso no mesmo pedido.
+        if (inputRequest.kind === 'confirm' && githubState.blockingReason === 'write_not_confirmed' && githubState.repository && githubState.branch) {
+          inputRequest.authorize = {
+            kind: 'github_write',
+            repo: githubState.repository,
+            branch: githubState.branch,
+            base: githubState.base || null,
+            actions: ['push', 'create_pr']
+          };
+        }
+        messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: true, awaiting_user: true, request_id: inputRequest.id, note: 'A pergunta foi entregue ao usuário e o turno termina aqui. A resposta dele chega como a próxima mensagem da conversa.' }) });
+        // Fecha as chamadas RESTANTES do lote: o assistant já foi empilhado com
+        // todas as tool_calls, e um array sem o `tool` correspondente é inválido
+        // para a API (a retomada do checkpoint falharia com 400).
+        for (let k = callIdx + 1; k < stepToolCalls.length; k++) {
+          const inFlight = delegations.get(stepToolCalls[k].id);
+          if (inFlight) {
+            const partial = await inFlight;
+            if (partial?.usage) addUsage(usage, partial.usage);
+            onEvent({ type: 'tool_result', id: stepToolCalls[k].id, name: SUBAGENT_TOOL_NAME, content: partial?.result?.slice(0, 2000) || '' });
+          }
+          messages.push({ role: 'tool', tool_call_id: stepToolCalls[k].id, content: JSON.stringify({ error: 'Não executada: o turno parou para o usuário responder a uma pergunta.', code: 'AWAITING_USER' }) });
+        }
+        break;
+      }
       // As delegações já anunciaram o início ao serem lançadas (acima).
       if (!pendingDelegation) {
         onEvent({ type: 'tool_start', id: call.id, name, preview, ...(detail ? { detail } : {}) });
@@ -1258,6 +1363,27 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
       if (researchReason && !webResearchStop) webResearchStop = researchReason;
     }
     if (stopped) break;
+    // O modelo pediu uma DECISÃO ao usuário: o turno acaba aqui, com estado
+    // `awaiting_user` — nunca `execution_failed`. O texto útil que ele já havia
+    // escrito é preservado; a pergunta entra no fim se ainda não estiver lá.
+    if (inputRequest) {
+      awaitingUserReply = true;
+      completedNaturally = true;
+      // Trabalho real já feito antes da pergunta merece checkpoint: quem confirma
+      // "pode publicar" depois de dezenas de etapas não pode ter de recomeçar.
+      if (executedToolCalls > 0) checkpointReason = 'awaiting_user';
+      if (!finalText.trim()) {
+        finalText = inputRequest.question;
+        onEvent({ type: 'delta', content: finalText });
+      } else if (!finalText.includes(inputRequest.question)) {
+        const pergunta = `\n\n${inputRequest.question}`;
+        finalText += pergunta;
+        onEvent({ type: 'delta', content: pergunta });
+      }
+      onEvent({ type: 'input_required', request: inputRequest });
+      emitExecutionState(onEvent, 'tool_waiting', 'Aguardando a resposta do usuário', { runId, step });
+      break;
+    }
     emitExecutionState(onEvent, 'continuing', 'Resultado processado; escolhendo a próxima etapa', { runId, step });
     // Checkpoint seguro entre lotes: nunca é gravado no meio de uma ferramenta.
     // Se o backend cair no próximo stream, a retomada parte daqui sem repetir
@@ -1284,7 +1410,7 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
     if (webResearchStop && !webResearchConclusionAttempted) {
       webResearchConclusionAttempted = true;
       tools = tools.filter(tool => !WEB_TOOL_NAMES.has(tool.function.name));
-      messages[1] = { role: 'system', content: toolAvailabilityNote(tools, { sandboxNetworkEnabled }) };
+      messages[1] = { role: 'system', content: toolAvailabilityNote(tools, { sandboxNetworkEnabled, githubNote }) };
       messages.push({ role: 'system', content: webResearchFinalizationNote(webResearchStop) });
       onEvent({ type: 'status', content: 'Concluindo a pesquisa com as fontes já verificadas...' });
       step -= 1;
@@ -1412,6 +1538,10 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
     await clearCheckpoint(conversationId);
   }
   const finalState = finalExecutionState({ stopped, awaitingUserReply, resumable, providerFailure, incomplete });
+  // O fallback textual só é reconhecido no fim do stream; quando ele acontece, a
+  // interface precisa do `input_required` também ao vivo (o `execution_meta`
+  // cobre o reload e o replay).
+  if (awaitingUserReply && inputRequest?.fallback) onEvent({ type: 'input_required', request: inputRequest });
   const execution = emitExecutionState(onEvent, finalState, failureMessage || null, {
     runId,
     model: chosenModel,
@@ -1420,7 +1550,14 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
     sandboxNetworkEnabled,
     prompt: promptManifest,
     resumable,
-    validation: checks
+    validation: checks,
+    // Persistido junto da mensagem: é o que faz a pergunta sobreviver ao reload,
+    // ao replay e à troca de conversa.
+    ...(awaitingUserReply && inputRequest ? { inputRequest } : {}),
+    // Estado real da integração com o GitHub nesta execução (sem token, sem
+    // segredo): a interface mostra a CAUSA de um bloqueio em vez de "a ferramenta
+    // não está habilitada".
+    ...(githubState.connected || githubState.repository ? { github: githubState } : {})
   });
   // Persistência e cartões só acontecem depois da validação. O estado gravado
   // é a fonte de verdade quando a conversa for reaberta.

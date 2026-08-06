@@ -53,13 +53,38 @@ export function shouldRepairOutputDelivery(text, outputsBefore, outputsAfter) {
 // parava para o usuário responder). Conservador de propósito: só considera a
 // pergunta se ela for o FINAL da resposta (pergunta retórica no meio do texto
 // seguida de conclusão não conta).
+// FECHAMENTOS SEM "?" que também são um pedido de decisão. Existem porque a
+// ferramenta `ask_user` é o caminho principal, mas modelos menores continuam
+// perguntando no texto — e nem sempre com interrogação ("Aguardo sua
+// confirmação para prosseguir."). A lista é curta e ancorada no FIM da resposta
+// de propósito: reconhecer isso no meio de um texto conclusivo transformaria
+// entrega pronta em "aguardando resposta".
+const AWAITING_CLOSING_RE = new RegExp([
+  'aguardo\\s+(?:a\\s+)?(?:sua|seu)\\s+(?:confirma\\u00e7\\u00e3o|resposta|autoriza\\u00e7\\u00e3o|decis\\u00e3o|escolha|ok|retorno)',
+  'aguardo\\s+(?:o\\s+)?seu\\s+aval',
+  'escolha\\s+(?:uma|a)\\s+(?:op\\u00e7\\u00e3o|alternativa|estrat\\u00e9gia)',
+  'preciso\\s+(?:da\\s+sua|de\\s+sua|do\\s+seu)\\s+(?:autoriza\\u00e7\\u00e3o|confirma\\u00e7\\u00e3o|decis\\u00e3o|resposta)',
+  'informe\\s+(?:qual|quais)\\b[^.\\n]{0,80}$',
+  'me\\s+diga\\s+(?:qual|quais|se)\\b[^.\\n]{0,80}$',
+  'confirme\\s+(?:se|qual|quais)\\b[^.\\n]{0,80}$',
+  'fico\\s+no\\s+aguardo\\s+da\\s+sua\\s+(?:decis\\u00e3o|resposta|confirma\\u00e7\\u00e3o)'
+].join('|'), 'i');
+
 export function endsAwaitingUserReply(text) {
   const s = withoutSystemNotices(String(text || ''));
   if (!s) return false;
   // Ignora enfeites de fechamento comuns depois do "?": markdown (** _ ` ~),
   // aspas, parênteses/colchetes e pontuação de lista.
   const tail = s.replace(/[\s*_`>\)\]"'~]+$/, '');
-  return tail.endsWith('?');
+  if (tail.endsWith('?')) return true;
+  // Sem "?": só o ÚLTIMO trecho conta (última frase ou linha), para uma
+  // pergunta retórica no meio de uma entrega concluída não valer.
+  const lastChunk = tail
+    .split(/\n{2,}/).pop()
+    .split(/(?<=[.!])\s+/).pop()
+    .replace(/[\s*_`>\)\]"'~.]+$/, '')
+    .trim();
+  return AWAITING_CLOSING_RE.test(lastChunk);
 }
 
 // Uma resposta CONCLUSIVA: tem corpo substancial e não está adiando o trabalho

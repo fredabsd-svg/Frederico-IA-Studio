@@ -18,18 +18,26 @@ test('modelo com tool_calls: a ferramenta aparece na conversa e o resultado volt
 
   // O agente recebe a tool_call do provedor, executa `bash echo ok-e2e-tool`
   // (no E2E o sandbox pode não estar disponível — a falha do comando vira
-  // tool_result mesmo assim) e reenvia ao provedor. A carta FECHADA da execução
-  // mostra a frase-resumo por categoria, não o nome da etapa: para o `bash` é
-  // "executando comandos" mais o contador de comandos.
-  await expect(page.getByText(/executando comandos/i).first()).toBeVisible({ timeout: 60_000 });
+  // tool_result mesmo assim) e reenvia ao provedor.
+  //
+  // Onde a execução aparece MUDOU: o cartão grande saiu do balão e o trabalho
+  // vive no terminal inferior (`.execDock`). Na mensagem fica a linha compacta
+  // com o resumo da sessão e o atalho para carregá-la no terminal.
+  const terminal = page.locator('.execDock');
+  await expect(terminal).toBeVisible({ timeout: 60_000 });
+  await expect(page.locator('.esCard'), 'o cartão grande não deve voltar ao balão').toHaveCount(0);
+  await expect(page.locator('.execLine').first()).toContainText(/etapa|comando/i, { timeout: 60_000 });
 
-  // O rótulo por etapa (`TOOL_META.bash`) só existe com os detalhes abertos —
-  // é ali que se prova que a tool_call virou um passo `bash` de verdade, e não
-  // só um contador genérico.
-  await page.getByRole('button', { name: 'Ver detalhes' }).first().click();
-  await expect(page.getByText(/Comando no terminal|Executando comando no terminal/).first())
+  // O rótulo por etapa (`TOOL_META.bash`) prova que a tool_call virou um passo
+  // `bash` de verdade, e não só um contador genérico. Ele vive na lista de
+  // etapas do terminal — que começa recolhido, para não roubar espaço de quem
+  // não pediu.
+  await page.locator('.execLine').first().getByRole('button', { name: /Ver detalhes|Ver no terminal/ }).click();
+  await terminal.getByRole('button', { name: 'Expandir o terminal' }).first().click();
+  await expect(terminal.getByText(/Comando no terminal|Executando comando no terminal/).first())
     .toBeVisible({ timeout: 30_000 });
-  await page.keyboard.press('Escape');
+  // Recolhe de volta para o resto do teste ver a conversa inteira.
+  await terminal.getByRole('button', { name: 'Recolher o terminal' }).first().click();
 
   // E a conversa termina com uma resposta do assistente — seja o eco do
   // provedor (`ok-e2e-tool recebido`) ou o aviso de falha do ambiente,

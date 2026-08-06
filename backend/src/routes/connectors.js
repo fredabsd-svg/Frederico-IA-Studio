@@ -3,6 +3,8 @@
 import { db } from '../db.js';
 import { getGithubConnection, testGithubToken, listGithubRepos, listGithubBranches, saveGithubConnection, githubOAuthConfig, githubOAuthAuthorizeUrl, createGithubOAuthState, consumeGithubOAuthState, exchangeGithubOAuthCode } from '../connectors/github.js';
 import { makeRouter } from './helpers.js';
+import { githubBlockingMessage, githubPreflight, normalizeGithubWriteAuthorization } from '../agent/githubAccess.js';
+import { developerContextFor } from '../agent/prompts.js';
 
 const router = makeRouter();
 
@@ -101,6 +103,47 @@ router.get('/connectors/github/branches', async (req, res) => {
   const r = await listGithubBranches(conn.token, String(req.query.repo || ''));
   if (r.error) return res.status(400).json({ error: r.error });
   res.json(r.branches);
+});
+
+// ---- PRÉ-VOO da publicação (Modo Desenvolvedor) ----
+// O painel precisa mostrar o estado REAL antes de a tarefa começar: conectado?
+// repositório vinculado? modo gravável? publicação autorizada? quais ferramentas
+// o executor vai receber? e, quando algo bloqueia, QUAL é a causa.
+//
+// Isto é a MESMA função que o loop do agente usa para montar o inventário
+// (agent/githubAccess.js). Antes, o painel dizia "Pode enviar (push)" só porque
+// o modo era de escrita, enquanto o executor não recebia `github_push` — a
+// divergência que fazia o agente responder "a ferramenta não está habilitada".
+//
+// Não devolve token, login nem qualquer segredo: só estado.
+router.get('/connectors/github/preflight', async (req, res) => {
+  const connected = Boolean(await getGithubConnection(req.userId));
+  const mode = String(req.query.mode || '').trim();
+  const repo = String(req.query.repo || '').trim();
+  const branch = String(req.query.branch || '').trim();
+  const base = String(req.query.base || '').trim();
+  // O contexto é montado pelo backend a partir do que o painel selecionou —
+  // exatamente como o loop faria com o payload `developer` do chat.
+  const developerContext = developerContextFor(
+    { mode, github: repo ? { repo, branch } : null },
+    req.userId,
+    { githubConnected: connected }
+  );
+  let authorization = null;
+  if (req.query.authorization) {
+    try { authorization = normalizeGithubWriteAuthorization(JSON.parse(String(req.query.authorization))); }
+    catch { authorization = null; }
+  }
+  const state = githubPreflight({
+    githubConnected: connected,
+    developerContext,
+    authorization,
+    base: base || authorization?.base || null
+  });
+  res.json({
+    ...state,
+    blockingMessage: githubBlockingMessage(state.blockingReason)
+  });
 });
 
 export default router;

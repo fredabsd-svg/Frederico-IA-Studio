@@ -57,6 +57,18 @@ A rede do container fica **desligada por padrão** e só abre quando o pedido do
 turno a autoriza (`assistantPolicy.resolveSandboxNetwork`). O estado real vai
 para o prompt e para o manifesto.
 
+**Git remoto é recusado no sandbox, sempre.** `clone`, `fetch`, `pull`, `push`,
+`ls-remote` e `remote add/set-url` param na guarda de execução
+(`execGuard.js → remoteGitSubcommand`) com a mensagem que aponta
+`github_clone`/`github_push`/`github_create_pr`. O motivo não é a rede: o token
+do GitHub **nunca** entra no container (`connectors/github.js`), então essas
+operações não funcionariam nem com a rede aberta. Sem o bloqueio, a falha chegava
+ao modelo como erro de rede genérico e ele insistia — nova tentativa,
+`GIT_SSL_NO_VERIFY`, abrir o github.com no navegador —, queimando etapas num
+caminho que não existe. Git **local** (`status`, `diff`, `add`, `commit`, `log`,
+`branch`, `checkout`, `config`, `stash`) segue liberado: é assim que o agente
+trabalha no clone que o backend preparou.
+
 ## 3. Timeout não derruba mais o sandbox
 
 Antes, um comando que estourava o tempo levava o **container inteiro** junto.

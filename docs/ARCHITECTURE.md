@@ -101,7 +101,34 @@ POST /chat
       └─ persistence.js: saveMessage + arquivos + indexAfterReply (memória)
 ```
 
-- **Eventos ao frontend:** `token`, `tool`, `tool_result`, `file`, `status`, `execution_failed`, `free_queue`, `free_status`, `done`, `error`.
+- **Eventos ao frontend:** `token`, `tool`, `tool_result`, `file`, `status`, `run_state`,
+  `input_required`, `execution_failed`, `free_queue`, `free_status`, `done`, `error`.
+
+### 4.1 `input_required` — pergunta interativa do agente
+
+Pedir uma **decisão** ao usuário (escopo, opção A ou B, autorização) não é falha. O agente
+tem uma ferramenta interna, `ask_user`, que o loop **intercepta antes do `runTool`**: ela não
+roda no sandbox, não toca arquivo nem rede — só encerra o turno.
+
+```json
+{ "type": "input_required",
+  "request": { "id": "iq_xxxxxxxxxx", "kind": "select",
+    "question": "Qual estratégia devo aplicar?",
+    "options": [ { "label": "Correção mínima", "value": "minimal", "description": "Altera apenas o defeito." } ],
+    "required": true, "createdAt": "2026-08-06T00:00:00.000Z" } }
+```
+
+| Aspecto | Como funciona |
+| --- | --- |
+| Validação | `agent/userInputRequest.js` RE-VALIDA os argumentos do modelo: `kind` ∈ text/confirm/select, `select` exige 2–8 opções com valores distintos, limites de tamanho, HTML recusado, **id gerado no backend**. Argumento inválido volta ao modelo como resultado de ferramenta (`ASK_USER_INVALID`) — o turno não morre. |
+| Estado | `awaiting_user` (terminal). `finalExecutionState` já o produzia; agora `classifyTaskResult` devolve `waiting_user` e as rotas **não** emitem `execution_failed`. |
+| Persistência | `execution_meta.inputRequest` (JSON já existente — **sem migration**). É daí que a interface reconstrói a pergunta depois de um reload ou de um replay. |
+| Replay | Idempotente: a solicitação é identificada por `id` e sobrescreve a mesma chave na mensagem. |
+| Checkpoint | `awaiting_user` entra em `RESUMABLE_REASONS`: o progresso de uma tarefa longa não se perde entre a pergunta e a resposta. |
+| Limites | Não oferecida a sub-agentes, a turnos sociais (`lowSignalTurn`), a tarefas de segundo plano (`interactive: false` em `routes/tasks.js`) nem a assistentes sem ferramentas. Só a **primeira** solicitação válida de um lote vale. |
+| Fallback | `endsAwaitingUserReply` (repair.js) continua reconhecendo a pergunta escrita no texto — inclusive fechamentos sem `?` ("aguardo sua confirmação"). Nesse caso a solicitação sai com `kind: 'text'` e `fallback: true`. |
+| Frontend | `components/UserInputRequest.jsx` (cartão inline) + `UserInputRequestDialog.jsx` (modal, chunk sob demanda). Fechar não descarta; a pergunta deixa de aparecer como pendente quando existe mensagem posterior do usuário (`executionSessions.js → pendingInputRequest`). |
+| Testes | `backend/src/agent/userInputRequest.test.js`, `agent/repair.awaiting.test.js`, `taskOutcome.test.js`, `frontend/src/executionSessions.test.js`, `e2e/tests/modo-desenvolvedor.spec.js`. |
 - **Persistido:** `messages` (+`execution_meta`, `memory_meta`, `multi_meta`), `files`, `usage`, `usage_daily`, `execution_checkpoints`, `conversation_chunks`.
 - **Erro:** `friendlyApiError` traduz o erro do provedor; `classifyTaskResult` decide se houve falha real.
 - **Recuperação:** failover de modelo (`MODEL_FALLBACKS`), retomada por checkpoint (`POST /resume`).
@@ -379,8 +406,72 @@ não executam ferramentas.
   explícita de API (`github_create_pr`) — o modelo não "declara" publicação sem retorno.
 - Falha de TLS/credencial é marcada `recoverable:false` para o freio de falhas parar cedo
   (evita o loop de 7 min visto em produção).
-- **Testes:** `connectors.github.test.js`, `hooks/useDevProjects.test.js`.
+- **Git remoto pelo sandbox é BLOQUEADO** (`execGuard.js → remoteGitSubcommand`): `clone`,
+  `fetch`, `pull`, `push`, `ls-remote` e `remote add/set-url` recusam com a mensagem que
+  aponta as ferramentas certas. Git **local** (`status`, `diff`, `add`, `commit`, `log`,
+  `branch`, `checkout`, `config`, `stash`) continua liberado — é assim que o agente trabalha
+  no clone. O reconhecimento é por posição de comando, então `git commit -m "corrige o fetch"`
+  e `echo "git push" >> README.md` não são confundidos com execução remota.
+- **Testes:** `connectors.github.test.js`, `agent/githubAccess.test.js`,
+  `execGuard.remoteGit.test.js`, `hooks/useDevProjects.test.js`.
 - **Lacuna:** não há teste de clone/commit/push com um servidor git local. Ver F-19.
+
+### 14.1 Autorização de publicação — uma decisão só (`agent/githubAccess.js`)
+
+O aplicativo distingue **duas coisas diferentes** que antes se confundiam:
+
+```
+autorização do usuário   ≠   disponibilidade técnica da ferramenta
+```
+
+O defeito corrigido: a liberação de `github_push`/`github_create_pr` dependia de uma condição
+espalhada no `loop.js` cujo único sinal era uma regex aplicada ao texto **do turno atual**
+(`explicitlyAuthorizesGitWrite`). O usuário autorizava numa mensagem, a tarefa seguia em
+turnos seguintes (ou retomava de um checkpoint) e as ferramentas de escrita simplesmente não
+estavam no inventário — e o agente respondia que "as ferramentas não estão habilitadas nesta
+sessão", como se fosse um limite do produto.
+
+Agora existe **um pré-voo** (`githubPreflight`) e o inventário sai dele
+(`githubToolsForContext`). A mesma função responde ao painel do Modo Desenvolvedor
+(`GET /api/connectors/github/preflight`) e monta a nota do prompt
+(`githubPreflightNote`) — o que o modelo acredita ter, o que o executor tem e o que a
+interface mostra vêm da mesma fonte, com teste de catraca (`githubAccess.test.js`).
+
+Matriz aplicada (fail-closed em toda linha):
+
+| GitHub conectado | Repositório vinculado | Modo gravável | Autorização válida | Resultado |
+| --- | --- | --- | --- | --- |
+| Não | — | — | — | Nenhuma ferramenta remota (`github_not_connected`) |
+| Sim | Não | Sim | Sim | Só leitura: `github_clone`, `github_list_repos` (`repository_not_bound`) |
+| Sim | Sim | Não (ask/plan/review) | Sim | Só leitura (`read_only_mode`) |
+| Sim | Sim | Sim | Não | Só leitura + confirmação estruturada (`write_not_confirmed`) |
+| Sim | Sim | Sim | Sim | `github_clone`, `github_push`, `github_create_pr` |
+
+A autorização é **estruturada e escopada** — repositório, branch, branch base e ações
+(`push`, `create_pr`) — e chega em `developer.permissions`:
+
+```js
+permissions: {
+  githubWrite: true,
+  githubWriteConfirmedAt: '2026-08-06T19:00:00.000Z',
+  githubWriteScope: { repo: 'owner/repo', branch: 'feat/x', base: 'main', actions: ['push', 'create_pr'] }
+}
+```
+
+Regras: vem de ação explícita do usuário (botão **Autorizar publicação** no painel, ou a
+confirmação de um `ask_user` cujo escopo o **backend** carimba a partir do vínculo); é
+re-validada no backend, que descarta campos e ações desconhecidas; não vale para outro
+repositório, outra branch ou outra base; nenhum sub-agente publica; o frontend não amplia
+nada; e o texto do modelo nunca concede permissão. Sobrevive a turnos seguintes e à retomada
+porque viaja no payload `developer`, que o checkpoint já persiste. A regex do turno segue
+existindo como caminho secundário, mas **escopada ao vínculo** — sem branch declarada não há
+escopo, e sem escopo não há permissão.
+
+Quando bloqueada, a interface mostra a **causa real** (`blockingReason` +
+`blockingMessage`), nunca "a ferramenta não está habilitada".
+
+Decisão registrada em
+[`docs/decisions/0002-autorizacao-estruturada-de-publicacao-no-github.md`](decisions/0002-autorizacao-estruturada-de-publicacao-no-github.md).
 
 ---
 
@@ -404,14 +495,65 @@ não executam ferramentas.
 ## 16. Frontend
 
 ```
-main.jsx → AuthGate → App.jsx (1.497 linhas)
+main.jsx → AuthGate → App.jsx
   ├─ hooks/: useChat (SSE), useConversations, useAssistants, useTasks, useFileUploads,
-  │          useDevProjects, useDocling, useCompanion, useCopilot, useCopilotChat, useSpeech
+  │          useDevProjects, useDocling, useCompanion, useCopilot, useCopilotChat,
+  │          useSpeech, useComposerHeight, useSmartAutoScroll
+  ├─ lógica pura (testável sem DOM): chatScroll.js (regras da rolagem),
+  │          executionSessions.js (sessões de execução e pergunta pendente),
+  │          executionSteps.js, sse.js, modelFilters.js, ...
   ├─ componentes de painel: SettingsHub, DeveloperPanel, MemoryPanel, ProviderPanel,
   │          MultiModelBoard/Picker, DoclingPanel, CopilotWorkspace, Companion, ...
+  ├─ rodapé do chat: ChatJumpToBottom + ExecutionTerminalDock (chunk sob demanda) +
+  │          compositor. As duas faixas publicam a própria altura em `--composer-h` e
+  │          `--dock-h`; quem flutua no canto (Companion) soma as duas.
   └─ CSS: styles.css + v2.css + 8 arquivos temáticos (auth, camera, companion,
           copilot, docling, landing, nino, design)
 ```
+
+**A coluna do chat é limitada pela janela.** `.app` é um grid com `height:100vh` e
+`grid-template-rows: minmax(0, 1fr)`; `.chat` tem `min-height: 0; overflow: hidden`. Sem
+esse par, a linha do grid era de tamanho automático: numa conversa longa ela crescia com o
+conteúdo, `.messages` (flex:1, overflow:auto) nunca precisava rolar — a **página** rolava —
+e o compositor saía da tela. O sintoma ficava escondido pela rolagem antiga
+(`scrollIntoView`, que rola qualquer ancestral); rolando o contêiner, o teste de navegador
+mediu `scrollHeight - clientHeight === 0` em `.messages` com nove parágrafos passando do
+rodapé. `.messages` é o **único** elemento que rola no chat.
+
+**Terminal de execução (`components/ExecutionTerminalDock.jsx`).** Filho normal do `.chat`,
+entre `.messages` e o compositor — nunca `position: fixed` sobre o conteúdo. Três estados
+(`collapsed` 48 px / `expanded` / `maximized` até 70 vh no desktop e 55 vh no celular),
+persistidos em `fred_execution_dock_v1_state` e `fred_execution_dock_v1_height`. Alça
+superior com Pointer Events (mouse, caneta e toque) **e alternativa por teclado**
+(setas, `Home`/`End`). Reaproveita o que já existia: `TOOL_META`/`CAT_META`/`describe`/
+`statusIcon`/`ResultView` de `ExecutionSession.jsx` e `groupExecutionSteps` de
+`executionSteps.js`; as sessões vêm de `executionSessions.js` (fonte única, também lida pela
+linha compacta do histórico). O relógio bate **dentro** do terminal — antes o chat inteiro
+re-renderizava (e reparseava markdown) uma vez por segundo. A janela em tela cheia
+(`ExecutionWorkspace`) continua disponível como visualização secundária.
+**Limite conhecido:** as etapas de ferramenta não são persistidas no banco (só o resumo, em
+`execution_meta`), então reabrir uma conversa antiga não reconstrói o terminal — mesmo limite
+que o cartão de execução sempre teve.
+
+**Rolagem do chat (Smart Auto-scroll).** As regras vivem em `chatScroll.js`, puras e
+testadas (`chatScroll.test.js`); `hooks/useSmartAutoScroll.js` só as liga ao contêiner
+`.messages`. Quatro estados separados: `isNearBottom` (mede o DOM), `isFollowing` e
+`userPausedFollowing` (refs — lidos a cada delta, e um render atrasado é exatamente o que
+fazia o chat brigar com o usuário) e `hasNewContentBelow` (acende o botão). Regras: roda
+para cima, `ArrowUp`/`PageUp`/`Home` e gesto de toque pausam **na hora**; voltar perto do
+fim (≤ 80 px) religa; durante o streaming o comportamento é sempre `'auto'`
+(`scrollIntoView({behavior:'smooth'})` reiniciado a cada token era o defeito); o clique
+explícito usa `'smooth'`, salvo `prefers-reduced-motion`. O efeito depende de
+`chatContentKey(messages)` — derivada do que cresceu —, não da identidade do array nem do
+tique do relógio.
+
+Dois detalhes que só o teste de navegador expôs, e que a implementação precisa manter:
+o `requestAnimationFrame` que executa a rolagem **reavalia a pausa antes de rolar** (a
+decisão é tomada no efeito, e o usuário pode girar a roda nos milissegundos até o quadro —
+sem a reavaliação ele levava um "puxão" logo depois de subir); e o retorno do
+acompanhamento exige uma rolagem **para baixo** até o fim (`shouldResumeFollowing`), porque
+um gesto para cima *começa* dentro dos 80 px finais e, com a regra ingênua "perto do fim
+religa", o primeiro quadro do próprio gesto desligava a pausa que o usuário acabou de pedir.
 
 **Medições de 2026-07-25** (não corrigidas nesta auditoria):
 - `App.jsx`: 62 `useState`, 13 `useEffect`, 12 `useRef` num único componente.

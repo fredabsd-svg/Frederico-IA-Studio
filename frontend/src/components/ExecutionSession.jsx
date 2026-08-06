@@ -1,20 +1,27 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Terminal, FolderOpen, Globe, Search, Image as ImageIcon, FileCog,
-  X, Maximize2, CheckCircle2, AlertCircle, Circle, Cpu, Loader, ExternalLink, Users
+  X, CheckCircle2, AlertCircle, Circle, Cpu, Loader, ExternalLink, Users
 } from 'lucide-react';
 import { API } from '../constants.js';
-import { groupExecutionSteps, delegationSummary, SUBAGENT_TOOL } from '../executionSteps.js';
+import { groupExecutionSteps, SUBAGENT_TOOL } from '../executionSteps.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Ambiente de Trabalho da IA
 //
 // Em vez de despejar dezenas de cartões "bash 0s" no chat, todas as chamadas de
-// ferramenta de uma resposta são agrupadas numa ÚNICA sessão de execução. Ela
-// aparece como um cartão compacto na conversa e pode ser expandida para uma
-// janela ao vivo (terminal, arquivos, código, pesquisa, navegador) onde o
-// usuário acompanha o que a IA está fazendo, com as etapas humanizadas e o
-// detalhe (entrada e resultado) de cada ação.
+// ferramenta de uma resposta são agrupadas numa ÚNICA sessão de execução.
+//
+// A EXPERIÊNCIA PRINCIPAL passou a ser o terminal inferior
+// (`ExecutionTerminalDock.jsx`): o cartão grande e vivo que morava no balão saiu
+// de cena, porque ele crescia dentro da mensagem e empurrava o texto da resposta
+// para fora da tela. Na conversa ficou a linha compacta (`ExecutionSessionLine`).
+//
+// O que este arquivo ainda entrega, e os dois lugares reaproveitam:
+//   * o vocabulário das etapas — TOOL_META, CAT_META, describe, statusIcon;
+//   * a formatação do resultado por categoria — ResultView;
+//   * a janela em TELA CHEIA (ExecutionWorkspace), visualização secundária com
+//     filtro por categoria, lista completa e detalhe lado a lado.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Cada ferramenta do backend vira uma "etapa" com nome humano e categoria.
@@ -94,19 +101,6 @@ function summarize(steps, now) {
   return { total: steps.length, files, commands, searches, reads, delegations, errors, elapsed: fmtDuration(last - first) };
 }
 
-// Frase-resumo montada a partir das categorias presentes (sem inventar nada).
-function summaryPhrase(s) {
-  const parts = [];
-  if (s.delegations) parts.push(s.delegations === 1 ? 'delegando para um sub-agente' : `delegando para ${s.delegations} sub-agentes`);
-  if (s.searches) parts.push('pesquisando na internet');
-  if (s.reads) parts.push('analisando arquivos');
-  if (s.commands) parts.push('executando comandos');
-  if (s.files) parts.push('gerando arquivos');
-  if (!parts.length) return 'Preparando o trabalho';
-  const text = parts.join(', ');
-  return text.charAt(0).toUpperCase() + text.slice(1);
-}
-
 export function statusIcon(status) {
   if (status === 'running') return <Loader size={15} className="esSpin" />;
   if (status === 'error') return <AlertCircle size={15} className="esErr" />;
@@ -114,7 +108,10 @@ export function statusIcon(status) {
 }
 
 // ─── Painel de detalhe: formata o resultado conforme a categoria da etapa ────
-function ResultView({ step, conversationId }) {
+// Exportado: o terminal inferior (ExecutionTerminalDock) mostra o resultado da
+// etapa selecionada com a MESMA formatação por categoria. Duplicar isto num
+// segundo componente faria os dois painéis divergirem na primeira mudança.
+export function ResultView({ step, conversationId }) {
   if (step.status === 'running') return <div className="esWaiting"><Loader size={14} className="esSpin" /> Executando…</div>;
 
   const parsed = tryParse(step.result);
@@ -393,88 +390,13 @@ function LiveOutput({ progress }) {
   );
 }
 
-// ─── Cartão compacto no chat ────────────────────────────────────────────────
-function ExecutionSessionInner({ steps, live, conversationId }) {
-  const [open, setOpen] = useState(false);
-  // Relógio próprio, só enquanto a sessão está viva: mantém o tempo correndo de
-  // forma suave sem depender de re-renders do chat.
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!live) return;
-    setNow(Date.now());
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [live]);
-
-  const sum = useMemo(() => summarize(steps, now), [steps, now]);
-  const delegs = useMemo(() => delegationSummary(steps), [steps]);
+// ─── Overlay em tela cheia, aberto de fora ──────────────────────────────────
+// Com o terminal inferior como experiência PRINCIPAL, a janela em tela cheia
+// passa a ser a visualização secundária (filtros por categoria, lista completa,
+// detalhe lado a lado). Ela continua lendo as MESMAS etapas — este wrapper só
+// permite abri-la a partir do terminal, sem passar pelo cartão do balão.
+export function ExecutionWorkspace({ steps = [], live = false, conversationId, onClose }) {
+  const sum = useMemo(() => summarize(steps, Date.now()), [steps]);
   if (!steps.length) return null;
-
-  const running = steps.find(s => s.status === 'running');
-  const runningInfo = running ? describe(running) : null;
-  const hasError = sum.errors > 0;
-
-  const title = live ? 'IA trabalhando no projeto' : (hasError ? 'Tarefa concluída com avisos' : 'Tarefa concluída');
-  // Com saída ao vivo, o cartão fechado já mostra que algo está acontecendo —
-  // e avisa quando o comando emudece, sem precisar abrir o ambiente de trabalho.
-  const parado = Math.round((running?.progress?.parado || 0) / 1000);
-  const subtitle = live
-    ? (runningInfo
-        ? (parado >= 5
-            ? `${runningInfo.label} · sem saída há ${parado}s`
-            : (running?.progress?.linhas ? `${runningInfo.label} · ${running.progress.linhas} linhas` : runningInfo.label))
-        : summaryPhrase(sum))
-    : summaryPhrase(sum);
-
-  const chips = [];
-  if (!live) {
-    if (sum.files) chips.push(`${sum.files} ${sum.files === 1 ? 'arquivo' : 'arquivos'}`);
-    if (sum.commands) chips.push(`${sum.commands} ${sum.commands === 1 ? 'comando' : 'comandos'}`);
-    if (sum.searches) chips.push(`${sum.searches} ${sum.searches === 1 ? 'pesquisa' : 'pesquisas'}`);
-    if (sum.delegations) chips.push(`${sum.delegations} ${sum.delegations === 1 ? 'delegação' : 'delegações'}`);
-    chips.push(hasError ? `${sum.errors} ${sum.errors === 1 ? 'erro' : 'erros'}` : 'nenhum erro');
-  } else {
-    chips.push(`${sum.total} ${sum.total === 1 ? 'etapa' : 'etapas'}`);
-    if (delegs.running) chips.push(`${delegs.running} ${delegs.running === 1 ? 'sub-agente' : 'sub-agentes'} em andamento`);
-    if (sum.files) chips.push(`${sum.files} ${sum.files === 1 ? 'arquivo' : 'arquivos'}`);
-  }
-
-  return (
-    <div className={`esCard ${live ? 'live' : (hasError ? 'warn' : 'done')}`}>
-      <div className="esCardMain">
-        <span className="esCardIcon">
-          {live ? <Loader size={18} className="esSpin" /> : (hasError ? <AlertCircle size={18} className="esErr" /> : <CheckCircle2 size={18} className="esOk" />)}
-        </span>
-        <div className="esCardText">
-          <b>{title}</b>
-          <span className="esCardSub">{subtitle}</span>
-          <span className="esCardMeta">{chips.join(' · ')} · {sum.elapsed}</span>
-        </div>
-      </div>
-      <button className="esCardBtn" onClick={() => setOpen(true)}>
-        <Maximize2 size={14} />
-        {live ? 'Abrir ambiente de trabalho' : 'Ver detalhes'}
-      </button>
-      {open && <WorkspaceOverlay steps={steps} live={live} sum={sum} conversationId={conversationId} onClose={() => setOpen(false)} />}
-    </div>
-  );
+  return <WorkspaceOverlay steps={steps} live={live} sum={sum} conversationId={conversationId} onClose={onClose} />;
 }
-
-// O array `steps` é recriado (novo .filter()) a cada render do chat, então
-// comparar por identidade não adiantaria. Comparamos pelo CONTEÚDO relevante:
-// quantidade de etapas e, em cada uma, status/fim/resultado. Assim, enquanto a
-// resposta em texto vai fluindo (deltas) ou o relógio bate, um cartão de sessão
-// já pronto acima NÃO é re-renderizado — que é o que engasgava a tela.
-function sameSteps(a, b) {
-  if (a === b) return true;
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    // `progress` entra na comparação: é um objeto novo a cada pedaço de saída
-    // que chega, e sem ele a saída ao vivo ficaria congelada na tela.
-    if (a[i].status !== b[i].status || a[i].ended !== b[i].ended || a[i].result !== b[i].result || a[i].progress !== b[i].progress) return false;
-  }
-  return true;
-}
-
-export const ExecutionSession = React.memo(ExecutionSessionInner, (a, b) =>
-  a.live === b.live && a.conversationId === b.conversationId && sameSteps(a.steps, b.steps));

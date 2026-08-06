@@ -73,6 +73,62 @@ export class BlockedExecutionError extends Error {
   }
 }
 
+// ---- Git REMOTO no sandbox ----------------------------------------------------
+//
+// O token do GitHub NUNCA entra no sandbox (ver connectors/github.js): clone,
+// push e Pull Request rodam no backend. Então `git push` pelo bash do sandbox
+// não é uma alternativa que às vezes funciona — é uma operação que SEMPRE falha,
+// por falta de credencial e (por padrão) de rede. Sem este bloqueio, a falha
+// chegava ao modelo como um erro de rede genérico e ele insistia: tentava outra
+// vez, tentava `GIT_SSL_NO_VERIFY`, tentava abrir o github.com no navegador —
+// minutos de etapas queimadas por um caminho que não existe.
+//
+// Aqui a recusa é explícita e aponta a ferramenta certa. Git LOCAL (status,
+// diff, add, commit, log, branch, checkout, config, stash...) continua liberado:
+// é assim que o agente trabalha no clone.
+const REMOTE_GIT_SUBCOMMANDS = new Set(['clone', 'fetch', 'pull', 'push', 'ls-remote']);
+
+export const REMOTE_GIT_MESSAGE =
+  'operação Git remota no sandbox. Operações Git remotas são executadas pelo conector seguro do backend '
+  + '(o sandbox não tem credencial nem rede para o GitHub). Use github_clone, github_push ou github_create_pr. '
+  + 'Git local (status, diff, add, commit, log, branch) continua disponível pelo bash.';
+
+// Devolve o subcomando remoto do git presente no comando, ou null. PURA
+// (testável). Anda pelos tokens depois de `git`, pulando as opções globais
+// (`-c chave=valor`, `-C dir`, `--git-dir=...`), para nunca confundir o texto
+// livre de um `git commit -m "fetch dos dados"` com um subcomando.
+export function remoteGitSubcommand(command) {
+  const text = String(command || '');
+  // Cada segmento de um comando composto é analisado por conta própria.
+  for (const segment of text.split(/\n|&&|\|\||[;|&]/)) {
+    const tokens = segment.trim().split(/\s+/).filter(Boolean);
+    let i = 0;
+    // Prefixos de ambiente (`GIT_SSL_NO_VERIFY=1 git push`) não são o comando.
+    while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i])) i += 1;
+    // O `git` tem de estar na POSIÇÃO DE COMANDO do segmento. Procurar `git` em
+    // qualquer posição pegaria `echo "git push" >> README.md` — texto, não
+    // execução — e bloquearia um comando inofensivo.
+    const cmd = String(tokens[i] || '').replace(/^['"]|['"]$/g, '');
+    if (cmd !== 'git' && !/(^|\/)git$/.test(cmd)) continue;
+    let j = i + 1;
+    while (j < tokens.length) {
+      const opt = tokens[j];
+      if (opt === '-c' || opt === '-C' || opt === '--exec-path' || opt === '--namespace') { j += 2; continue; }
+      if (opt.startsWith('-')) { j += 1; continue; }
+      break;
+    }
+    const sub = String(tokens[j] || '').replace(/^['"]|['"]$/g, '').toLowerCase();
+    if (REMOTE_GIT_SUBCOMMANDS.has(sub)) return sub;
+    // `git remote add <nome> <url>` também alcança a rede na prática (e
+    // reescreveria o remoto do clone que o backend preparou).
+    if (sub === 'remote') {
+      const action = String(tokens[j + 1] || '').toLowerCase();
+      if (action === 'add' || action === 'set-url' || action === 'update' || action === 'prune') return `remote ${action}`;
+    }
+  }
+  return null;
+}
+
 // Valida um comando de shell. `pcWriteAuthorized` vem do turno atual.
 export function guardCommand(command, { pcWriteAuthorized = false, networkAllowlist = null } = {}) {
   const norm = normalizeCommand(command);
@@ -81,6 +137,8 @@ export function guardCommand(command, { pcWriteAuthorized = false, networkAllowl
     if (p.extra && !p.extra.test(norm)) continue;
     throw new BlockedExecutionError(p.msg);
   }
+  const remoteGit = remoteGitSubcommand(command);
+  if (remoteGit) throw new BlockedExecutionError(`git ${remoteGit} — ${REMOTE_GIT_MESSAGE}`);
   // Alteração de arquivos REAIS do usuário exige autorização deste turno.
   if (!pcWriteAuthorized && norm.includes(PC_MOUNT_ROOT) && SHELL_MUTATING.test(norm)) {
     throw new BlockedExecutionError('alteração de arquivos das Pastas do PC sem autorização do usuário', { needsAuthorization: true });

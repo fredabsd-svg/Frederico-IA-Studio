@@ -18,6 +18,20 @@
 //   travado      → abre o stream, envia apenas o delta inicial e fica em silêncio.
 //                  Força o watchdog do backend a detectar o stall e disparar a
 //                  recuperação (aviso de provedor indisponível).
+//   eco-longo    → resposta LONGA (muitos parágrafos) em ritmo lento. Existe para
+//                  o Smart Auto-scroll: só com conteúdo que ultrapassa a altura da
+//                  janela é possível subir a conversa no meio do streaming e cobrar
+//                  que o app NÃO arraste o usuário de volta ao fim.
+//   pergunta-texto / pergunta-confirmacao / pergunta-selecao
+//                → chamam a ferramenta interna `ask_user` (kind text/confirm/select)
+//                  na primeira rodada. O turno termina em `awaiting_user`, sem
+//                  `execution_failed`. Depois que a resposta do usuário entra na
+//                  conversa (o histórico já contém o resultado do ask_user), o
+//                  modelo devolve texto normal — senão ele perguntaria em laço.
+//   ferramentas-lentas
+//                → tool_call de `bash` com saída em pedaços. Serve ao terminal
+//                  inferior: prova que a execução aparece lá (e não como cartão
+//                  grande no balão) enquanto o compositor continua visível.
 //
 // O modelo `travado` é parametrizável: o teste define STREAM_STALL_TIMEOUT_MS
 // baixo (em playwright.config.js) para que o watchdog encerre em ~2s em vez
@@ -28,8 +42,44 @@
 // mostre o seu.
 import http from 'node:http';
 
-const MODELOS = ['eco', 'eco-lento', 'chave-ruim', 'ferramentas', 'travado', 'design-web', 'design-slides'];
+const MODELOS = [
+  'eco', 'eco-lento', 'chave-ruim', 'ferramentas', 'travado', 'design-web', 'design-slides',
+  'eco-longo', 'pergunta-texto', 'pergunta-confirmacao', 'pergunta-selecao', 'ferramentas-lentas'
+];
 const PAUSA_LENTA_MS = Number(process.env.E2E_PAUSA_TOKEN_MS || 250);
+// Ritmo do `eco-longo`: rápido o bastante para o teste não arrastar, lento o
+// bastante para haver tempo de subir a conversa no meio do streaming.
+const PAUSA_LONGA_MS = Number(process.env.E2E_PAUSA_LONGA_MS || 22);
+
+// Perguntas simuladas de cada modelo `pergunta-*`. Os argumentos são os MESMOS
+// que um modelo real mandaria — a validação de verdade acontece no backend
+// (agent/userInputRequest.js), e é ela que o E2E exercita de ponta a ponta.
+const PERGUNTAS = {
+  'pergunta-texto': {
+    kind: 'text',
+    question: 'Em qual formato devo entregar o relatorio?',
+    placeholder: 'ex.: XLSX'
+  },
+  'pergunta-confirmacao': {
+    kind: 'confirm',
+    question: 'Posso enviar a branch e abrir o Pull Request?',
+    confirmLabel: 'Enviar e abrir PR',
+    cancelLabel: 'Manter apenas localmente'
+  },
+  'pergunta-selecao': {
+    kind: 'select',
+    question: 'Qual estrategia devo aplicar?',
+    options: [
+      { label: 'Correcao minima', value: 'minimal', description: 'Altera apenas o defeito.' },
+      { label: 'Refatoracao completa', value: 'refactor', description: 'Tambem reorganiza os componentes.' }
+    ],
+    required: true
+  }
+};
+
+// Texto longo do `eco-longo`: precisa passar da altura da janela com folga para o
+// teste de rolagem ter o que rolar.
+const PARAGRAFO_LONGO = 'Este e um paragrafo de teste do Smart Auto-scroll, escrito para ocupar varias linhas na tela do navegador e permitir que o teste role a conversa para cima durante o streaming.';
 
 const dorme = (ms) => new Promise(r => setTimeout(r, ms));
 
@@ -111,7 +161,10 @@ function pedacoSSE(res, modelo, delta, finish = null) {
 
 async function responderStream(req, res, corpo) {
   const modelo = String(corpo.model || 'eco');
-  const texto = ultimaMensagemDoUsuario(corpo.messages).trim() || 'sem texto';
+  const texto = modelo === 'eco-longo'
+    // 14 parágrafos numerados: cada um cabe no viewport, o conjunto não.
+    ? Array.from({ length: 30 }, (_, i) => `Bloco ${i + 1}. ${PARAGRAFO_LONGO}`).join('\n\n')
+    : (ultimaMensagemDoUsuario(corpo.messages).trim() || 'sem texto');
   // Tokeniza preservando os espaços, para o texto remontado bater exatamente.
   const tokens = texto.match(/\S+\s*/g) || [texto];
 
@@ -135,11 +188,13 @@ async function responderStream(req, res, corpo) {
   pedacoSSE(res, modelo, { role: 'assistant', content: '' });
 
   const lento = modelo === 'eco-lento';
+  const longo = modelo === 'eco-longo';
 
   for (let i = 0; i < tokens.length; i++) {
     if (res.writableEnded || res.destroyed) return;
     pedacoSSE(res, modelo, { content: tokens[i] });
     if (lento) await dorme(PAUSA_LENTA_MS);
+    else if (longo) await dorme(PAUSA_LONGA_MS);
   }
 
   pedacoSSE(res, modelo, {}, 'stop');
@@ -206,6 +261,101 @@ async function responderStreamFerramentas(req, res, corpo) {
   res.end();
 }
 
+// A conversa JÁ passou por esta pergunta? Sem a checagem, o modelo simulado
+// perguntaria em laço a cada turno.
+//
+// A checagem olha as mensagens de ASSISTENTE, não as de ferramenta: o `tool`
+// result do `ask_user` existe só dentro do turno que o produziu — o histórico do
+// turno seguinte é remontado a partir das mensagens PERSISTIDAS da conversa
+// (user/assistant), e é lá que a pergunta aparece, como o texto da resposta
+// anterior. É esse o contrato: a decisão do usuário chega pelo histórico.
+function jaPerguntou(mensagens, pergunta) {
+  const alvo = String(pergunta?.question || '').trim();
+  if (!alvo) return false;
+  return (Array.isArray(mensagens) ? mensagens : []).some(m => {
+    if (m?.role !== 'assistant') return false;
+    return String(m.content || '').includes(alvo);
+  });
+}
+
+// `pergunta-*`: chama `ask_user` no primeiro turno e, depois de a resposta do
+// usuário entrar na conversa, devolve texto normal.
+async function responderStreamPergunta(req, res, corpo) {
+  const modelo = String(corpo.model || '');
+  const mensagens = Array.isArray(corpo.messages) ? corpo.messages : [];
+  const pergunta = PERGUNTAS[modelo];
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive'
+  });
+  pedacoSSE(res, modelo, { role: 'assistant', content: '' });
+
+  if (!pergunta || jaPerguntou(mensagens, pergunta)) {
+    // Turno seguinte: a decisão chegou, então o trabalho "continua".
+    for (const t of ['Entendido: ', 'sigo com a sua escolha.']) {
+      if (res.writableEnded || res.destroyed) return;
+      pedacoSSE(res, modelo, { content: t });
+      await dorme(20);
+    }
+    pedacoSSE(res, modelo, {}, 'stop');
+    res.write('data: [DONE]\n\n');
+    return res.end();
+  }
+
+  contadorToolCall += 1;
+  const toolCallId = `call_ask_${contadorToolCall}`;
+  pedacoSSE(res, modelo, {
+    tool_calls: [{ index: 0, id: toolCallId, type: 'function', function: { name: 'ask_user', arguments: '' } }]
+  });
+  pedacoSSE(res, modelo, {
+    tool_calls: [{ index: 0, function: { arguments: JSON.stringify(pergunta) } }]
+  });
+  pedacoSSE(res, modelo, {}, 'tool_calls');
+  res.write('data: [DONE]\n\n');
+  res.end();
+}
+
+// `ferramentas-lentas`: um `bash` com comando longo. O que o teste do terminal
+// precisa é que a etapa APAREÇA e permaneça — o resultado em si (que depende de
+// haver Docker no runner) não é cobrado.
+async function responderStreamFerramentasLentas(req, res, corpo) {
+  const modelo = String(corpo.model || 'ferramentas-lentas');
+  const mensagens = Array.isArray(corpo.messages) ? corpo.messages : [];
+  const ultima = mensagens[mensagens.length - 1];
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive'
+  });
+  pedacoSSE(res, modelo, { role: 'assistant', content: '' });
+
+  if (ultima?.role === 'tool') {
+    for (const t of ['Execucao ', 'registrada ', 'no terminal.']) {
+      if (res.writableEnded || res.destroyed) return;
+      pedacoSSE(res, modelo, { content: t });
+      await dorme(30);
+    }
+    pedacoSSE(res, modelo, {}, 'stop');
+    res.write('data: [DONE]\n\n');
+    return res.end();
+  }
+
+  contadorToolCall += 1;
+  const toolCallId = `call_slow_${contadorToolCall}`;
+  pedacoSSE(res, modelo, {
+    tool_calls: [{ index: 0, id: toolCallId, type: 'function', function: { name: 'bash', arguments: '' } }]
+  });
+  pedacoSSE(res, modelo, {
+    tool_calls: [{ index: 0, function: { arguments: JSON.stringify({ command: 'for i in 1 2 3 4 5; do echo linha-$i; sleep 1; done' }) } }]
+  });
+  pedacoSSE(res, modelo, {}, 'tool_calls');
+  res.write('data: [DONE]\n\n');
+  res.end();
+}
+
 export function criarProvedorFalso() {
   return http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://provedor.falso');
@@ -252,6 +402,8 @@ export function criarProvedorFalso() {
         return json(res, 401, { error: { message: 'Incorrect API key provided.', type: 'invalid_request_error', code: 'invalid_api_key' } });
       }
       if (pedido === 'ferramentas' && corpo.stream) return responderStreamFerramentas(req, res, corpo);
+      if (pedido === 'ferramentas-lentas' && corpo.stream) return responderStreamFerramentasLentas(req, res, corpo);
+      if (PERGUNTAS[pedido] && corpo.stream) return responderStreamPergunta(req, res, corpo);
       if (corpo.stream) return responderStream(req, res, corpo);
       // Sem streaming: validação da chave ao cadastrar o provedor E o Modo
       // Design, que não usa streaming e espera o artefato pronto.

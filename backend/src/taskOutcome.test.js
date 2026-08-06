@@ -35,3 +35,29 @@ test('keeps a verified agent result as done', () => {
     status: 'done', progress: 'Concluida', error: null
   });
 });
+
+// PERGUNTA AO USUÁRIO não é falha: o agente pediu uma decisão e parou. Antes, um
+// turno assim podia cair em `incomplete` e a rota emitia `execution_failed` —
+// a mensagem aparecia como erro no chat, com botão de "Reenviar", em vez de
+// mostrar a pergunta para responder.
+test('uma pergunta ao usuário fica como waiting_user, não como erro', () => {
+  assert.deepEqual(classifyTaskResult({
+    text: 'Posso alterar também o banco?',
+    execution: { state: 'awaiting_user', terminal: true }
+  }), { status: 'waiting_user', progress: 'Aguardando resposta', error: null });
+});
+
+test('awaiting_user tem precedência sobre incomplete (não emite execution_failed)', () => {
+  const outcome = classifyTaskResult({
+    incomplete: true,
+    failureMessage: 'A execução terminou sem produzir um resultado verificável.',
+    execution: { state: 'awaiting_user', terminal: true }
+  });
+  assert.equal(outcome.status, 'waiting_user');
+  assert.equal(outcome.error, null);
+});
+
+test('cancelamento continua vencendo awaiting_user', () => {
+  const outcome = classifyTaskResult({ stopped: true, execution: { state: 'awaiting_user' } });
+  assert.equal(outcome.status, 'canceled');
+});

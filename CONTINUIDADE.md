@@ -24,6 +24,64 @@ que ainda segura o verde é o **pipeline multimodelo retomável**: o F-15 entreg
 tabela e as primitivas, mas o `runMultiModel` ainda não as usa, então o reinício continua
 sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
+- **Último trabalho:** a **Frente 16 — Modo Desenvolvedor: rolagem, perguntas,
+  terminal e publicação no GitHub** fechou quatro defeitos que se reforçavam.
+  1. **Smart Auto-scroll real.** O efeito antigo dependia da identidade do array
+     `messages` e chamava `scrollIntoView({behavior:'smooth'})` — durante o
+     streaming a animação reiniciava a cada token, e quem subia para reler algo
+     era arrastado de volta. Agora há estado explícito de acompanhamento
+     (`chatScroll.js` + `hooks/useSmartAutoScroll.js`): roda, teclado e gesto de
+     toque pausam **na hora**, o botão "Ir para o final" retoma, enviar força o
+     acompanhamento uma vez, streaming nunca usa animação suave e a chave de
+     conteúdo é derivada do que realmente cresceu (não do tique do relógio).
+  2. **Perguntas interativas (`ask_user`).** Pedir uma decisão deixou de ser
+     falha: uma ferramenta interna, interceptada antes do `runTool`, encerra o
+     turno em `awaiting_user`, emite `input_required` e persiste em
+     `execution_meta.inputRequest` (sem migration). `classifyTaskResult` devolve
+     `waiting_user` e as rotas **não** emitem mais `execution_failed` nesse caso.
+     A interface tem texto, confirmação e seleção; fechar não descarta; sobrevive
+     ao reload e ao replay.
+  3. **Terminal inferior expansível.** O cartão grande e vivo saiu do balão (que
+     ele empurrava para fora da tela) e virou uma faixa do layout do chat —
+     recolhível, expansível, maximizável, redimensionável por ponteiro **e por
+     teclado**, com rolagem própria e "Novos logs". O relógio bate dentro do
+     terminal, não no chat. O overlay em tela cheia continua como visualização
+     secundária, lendo as mesmas etapas.
+  4. **Publicação no GitHub.** `autorização do usuário ≠ disponibilidade da
+     ferramenta`: a liberação de `github_push`/`github_create_pr` dependia de uma
+     regex no texto do turno atual, então a autorização morria no turno seguinte
+     e o agente respondia "as ferramentas não estão habilitadas nesta sessão".
+     Agora há uma decisão só (`agent/githubAccess.js`): autorização
+     **estruturada** e escopada a repositório/branch/base/ações, re-validada no
+     backend, viajando no checkpoint; um pré-voo que a interface mostra com a
+     **causa real** de cada bloqueio; e git remoto pelo bash do sandbox
+     **bloqueado**, apontando as ferramentas certas.
+  Três achados do próprio teste de navegador, todos corrigidos aqui:
+  * **Um quadro de animação já agendado ignorava a pausa.** A decisão "acompanhar"
+    era tomada no efeito e executada no `requestAnimationFrame` seguinte; se o
+    usuário girasse a roda nesse intervalo, o quadro descia mesmo assim. O efeito
+    visível era o pior possível: o gesto funcionava, a pausa passava a valer, mas
+    o usuário levava um "puxão" de volta ao fim logo depois de subir. A trilha de
+    rolagem medida no navegador mostrou exatamente um salto, 16 ms após o gesto.
+    O quadro agora reavalia a pausa antes de rolar.
+  * **A coluna do chat não era limitada pela janela.** `.app` é um grid com
+    `height:100vh`, mas a linha era de tamanho automático: numa conversa longa ela
+    crescia com o conteúdo, `.messages` (flex:1, overflow:auto) nunca precisava
+    rolar — a **página** rolava — e **o compositor era empurrado para fora da
+    tela**. O sintoma ficava escondido porque a rolagem antiga usava
+    `scrollIntoView()`, que rola qualquer ancestral. Rolando o contêiner (o certo),
+    o teste mediu `scrollHeight - clientHeight === 0` com nove parágrafos passando
+    do rodapé. Corrigido com `grid-template-rows:minmax(0,1fr)` em `.app` e
+    `min-height:0;overflow:hidden` em `.chat`.
+  * **O personagem do copiloto pousava sobre o cabeçalho do terminal** e
+    interceptava os cliques de recolher/expandir — mesma classe de defeito que ele
+    já tinha com o botão de enviar. Corrigido com `--dock-h`: quem flutua no
+    rodapé soma compositor + terminal.
+  **Limite conhecido:** as etapas de ferramenta não são persistidas no banco (só o
+  resumo, em `execution_meta`), então reabrir uma conversa antiga **não**
+  reconstrói o terminal — é o mesmo limite que o cartão de execução sempre teve.
+  Dentro da sessão, a sessão concluída reabre pelo botão "Ver detalhes"; a
+  preferência de estado e de altura do terminal sobrevive ao reload.
 - **Último trabalho:** o **portão de bundle passou a medir a coisa certa**. Ele somava
   todo o JS contra um teto único de 1.000 KB — e a `main` estava exatamente em 1.000,
   com 100% do orçamento consumido: qualquer PR de frontend reprovava. Pior, ele punia
@@ -874,7 +932,8 @@ Novo job `e2e` no CI, com Postgres real e Chromium. Ver `e2e/README.md`.
 
 | ID | Risco | Severidade |
 | --- | --- | --- |
-| F-21 | `App.jsx` ainda concentra dezenas de `useState`; CSS em camadas sem inventário. O **bundle deixou de ser um chunk só** (`React.lazy` nos painéis pesados: principal ~920 KB contra o teto de 1.000 KB do CI), mas o `MultiModelBoard` segue no principal — é importado de forma estática pelo `Landing.jsx`. | 🟡 Média |
+| F-21 | `App.jsx` ainda concentra dezenas de `useState`; CSS em camadas sem inventário. O **bundle deixou de ser um chunk só** (`React.lazy` nos painéis pesados: entrada em 913 KB contra o teto de 920 KB), mas o `MultiModelBoard` segue no principal — é importado de forma estática pelo `Landing.jsx`. **Atenção:** a folga do pacote de entrada é de apenas 7 KB. O terminal, a janela em tela cheia e o modal de pergunta já saíram para chunks próprios; o próximo PR de frontend provavelmente precisa de mais um split (candidato natural: `ExecutionSession.jsx`, que continua na entrada porque o `DevActivityRail` importa `TOOL_META` de lá de forma estática). | 🟡 Média |
+| — | O **pré-voo do GitHub** é honesto sobre autorização, vínculo e modo, mas **não** verifica os escopos reais do PAT: um token sem permissão de escrita só é descoberto quando o `github_push` falha (a mensagem do conector nomeia a causa). Verificar o escopo antes exigiria uma chamada extra à API do GitHub por pré-voo. | 🟢 Baixa |
 
 ## Riscos fechados nesta sessão
 
@@ -1510,6 +1569,24 @@ python -m unittest discover -s sandbox -p '*_test.py' -v
 - **Docker só pelo guarda.** O backend não monta `/var/run/docker.sock`; quem monta é o
   `docker-guard`, que valida cada requisição. Rota nova para o daemon exige liberar em
   `docker-guard/src/policy.js` — negar por padrão é a regra.
+- **Ferramenta do GitHub sai de um lugar só.** Quem decide se `github_push`/
+  `github_create_pr` entram no inventário é `agent/githubAccess.js` — a MESMA função que
+  responde ao painel (`GET /api/connectors/github/preflight`) e monta a nota do prompt.
+  Nunca acrescente uma segunda condição no `loop.js`: foi a decisão espalhada que produzia
+  "a ferramenta não está habilitada nesta sessão" com o usuário já tendo autorizado. Há
+  teste de catraca (`agent/githubAccess.test.js`) cobrando que o que o prompt anuncia é
+  exatamente o que o executor recebe.
+- **Pergunta ao usuário não é falha.** Um turno que termina pedindo decisão vale
+  `awaiting_user` / `waiting_user`, com a solicitação em `execution_meta.inputRequest` —
+  nunca `execution_failed`. A ferramenta é `ask_user`, interceptada antes do `runTool`.
+- **Rolagem do chat: nada de `scrollIntoView` nem de `window.scrollTo`.** As regras vivem
+  em `chatScroll.js` (puras, testadas) e o hook `useSmartAutoScroll` as liga ao contêiner.
+  Durante o streaming o comportamento é sempre `'auto'`: animação suave reiniciada a cada
+  token foi exatamente o defeito corrigido.
+- **Quem flutua no rodapé soma `--composer-h` + `--dock-h`.** O compositor e o terminal
+  inferior publicam as próprias alturas (`useComposerHeight`); esquecer uma delas põe o
+  elemento flutuante em cima de um controle real — já aconteceu duas vezes, com o botão de
+  enviar e com os botões do terminal.
 
 **Mapa da documentação:** `docs/ARCHITECTURE.md` (como funciona) ·
 `docs/SECURITY.md` (ameaças e controles) · `docs/OPERATIONS.md` (runbook) ·
