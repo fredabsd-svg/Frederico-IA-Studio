@@ -618,14 +618,22 @@ export function selectOrphanContainers(list, { known = new Set(), instanceId, gr
   return orphans;
 }
 
-const RECONCILE_ON_BOOT = process.env.SANDBOX_RECONCILE_ON_BOOT !== 'false';
+// Fora de teste, a reconciliação é LIGADA por padrão: containers órfãos de um
+// crash anterior são removidos no boot. Em NODE_ENV=test, fica DESLIGADA por
+// padrão (a suíte não tem Docker). Sobrescreva com SANDBOX_RECONCILE_ON_BOOT.
+const RECONCILE_ON_BOOT = shouldReconcileOnBoot();
+
+export function shouldReconcileOnBoot(env = process.env) {
+  if (env.NODE_ENV === 'test') return env.SANDBOX_RECONCILE_ON_BOOT === 'true';
+  return env.SANDBOX_RECONCILE_ON_BOOT !== 'false';
+}
 const ORPHAN_GRACE_MS = Math.max(0, Number(process.env.SANDBOX_ORPHAN_GRACE_MS ?? 10 * 60 * 1000));
 const RECONCILE_INTERVAL_MS = Math.max(0, Number(process.env.SANDBOX_RECONCILE_INTERVAL_MS ?? 15 * 60 * 1000));
 
 // Remove os containers órfãos do Frederico. Chamada no boot (carência 0: tudo
 // que sobrou de um processo anterior é lixo) e periodicamente (com carência,
 // para não competir com uma criação em andamento).
-export async function reconcileSandboxes({ graceMs = ORPHAN_GRACE_MS } = {}) {
+export async function reconcileSandboxes({ graceMs = ORPHAN_GRACE_MS, onBoot = false } = {}) {
   let list = [];
   try {
     list = await docker.listContainers({
@@ -647,19 +655,19 @@ export async function reconcileSandboxes({ graceMs = ORPHAN_GRACE_MS } = {}) {
   healthMetrics.sandboxOrphansRemoved = (healthMetrics.sandboxOrphansRemoved || 0) + removed;
   healthMetrics.sandboxLastReconcileAt = new Date().toISOString();
   healthMetrics.sandboxReconcileError = null;
-  if (removed || failed) console.log(`[sandbox] reconciliação: ${removed} órfão(s) removido(s), ${failed} falha(s), ${list.length} container(es) do app inspecionado(s).`);
+  if (removed || failed || onBoot) console.log(`[sandbox] reconciliação${onBoot ? ' no boot' : ''}: ${removed} órfão(s) removido(s), ${failed} falha(s), ${list.length} container(es) do app inspecionado(s).`);
   return { checked: list.length, removed, failed };
 }
 
 // Arma a reconciliação: uma varredura imediata no boot (sem carência) e depois
-// varreduras periódicas com carência. SANDBOX_RECONCILE_ON_BOOT=false desliga
-// (necessário se um dia houver mais de uma réplica no MESMO daemon Docker).
+// varreduras periódicas com carência. Fora de NODE_ENV=test a reconciliação é
+// ligada por padrão; em teste, desligada (a suíte não tem Docker).
 export function startSandboxReconciliation() {
   if (!RECONCILE_ON_BOOT) {
-    console.warn('[sandbox] reconciliação desligada (SANDBOX_RECONCILE_ON_BOOT=false): containers órfãos precisarão de limpeza manual.');
+    console.warn('[sandbox] reconciliação desligada (NODE_ENV=test ou SANDBOX_RECONCILE_ON_BOOT=false): containers órfãos precisarão de limpeza manual.');
     return;
   }
-  void reconcileSandboxes({ graceMs: 0 }).catch(() => {});
+  void reconcileSandboxes({ graceMs: 0, onBoot: true }).catch(() => {});
   if (RECONCILE_INTERVAL_MS > 0) {
     setInterval(() => { void reconcileSandboxes().catch(() => {}); }, RECONCILE_INTERVAL_MS).unref();
   }
