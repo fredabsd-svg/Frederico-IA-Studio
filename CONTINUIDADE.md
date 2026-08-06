@@ -24,7 +24,12 @@ que ainda segura o verde é o **pipeline multimodelo retomável**: o F-15 entreg
 tabela e as primitivas, mas o `runMultiModel` ainda não as usa, então o reinício continua
 sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** a **Frente 4 — Vulnerabilidades de dependências** zerou
+- **Último trabalho:** a **Frente 9 — Desmontar o App.jsx (etapa 1: shell)**
+  extraiu a sidebar (~70 linhas de JSX) para `Sidebar.jsx`, reduzindo o
+  `App.jsx` de 1550 para ~1480 linhas. Comportamento idêntico: 77 testes
+  passam, build OK. As próximas etapas (estado da conversa, estado da
+  execução, drawers/configurações) estão registradas abaixo.
+  Antes dela, a **Frente 4 — Vulnerabilidades de dependências** zerou
   as 4 vulnerabilidades do `npm audit`: no backend, o override `uuid: ^11.1.1`
   corrigiu o dockerode (moderate) e o `npm audit fix` atualizou `ip-address`
   (high); no frontend, o override `postcss: ^8.5.23` corrigiu a vulnerabilidade
@@ -1282,10 +1287,14 @@ antes do aviso.
 
 ## Próximos passos (em ordem)
 
-1. **Frente 5 — IPv6 + `git` na allowlist de egress do sandbox.**
-   `parseAllowlistEntry` declara que IPv6 ficou de fora; `extractHostCandidates`
-   não varre `git`.
-2. **Frentes seguintes** conforme o backlog ordenado.
+1. **Frente 9 — Desmontar o App.jsx (etapas 2-4):** a etapa 1 (shell/sidebar)
+   está feita nesta PR. Faltam: etapa 2 (estado da conversa), etapa 3 (estado
+   da execução), etapa 4 (drawers/configurações). O plano completo está
+   registrado em `docs/ARCHITECTURE.md`.
+2. **Frente 10 — `MultiModelBoard` fora do chunk principal.** O build avisa
+   `INEFFECTIVE_DYNAMIC_IMPORT`: o `MultiModelBoard` é importado dinâmico no
+   `App.jsx` e estático no `Landing.jsx` e `MultiModelPicker.jsx`.
+3. **Frentes seguintes** conforme o backlog ordenado.
 
 ---
 
