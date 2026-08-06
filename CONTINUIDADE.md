@@ -50,6 +50,11 @@ sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md
   órfãos no boot); em teste, DESLIGADA (a suíte não tem Docker). O boot
   agora sempre relata o resultado da reconciliação (mesmo sem órfãos).
   5 testes de política pura cobrem todos os cenários.
+- **Último trabalho:** a **Frente 8 — Retomada real pós-kill-9** fecha o F-14
+  de verdade: teste de integração com `child_process` onde o processo A grava
+  checkpoint com tool calls e encerra (simulando SIGKILL), e o processo B
+  carrega e reconstrói via `buildResumeMessages` sem duplicar ferramentas.
+  Pula com a mensagem padrão sem PostgreSQL; com banco, exerce o caminho real.
 - **Último trabalho:** a **Frente 9 — Desmontar o App.jsx (etapa 1: shell)**
   extraiu a sidebar (~70 linhas de JSX) para `Sidebar.jsx`, reduzindo o
   `App.jsx` de 1550 para ~1480 linhas. Comportamento idêntico: 77 testes
@@ -1363,6 +1368,8 @@ antes do aviso.
 1. **Frente 8 — Retomada real pós-kill-9.** Teste de integração com `child_process`: 
    processo A grava checkpoint mid-run e leva SIGKILL; processo B lê e retoma sem
    duplicar ferramentas. Fecha o F-14 de verdade.
+1. **Frente 9 — Desmontar o App.jsx (etapa 1: shell).** Extrair shell (layout,
+   sidebar, drawers de abertura) para componentes próprios, sem mudar comportamento.
 2. **Frentes seguintes** conforme o backlog ordenado.
 1. **Frente 9 — Desmontar o App.jsx (etapas 2-4):** a etapa 1 (shell/sidebar)
    está feita nesta PR. Faltam: etapa 2 (estado da conversa), etapa 3 (estado
