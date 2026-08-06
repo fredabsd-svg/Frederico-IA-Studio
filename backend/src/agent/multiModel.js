@@ -805,7 +805,7 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
     onEvent({ type: 'mm_done', meta: multiMeta });
     const doneMsgId = await saveMessage(userId, conversationId, 'assistant', finalText, { multiMeta });
     onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId: doneMsgId });
-    indexAfterReply(userId, conversationId).catch(() => {});
+    indexAfterReply(userId, conversationId, config.coordinator).catch(() => {});
     return { text: finalText, usage, model: config.coordinator, stopped: control.stopped };
   } finally {
     if (pipelineRunId && !pipelineClosedCleanly) {
