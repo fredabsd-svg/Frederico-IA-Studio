@@ -24,6 +24,12 @@ que ainda segura o verde é o **pipeline multimodelo retomável**: o F-15 entreg
 tabela e as primitivas, mas o `runMultiModel` ainda não as usa, então o reinício continua
 sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
+- **Último trabalho:** o **portão de bundle passou a medir a coisa certa**. Ele somava
+  todo o JS contra um teto único de 1.000 KB — e a `main` estava exatamente em 1.000,
+  com 100% do orçamento consumido: qualquer PR de frontend reprovava. Pior, ele punia
+  code splitting (cada chunk novo soma invólucro), reprovando o PR da Frente 10 que
+  BAIXOU a primeira pintura de 909 para 896 KB. Agora são dois tetos — entrada
+  (920 KB) e total (1.100 KB) — e a regra roda no `npm run check`, não só no CI.
 - **Último trabalho:** a **Frente 5 — IPv6 + `git` na allowlist de egress do
   sandbox** fechou duas lacunas do F-05b: endereços IPv6 literais (`[::1]`,
   `[2001:db8::1]`) são bloqueados com mensagem clara quando a allowlist está
@@ -94,6 +100,44 @@ sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md
   do matplotlib.
   **O LibreOffice deste contêiner não converte nada** (falha até com um `.txt` de uma
   linha), então a conferência do `.docx` foi estrutural — OOXML sobre o arquivo reaberto.
+
+---
+
+## O portão de bundle media a coisa errada (2026-08-06)
+
+Dois PRs de code splitting (Frentes 9 e 10) chegaram com a CI vermelha, ambos
+no mesmo job. Investigando, o defeito não estava neles.
+
+O portão somava **todo** o JS de `dist/assets` contra um teto único de 1.000 KB.
+Duas coisas estavam erradas nisso:
+
+1. **A `main` já marcava 1.000 KB** — 100% do orçamento consumido. Não era um
+   teto com folga: era uma parede. Qualquer PR que acrescentasse um byte de
+   frontend reprovava, o que bloqueava as Frentes 9, 10 e 11 inteiras.
+2. **A soma punia exatamente o trabalho que a catraca dizia esperar.** O
+   comentário do job dizia que o teto existia "enquanto o code splitting do
+   `App.jsx` não é feito" — mas cada `React.lazy` novo tira bytes da primeira
+   pintura e ACRESCENTA alguns KB ao total, porque cada chunk carrega seu
+   invólucro. O PR da Frente 10 é o caso exemplar: baixou a primeira pintura de
+   909 para 896 KB (melhora real para o usuário) e foi reprovado.
+
+Parte do "crescimento" nem era real: o `du -sk` arredonda por bloco, então um
+build com 11 arquivos parecia maior que um com 9 mesmo com menos bytes.
+
+**Agora são duas perguntas, dois números:** a **entrada** (script inicial mais o
+que o HTML manda pré-carregar) é o que o usuário espera antes da primeira
+pintura, e é o número que o splitting deve baixar; o **total emitido** não
+encolhe com splitting e serve de alarme para dependência nova entrando de
+carona. Por isso o teto do total é folgado — ele não é meta, é alarme.
+
+**A regra saiu do YAML e virou `frontend/scripts/bundleBudget.mjs`, ligada ao
+`npm run check`.** Era a causa de os dois PRs terem sido enviados vermelhos de
+boa-fé: eles rodaram `npm run check`, que passou, porque o portão só existia no
+CI. Portão que só existe no CI é descoberto tarde demais.
+
+Conferido nos dois sentidos: com teto artificialmente baixo o script sai com
+código 1 e a mensagem certa; restaurado, sai 0. Sem `dist`, avisa para rodar o
+build em vez de estourar.
 
 ---
 
@@ -1285,6 +1329,9 @@ antes do aviso.
 
 ## Próximos passos (em ordem)
 
+1. **Frente 5 — IPv6 + `git` na allowlist de egress do sandbox.**
+   `parseAllowlistEntry` declara que IPv6 ficou de fora; `extractHostCandidates`
+   não varre `git`.
 1. **Frente 6 — Extração de memória usa o modelo da conversa.** Em E2E aparece
    `[memória] extração falhou (segue sem): 404 Modelo não faz parte deste
    provedor falso` — a extração de memória usa o default do app em vez do modelo
