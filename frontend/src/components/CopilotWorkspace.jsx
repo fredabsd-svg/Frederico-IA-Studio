@@ -6,6 +6,7 @@ import {
   MessageSquare, FolderOpen, Send, Trash2, Eraser, Bell,
   FileText, Download, Eye, X, Wand2, Brain, Link2, Copy,
   BookmarkPlus, ArrowUpToLine, Pin, PinOff, Plus, ScrollText, Check, Link2Off,
+  ShieldCheck, Gauge, SearchCheck, Sparkles,
 } from 'lucide-react';
 import { NinoAvatar, NINO_CAPTION } from './NinoAvatar.jsx';
 
@@ -69,6 +70,9 @@ export function CopilotWorkspace({
         <button role="tab" aria-selected={tab === 'docs'} className={tab === 'docs' ? 'on' : ''} onClick={() => setTab('docs')}>
           <FolderOpen size={14} /> Documentos {copilot.documents.length > 0 && <span className="cwCount">{copilot.documents.length}</span>}
         </button>
+        <button role="tab" aria-selected={tab === 'actions'} className={tab === 'actions' ? 'on' : ''} onClick={() => setTab('actions')}>
+          <Sparkles size={14} /> Ações
+        </button>
       </div>
 
       {tab === 'chat' && (
@@ -79,7 +83,8 @@ export function CopilotWorkspace({
         />
       )}
       {tab === 'memory' && <MemoryTab copilot={copilot} name={name} quiet={quiet} showToast={showToast} />}
-      {tab === 'docs' && <DocsTab copilot={copilot} name={name} quiet={quiet} />}
+      {tab === 'docs' && <DocsTab copilot={copilot} name={name} quiet={quiet} showToast={showToast} />}
+      {tab === 'actions' && <ExecutiveActionsTab copilot={copilot} name={name} quiet={quiet} />}
     </Drawer>
   );
 }
@@ -153,7 +158,7 @@ function ChatTab({ copilot, companion, name, unread, quiet, conversationId, conv
           <div className="cwEmpty">
             <span className="cwEmptyFace"><NinoAvatar state="observando" name={name} quiet={quiet} /></span>
             <b>Oi! Eu sou o {name}.</b>
-            <span>Este é o nosso canto — separado do chat principal. Me use para revisar textos, lapidar prompts, organizar ideias ou tirar dúvidas do Studio.</span>
+            <span>Este é o nosso canto executivo — separado do chat principal. Posso planejar, questionar premissas, auditar entregas, proteger seus dados e otimizar o uso dos modelos.</span>
             {canShare && byPreference && <span className="cwEmptyHint">Já acompanho o que está na conversa aberta. Se preferir sigilo numa pergunta, desligue o <Link2 size={12} /> antes de enviar.</span>}
             {canShare && !byPreference && <span className="cwEmptyHint">Quando precisar que eu veja do que se trata lá no chat, ligue o <Link2 size={12} /> antes de enviar.</span>}
           </div>
@@ -440,7 +445,7 @@ function MemoryTab({ copilot, name, quiet, showToast }) {
 
 // ---- Documentos ---------------------------------------------------------------
 
-function DocsTab({ copilot, name, quiet }) {
+function DocsTab({ copilot, name, quiet, showToast }) {
   const { documents, docsLoading, deleteDocument } = copilot;
   const [view, setView] = useState(null);
 
@@ -464,6 +469,10 @@ function DocsTab({ copilot, name, quiet }) {
             <small><span className="cwDocKind">{DOC_KIND_LABEL[d.kind] || d.kind}</span> · {fmtDate(d.createdAt)} · {fmtSize(d.size)}</small>
           </div>
           <div className="cwDocActions">
+            <button title="Auditar antes de baixar" aria-label="Auditar antes de baixar" onClick={async () => {
+              const result = await copilot.runExecutiveTool('sandbox-audit', { documentId: d.id });
+              if (result) showToast?.(result.status === 'aprovado' ? 'Documento aprovado na auditoria.' : `Auditoria: ${result.issues.length} ponto(s) para revisar.`);
+            }}><ShieldCheck size={15} /></button>
             <button title="Visualizar" aria-label="Visualizar" onClick={() => setView(d)}><Eye size={15} /></button>
             <a title="Baixar" aria-label="Baixar" href={`${API}/api/copilot/documents/${encodeURIComponent(d.id)}/download`} target="_blank" rel="noreferrer"><Download size={15} /></a>
             <button title="Excluir" aria-label="Excluir" onClick={() => deleteDocument(d.id)}><Trash2 size={15} /></button>
@@ -473,6 +482,77 @@ function DocsTab({ copilot, name, quiet }) {
       {view && <DocViewer doc={view} onClose={() => setView(null)} />}
     </div>
   );
+}
+
+// ---- Ações executivas --------------------------------------------------------
+
+function ExecutiveActionsTab({ copilot, name, quiet }) {
+  const [content, setContent] = useState('');
+  const [busy, setBusy] = useState('');
+  const [result, setResult] = useState(null);
+
+  async function run(id) {
+    if (id !== 'memory-review' && !content.trim()) return;
+    setBusy(id); setResult(null);
+    let data = null;
+    if (id === 'logic-review' || id === 'optimize-prompt') data = await copilot.runExecutiveAction(id, content);
+    else if (id === 'memory-review') data = await copilot.runExecutiveTool(id);
+    else if (id === 'model-routing') data = await copilot.runExecutiveTool(id, { prompt: content });
+    else data = await copilot.runExecutiveTool(id, { content, name: 'conteúdo colado.txt', mime: 'text/plain' });
+    setResult(data); setBusy('');
+  }
+
+  const output = formatExecutiveResult(result);
+  return (
+    <div className="cwExecutive">
+      <div className="cwEmpty actions">
+        <span className="cwEmptyFace"><NinoAvatar state="analisando" name={name} quiet={quiet} /></span>
+        <b>Planejar, auditar e proteger</b>
+        <span>Cole um prompt, resposta ou conteúdo. As análises locais não registram os valores sensíveis encontrados.</span>
+      </div>
+      <textarea value={content} onChange={e => setContent(e.target.value)} rows={7} maxLength={200000} placeholder="Cole aqui o conteúdo que o Nino deve analisar…" aria-label="Conteúdo para ação executiva" />
+      <div className="cwExecutiveGrid">
+        <button onClick={() => run('sandbox-audit')} disabled={busy || !content.trim()}><ShieldCheck size={15} /> Auditar este documento</button>
+        <button onClick={() => run('lgpd-check')} disabled={busy || !content.trim()}><ShieldCheck size={15} /> Verificar LGPD e segredos</button>
+        <button onClick={() => run('model-routing')} disabled={busy || !content.trim()}><Gauge size={15} /> Recomendar modelo</button>
+        <button onClick={() => run('logic-review')} disabled={busy || !content.trim()}><SearchCheck size={15} /> Buscar furos lógicos</button>
+        <button onClick={() => run('optimize-prompt')} disabled={busy || !content.trim()}><Wand2 size={15} /> Otimizar meu prompt</button>
+        <button onClick={() => run('memory-review')} disabled={busy}><Brain size={15} /> Resumir e limpar memória</button>
+      </div>
+      {busy && <div className="cwLoading">{name} está auditando…</div>}
+      {output && <pre className="cwExecutiveResult">{output}</pre>}
+      {result?.duplicates && <div className="cwDim">Nenhuma nota é apagada automaticamente; o relatório indica o que deve ser consolidado.</div>}
+    </div>
+  );
+}
+
+function formatExecutiveResult(result) {
+  if (!result) return '';
+  if (result.result) return result.result;
+  if (result.tier) return [
+    `Modelo recomendado: ${result.tier}`,
+    `Complexidade estimada: ${result.complexityScore}/100`,
+    ...(result.reasons || []).map(reason => `• ${reason}`),
+    '', result.recommendation,
+  ].join('\n');
+  if (Array.isArray(result.issues)) return [
+    `Resultado da auditoria: ${result.status}`,
+    `Escopo verificado: ${result.scope}`,
+    ...(result.issues.length ? result.issues.map(issue => `• ${issue.message}`) : ['• Nenhum problema evidente encontrado.']),
+  ].join('\n');
+  if (Array.isArray(result.findings)) return [
+    `Resultado de privacidade: ${result.status}`,
+    ...(result.findings.length ? result.findings.map(item => `• ${item.count} ocorrência(s) de ${item.label}`) : ['• Nenhum padrão evidente encontrado.']),
+    '', result.recommendation,
+  ].join('\n');
+  if (Array.isArray(result.duplicates)) return [
+    `Estado da memória: ${result.status}`,
+    `Notas analisadas: ${result.totalNotes}`,
+    `Grupos duplicados: ${result.duplicates.length}`,
+    `Notas com dados sensíveis: ${result.sensitive?.length || 0}`,
+    '', result.recommendation,
+  ].join('\n');
+  return 'Análise concluída.';
 }
 
 function DocViewer({ doc, onClose }) {

@@ -10,12 +10,18 @@ import { db, now } from '../db.js';
 import { getUserProvider } from '../userProvider.js';
 import { sanitizeSettings } from './companion.js';
 import { audit } from '../companion/audit.js';
+import { decide, readPermissions } from '../companion/permissions.js';
+import { normalizeScheduleDay, normalizeScheduleHour } from '../scheduling.js';
 import {
   buildChatMessages, buildReviseMessages, buildSummaryMessages, estimateTokens,
   buildContextBlock, buildNotesBlock, buildKnowledgeBlock, decideContextAccess,
   CONTEXT_ACCESS, RESPONSE_STYLES, TONES, NOTE_KINDS,
 } from '../copilot/core.js';
 import { findKnowledge } from '../copilot/knowledge.js';
+import {
+  buildExecutiveActionMessages, checkLgpdCompliance, reviewMemory,
+  runSandboxAudit, suggestModelRouting,
+} from '../copilot/executive.js';
 import {
   ensureCopilotConversation, listCopilotMessages, appendCopilotMessage, clearCopilotConversation,
   createDocument, listDocuments, getDocument, deleteDocument,
@@ -251,6 +257,95 @@ router.post('/copilot/actions/summary', async (req, res) => {
     meta: { origem: 'acao_resumo', mensagens: history.length },
   });
   res.json({ summary, document });
+});
+
+// ---- Ferramentas executivas exclusivas do Nino ------------------------------
+
+async function authorizedContent(req) {
+  const documentId = String(req.body?.documentId || '').trim();
+  if (documentId) {
+    const document = await getDocument(req.userId, documentId);
+    return document ? { content: document.content || '', name: document.name, mime: document.mime } : null;
+  }
+  return {
+    content: String(req.body?.content ?? req.body?.text ?? '').slice(0, 200_000),
+    name: String(req.body?.name || '').slice(0, 200),
+    mime: String(req.body?.mime || '').slice(0, 100),
+  };
+}
+
+router.post('/copilot/tools/lgpd-check', async (req, res) => {
+  const input = await authorizedContent(req);
+  if (!input) return res.status(404).json({ error: 'Documento não encontrado.' });
+  if (!input.content) return res.status(400).json({ error: 'Informe conteúdo ou documentId para analisar.' });
+  const result = checkLgpdCompliance(input);
+  await audit(req.userId, { actor: 'copiloto', category: 'consultar', action: 'check_lgpd_compliance', authorized: true, level: result.status === 'bloquear' ? 'critico' : result.status === 'revisar' ? 'aviso' : 'info', detail: `${result.total} ocorrência(s); valores não registrados` });
+  res.json(result);
+});
+
+router.post('/copilot/tools/sandbox-audit', async (req, res) => {
+  const input = await authorizedContent(req);
+  if (!input) return res.status(404).json({ error: 'Documento não encontrado.' });
+  const result = runSandboxAudit(input);
+  await audit(req.userId, { actor: 'copiloto', category: 'consultar', action: 'run_sandbox_audit', target: input.name || 'conteúdo colado', authorized: true, level: result.status === 'reprovado' ? 'aviso' : 'info', detail: `${result.scope}; ${result.issues.length} achado(s)` });
+  res.json(result);
+});
+
+router.post('/copilot/tools/model-routing', async (req, res) => {
+  const result = suggestModelRouting(req.body || {});
+  await audit(req.userId, { actor: 'copiloto', category: 'consultar', action: 'suggest_model_routing', authorized: true, level: 'info', detail: `${result.tier}; complexidade ${result.complexityScore}` });
+  res.json(result);
+});
+
+router.post('/copilot/tools/memory-review', async (req, res) => {
+  const notes = await listNotes(req.userId, { limit: 200 });
+  const result = reviewMemory(notes);
+  await audit(req.userId, { actor: 'copiloto', category: 'consultar', action: 'auditar memória', authorized: true, level: result.sensitive.length ? 'aviso' : 'info', detail: `${result.duplicates.length} duplicata(s); ${result.sensitive.length} nota(s) sensível(is)` });
+  res.json(result);
+});
+
+router.post('/copilot/tools/auto-routine', async (req, res) => {
+  const b = req.body || {};
+  const title = String(b.title || '').trim().slice(0, 200);
+  const prompt = String(b.prompt || '').trim().slice(0, 100_000);
+  const cadence = ['daily', 'weekly', 'monthly'].includes(b.cadence) ? b.cadence : 'weekly';
+  const preview = { title, prompt, cadence, day: normalizeScheduleDay(cadence, b.day), hour: normalizeScheduleHour(b.hour) };
+  const assistantId = b.assistantId ? String(b.assistantId).slice(0, 64) : null;
+  const model = b.model ? String(b.model).slice(0, 200) : null;
+  const clientId = b.clientId ? String(b.clientId).slice(0, 64) : null;
+  if (!title || !prompt) return res.status(400).json({ error: 'Título e instrução da rotina são obrigatórios.' });
+  if (b.confirmed !== true) return res.status(409).json({ error: 'Confirmação explícita necessária.', requiresConfirmation: true, preview });
+  const perms = await readPermissions(req.userId);
+  const decision = decide(perms, 'criar_rotinas');
+  if (!decision.allowed) return res.status(403).json({ error: decision.reason, decision });
+  const id = nanoid();
+  await db.prepare('INSERT INTO schedules (id,user_id,title,prompt,assistant_id,model,client_id,web_search,cadence,day,hour,enabled,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
+    .run(id, req.userId, title, prompt, assistantId, model, clientId, b.webSearch ? 1 : 0, cadence, preview.day, preview.hour, 1, now());
+  await audit(req.userId, { actor: 'copiloto', category: 'alterar', action: 'trigger_auto_routine', target: title, authorized: true, permLevel: perms.level, level: 'aviso', detail: `${cadence}; ${preview.hour}` });
+  res.json(await db.prepare('SELECT * FROM schedules WHERE id=? AND user_id=?').get(id, req.userId));
+});
+
+router.post('/copilot/tools/executive-action', async (req, res) => {
+  const action = String(req.body?.action || '');
+  const content = String(req.body?.content || '').trim();
+  if (!['logic-review', 'optimize-prompt'].includes(action)) return res.status(400).json({ error: 'Ação executiva inválida.' });
+  if (!content) return res.status(400).json({ error: 'Informe o conteúdo para analisar.' });
+  const provider = await resolveProvider(req.userId);
+  if (!provider.hasKey || !provider.client) return res.status(400).json({ error: NO_KEY_MSG });
+  try {
+    const completion = await provider.client.chat.completions.create({
+      model: provider.model,
+      messages: buildExecutiveActionMessages(action, content),
+      temperature: 0.2,
+    });
+    const result = replyText(completion);
+    if (!result) return res.status(502).json({ error: CALL_FAIL_MSG });
+    await audit(req.userId, { actor: 'copiloto', category: 'consultar', action, authorized: true, level: 'info', detail: 'conteúdo não registrado no log' });
+    res.json({ action, result });
+  } catch (err) {
+    console.error('[copilot] falha na ação executiva:', err?.message);
+    res.status(502).json({ error: CALL_FAIL_MSG });
+  }
 });
 
 // ---- Revisão de escrita (balão proativo do avatar) --------------------------

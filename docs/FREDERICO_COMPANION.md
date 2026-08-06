@@ -1,5 +1,9 @@
 # Frederico Companion — Assistente Virtual
 
+Estado: parcialmente implementado
+Verificado contra o código em: 2026-08-06
+Evidências: `backend/src/copilot/executive.js`, `backend/src/copilot/executive.test.js`, `backend/src/routes/copilot.js`, `frontend/src/components/CopilotWorkspace.jsx`
+
 O **Frederico Companion** é a camada de experiência (um personagem virtual
 flutuante) sobre a infraestrutura que o Frederico AI Studio já oferece: catálogo
 de modelos, provedores, memória, ferramentas e modo desenvolvedor. O personagem é
@@ -100,3 +104,40 @@ Próximos cortes da Fase 2:
 O MVP prioriza **provar a utilidade** antes de investir num avatar 3D
 sofisticado: primeiro ele precisa ser útil, depois pode ser visualmente
 impressionante.
+
+## Nino como gerente executivo
+
+O chat próprio do Nino não usa mais a revisão gramatical como identidade
+principal. O prompt de produção define cinco responsabilidades: Planejador,
+Crítico, Guardião, Otimizador e Tecelão. Ele pode questionar respostas do agente
+principal, propor divisão de tarefas e recomendar o próximo resultado útil, mas
+não recebe autoridade implícita para executar ações.
+
+Ao surgir um novo anexo, o frontend envia somente metadados mínimos (nome,
+caminho lógico, MIME e tamanho) ao motor local de sugestões. CSVs recebem uma
+proposta de auditoria/relatório/dashboard; PDFs recebem uma sugestão condicional
+de Docling/OCR. Arquivos já presentes quando a tela abre não geram alertas
+retroativos.
+
+A aba **Ações** expõe ferramentas separadas e auditáveis:
+
+- `POST /api/copilot/tools/sandbox-audit`: verifica conteúdo textual, estrutura
+  de CSV, risco de fórmula injetável, disponibilidade de texto em PDF e sinais
+  de dados pessoais. Para `.xlsx` binário, informa explicitamente que a análise
+  completa das fórmulas ainda exige integração com o arquivo no sandbox.
+- `POST /api/copilot/tools/lgpd-check`: conta padrões de CPF, e-mail, telefone,
+  cartão e possíveis segredos sem devolver ou registrar os valores encontrados.
+- `POST /api/copilot/tools/model-routing`: classifica o pedido em nível econômico,
+  equilibrado ou avançado e informa as capacidades exigidas.
+- `POST /api/copilot/tools/memory-review`: identifica duplicatas exatas e notas
+  com possíveis dados sensíveis. A ferramenta é somente leitura e nunca apaga
+  memória automaticamente.
+- `POST /api/copilot/tools/executive-action`: executa auditoria lógica ou
+  otimização de prompt com instruções dedicadas e conteúdo delimitado como dado
+  não confiável.
+- `POST /api/copilot/tools/auto-routine`: cria uma rotina somente após confirmação
+  explícita, política `criar_rotinas` autorizada e registro em auditoria.
+
+Os resultados são apoio à decisão, não certificação legal ou garantia contábil.
+Valores sensíveis não entram no log de auditoria; o log registra apenas categoria,
+quantidade e resultado da verificação.

@@ -23,7 +23,7 @@ const DEFAULTS = {
   writingSensitivity: 'media',
 };
 
-export function useCompanion({ tasks = [], devConversationId = null, showToast } = {}) {
+export function useCompanion({ tasks = [], uploads = [], devConversationId = null, showToast } = {}) {
   const [settings, setSettings] = useState(DEFAULTS);
   const [persona, setPersona] = useState(null);
   const [events, setEvents] = useState([]);
@@ -151,6 +151,7 @@ export function useCompanion({ tasks = [], devConversationId = null, showToast }
   // Só dispara nos modos que permitem intervenção e com alertas proativos
   // ligados — nunca em "silencioso", "foco" ou "apresentacao" (seção 5).
   const seenTaskErrors = useRef(new Set());
+  const seenUploads = useRef(new Set());
   const bootstrapped = useRef(false);
   useEffect(() => {
     const s = settingsRef.current;
@@ -178,6 +179,46 @@ export function useCompanion({ tasks = [], devConversationId = null, showToast }
       });
     }
   }, [tasks, addEvent]);
+
+  // Antecipação por metadados: novos anexos geram uma proposta útil sem enviar
+  // o conteúdo do arquivo ao Nino. A primeira carga é apenas registrada para
+  // não transformar arquivos antigos em uma enxurrada de alertas.
+  const bootstrappedUploads = useRef(false);
+  useEffect(() => {
+    const list = Array.isArray(uploads) ? uploads : [];
+    const entries = list.map(f => ({ file: f, key: String(f.id || f.path || f.name || '') })).filter(item => item.key);
+    const keys = entries.map(item => item.key);
+    if (!bootstrappedUploads.current) {
+      keys.forEach(key => seenUploads.current.add(key));
+      bootstrappedUploads.current = true;
+      return;
+    }
+    const fresh = entries.filter(item => !seenUploads.current.has(item.key)).map(item => item.file);
+    keys.forEach(key => seenUploads.current.add(key));
+    const s = settingsRef.current;
+    if (!fresh.length || !s.enabled || !s.proactiveAlerts || !['auxiliar', 'proativo'].includes(s.mode)) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${API}/api/companion/suggestions`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ files: fresh.map(f => ({ name: f.name, path: f.path, mime: f.mime, size: f.size })) }),
+        });
+        if (!res.ok || cancelled) return;
+        const suggestions = await res.json();
+        for (const item of suggestions.slice(0, 3)) {
+          if (cancelled) break;
+          await addEvent({
+            kind: 'antecipacao_intencao', level: item.severity || 'info',
+            title: 'Posso antecipar o próximo passo', detail: item.suggestion,
+            origin: 'metadados_do_anexo', proposedAction: item.suggestion,
+            authorization: 'Nenhuma ação executada sem sua confirmação',
+          });
+        }
+      } catch { /* sugestão não bloqueia o upload */ }
+    })();
+    return () => { cancelled = true; };
+  }, [uploads, addEvent, settings.enabled, settings.mode, settings.proactiveAlerts]);
 
   return {
     settings, persona, events, options, ready,

@@ -276,7 +276,7 @@ export default function App({ user } = {}) {
   // Conversa de desenvolvimento ativa (para o monitoramento de Git do Companion):
   // a sessão do modo dev, ou a conversa aberta quando o workspace é o "developer".
   const devConversationId = developerSession?.conversationId || (workspace === 'developer' ? current?.id : null) || null;
-  const companion = useCompanion({ tasks, devConversationId, showToast });
+  const companion = useCompanion({ tasks, uploads, devConversationId, showToast });
   // Docling — andamento e resultados do processamento documental da conversa.
   const docling = useDocling(current?.id);
   // Copiloto — central de diagnósticos, saúde e permissões.
