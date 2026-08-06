@@ -38,6 +38,12 @@ sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md
   existentes intactos.
   Antes dela, a **Frente 4 — Vulnerabilidades de dependências** (#173) zerou
   as 4 vulnerabilidades com overrides em `package.json`.
+- **Último trabalho:** a **Frente 6 — Extração de memória usa o modelo da
+  conversa** corrigiu o ruído nos E2E. O `indexAfterReply` agora recebe o
+  `modelRef` da conversa (via `loop.js`, `multiModel.js`, `orchestrator.js`)
+  e o repassa ao `getUserProvider`, eliminando o 404 de "modelo não pertence a
+  este provedor" em contas multi-chave. O log virou `console.warn` com mensagem
+  mais informativa. 9 testes unitários cobrem a precedência.
 - **Último trabalho:** a **Frente 9 — Desmontar o App.jsx (etapa 1: shell)**
   extraiu a sidebar (~70 linhas de JSX) para `Sidebar.jsx`, reduzindo o
   `App.jsx` de 1550 para ~1480 linhas. Comportamento idêntico: 77 testes
@@ -1346,6 +1352,8 @@ antes do aviso.
    `[memória] extração falhou (segue sem): 404 Modelo não faz parte deste
    provedor falso` — a extração de memória usa o default do app em vez do modelo
    ativo da conversa.
+1. **Frente 7 — Reconciliação de sandbox ligada por padrão.** `SANDBOX_RECONCILE_ON_BOOT=false`
+   desliga a coleta de containers órfãos; em produção, crash deixa lixo.
 2. **Frentes seguintes** conforme o backlog ordenado.
 1. **Frente 9 — Desmontar o App.jsx (etapas 2-4):** a etapa 1 (shell/sidebar)
    está feita nesta PR. Faltam: etapa 2 (estado da conversa), etapa 3 (estado
