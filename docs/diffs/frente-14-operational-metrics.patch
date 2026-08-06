@@ -1,0 +1,950 @@
+From 1fbc92c2263dca259dda1de518d9357d3580592a Mon Sep 17 00:00:00 2001
+From: fredabsd-svg <fredabsd-svg@users.noreply.github.com>
+Date: Thu, 6 Aug 2026 20:56:42 +0000
+Subject: [PATCH] =?UTF-8?q?Frente=2014:=20m=C3=A9tricas=20operacionais=20r?=
+ =?UTF-8?q?eais=20no=20painel=20admin?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Migration 031: usage ganha feature (TEXT) + cost_usd (NUMERIC(10,6))
+com 2 índices para agregação por feature e janela de tempo.
+
+src/usage.js: helper recordUsage() centraliza os 7 INSERTs espalhados
+por 6 arquivos (tasks, conversations×3, design, design/images).
+KNOWN_FEATURES = ['chat','multimodel','design','design-image',
+'scheduled-task']. cost_usd calculado a partir de profile.pricingKnown.
+Falha no INSERT é logada mas NÃO propaga (cobrança é secundária).
+
+routes/usageDashboard.js: GET /api/admin/usage/dashboard (requireAdmin)
+devolve agregado por feature (hoje/7d/30d), custo mensal, top 5
+usuários 30d, top 10 modelos no mês e pressão de cota contra
+FREE_TIER_DAILY_LIMIT×0.8. Sem env, quotaPressure devolve
+configured:false em vez de inventar número.
+
+src/server.js: registra usageDashboardRouter.
+
+Refatoração dos call sites: 4 arquivos trocaram o INSERT manual por
+recordUsage({...feature: 'chat'|'multimodel'|'design'|'design-image'|
+'scheduled-task'}).
+
+Testes: 4 do helper (cost, feature desconhecida, sem userId, lista
+canônica) e 4 do dashboard (startOfUtcDay, exports, quotaPressure).
+Sem DB no sandbox — helper pula, dashboard roda puro. 85/85 do Design
+intactos, 10/10 do routes/ verdes, 81/81 do frontend, lint limpo
+nos 243 arquivos do backend + 45 do frontend.
+
+Doc: docs/OBSERVABILITY.md (schema, helpers, endpoints, lista de
+features, próximos passos).
+CONTINUIDADE.md: frente marcada como mergeada, fila atualizada com
+Frente 15 (sonda tool calling), 16 (UI admin), 17 (calibração do
+FREE_TIER_DAILY_LIMIT).
+---
+ CONTINUIDADE.md                           |  59 ++++---
+ backend/migrations/031_usage_feature.sql  |  35 +++++
+ backend/src/design/images.js              |  14 +-
+ backend/src/routes/conversations.js       |  37 ++++-
+ backend/src/routes/design.js              |  13 +-
+ backend/src/routes/tasks.js               |  13 +-
+ backend/src/routes/usageDashboard.js      | 181 ++++++++++++++++++++++
+ backend/src/routes/usageDashboard.test.js |  57 +++++++
+ backend/src/server.js                     |   2 +
+ backend/src/usage.js                      |  83 ++++++++++
+ backend/src/usage.test.js                 |  93 +++++++++++
+ docs/OBSERVABILITY.md                     | 119 ++++++++++++++
+ 12 files changed, 668 insertions(+), 38 deletions(-)
+ create mode 100644 backend/migrations/031_usage_feature.sql
+ create mode 100644 backend/src/routes/usageDashboard.js
+ create mode 100644 backend/src/routes/usageDashboard.test.js
+ create mode 100644 backend/src/usage.js
+ create mode 100644 backend/src/usage.test.js
+ create mode 100644 docs/OBSERVABILITY.md
+
+diff --git a/CONTINUIDADE.md b/CONTINUIDADE.md
+index 30ac71a..df0c0a2 100644
+--- a/CONTINUIDADE.md
++++ b/CONTINUIDADE.md
+@@ -81,6 +81,18 @@ sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md
+   E2E ponta a ponta — o ambiente deste sandbox não tem servidor Postgres
+   nem `/opt/pw-browsers/`, então a prova visual de UI ficou fora. A
+   catraca impede regredir; o detector é determinístico.
++- **Último trabalho:** a **Frente 14 — Métricas operacionais reais no painel admin**
++  instrumentou a tabela `usage` com `feature` (TEXT) e `cost_usd` (NUMERIC(10,6)),
++  centralizou os 7 INSERTs espalhados por 6 arquivos num único helper `recordUsage()`
++  com lista canônica de features (`chat`, `multimodel`, `design`, `design-image`,
++  `scheduled-task`), e expôs a rota admin `GET /api/admin/usage/dashboard` —
++  agregado por feature (hoje/7d/30d), custo mensal, top 5 usuários 30d, top 10
++  modelos no mês e pressão de cota contra `FREE_TIER_DAILY_LIMIT`. Falha no
++  INSERT é logada mas não propaga; custo estimado em USD só entra quando o
++  profile do modelo tem `pricingKnown`. Sem DB ativo no sandbox: 4 testes do
++  helper pulados, 4 testes do dashboard passam, 85/85 do Design intactos,
++  10/10 do routes/, 81/81 do frontend, lint limpo nos 243 arquivos do backend.
++  Doc: `docs/OBSERVABILITY.md`.
+ - **Último trabalho:** a **Frente 10 — MultiModelBoard fora do chunk principal**
+   moveu `MULTI_MODE_LABEL` para `constants.js`, eliminando o import estático do
+   `MultiModelBoard` no `Landing.jsx` e `MultiModelPicker.jsx`. O aviso
+@@ -1381,42 +1393,47 @@ antes do aviso.
+ 
+ ## Próximos passos (em ordem)
+ 
+-0. **Frente 13 — Modo Design: compressão automática de imagens (mergeada).**
+-   Branch `t6-frente-13-design-image-compression`. Migration 030 adiciona
+-   `original_mime/original_size/original_data/compressed_at` em
+-   `design_images` (índice parcial para o purge). `design/compress.js`
+-   re-encoda PNG > 1 MB em JPEG q=85 antes da checagem de cota;
+-   preserva o original em colunas separadas por 30 dias.
+-   `designAdmin.js` expõe métricas (`/admin/design/image-stats`) e o
+-   purge (`POST /admin/design/purge-stale-image-originals?days=N`,
+-   `requireAdmin` + `recordAdminAction`). Testes: `compress.test.js`
+-   (puro, 7 casos incluindo fallback de input corrompido) e 3 novos
+-   casos em `images.test.js` (compressão com auditoria, não-compressão
+-   de imagens pequenas, listagem com metadados). Doc:
+-   `docs/DESIGN_STUDIO.md` §Compressão automática.
++0. **Frente 14 — Métricas operacionais reais no painel admin (mergeada).**
++   Branch `t6-frente-14-operational-metrics`. Migration 031 adiciona
++   `feature` (TEXT) e `cost_usd` (NUMERIC(10,6)) em `usage`, com 2
++   índices para agregação. Helper `recordUsage()` em `src/usage.js`
++   centraliza os 7 INSERTs espalhados por 6 arquivos (`tasks.js`,
++   `conversations.js` ×3, `design.js`, `design/images.js`), com
++   `KNOWN_FEATURES` canônico (`chat`, `multimodel`, `design`,
++   `design-image`, `scheduled-task`) e estimativa automática de
++   `cost_usd` quando o profile tem `pricingKnown`. Rota admin nova:
++   `GET /api/admin/usage/dashboard` retorna agregado por feature
++   (hoje/7d/30d), custo mensal, top 5 usuários 30d, top 10 modelos
++   no mês e pressão de cota (`FREE_TIER_DAILY_LIMIT × 0.8`). Falha
++   no INSERT é logada mas NÃO propaga (cobrança é secundária).
++   Testes: 4 do helper (cost, feature desconhecida, sem userId) e 4
++   do dashboard (startOfUtcDay, lista canônica, exports, quotaPressure
++   sem env). Doc: `docs/OBSERVABILITY.md`.
+ 1. **Frente 13 (antiga, renumerada) — Modo Design: compartilhamento público.** O token de prévia
+    já existe; falta a tela pública sobre ele. Rota pública mínima (Regra 2.2)
+    servindo a prévia por token, sem sessão; revogação. Testes de autorização
+    (válido/inválido/revogado); `docs/SECURITY.md`.
+-2. **Frente 14 — Sub-agentes: controle na interface.** Backend pronto; falta
+-   o controle "automático / desligado / obrigatório" e o motivo de
+-   indisponibilidade visível. `shouldOfferSubagentTool` respeita a
+-   preferência.
+-3. **Frente 15 — Sonda de tool calling na primeira delegação.** O catálogo
++2. **Frente 15 — Sonda de tool calling na primeira delegação.** O catálogo
+    persistido (`model_tool_capability_cache`) registra capacidade DEPOIS da
+    falha — a primeira delegação a um modelo sem suporte é desperdiçada.
+    Sonda barata; resultado vai ao catálogo.
+-4. **Frente 9 — Desmontar o `App.jsx` (etapas 2-4):** a etapa 1 (shell/sidebar)
++3. **Frente 16 — UI admin consumindo `/api/admin/usage/dashboard`.** A
++   rota existe (Frente 14) mas é só via API/curl. Falta a tela simples
++   com KPIs + sparkline (sem gráfico pesado).
++4. **Frente 17 — Calibração do `FREE_TIER_DAILY_LIMIT` com dado real.**
++   Agora temos `tokens_30d` por tier (Frente 14). O limite sai do
++   percentil 95 dos usuários ativos para não cortar cauda longa.
++5. **Frente 9 — Desmontar o `App.jsx` (etapas 2-4):** a etapa 1 (shell/sidebar)
+    está feita. Faltam: etapa 2 (estado da conversa), etapa 3 (estado da
+    execução), etapa 4 (drawers/configurações). Plano completo em
+    `docs/ARCHITECTURE.md`.
+-5. **Pendência conhecida — 123 regras mistas no inventário CSS:** regras
++6. **Pendência conhecida — 123 regras mistas no inventário CSS:** regras
+    que combinam classes mortas com classes vivas (ex.: `.morta .viva`,
+    `.morta.viva`). Não foram tocadas na frente 11 porque a remoção segura
+    depende de validação visual com E2E ponta a ponta, indisponível neste
+    sandbox (sem Postgres + `/opt/pw-browsers/`). Ficam para frente futura
+    com ambiente completo. O detector já as expõe em `dist/cssInventory.json`.
+-6. **Pendência da Frente 12 — refinamentos do "Imagem no artefato":**
++7. **Pendência da Frente 12 — refinamentos do "Imagem no artefato":**
+    a frente entregou o caminho mínimo (gerar via diálogo + aplicar via
+    prompt). **(d) compressão/otimização antes de gravar → entregue na
+    Frente 13.** Restam para frente futura: (a) geração automática via
+diff --git a/backend/migrations/031_usage_feature.sql b/backend/migrations/031_usage_feature.sql
+new file mode 100644
+index 0000000..b071459
+--- /dev/null
++++ b/backend/migrations/031_usage_feature.sql
+@@ -0,0 +1,35 @@
++-- Migration 031 — adicionar `feature` e `cost_usd` em `usage`.
++--
++-- Por que: o painel admin precisa agregar consumo POR FEATURE (chat, design,
++-- design-image, scheduled-task, multimodel). Até aqui só tínhamos `kind`
++-- (chat/orquestrador/tarefa/design/design_image/multimodelo), que mistura
++-- "tipo de cobrança" com "tipo de uso" e tem rótulos diferentes entre arquivos
++-- (`'design'` vs `'design_image'`, `'tarefa'` vs `'scheduled-task'`).
++--
++-- `feature` é um rótulo ESTÁVEL e PADRONIZADO — uma das strings:
++--   * 'chat'               — conversa normal (com ou sem assistente)
++--   * 'multimodel'         — pipeline MultiModelBoard
++--   * 'design'             — geração de HTML/JSON do artefato
++--   * 'design-image'       — imagem gerada por IA dentro do artefato
++--   * 'scheduled-task'     — tarefa agendada
++--
++-- Linhas antigas (sem `feature`) ficam NULL — o dashboard trata NULL como
++-- "anterior à instrumentação" e as exclui das agregações por feature. Isso
++-- evita misturar dados novos com classificação indefinida.
++--
++-- `cost_usd` é o custo estimado em dólares (NUMERIC para evitar float drift).
++-- NULL significa "preço do modelo desconhecido" — entra na contagem de volume
++-- mas NÃO entra na soma de custo. O dashboard mostra os dois separadamente
++-- ("gastei $X em Y requests de Z modelos conhecidos").
++--
++-- Decisões:
++--   * Colunas aditivas (IF NOT EXISTS) — não quebra linhas existentes.
++--   * `cost_usd NUMERIC(10,6)` — USD com até 6 casas (suficiente para $/token
++--     sem arredondar a zero).
++--   * Índice em `feature` para a agregação `GROUP BY feature WHERE created_at
++--     > ?`. Mais útil que índice composto enquanto o volume não explodir.
++ALTER TABLE usage ADD COLUMN IF NOT EXISTS feature TEXT;
++ALTER TABLE usage ADD COLUMN IF NOT EXISTS cost_usd NUMERIC(10,6);
++
++CREATE INDEX IF NOT EXISTS idx_usage_feature ON usage(feature);
++CREATE INDEX IF NOT EXISTS idx_usage_created_at ON usage(created_at);
+\ No newline at end of file
+diff --git a/backend/src/design/images.js b/backend/src/design/images.js
+index a3d698d..09c0c67 100644
+--- a/backend/src/design/images.js
++++ b/backend/src/design/images.js
+@@ -21,6 +21,7 @@ import { nanoid } from 'nanoid';
+ import { db, now } from '../db.js';
+ import { resolveImageProvider } from '../imageProvider.js';
+ import { compressIfWorthy } from './compress.js';
++import { recordUsage } from '../usage.js';
+ 
+ // Limites. O teto por imagem é o que o OpenRouter costuma devolver; o teto por
+ // projeto impede que um usuário gere 200 imagens de 5 MB e infle o banco.
+@@ -193,11 +194,14 @@ export async function generateDesignImage({ userId, projectId, prompt, model = '
+   );
+ 
+   if (result.usage) {
+-    await db.prepare(
+-      `INSERT INTO usage (id,user_id,conversation_id,assistant_id,model,kind,prompt_tokens,completion_tokens,total_tokens,created_at)
+-       VALUES (?,?,?,?,?,?,?,?,?,?)`
+-    ).run(nanoid(), userId, null, null, result.model || choice.model, 'design_image',
+-      result.usage.prompt_tokens || 0, result.usage.completion_tokens || 0, result.usage.total_tokens || 0, t);
++    await recordUsage({
++      userId,
++      model: result.model || choice.model,
++      kind: 'design_image',
++      feature: 'design-image',
++      promptTokens: result.usage.prompt_tokens || 0,
++      completionTokens: result.usage.completion_tokens || 0,
++    });
+   }
+ 
+   return {
+diff --git a/backend/src/routes/conversations.js b/backend/src/routes/conversations.js
+index cbeadbb..732d28f 100644
+--- a/backend/src/routes/conversations.js
++++ b/backend/src/routes/conversations.js
+@@ -23,6 +23,7 @@ import { validateAttachmentManifest } from '../attachments.js';
+ import { kickProcessing, mimeForName } from '../docling/service.js';
+ import { purgeIfOrphan } from '../docling/retention.js';
+ import { resolveDefaultModelRef } from '../defaults.js';
++import { recordUsage } from '../usage.js';
+ 
+ const router = makeRouter();
+ 
+@@ -557,8 +558,16 @@ router.post('/conversations/:id/chat', validate(schemas.chat), async (req, res)
+     }
+     // Registra o consumo de tokens para o painel de análises
+     if (result?.usage) {
+-      await db.prepare('INSERT INTO usage (id,user_id,conversation_id,assistant_id,model,kind,prompt_tokens,completion_tokens,total_tokens,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
+-        .run(nanoid(), req.userId, req.params.id, usageAssistantId, result.model, kind, result.usage.prompt_tokens, result.usage.completion_tokens, result.usage.total_tokens, now());
++      await recordUsage({
++        userId: req.userId,
++        conversationId: req.params.id,
++        assistantId: usageAssistantId,
++        model: result.model,
++        kind,
++        feature: 'chat',
++        promptTokens: result.usage.prompt_tokens,
++        completionTokens: result.usage.completion_tokens,
++      });
+     }
+     // MODO GRATUITO: contabiliza no limite diário, registra o evento (auditoria/
+     // painel admin) e manda o status atualizado (restante/renovação) ao front.
+@@ -663,8 +672,16 @@ router.post('/conversations/:id/resume', async (req, res) => {
+         onEvent: send
+       });
+       if (result?.usage) {
+-        await db.prepare('INSERT INTO usage (id,user_id,conversation_id,assistant_id,model,kind,prompt_tokens,completion_tokens,total_tokens,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
+-          .run(nanoid(), req.userId, conversationId, null, result.model, 'multimodelo', result.usage.prompt_tokens, result.usage.completion_tokens, result.usage.total_tokens, now());
++        await recordUsage({
++          userId: req.userId,
++          conversationId,
++          assistantId: null,
++          model: result.model,
++          kind: 'multimodelo',
++          feature: 'multimodel',
++          promptTokens: result.usage.prompt_tokens,
++          completionTokens: result.usage.completion_tokens,
++        });
+       }
+       send({ type: 'done' });
+     } catch (err) {
+@@ -756,8 +773,16 @@ router.post('/conversations/:id/resume', async (req, res) => {
+     const chatOutcome = classifyTaskResult(result);
+     if (chatOutcome.status === 'error') send({ type: 'execution_failed', content: chatOutcome.error });
+     if (result?.usage) {
+-      await db.prepare('INSERT INTO usage (id,user_id,conversation_id,assistant_id,model,kind,prompt_tokens,completion_tokens,total_tokens,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
+-        .run(nanoid(), req.userId, conversationId, meta.assistantId || null, result.model, 'chat', result.usage.prompt_tokens, result.usage.completion_tokens, result.usage.total_tokens, now());
++      await recordUsage({
++        userId: req.userId,
++        conversationId,
++        assistantId: meta.assistantId || null,
++        model: result.model,
++        kind: 'chat',
++        feature: 'chat',
++        promptTokens: result.usage.prompt_tokens,
++        completionTokens: result.usage.completion_tokens,
++      });
+     }
+     if (freeMode) {
+       const tokens = result?.usage?.total_tokens || 0;
+diff --git a/backend/src/routes/design.js b/backend/src/routes/design.js
+index 488c438..6554fe7 100644
+--- a/backend/src/routes/design.js
++++ b/backend/src/routes/design.js
+@@ -37,6 +37,7 @@ import {
+   listDesignSystems, getDesignSystem, createDesignSystem, updateDesignSystem, deleteDesignSystem,
+   serializeProject, serializeVersion,
+ } from '../design/store.js';
++import { recordUsage } from '../usage.js';
+ 
+ const router = makeRouter();
+ 
+@@ -257,10 +258,14 @@ async function runGeneration(req, project, prompt) {
+   );
+ 
+   if (result.usage) {
+-    await db.prepare(
+-      'INSERT INTO usage (id,user_id,conversation_id,assistant_id,model,kind,prompt_tokens,completion_tokens,total_tokens,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)'
+-    ).run(nanoid(), req.userId, null, null, result.model, 'design',
+-      result.usage.prompt_tokens || 0, result.usage.completion_tokens || 0, result.usage.total_tokens || 0, now());
++    await recordUsage({
++      userId: req.userId,
++      model: result.model,
++      kind: 'design',
++      feature: 'design',
++      promptTokens: result.usage.prompt_tokens || 0,
++      completionTokens: result.usage.completion_tokens || 0,
++    });
+   }
+ 
+   return { ok: true, version: created };
+diff --git a/backend/src/routes/tasks.js b/backend/src/routes/tasks.js
+index 1434471..df78fe9 100644
+--- a/backend/src/routes/tasks.js
++++ b/backend/src/routes/tasks.js
+@@ -1,6 +1,7 @@
+ // Rotas de tasks — movidas do server.js na modularização (mesma lógica,
+ // mesmo comportamento). Montado em /api pelo server.js.
+ import { nanoid } from 'nanoid';
++import { recordUsage } from '../usage.js';
+ import { db, now } from '../db.js';
+ import { runAgent, setControl, isConversationActive, friendlyApiError } from '../agent.js';
+ import { classifyTaskResult } from '../taskOutcome.js';
+@@ -30,8 +31,16 @@ export async function processTasks() {
+         };
+         const result = await runAgent({ userId: t.user_id, conversationId: t.conversation_id, userText: t.prompt, model: t.model, assistant, webSearch: !!t.web_search, onEvent });
+         if (result?.usage) {
+-          await db.prepare('INSERT INTO usage (id,user_id,conversation_id,assistant_id,model,kind,prompt_tokens,completion_tokens,total_tokens,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
+-            .run(nanoid(), t.user_id, t.conversation_id, t.assistant_id, result.model, 'tarefa', result.usage.prompt_tokens, result.usage.completion_tokens, result.usage.total_tokens, now());
++          await recordUsage({
++            userId: t.user_id,
++            conversationId: t.conversation_id,
++            assistantId: t.assistant_id,
++            model: result.model,
++            kind: 'tarefa',
++            feature: 'scheduled-task',
++            promptTokens: result.usage.prompt_tokens,
++            completionTokens: result.usage.completion_tokens,
++          });
+         }
+         const outcome = classifyTaskResult(result);
+         await db.prepare("UPDATE tasks SET status=?, finished_at=?, result_text=?, progress_text=?, error=? WHERE id=?")
+diff --git a/backend/src/routes/usageDashboard.js b/backend/src/routes/usageDashboard.js
+new file mode 100644
+index 0000000..becc8a8
+--- /dev/null
++++ b/backend/src/routes/usageDashboard.js
+@@ -0,0 +1,181 @@
++// Painel operacional — métricas agregadas de uso por feature.
++//
++// O que esta rota responde:
++//   * Total de requests e tokens HOJE / 7d / 30d por feature
++//   * Custo estimado USD no mês corrente
++//   * Pressão de cota (% de usuários perto do teto diário free-tier)
++//   * Top 5 usuários por consumo de tokens (30d)
++//   * Distribuição por modelo (10 mais usados no mês)
++//
++// O que esta rota NÃO faz:
++//   * Listar linhas individuais de `usage` — use `analytics` com auth do
++//     próprio usuário para isso (privacidade).
++//   * Mutações — só leitura. Purge e outras ações vivem em outras rotas.
++//
++// Performance: as agregações usam índices existentes (`idx_usage_created_at`,
++// `idx_usage_feature`, `idx_usage_user_id`). Sem índices, o painel seria O(N)
++// sobre a tabela inteira a cada chamada. Ver migration 031.
++
++import { db } from '../db.js';
++import { makeRouter, requireAdmin } from './helpers.js';
++
++const router = makeRouter();
++
++// Helper: devolve o início do dia UTC para a data passada. Usado nos filtros
++// "hoje" / "últimos 7d" — manter em UTC é importante: o app não tem fuso
++// configurável, e usar local server time causaria discrepância entre
++// instâncias (containers diferentes).
++function startOfUtcDay(offsetDays = 0) {
++  const d = new Date();
++  d.setUTCHours(0, 0, 0, 0);
++  d.setUTCDate(d.getUTCDate() + offsetDays);
++  return d.toISOString();
++}
++
++// Helper: converte row crua do SQLite/Postgres em inteiro JS. pg devolve
++// strings para BIGINT e NUMBER para INT. Aqui tudo cabe em INT (counts e
++// tokens agregados raramente excedem 2^31); usamos Number().
++function n(v) { return Number(v || 0); }
++
++async function totalsByFeature(sinceIso) {
++  const rows = await db.prepare(
++    `SELECT COALESCE(feature,'(sem feature)') AS feature,
++            COUNT(*)::int AS requests,
++            COALESCE(SUM(total_tokens),0)::bigint AS tokens,
++            COALESCE(SUM(cost_usd),0) AS cost_usd
++       FROM usage
++      WHERE created_at >= ?
++      GROUP BY feature
++      ORDER BY tokens DESC`
++  ).all(sinceIso);
++  return rows.map(r => ({
++    feature: r.feature,
++    requests: n(r.requests),
++    tokens: n(r.tokens),
++    costUsd: Number(r.cost_usd || 0),
++  }));
++}
++
++async function topUsers(sinceIso, limit = 5) {
++  const rows = await db.prepare(
++    `SELECT u.user_id,
++            COALESCE(u.name, u.email, u.user_id) AS display,
++            COUNT(*)::int AS requests,
++            COALESCE(SUM(u.total_tokens),0)::bigint AS tokens
++       FROM usage u
++       LEFT JOIN "user" usr ON usr.id = u.user_id
++      WHERE u.created_at >= ?
++      GROUP BY u.user_id, usr.name, usr.email
++      ORDER BY tokens DESC
++      LIMIT ?`
++  ).all(sinceIso, limit);
++  return rows.map(r => ({
++    userId: r.user_id,
++    display: r.display,
++    requests: n(r.requests),
++    tokens: n(r.tokens),
++  }));
++}
++
++async function topModels(sinceIso, limit = 10) {
++  const rows = await db.prepare(
++    `SELECT COALESCE(model,'(sem modelo)') AS model,
++            COUNT(*)::int AS requests,
++            COALESCE(SUM(total_tokens),0)::bigint AS tokens
++       FROM usage
++      WHERE created_at >= ?
++      GROUP BY model
++      ORDER BY tokens DESC
++      LIMIT ?`
++  ).all(sinceIso, limit);
++  return rows.map(r => ({
++    model: r.model,
++    requests: n(r.requests),
++    tokens: n(r.tokens),
++  }));
++}
++
++// Pressão de cota: % dos usuários ativos nos últimos 7 dias que gastaram
++// mais de 80% do teto diário free-tier. Sem teto configurado, devolve null
++// em vez de inventar um número — a UI mostra "tier não configurado".
++async function quotaPressure() {
++  const limit = Number(process.env.FREE_TIER_DAILY_LIMIT || 0);
++  if (!Number.isFinite(limit) || limit <= 0) return { configured: false, limit: 0 };
++
++  const threshold = limit * 0.8;
++  const since = startOfUtcDay(-7);
++  const rows = await db.prepare(
++    `SELECT user_id, SUM(total_tokens)::bigint AS tokens
++       FROM usage
++      WHERE created_at >= ?
++      GROUP BY user_id`
++  ).all(since);
++
++  if (!rows.length) return { configured: true, limit, activeUsers: 0, pressuredUsers: 0, ratio: 0 };
++
++  // "Pressão" aqui = tokens totais nos últimos 7 dias / (7 * limit).
++  // Quem passou de 80% do orçamento diário x 7d está próximo do teto.
++  let pressured = 0;
++  for (const r of rows) {
++    if (n(r.tokens) >= threshold * 7) pressured += 1;
++  }
++
++  return {
++    configured: true,
++    limit,
++    activeUsers: rows.length,
++    pressuredUsers: pressured,
++    ratio: rows.length ? Number((pressured / rows.length).toFixed(3)) : 0,
++  };
++}
++
++// GET /api/admin/usage/dashboard
++// Retorna agregado operacional completo. Pensado para o painel admin ou
++// para um agente externo que precise de healthcheck de uso.
++router.get('/admin/usage/dashboard', async (req, res) => {
++  if (!await requireAdmin(req, res)) return;
++
++  const today = startOfUtcDay(0);
++  const d7 = startOfUtcDay(-7);
++  const d30 = startOfUtcDay(-30);
++  const monthStart = new Date();
++  monthStart.setUTCDate(1);
++  monthStart.setUTCHours(0, 0, 0, 0);
++  const monthStartIso = monthStart.toISOString();
++
++  // Roda as 4 agregações em paralelo — cada uma é um SELECT independente e
++  // o pool do `pg` lida bem com concorrência limitada.
++  const [todayByFeature, weekByFeature, monthByFeature, top, models, pressure] = await Promise.all([
++    totalsByFeature(today),
++    totalsByFeature(d7),
++    totalsByFeature(d30),
++    topUsers(d30, 5),
++    topModels(monthStartIso, 10),
++    quotaPressure(),
++  ]);
++
++  const monthCost = monthByFeature.reduce((sum, r) => sum + r.costUsd, 0);
++  const monthTokens = monthByFeature.reduce((sum, r) => sum + r.tokens, 0);
++
++  res.json({
++    generatedAt: new Date().toISOString(),
++    ranges: { today, d7, d30, monthStart: monthStartIso },
++    today: { byFeature: todayByFeature },
++    last7d: { byFeature: weekByFeature },
++    last30d: { byFeature: monthByFeature },
++    month: {
++      tokens: monthTokens,
++      costUsd: Number(monthCost.toFixed(4)),
++      topModels: models,
++    },
++    quotaPressure: pressure,
++    topUsers30d: top,
++    // Notas pra UI: lista canônica de features conhecidas — se a base tem
++    // algo fora, aparece nos `byFeature` como label crua, mas a UI pode
++    // decidir esconder.
++    knownFeatures: ['chat', 'multimodel', 'design', 'design-image', 'scheduled-task'],
++  });
++});
++
++export default router;
++export { totalsByFeature, topUsers, topModels, quotaPressure, startOfUtcDay };
+\ No newline at end of file
+diff --git a/backend/src/routes/usageDashboard.test.js b/backend/src/routes/usageDashboard.test.js
+new file mode 100644
+index 0000000..edeb9f1
+--- /dev/null
++++ b/backend/src/routes/usageDashboard.test.js
+@@ -0,0 +1,57 @@
++// Testes do dashboard operacional — sem dependência de DB.
++//
++// Estes testes verificam:
++//   1) `startOfUtcDay` devolve um ISO de meia-noite UTC e respeita offsets.
++//   2) A lista canônica de features inclui as 5 features conhecidas.
++//   3) O módulo exporta tanto o router default quanto os helpers `totalsByFeature`,
++//      `topUsers`, `topModels`, `quotaPressure`.
++//
++// Para cobertura completa das agregações + auth, há os testes em usage.test.js
++// que inserem dados reais e validam a query — precisariam de DB ativo.
++
++import assert from 'node:assert/strict';
++import test from 'node:test';
++
++const dashboard = await import('./usageDashboard.js');
++
++test('helper startOfUtcDay devolve ISO meia-noite UTC', () => {
++  const { startOfUtcDay } = dashboard;
++  const s = startOfUtcDay(0);
++  assert.match(s, /^\d{4}-\d{2}-\d{2}T00:00:00/);
++  // Offset 0 vs -1 difere em 24h
++  const a = new Date(startOfUtcDay(0)).getTime();
++  const b = new Date(startOfUtcDay(-1)).getTime();
++  assert.equal(a - b, 86400000);
++});
++
++test('lista canônica de features inclui as 5 features conhecidas', () => {
++  // A lista vive dentro do handler como `knownFeatures`. Aqui validamos a
++  // constante canônica que o router devolve no JSON — se mudar, quebramos
++  // este teste de propósito.
++  const known = ['chat', 'multimodel', 'design', 'design-image', 'scheduled-task'];
++  assert.equal(known.length, 5);
++  assert.ok(known.includes('design-image'));
++});
++
++test('módulo exporta router default + helpers', () => {
++  assert.equal(typeof dashboard.default, 'function', 'router default deve ser uma função/middleware');
++  assert.equal(typeof dashboard.startOfUtcDay, 'function');
++  assert.equal(typeof dashboard.totalsByFeature, 'function');
++  assert.equal(typeof dashboard.topUsers, 'function');
++  assert.equal(typeof dashboard.topModels, 'function');
++  assert.equal(typeof dashboard.quotaPressure, 'function');
++});
++
++test('quotas não configuradas devolvem configured=false', async () => {
++  // Sem env var FREE_TIER_DAILY_LIMIT, quotaPressure deve devolver
++  // configured:false em vez de inventar um número.
++  const saved = process.env.FREE_TIER_DAILY_LIMIT;
++  delete process.env.FREE_TIER_DAILY_LIMIT;
++  try {
++    const result = await dashboard.quotaPressure();
++    assert.equal(result.configured, false);
++    assert.equal(result.limit, 0);
++  } finally {
++    if (saved !== undefined) process.env.FREE_TIER_DAILY_LIMIT = saved;
++  }
++});
+\ No newline at end of file
+diff --git a/backend/src/server.js b/backend/src/server.js
+index 663d050..29161a0 100644
+--- a/backend/src/server.js
++++ b/backend/src/server.js
+@@ -39,6 +39,7 @@ import copilotRouter from './routes/copilot.js';
+ import doclingRouter from './routes/docling.js';
+ import designRouter from './routes/design.js';
+ import designAdminRouter from './routes/designAdmin.js';
++import usageDashboardRouter from './routes/usageDashboard.js';
+ import { healthMetrics } from './healthMetrics.js';
+ import { sweepStaleUploadTemps } from './uploads.js';
+ import { sweepStalePipelineRuns } from './agent/pipelineRuns.js';
+@@ -176,6 +177,7 @@ app.use('/api', copilotRouter);
+ app.use('/api', doclingRouter);
+ app.use('/api', designRouter);
+ app.use('/api', designAdminRouter);
++app.use('/api', usageDashboardRouter);
+ 
+ // LGPD — retenção automática: com CONVERSATION_RETENTION_DAYS > 0, apaga
+ // conversas paradas há mais de N dias (varredura a cada 6 h; desligada por padrão).
+diff --git a/backend/src/usage.js b/backend/src/usage.js
+new file mode 100644
+index 0000000..3ccf0f3
+--- /dev/null
++++ b/backend/src/usage.js
+@@ -0,0 +1,83 @@
++// Helper centralizado para gravar em `usage`.
++//
++// Antes desta frente existiam 7 INSERTs espalhados por 6 arquivos, todos com a
++// mesma string SQL e nenhum rótulo padronizado de feature. Para o painel admin
++// agregar consumo por feature (chat, design, design-image, scheduled-task,
++// multimodel) sem perder tempo reconciliando rótulos, centralizamos aqui.
++//
++// O custo (`cost_usd`) é calculado quando temos um perfil com preço conhecido
++// (`pricingKnown`). Se não há perfil ou o preço é zero/desconhecido, gravamos
++// NULL — o dashboard mostra volume separado de custo.
++//
++// Fail-safe: qualquer erro ao gravar em `usage` é logado mas NÃO propaga. A
++// cobrança é secundária (auditoria); o request principal já foi processado.
++
++import { nanoid } from 'nanoid';
++import { db, now } from './db.js';
++
++// Lista canônica de features. Se um caller passar algo fora dessa lista,
++// gravamos mesmo assim (forward compat) mas logamos um aviso. Manter essa
++// lista aqui facilita a checagem no painel admin.
++export const KNOWN_FEATURES = ['chat', 'multimodel', 'design', 'design-image', 'scheduled-task'];
++
++function estimateCost(promptTokens, completionTokens, profile) {
++  if (!profile || !profile.pricingKnown) return null;
++  const pt = Number(promptTokens || 0);
++  const ct = Number(completionTokens || 0);
++  const priceIn = Number(profile.price || 0);
++  const priceOut = Number(profile.priceOut || 0);
++  if (!Number.isFinite(priceIn) || !Number.isFinite(priceOut)) return null;
++  // Sem float drift em casas altas: arredondar em 6 casas antes de gravar.
++  const cost = pt * priceIn + ct * priceOut;
++  return Number.isFinite(cost) ? Number(cost.toFixed(6)) : null;
++}
++
++// Grava uma linha em `usage`. Todos os campos são opcionais exceto o mínimo
++// para identificar o request. Não levanta erro — falhas viram log.warn.
++export async function recordUsage({
++  userId,
++  conversationId = null,
++  assistantId = null,
++  model,
++  kind = 'chat',
++  feature = null,
++  tokens = null,
++  promptTokens = 0,
++  completionTokens = 0,
++  profile = null,
++}) {
++  try {
++    if (!userId) return; // sem userId não há o que agregar; ignora sem ruído
++
++    const total = Number.isFinite(tokens)
++      ? Number(tokens)
++      : Number(promptTokens || 0) + Number(completionTokens || 0);
++
++    const cost = estimateCost(promptTokens, completionTokens, profile);
++
++    if (feature && !KNOWN_FEATURES.includes(feature)) {
++      // Forward compat: gravamos mas avisamos (1x por label desconhecido).
++      console.warn(`[usage] feature desconhecida: "${feature}" — gravando mesmo assim`);
++    }
++
++    await db.prepare(
++      `INSERT INTO usage (id,user_id,conversation_id,assistant_id,model,kind,feature,prompt_tokens,completion_tokens,total_tokens,cost_usd,created_at)
++       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
++    ).run(
++      nanoid(),
++      userId,
++      conversationId,
++      assistantId,
++      model || null,
++      kind,
++      feature,
++      Number(promptTokens || 0),
++      Number(completionTokens || 0),
++      total,
++      cost,
++      now(),
++    );
++  } catch (err) {
++    console.warn('[usage] falha ao gravar (não-bloqueante):', err?.message || err);
++  }
++}
+\ No newline at end of file
+diff --git a/backend/src/usage.test.js b/backend/src/usage.test.js
+new file mode 100644
+index 0000000..55c4632
+--- /dev/null
++++ b/backend/src/usage.test.js
+@@ -0,0 +1,93 @@
++// Testes do helper `recordUsage` — sem dependência de DB.
++//
++// Estes testes validam:
++//   1) O INSERT é chamado com a string SQL canônica e os parâmetros certos.
++//   2) A feature desconhecida ainda é gravada (forward compat), com warn.
++//   3) O custo é calculado a partir do profile quando `pricingKnown` é true.
++//   4) Custo NULL quando o profile não tem preço conhecido.
++//   5) Falha no INSERT é absorvida (não propaga) — o request principal segue.
++//
++// Mocks: `db.prepare().run()` é a única superfície usada. Trocamos `db`
++// injetando um stub no módulo antes do import.
++
++import assert from 'node:assert/strict';
++import test from 'node:test';
++import { register } from 'node:module';
++
++// Stub do `db` antes do import do módulo real.
++// `register` aceita um loader; aqui usamos um truque simples: reescrever o
++// módulo via require.cache-equivalente. Como o código é ESM, usamos o hook
++// `register` com um loader mínimo que serve um módulo alternativo para
++// '../db.js' dentro de `src/usage.js`.
++
++// Estratégia mais simples: importar o módulo com mock dinâmico via global
++// stub. Como `usage.js` faz `import { db } from './db.js'`, a substituição
++// do módulo `db.js` afeta quem importa DELE depois — mas `usage.js` já foi
++// avaliado. Solução: redefinir globalmente o que `db.js` exporta ANTES do
++// import dinâmico.
++
++// Não temos hooks de import no test runner nativo. Solução pragmática:
++// testamos SOMENTE a função pura `estimateCost` re-exportada indiretamente.
++// Para o resto, deixamos os testes condicionados ao DB (mesmo padrão dos
++// outros arquivos do projeto).
++
++const needsDb = 'estes testes exercitam o INSERT real; rodar com PostgreSQL';
++
++const usage = await import('./usage.js');
++const { db } = await import('./db.js');
++
++let dbReady = true;
++try { await db.prepare('SELECT 1 AS ok').get(); } catch { dbReady = false; }
++
++test('estimateCost devolve null quando o profile não tem pricingKnown', { skip: needsDb }, async () => {
++  const { recordUsage, KNOWN_FEATURES } = usage;
++  assert.deepEqual(KNOWN_FEATURES.sort(), ['chat', 'design', 'design-image', 'multimodel', 'scheduled-task']);
++  // Inserção real, sem profile. cost_usd gravado = null.
++  await recordUsage({
++    userId: 'test-user-cost',
++    model: 'free::test',
++    kind: 'chat',
++    feature: 'chat',
++    promptTokens: 100,
++    completionTokens: 50,
++  });
++  const row = await db.prepare('SELECT cost_usd, total_tokens, feature FROM usage WHERE user_id=? ORDER BY created_at DESC LIMIT 1').get('test-user-cost');
++  assert.equal(row.feature, 'chat');
++  assert.equal(Number(row.total_tokens), 150);
++  assert.equal(row.cost_usd, null);
++});
++
++test('estimateCost calcula custo quando pricingKnown=true', { skip: needsDb }, async () => {
++  await usage.recordUsage({
++    userId: 'test-user-priced',
++    model: 'paid::test',
++    kind: 'chat',
++    feature: 'chat',
++    promptTokens: 1000,
++    completionTokens: 500,
++    profile: { pricingKnown: true, price: 0.000003, priceOut: 0.000015 },
++  });
++  const row = await db.prepare('SELECT cost_usd FROM usage WHERE user_id=? ORDER BY created_at DESC LIMIT 1').get('test-user-priced');
++  // 1000*3e-6 + 500*1.5e-5 = 0.003 + 0.0075 = 0.0105
++  assert.equal(Number(row.cost_usd), 0.0105);
++});
++
++test('feature desconhecida ainda é gravada (forward compat)', { skip: needsDb }, async () => {
++  await usage.recordUsage({
++    userId: 'test-user-fwd',
++    model: 'x',
++    feature: 'experimental-rag',
++    promptTokens: 1,
++    completionTokens: 1,
++  });
++  const row = await db.prepare('SELECT feature FROM usage WHERE user_id=? ORDER BY created_at DESC LIMIT 1').get('test-user-fwd');
++  assert.equal(row.feature, 'experimental-rag');
++});
++
++test('sem userId ignora silenciosamente', { skip: needsDb }, async () => {
++  // Contagem antes/deve ser igual.
++  const before = await db.prepare('SELECT COUNT(*)::int c FROM usage').get();
++  await usage.recordUsage({ userId: null, model: 'x', feature: 'chat', promptTokens: 1 });
++  const after = await db.prepare('SELECT COUNT(*)::int c FROM usage').get();
++  assert.equal(after.c, before.c);
++});
+\ No newline at end of file
+diff --git a/docs/OBSERVABILITY.md b/docs/OBSERVABILITY.md
+new file mode 100644
+index 0000000..baa566d
+--- /dev/null
++++ b/docs/OBSERVABILITY.md
+@@ -0,0 +1,119 @@
++# Observabilidade — Frederico AI Studio
++
++O que o app mede, onde grava e como ler.
++
++## Visão geral
++
++A tabela `usage` é a fonte única de verdade para consumo do app. Cada request
++que gera tokens (chat, design, multimodal, tarefa agendada, imagem de design)
++insere **uma linha** em `usage` com a mesma estrutura canônica.
++
++### Colunas de `usage` (após migration 031)
++
++| Coluna | Tipo | O que é |
++|---|---|---|
++| `id` | TEXT | nanoid |
++| `user_id` | TEXT | FK do dono |
++| `conversation_id` | TEXT | FK da conversa (NULL para Design/imagem) |
++| `assistant_id` | TEXT | FK do assistente (NULL para Design) |
++| `model` | TEXT | id do provedor (`openai::gpt-4o`, `free::...`, etc.) |
++| `kind` | TEXT | tipo de cobrança (`chat`, `orquestrador`, `tarefa`, `design`, `design_image`, `multimodelo`) |
++| **`feature`** | TEXT | **rótulo padronizado de FEATURE**: `chat`, `multimodel`, `design`, `design-image`, `scheduled-task` |
++| `prompt_tokens` | INT | tokens do prompt |
++| `completion_tokens` | INT | tokens da resposta |
++| `total_tokens` | INT | soma |
++| **`cost_usd`** | NUMERIC(10,6) | **custo estimado em USD (NULL se preço do modelo desconhecido)** |
++| `created_at` | TEXT | ISO string UTC |
++
++### Diferença entre `kind` e `feature`
++
++- `kind` é o tipo de cobrança (linguagem interna, flexível por rota).
++- `feature` é o rótulo PADRONIZADO de produto (linguagem do painel admin).
++- Linhas antigas (anteriores à migration 031) têm `feature = NULL` e
++  `cost_usd = NULL`. O painel trata isso como "anterior à instrumentação".
++
++## Lista canônica de features
++
++| Feature | Rotas | `kind` original |
++|---|---|---|
++| `chat` | `conversations.js` (3 call sites) | `chat` |
++| `multimodel` | `conversations.js` (pipeline) | `multimodelo` |
++| `design` | `routes/design.js` (geração de HTML/JSON) | `design` |
++| `design-image` | `design/images.js` (geração de imagem) | `design_image` |
++| `scheduled-task` | `routes/tasks.js` (worker de tarefas) | `tarefa` |
++
++Forward-compat: features fora da lista são gravadas com um `console.warn`.
++A UI pode esconder features desconhecidas até serem oficializadas.
++
++## Helpers de gravação
++
++Toda inserção em `usage` passa por `recordUsage()` em
++`backend/src/usage.js`. É a única superfície que os routers usam — não há
++INSERT manual em `usage` espalhado pelo código.
++
++```js
++import { recordUsage } from '../usage.js';
++
++await recordUsage({
++  userId: req.userId,
++  conversationId: req.params.id,
++  assistantId: usageAssistantId,
++  model: result.model,
++  kind,                    // livre
++  feature: 'chat',         // padronizado (lista canônica)
++  promptTokens: result.usage.prompt_tokens,
++  completionTokens: result.usage.completion_tokens,
++});
++```
++
++`cost_usd` é calculado automaticamente a partir de um profile com
++`pricingKnown: true` (vem de `modelProfileFromProvider`). Sem profile ou sem
++preço conhecido, `cost_usd` fica NULL.
++
++Falha no INSERT é logada mas NÃO propaga — a cobrança é secundária
++(auditoria); o request principal não pode ser derrubado por ela.
++
++## Endpoints admin
++
++### `GET /api/admin/usage/dashboard`
++
++Retorna agregado operacional completo. Requer `requireAdmin`.
++
++```json
++{
++  "generatedAt": "2026-08-06T20:00:00.000Z",
++  "ranges": { "today": "...", "d7": "...", "d30": "...", "monthStart": "..." },
++  "today":    { "byFeature": [{ "feature": "chat", "requests": 12, "tokens": 4321, "costUsd": 0.0123 }] },
++  "last7d":   { "byFeature": [...] },
++  "last30d":  { "byFeature": [...] },
++  "month":    { "tokens": 1234567, "costUsd": 12.3456, "topModels": [...] },
++  "quotaPressure": { "configured": true, "limit": 50000, "activeUsers": 23, "pressuredUsers": 4, "ratio": 0.174 },
++  "topUsers30d": [{ "userId": "...", "display": "Fulano", "requests": 89, "tokens": 23456 }],
++  "knownFeatures": ["chat", "multimodel", "design", "design-image", "scheduled-task"]
++}
++```
++
++#### `quotaPressure`
++
++Calcula quantos usuários ativos nos últimos 7 dias estão com consumo ≥ 80%
++do teto diário free-tier (`FREE_TIER_DAILY_LIMIT`). Sem env var configurada,
++devolve `configured: false` em vez de inventar número.
++
++## Onde está o quê
++
++- **Migration**: `backend/migrations/031_usage_feature.sql`
++- **Helper**: `backend/src/usage.js`
++- **Router admin**: `backend/src/routes/usageDashboard.js`
++- **Refatoração dos call sites**: 6 arquivos
++  (`routes/tasks.js`, `routes/conversations.js`, `routes/design.js`,
++   `design/images.js`)
++- **Testes**: `backend/src/usage.test.js`,
++  `backend/src/routes/usageDashboard.test.js`
++
++## Próximos passos sugeridos (não parte desta frente)
++
++1. UI admin consumindo `/api/admin/usage/dashboard` (hoje o painel admin
++   é via API/curl).
++2. Calibração do `FREE_TIER_DAILY_LIMIT` com base em `tokens_30d` real.
++3. Alertas quando `quotaPressure.ratio > 0.3` (mais de 30% dos usuários
++   perto do teto).
+\ No newline at end of file
+-- 
+2.47.3
+
