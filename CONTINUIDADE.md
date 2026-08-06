@@ -24,7 +24,13 @@ que ainda segura o verde é o **pipeline multimodelo retomável**: o F-15 entreg
 tabela e as primitivas, mas o `runMultiModel` ainda não as usa, então o reinício continua
 sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** a **Frente 3 — Integração do coordenador durável no
+- **Último trabalho:** a **Frente 7 — Reconciliação de sandbox ligada por
+  padrão** ajustou a política de `SANDBOX_RECONCILE_ON_BOOT`: fora de
+  `NODE_ENV=test` a reconciliação é LIGADA por padrão (remove containers
+  órfãos no boot); em teste, DESLIGADA (a suíte não tem Docker). O boot
+  agora sempre relata o resultado da reconciliação (mesmo sem órfãos).
+  5 testes de política pura cobrem todos os cenários.
+  Antes dela, a **Frente 3 — Integração do coordenador durável no
   `runMultiModel`** fechou o risco F-15: o pipeline multimodelo agora persiste
   o `currentStage` e o `state_json` entre etapas na tabela `pipeline_runs`
   (migration 027), retoma do estágio correto pelo `/resume`, completa runs como
@@ -1277,12 +1283,10 @@ antes do aviso.
 
 ## Próximos passos (em ordem)
 
-1. **Frente 4 — Vulnerabilidades de dependências.** O CI acusa `3 vulnerabilities
-   (2 moderate, 1 high)` no backend e `1 high` no frontend em todo `npm ci`.
-2. **Frente 5 — IPv6 + `git` na allowlist de egress do sandbox.**
-   `parseAllowlistEntry` declara que IPv6 ficou de fora; `extractHostCandidates`
-   não varre `git`.
-3. **Frentes seguintes** conforme o backlog ordenado.
+1. **Frente 8 — Retomada real pós-kill-9.** Teste de integração com `child_process`: 
+   processo A grava checkpoint mid-run e leva SIGKILL; processo B lê e retoma sem
+   duplicar ferramentas. Fecha o F-14 de verdade.
+2. **Frentes seguintes** conforme o backlog ordenado.
 
 ---
 

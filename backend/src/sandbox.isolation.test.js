@@ -179,3 +179,29 @@ test('no boot (carência 0) todo container de instância anterior é órfão', (
   const orphans = selectOrphanContainers(list, { known: new Set(), instanceId: 'nova-instancia', graceMs: 0, nowMs });
   assert.deepEqual(orphans.map(o => o.id), ['sobrou-1']);
 });
+
+// ---- Política de reconciliação (Frente 7) ----
+
+import { shouldReconcileOnBoot } from './sandbox.js';
+
+test('reconciliação ligada por padrão fora de teste', () => {
+  assert.equal(shouldReconcileOnBoot({ NODE_ENV: 'production' }), true);
+  assert.equal(shouldReconcileOnBoot({ NODE_ENV: 'development' }), true);
+  assert.equal(shouldReconcileOnBoot({}), true, 'sem NODE_ENV também liga');
+});
+
+test('reconciliação desligada por padrão em NODE_ENV=test', () => {
+  assert.equal(shouldReconcileOnBoot({ NODE_ENV: 'test' }), false);
+});
+
+test('SANDBOX_RECONCILE_ON_BOOT=true força ligar em teste', () => {
+  assert.equal(shouldReconcileOnBoot({ NODE_ENV: 'test', SANDBOX_RECONCILE_ON_BOOT: 'true' }), true);
+});
+
+test('SANDBOX_RECONCILE_ON_BOOT=false desliga em produção', () => {
+  assert.equal(shouldReconcileOnBoot({ NODE_ENV: 'production', SANDBOX_RECONCILE_ON_BOOT: 'false' }), false);
+});
+
+test('SANDBOX_RECONCILE_ON_BOOT=true mantém ligado em produção', () => {
+  assert.equal(shouldReconcileOnBoot({ NODE_ENV: 'production', SANDBOX_RECONCILE_ON_BOOT: 'true' }), true);
+});
