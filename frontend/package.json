@@ -10,7 +10,8 @@
     "test": "node scripts/run-tests.mjs",
     "test:unit": "node scripts/run-tests.mjs",
     "test:all": "npm run lint && npm test",
-    "check": "npm run lint && npm test && npm run build"
+    "budget": "node scripts/bundleBudget.mjs",
+    "check": "npm run lint && npm test && npm run build && npm run budget"
   },
   "dependencies": {
     "better-auth": "^1.6.23",
