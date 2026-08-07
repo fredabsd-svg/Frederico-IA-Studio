@@ -59,6 +59,9 @@ import { ClientPicker } from './components/ClientPicker.jsx';
 // Checklist do plano estruturado (update_plan): só existe em missões do Modo
 // Desenvolvedor — fora dele o chunk nem é baixado (orçamento de entrada).
 const LazyPlanChecklist = lazy(() => import('./components/PlanChecklist.jsx').then(m => ({ default: m.PlanChecklist })));
+// Painel de confiança da entrega (revisão automática do diff): só existe em
+// tarefas de escrita do Modo Desenvolvedor — fora dele o chunk nem é baixado.
+const LazyReviewPanel = lazy(() => import('./components/ReviewPanel.jsx').then(m => ({ default: m.ReviewPanel })));
 // Drawer de configuração da tarefa dev: só aparece ao abrir o Modo
 // Desenvolvedor — fora da entrada pelo mesmo motivo.
 const LazyDeveloperPanel = lazy(() => import('./DeveloperPanel.jsx').then(m => ({ default: m.DeveloperPanel })));
@@ -1180,6 +1183,11 @@ export default function App({ user } = {}) {
                 quem valida status/evidência — aqui só exibimos. */}
             {m.role === 'assistant' && (m.plan || m.execution?.plan) &&
               <Suspense fallback={null}><LazyPlanChecklist plan={m.plan || m.execution?.plan}/></Suspense>}
+            {/* Revisão automática das alterações: medida pelo backend sobre o
+                diff real (ao vivo por `verification`, ou do execution_meta ao
+                reabrir a conversa). */}
+            {m.role === 'assistant' && (m.review || m.execution?.review) &&
+              <Suspense fallback={null}><LazyReviewPanel review={m.review || m.execution?.review}/></Suspense>}
             {m.role === 'assistant' && m.multi && !(m.blocks || []).some(b => b.type === 'tool')
               ? null
               : m.blocks

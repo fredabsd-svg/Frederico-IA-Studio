@@ -1453,3 +1453,19 @@ body.dockResizing{user-select:none;cursor:ns-resize}
 .devChangeTotals ins,.devChangeStat ins{color:var(--ok);text-decoration:none}
 .devChangeTotals del,.devChangeStat del{color:var(--danger);text-decoration:none}
 .devChangeStat{flex:none;font-size:var(--fs-xs);display:flex;gap:5px}
+
+/* Painel de confiança da entrega (revisão automática do diff). */
+.reviewPanel{margin:8px 0 4px;border:1px solid var(--line);border-radius:var(--r-md);padding:9px 11px;max-width:720px;font-size:var(--fs-sm)}
+.reviewPanel.rv-ok{border-color:color-mix(in srgb,var(--ok) 40%,var(--line))}
+.reviewPanel.rv-warn{border-color:color-mix(in srgb,var(--danger) 35%,var(--line))}
+.reviewHead{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:6px}
+.reviewPanel.rv-ok .reviewHead>svg{color:var(--ok)}
+.reviewPanel.rv-warn .reviewHead>svg{color:var(--danger)}
+.reviewCounts{color:var(--muted);font-size:var(--fs-xs)}
+.reviewPanel>small{color:var(--muted);font-size:var(--fs-xs)}
+.reviewList{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:5px}
+.reviewList li{display:flex;align-items:flex-start;gap:7px;line-height:1.4}
+.reviewList code{font-size:var(--fs-xs);background:var(--code-bg);border-radius:3px;padding:1px 4px;margin-right:5px}
+.reviewIcon{display:inline-flex;margin-top:2px;color:var(--muted)}
+.reviewList li.rv-blocker .reviewIcon,.reviewList li.rv-high .reviewIcon{color:var(--danger)}
+.reviewText{display:block}

@@ -279,6 +279,9 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
         // PLANO ESTRUTURADO (update_plan): cada evento substitui o plano da
         // mensagem. Replay é idempotente — o último evento vence, como no vivo.
         if (ev.type === 'plan_update' && ev.plan) update(m => ({ ...m, plan: ev.plan }));
+        // REVISÃO AUTOMÁTICA das alterações (review gate): medida no backend
+        // sobre o diff real. Idempotente no replay — o último evento vence.
+        if (ev.type === 'verification' && ev.review) update(m => ({ ...m, review: ev.review }));
         if (ev.type === 'delta') update(m => {
           const blocks = [...(m.blocks || [])];
           const last = blocks[blocks.length - 1];

@@ -152,6 +152,17 @@ POST /chat
   estruturado que instrui a mudar de estratégia; resultado novo zera a
   contagem (progresso legítimo). O bloqueio conta no freio de falhas
   consecutivas do loop.
+- **Review gate + painel de confiança (Fases 28 e 44):** `agent/reviewGate.js`
+  — antes de a tarefa se apresentar como entregue, o backend passa um pente
+  automático no que foi REALMENTE alterado (ChangeSet + `git diff HEAD -U0`),
+  procurando segredo em linha adicionada (blocker), teste desligado
+  (`.only`/`.skip`, high), código alterado sem teste tocado (high), remoção de
+  caminho sensível, código de depuração, TODO/FIXME novo e arquivos fora do
+  que o plano menciona. Não é opinião do modelo: são sinais medidos no diff.
+  Achado **não bloqueia** a publicação por conta própria — ele vai ao evento
+  `verification`, ao `execution_meta` (sobrevive ao reload) e, quando é
+  blocker/high, ao TEXTO da resposta; a autorização continua sendo do usuário.
+  Falha do gate nunca derruba o run (a entrega segue sem revisão).
 - **Branch de trabalho por tarefa (Fase 23):** `agent/workBranch.js` — o
   isolamento de ARQUIVOS já vem do clone por conversa; o de HISTÓRICO vem
   daqui. Em modo de escrita sobre branch protegida (main/master/develop…) ou
