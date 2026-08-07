@@ -32,6 +32,7 @@ import { finalExecutionState } from './executionState.js';
 import { createRunStateTracker } from './runStateMachine.js';
 import { resolveSandboxNetwork, isToolCallAllowed } from './assistantPolicy.js';
 import { evaluateShellCommand, normalizeCommandGrants } from './permissionPolicy.js';
+import { createDoomLoopDetector, doomLoopResult } from './doomLoop.js';
 import { explicitlyAuthorizesPcWrite } from '../execGuard.js';
 import { takeSandboxRestartNotice, sandboxOpenTransaction } from '../sandbox.js';
 import { formatRestartNotice, formatOpenTransactionNotice } from '../agentEnv.js';
@@ -729,6 +730,9 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
   // interrompido volta do checkpoint e é reemitido para a interface remontar.
   let currentPlan = resume?.meta?.plan || null;
   if (currentPlan) onEvent({ type: 'plan_update', plan: currentPlan });
+  // DOOM LOOP (Fase 46): mesma ferramenta + mesmos argumentos + mesmo resultado
+  // repetidos viram bloqueio com instrução de mudar de estratégia.
+  const doomLoop = createDoomLoopDetector();
   // Checkpoint: motivo da interrupção que JUSTIFICA salvar estado p/ retomar
   // (limite de ciclos, falha de provedor/stall exaurido, parada do usuário).
   // Falhas de QUALIDADE (degeneração, protocolo) NÃO viram checkpoint — ali o
@@ -1357,6 +1361,11 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
       const shellPermission = (name === 'bash' && allowedToolCall)
         ? evaluateShellCommand(String(args.command || ''), { grants: commandGrants })
         : null;
+      // Doom loop: avaliado para toda ferramenta EXECUTÁVEL (a delegação tem
+      // orçamento próprio; ask_user/update_plan são interceptadas antes).
+      const doom = (allowedToolCall && name !== SUBAGENT_TOOL_NAME)
+        ? doomLoop.shouldBlock(name, call.function.arguments || '')
+        : null;
       if (!allowedToolCall) {
         result = JSON.stringify({ error: 'Ferramenta não autorizada para esta chamada.', code: 'TOOL_NOT_ALLOWED', tool: name });
       } else if (shellPermission?.decision === 'deny') {
@@ -1376,6 +1385,12 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
           code: 'PERMISSION_REQUIRED',
           pattern: shellPermission.rule.pattern
         });
+      } else if (doom?.blocked) {
+        // A repetição não executa: o modelo recebe o motivo e a instrução de
+        // mudar de rota. O erro conta no freio de falhas consecutivas — quem
+        // insiste em círculo encerra o run com a causa honesta.
+        onEvent({ type: 'status', content: `Repetição sem progresso detectada em ${name}; pedindo mudança de estratégia.` });
+        result = doomLoopResult(name, doom.repeats);
       } else if (isWebTool && webResearchStop) {
         result = JSON.stringify({ error: 'A pesquisa web já atingiu o limite desta tarefa. Conclua com as evidências obtidas.', code: 'WEB_RESEARCH_STOPPED' });
       } else if (repeatedFetch) {
@@ -1433,6 +1448,9 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
           releaseToolRequest(control, activeTool);
         }
       }
+      // Alimenta o detector com o resultado REAL: resultado novo zera a
+      // contagem (progresso legítimo); idêntico aproxima o bloqueio.
+      if (doom) doomLoop.record(doom.key, result);
       executedToolCalls += 1;
       // A miniatura da página (web_fetch) vai num campo SEPARADO do stream: o
       // `content` é cortado em 2000 chars e o caminho poderia ficar de fora.
