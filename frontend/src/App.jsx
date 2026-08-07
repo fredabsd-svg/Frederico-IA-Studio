@@ -13,8 +13,6 @@ import { collectExecutionSessions, pendingInputRequest, pickTerminalSession } fr
 import { chatContentKey } from './chatScroll.js';
 import { useSmartAutoScroll } from './hooks/useSmartAutoScroll.js';
 import { Sidebar } from './Sidebar.jsx';
-import { DevProjectRail } from './components/DevProjectRail.jsx';
-import { DevActivityRail } from './components/DevActivityRail.jsx';
 import { PcFoldersPanel } from './PcFoldersPanel.jsx';
 import { ToolsPanel } from './ToolsPanel.jsx';
 import { SandboxPanel } from './SandboxPanel.jsx';
@@ -62,6 +60,10 @@ const LazyPlanChecklist = lazy(() => import('./components/PlanChecklist.jsx').th
 // Painel de confiança da entrega (revisão automática do diff): só existe em
 // tarefas de escrita do Modo Desenvolvedor — fora dele o chunk nem é baixado.
 const LazyReviewPanel = lazy(() => import('./components/ReviewPanel.jsx').then(m => ({ default: m.ReviewPanel })));
+// As colunas do Modo Desenvolvedor só existem nesse workspace — fora dele, o
+// chunk nem é baixado. (A entrada estava encostando no teto de 920 KB.)
+const LazyDevProjectRail = lazy(() => import('./components/DevProjectRail.jsx').then(m => ({ default: m.DevProjectRail })));
+const LazyDevActivityRail = lazy(() => import('./components/DevActivityRail.jsx').then(m => ({ default: m.DevActivityRail })));
 // Drawer de configuração da tarefa dev: só aparece ao abrir o Modo
 // Desenvolvedor — fora da entrada pelo mesmo motivo.
 const LazyDeveloperPanel = lazy(() => import('./DeveloperPanel.jsx').then(m => ({ default: m.DeveloperPanel })));
@@ -92,6 +94,7 @@ import { useFileUploads } from './hooks/useFileUploads.js';
 import { useChat } from './hooks/useChat.js';
 import { useTasks } from './hooks/useTasks.js';
 import { useDevProjects, projectContextText, developerSessionForConversation, permissionsPayloadFor } from './hooks/useDevProjects.js';
+import { LAYOUT_KEY, normalizeLayoutLevel, resolveLayout, sessionContextItems } from './devWorkspaceLayout.js';
 import { useComposerHeight } from './hooks/useComposerHeight.js';
 
 const QUICK_ACTION_ICON = {
@@ -166,8 +169,19 @@ export default function App({ user } = {}) {
   const [developerSession, setDeveloperSession] = useState(null);
   const [developerStartMode, setDeveloperStartMode] = useState('plan');
   const devProjects = useDevProjects();
-  const [devLeftCollapsed, setDevLeftCollapsed] = useState(() => localStorage.getItem('fred_dev_left') === '1');
-  const [devRightCollapsed, setDevRightCollapsed] = useState(() => localStorage.getItem('fred_dev_right') === '1');
+  // Colunas do workspace: `null` significa "o usuário ainda não decidiu" — aí
+  // quem manda é o nível de layout (simplicidade progressiva, Fase 52). Um
+  // clique dele grava a preferência e passa a vencer o padrão.
+  const readCollapsed = (key) => {
+    const saved = localStorage.getItem(key);
+    return saved === null ? null : saved === '1';
+  };
+  const [devLeftPref, setDevLeftPref] = useState(() => readCollapsed('fred_dev_left'));
+  const [devRightPref, setDevRightPref] = useState(() => readCollapsed('fred_dev_right'));
+  const [devLayoutLevel, setDevLayoutLevel] = useState(() => normalizeLayoutLevel(localStorage.getItem(LAYOUT_KEY)));
+  const devLayout = resolveLayout({ level: devLayoutLevel, leftCollapsed: devLeftPref, rightCollapsed: devRightPref });
+  const devLeftCollapsed = devLayout.leftCollapsed;
+  const devRightCollapsed = devLayout.rightCollapsed;
   const [routinesOpen, setRoutinesOpen] = useState(false);
   const [inboxOpen, setInboxOpen] = useState(false);
   const [providerOpen, setProviderOpen] = useState(false);
@@ -835,8 +849,27 @@ export default function App({ user } = {}) {
   }
 
   // Colapso das colunas do ambiente de desenvolvimento (guardado entre sessões).
-  function toggleDevLeft() { setDevLeftCollapsed(v => { localStorage.setItem('fred_dev_left', v ? '0' : '1'); return !v; }); }
-  function toggleDevRight() { setDevRightCollapsed(v => { localStorage.setItem('fred_dev_right', v ? '0' : '1'); return !v; }); }
+  function toggleDevLeft() {
+    const next = !devLeftCollapsed;
+    localStorage.setItem('fred_dev_left', next ? '1' : '0');
+    setDevLeftPref(next);
+  }
+  function toggleDevRight() {
+    const next = !devRightCollapsed;
+    localStorage.setItem('fred_dev_right', next ? '1' : '0');
+    setDevRightPref(next);
+  }
+  // Alterna simples ⇄ completo. Trocar de nível LIMPA as preferências de
+  // coluna: o usuário pediu um novo padrão, não uma mistura do antigo.
+  function toggleDevLayoutLevel() {
+    const next = devLayoutLevel === 'simples' ? 'completo' : 'simples';
+    localStorage.setItem(LAYOUT_KEY, next);
+    localStorage.removeItem('fred_dev_left');
+    localStorage.removeItem('fred_dev_right');
+    setDevLeftPref(null);
+    setDevRightPref(null);
+    setDevLayoutLevel(next);
+  }
 
   // ---- Clientes / Projetos ----
   async function loadClients() {
@@ -970,6 +1003,38 @@ export default function App({ user } = {}) {
   // antigas, texto puro) mostram "Pronto".
   const lastAssistantMsg = [...messages].reverse().find(m => m.role === 'assistant');
   const lastExecState = lastAssistantMsg?.execution?.state || null;
+  // PRÉ-VOO REAL para a barra de contexto (Fase 55): a branch mostrada precisa
+  // ser a de TRABALHO (que pode ser derivada da protegida), e quem sabe isso é
+  // o backend — a mesma função que decide o inventário do agente.
+  const [devPreflight, setDevPreflight] = useState(null);
+  useEffect(() => {
+    const repo = developerSession?.github?.repo;
+    if (workspace !== 'developer' || !repo) { setDevPreflight(null); return undefined; }
+    let alive = true;
+    const params = new URLSearchParams({
+      repo,
+      branch: developerSession?.github?.branch || '',
+      mode: developerSession?.mode || '',
+      conversationId: current?.id || '',
+      projectName: devProjects.active?.name || ''
+    });
+    (async () => {
+      try {
+        const res = await fetch(`${API}/api/connectors/github/preflight?${params}`);
+        const data = res.ok ? await res.json() : null;
+        if (alive) setDevPreflight(data && typeof data === 'object' ? data : null);
+      } catch { if (alive) setDevPreflight(null); }
+    })();
+    return () => { alive = false; };
+  }, [workspace, developerSession?.github?.repo, developerSession?.github?.branch, developerSession?.mode, current?.id, devProjects.active?.name]);
+
+  const devSessionItems = sessionContextItems({
+    project: devProjects.active,
+    session: developerSession,
+    model,
+    preflight: devPreflight,
+    canWrite: Boolean(DEV_WORK_MODES.find(m => m.id === developerSession?.mode)?.write)
+  });
   const devStagePill = busy
     ? { label: paused ? 'Pausado' : (statusText || 'Trabalhando...'), tone: 'live' }
     : lastExecState === 'awaiting_user'
@@ -1024,7 +1089,7 @@ export default function App({ user } = {}) {
       onSignOut={signOut}
     />
 
-    {workspace === 'developer' && <DevProjectRail
+    {workspace === 'developer' && <Suspense fallback={null}><LazyDevProjectRail
       collapsed={devLeftCollapsed}
       onToggle={toggleDevLeft}
       projects={devProjects.projects}
@@ -1039,7 +1104,7 @@ export default function App({ user } = {}) {
       conversationId={current?.id}
       recentTasks={recentDevTasks}
       onOpenTask={openConversation}
-    />}
+    /></Suspense>}
 
     <main
       className={`chat ${dragActive ? 'dragActive' : ''}`}
@@ -1118,8 +1183,28 @@ export default function App({ user } = {}) {
           <button type="button" className="workspaceAction primary" onClick={() => openDeveloper('build')}><Code2 size={15}/> Implementar</button>
           <button type="button" className="workspaceAction" onClick={() => openDeveloper('fix')}><Bug size={15}/> Corrigir</button>
           <button type="button" className="workspaceAction" onClick={() => openDeveloper('review')}><Check size={15}/> Revisar</button>
+          {/* Simplicidade progressiva (Fase 52): começa em Chat + Tarefa +
+              Terminal; o resto entra por este botão, e a escolha fica salva. */}
+          <button type="button" className="workspaceAction" onClick={toggleDevLayoutLevel}
+            title={devLayout.level === 'simples'
+              ? 'Mostrar tudo: arquivos, alterações, agentes e memória'
+              : 'Voltar ao essencial: chat, tarefa e terminal'}>
+            {devLayout.level === 'simples' ? <><PanelRight size={15}/> Mostrar tudo</> : <><PanelLeft size={15}/> Modo essencial</>}
+          </button>
           {devRightCollapsed && <button type="button" className="workspaceIconAction" onClick={toggleDevRight} title="Mostrar atividades e memória" aria-label="Mostrar atividades e memória"><PanelRight size={16}/></button>}
         </div>
+      </section>}
+      {/* CONTEXTO DA SESSÃO (Fase 55): projeto, branch de TRABALHO (real, vinda
+          do pré-voo), ambiente, modelo e permissões. Item sem dado real não
+          aparece — a barra nunca preenche com placeholder. */}
+      {workspace === 'developer' && devSessionItems.length > 1 && <section className="devSessionBarCtx" aria-label="Contexto da sessão de desenvolvimento">
+        {devSessionItems.map(item => (
+          <span key={item.key} className="devCtxItem" title={item.note ? `${item.label}: ${item.value} — ${item.note}` : `${item.label}: ${item.value}`}>
+            <small>{item.label}</small>
+            <b>{item.value}</b>
+            {item.note && <em>{item.note}</em>}
+          </span>
+        ))}
       </section>}
       {unprotected && !authWarnHidden && <div className="authWarn">
         <span>🔓 <b>Sem senha de acesso.</b> Use apenas na sua rede local — não exponha na internet sem definir <code>APP_PASSWORD</code>.</span>
@@ -1373,7 +1458,7 @@ export default function App({ user } = {}) {
       </footer>
     </main>
 
-    {workspace === 'developer' && <DevActivityRail
+    {workspace === 'developer' && <Suspense fallback={null}><LazyDevActivityRail
       collapsed={devRightCollapsed}
       onToggle={toggleDevRight}
       busy={busy}
@@ -1385,7 +1470,7 @@ export default function App({ user } = {}) {
       conversationId={current?.id || null}
       askConfirm={askConfirm}
       showToast={showToast}
-    />}
+    /></Suspense>}
 
     {filesDrawerOpen && <Drawer title="Arquivos da conversa" icon={<FolderOpen size={18}/>} onClose={() => setFilesDrawerOpen(false)} className="filesDrawer">
       <p className="muted drawerIntro">Anexos e arquivos gerados nesta conversa ficam reunidos aqui para você encontrar, abrir ou baixar sem procurar no histórico.</p>

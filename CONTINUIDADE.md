@@ -24,7 +24,29 @@ que ainda segura o verde é o **pipeline multimodelo retomável**: o F-15 entreg
 tabela e as primitivas, mas o `runMultiModel` ainda não as usa, então o reinício continua
 sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** a **Frente 22 — Diff por arquivo e reversão por hunk**
+- **Último trabalho:** a **Frente 23 — Layout do Developer Workspace**
+  (Fases 51, 52 e 55). A grade de três colunas + terminal + compositor **já
+  existia**; o que faltava era o que ela anuncia e quanto mostra por padrão.
+  - **Contexto da sessão (Fase 55):** uma faixa abaixo da barra do workspace com
+    projeto · branch · ambiente · modelo · permissões. A branch exibida é a de
+    TRABALHO, vinda do pré-voo real do backend (a mesma fonte que decide o
+    inventário do agente) — com a nota "a partir de main" quando é derivada.
+    Item sem dado real não aparece; só "Permissões" é sempre exibido, porque
+    "somente leitura" é informação, não vazio.
+  - **Simplicidade progressiva (Fase 52):** o workspace começa em Chat + Tarefa
+    + Terminal e abre Arquivos/Alterações/Memória no botão "Mostrar tudo". A
+    escolha explícita do usuário sobre uma coluna **vence** o padrão do nível
+    (o estado agora distingue "recolhida" de "ainda não decidiu").
+  - As colunas do modo dev viraram chunks lazy: a entrada do bundle caiu de
+    920 KB (exatamente no teto) para **890 KB**.
+  **Limitação assumida e declarada:** esta frente NÃO tem prova visual. O
+  sandbox desta sessão não tem Chromium nem Postgres, então os E2E de layout
+  (`e2e/tests/layout.spec.js`, que existem e cobrem sobreposição em oito
+  larguras) não rodaram aqui — só na CI do PR. Por isso a mudança foi
+  deliberadamente incremental: a lógica nova é pura e testada (9 testes), e o
+  CSS acrescenta uma faixa própria em vez de mexer no grid que já sustenta
+  compositor, terminal e mascote. Recomendo conferir em tela antes de mesclar.
+- **Último trabalho anterior:** a **Frente 22 — Diff por arquivo e reversão por hunk**
   fecha a Fase 27. A aba "Alterações" já dizia a verdade (Frente 18); agora dá
   para VER o diff do arquivo e DESFAZER — o arquivo inteiro ou um trecho — sem
   sair do painel.
@@ -365,10 +387,11 @@ sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md
   (o Nino cobrindo o botão de enviar), **[#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)**
   (Playwright + suíte ponta a ponta) e **[#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)**
   (as sete falhas P0 dos sub-agentes).
-- **Última validação:** 2026-08-07 (Frente 22) — **backend `npm run check`:
-  1273 testes, 0 falhas, 144 pulados** e **frontend: 140/140** (bundle
-  917/920 KB — o visualizador de diff entrou em chunk lazy justamente por
-  ter encostado no teto). Antes dela, Frente 21 — backend 1265, 0 falhas. Antes dela, Frente 20 — backend 1253 testes, 0 falhas. Antes dela, Frente 19 — **backend 1240 testes, 0 falhas, 144 pulados** (exigem PostgreSQL; esperado fora do
+- **Última validação:** 2026-08-07 (Frente 23) — **backend `npm run check`:
+  1273 testes, 0 falhas, 144 pulados** e **frontend: 149/149** (bundle
+  890/920 KB, depois de mover as colunas do modo dev para chunks lazy).
+  **Sem prova visual nesta sessão** (sem Chromium/Postgres): os E2E de layout
+  rodam na CI. Antes dela, Frente 22 — backend 1273, frontend 140/140. Antes dela, Frente 21 — backend 1265, 0 falhas. Antes dela, Frente 20 — backend 1253 testes, 0 falhas. Antes dela, Frente 19 — **backend 1240 testes, 0 falhas, 144 pulados** (exigem PostgreSQL; esperado fora do
   Docker) e **frontend `npm run check`: 140/140** (lint + testes + build +
   budget + css:inventory verdes). Bundle: entrada 916/920 KB, total dentro do
   teto. Antes dela: Frente 18 (backend 1236/0, frontend 135/135) e Frente 17
