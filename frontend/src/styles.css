@@ -1489,6 +1489,23 @@ body.dockResizing{user-select:none;cursor:ns-resize}
 .devFileBtn{width:100%;text-align:left;background:none;border:0;cursor:pointer;font:inherit;color:inherit;padding:0}
 .devFileBtn:hover .devFileName{text-decoration:underline}
 
+/* Handoff local ↔ worktree (aba Alterações): os comandos que o usuário roda no
+   computador dele e o campo do patch de volta. Cor sai dos tokens — a regra das
+   7 paletas vale aqui como no resto do modo dev. */
+.handoffToggle{margin-top:10px;border-top:1px solid var(--line);padding-top:8px}
+.handoff{margin-top:8px;display:flex;flex-direction:column;gap:12px}
+.handoffRepo{border:1px solid var(--line);border-radius:var(--r-md);padding:9px 11px}
+.handoffHead{display:flex;align-items:center;gap:7px;flex-wrap:wrap;font-size:var(--fs-xs);color:var(--muted)}
+.handoffHead b{color:var(--text)}
+.handoffTitle{margin:10px 0 5px;font-size:var(--fs-xs);text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+.handoffCmds{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:7px}
+.handoffCmd{display:flex;flex-direction:column;gap:3px}
+.handoffCmdLabel{font-size:var(--fs-xs);color:var(--muted);line-height:1.35}
+.handoffCmdRow{display:flex;align-items:center;gap:6px}
+.handoffCmdRow code{flex:1;min-width:0;overflow-x:auto;white-space:pre;font-size:var(--fs-xs);background:var(--code-bg);border-radius:3px;padding:3px 6px}
+.handoffDownload{margin-top:8px}
+.handoffPatch{width:100%;margin:7px 0;min-height:96px;resize:vertical;font-family:var(--mono,monospace);font-size:var(--fs-xs);line-height:1.4;background:var(--code-bg);color:var(--text);border:1px solid var(--line);border-radius:var(--r-sm);padding:6px 8px}
+
 /* Contexto da sessão de desenvolvimento (projeto · branch · ambiente · modelo · permissões). */
 .devSessionBarCtx{display:flex;flex-wrap:wrap;gap:6px 16px;padding:6px 16px;border-bottom:1px solid var(--line);background:rgba(127,127,127,.04);font-size:var(--fs-xs)}
 .devCtxItem{display:flex;align-items:baseline;gap:5px;min-width:0}

@@ -10,6 +10,7 @@ import { acquireConversationControl, releaseConversationControl } from '../agent
 import { createRunLog, listConversationRuns } from '../agent/runLog.js';
 import { collectConversationChanges } from '../agent/changeSet.js';
 import { fileDiff, revertChange } from '../agent/diffView.js';
+import { handoffSnapshot, exportPatch, applyPatch, MAX_PATCH_CHARS } from '../agent/handoff.js';
 import { openLiveStream, getLiveStream } from '../liveStream.js';
 import { runTool } from '../tools.js';
 import { classifyTaskResult } from '../taskOutcome.js';
@@ -720,6 +721,50 @@ router.post('/conversations/:id/revert', async (req, res) => {
     file: String(req.body?.file || ''),
     hunkIndex: Number.isInteger(hunkIndex) ? hunkIndex : null
   });
+  if (result?.error) return res.status(400).json(result);
+  res.json(result);
+});
+
+// HANDOFF LOCAL ↔ WORKTREE (Fase 24): estado do clone da conversa e os comandos
+// que o USUÁRIO roda na máquina dele para abrir a branch da tarefa numa
+// worktree ao lado do checkout dele. Leitura local, sem token.
+router.get('/conversations/:id/handoff', async (req, res) => {
+  const conv = await db.prepare('SELECT id FROM conversations WHERE id=? AND user_id=?').get(req.params.id, req.userId);
+  if (!conv) return res.status(404).json({ error: 'Não encontrado' });
+  res.json(await handoffSnapshot(req.userId, req.params.id));
+});
+
+// O trabalho NÃO COMMITADO como patch aplicável (inclui os arquivos novos).
+// Vai como texto para download: é o único caminho que funciona mesmo sem
+// GitHub conectado, sem autorização de escrita e sem branch publicada.
+router.get('/conversations/:id/handoff/patch', async (req, res) => {
+  const conv = await db.prepare('SELECT id FROM conversations WHERE id=? AND user_id=?').get(req.params.id, req.userId);
+  if (!conv) return res.status(404).json({ error: 'Não encontrado' });
+  const repo = String(req.query.repo || '');
+  const result = await exportPatch(req.userId, req.params.id, { repo });
+  if (result?.error) return res.status(400).json(result);
+  // O nome do arquivo vem do nome do clone, já saneado pelo módulo — nunca do
+  // parâmetro cru, que iria parar num cabeçalho HTTP.
+  res.setHeader('Content-Type', 'text/x-patch; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${result.repo}.patch"`);
+  res.send(result.patch);
+});
+
+// O SENTIDO DE VOLTA: um patch gerado na máquina do usuário entra no clone da
+// tarefa. Escrita destrutiva sobre trabalho não commitado — mesmo tratamento da
+// reversão: recusada com a tarefa em execução, e `git apply --check` antes, para
+// o patch se aplicar inteiro ou não se aplicar de jeito nenhum.
+router.post('/conversations/:id/handoff/apply', async (req, res) => {
+  const conv = await db.prepare('SELECT id FROM conversations WHERE id=? AND user_id=?').get(req.params.id, req.userId);
+  if (!conv) return res.status(404).json({ error: 'Não encontrado' });
+  if (isConversationActive(req.params.id)) {
+    return res.status(409).json({ error: 'A tarefa ainda está em execução. Pare o processamento antes de aplicar um patch — aplicar agora pode conflitar com o que a IA está escrevendo.' });
+  }
+  const patch = typeof req.body?.patch === 'string' ? req.body.patch : '';
+  if (patch.length > MAX_PATCH_CHARS) {
+    return res.status(413).json({ error: `O patch tem ${patch.length} caracteres — o limite é ${MAX_PATCH_CHARS}.` });
+  }
+  const result = await applyPatch(req.userId, req.params.id, { repo: String(req.body?.repo || ''), patch });
   if (result?.error) return res.status(400).json(result);
   res.json(result);
 });

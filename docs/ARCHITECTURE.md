@@ -172,6 +172,23 @@ POST /chat
   descartado. Contenção: repositório e caminho confinados ao clone da conversa
   (caminho absoluto e `..` são RECUSADOS, não normalizados), e a rota recusa
   reversão com a tarefa em execução.
+- **Handoff local ↔ worktree (Fase 24):** `agent/handoff.js` +
+  `GET /conversations/:id/handoff`, `GET .../handoff/patch` e
+  `POST .../handoff/apply`. O trabalho da tarefa mora no clone da conversa e até
+  aqui só saía dali por `github_push` + PR. Agora há ponte nos dois sentidos:
+  o painel monta os comandos que o USUÁRIO roda na máquina dele
+  (`git fetch` + `git worktree add --track -b <branch> ../<dir> origin/<branch>`,
+  que não toca o checkout dele), e oferece como patch o que a worktree não
+  traria. A base do patch é `origin/<branch>` quando há commit local não
+  publicado e `HEAD` caso contrário — com base fixa em `HEAD`, o commit do meio
+  sumiria dos dois caminhos. Arquivo não rastreado entra no patch por um ÍNDICE
+  TEMPORÁRIO (`GIT_INDEX_FILE`): o `git add -A` enxerga tudo sem tocar o índice
+  do clone. No sentido de volta, `git apply --check` antes de aplicar: o patch
+  entra inteiro ou não entra (sem `--3way`, que deixaria marcador de conflito
+  dentro dos arquivos da tarefa), e o clone é devolvido ao uid do sandbox
+  (`chownTree`) para o agente poder editar depois o que recebeu.
+  **Limite honesto:** sem branch publicada, os commits locais só saem pelo
+  GitHub — o patch cobre a partir de `HEAD`, não da base da branch.
 - **Review gate + painel de confiança (Fases 28 e 44):** `agent/reviewGate.js`
   — antes de a tarefa se apresentar como entregue, o backend passa um pente
   automático no que foi REALMENTE alterado (ChangeSet + `git diff HEAD -U0`),

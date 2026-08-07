@@ -352,6 +352,22 @@ simbólicos (nada fora da base entra na lista), pula binários e limita bytes e
 resultados — as duas superfícies são somente-leitura e não tocam sandbox nem
 rede.
 
+O **handoff** (`agent/handoff.js`) é a exceção que escreve, e por isso carrega
+controles próprios. Ao APLICAR um patch vindo do computador do usuário:
+
+- os caminhos de destino saem das linhas `---`/`+++` do patch e são conferidos
+  ANTES de o git ser chamado — caminho absoluto, `C:\...` ou segmento `..` é
+  **recusado nomeando o caminho**, nunca reinterpretado como relativo (mesma
+  régua do `diffView`; o `git apply` também recusa por conta própria fora da
+  árvore de trabalho, então a defesa é dupla);
+- o patch tem teto de tamanho (`MAX_PATCH_CHARS`) checado na rota e no módulo;
+- a rota recusa aplicar com a **tarefa em execução** (409), como a reversão;
+- a URL do remoto exposta na interface passa por `sanitizeRemoteUrl`, que
+  remove credencial embutida (`https://usuario:token@…`) — ela vai para a tela
+  e para a área de transferência do usuário;
+- exportar o patch **não** altera o clone: o `git add -A` roda contra um
+  `GIT_INDEX_FILE` temporário, removido em `finally`.
+
 ### 8.1 Delegação a sub-agentes — a fronteira de autorização
 
 Um sub-agente (`agent/subagents.js`) roda um `runAgent` COMPLETO, com ferramentas de

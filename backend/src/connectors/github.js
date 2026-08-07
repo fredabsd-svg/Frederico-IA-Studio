@@ -382,7 +382,12 @@ export async function buildRepoDigest({ userId, repo, branch = null, signal, max
 // ferramentas github_* — o token nunca sai deste módulo.
 // `stdin`: texto entregue ao processo (usado por `git apply -` na reversão por
 // hunk). Sem ele, um patch teria de virar arquivo temporário no disco.
-export function runGit(cwd, args, { token = null, timeoutMs = GIT_TIMEOUT_MS, signal, stdin = null } = {}) {
+// `env`: variáveis extras para ESTA chamada (o handoff usa `GIT_INDEX_FILE`
+// para montar um patch com os arquivos novos sem tocar no índice de verdade).
+// `maxOutput`: teto da saída capturada. O padrão de 8 KB serve para mensagens;
+// exportar um patch precisa do texto INTEIRO, senão o arquivo sai truncado —
+// e um patch truncado é pior que nenhum, porque parece válido.
+export function runGit(cwd, args, { token = null, timeoutMs = GIT_TIMEOUT_MS, signal, stdin = null, env = null, maxOutput = 8000 } = {}) {
   return new Promise((resolve) => {
     const authArgs = token
       ? ['-c', `http.https://github.com/.extraheader=Authorization: Basic ${Buffer.from(`x-access-token:${token}`).toString('base64')}`]
@@ -391,7 +396,7 @@ export function runGit(cwd, args, { token = null, timeoutMs = GIT_TIMEOUT_MS, si
     // isto o git recusa com "detected dubious ownership".
     const child = spawn('git', ['-c', `safe.directory=${cwd}`, ...authArgs, ...args], {
       cwd,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', ...(env || {}) }
     });
     let out = '', err = '', settled = false;
     const finish = (code, extra = '') => {
@@ -399,7 +404,7 @@ export function runGit(cwd, args, { token = null, timeoutMs = GIT_TIMEOUT_MS, si
       settled = true;
       clearTimeout(timer);
       signal?.removeEventListener('abort', onAbort);
-      resolve({ code, stdout: scrubSecrets(out, token).slice(-8000), stderr: (scrubSecrets(err, token) + extra).slice(-8000) });
+      resolve({ code, stdout: scrubSecrets(out, token).slice(-maxOutput), stderr: (scrubSecrets(err, token) + extra).slice(-8000) });
     };
     const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch {} finish(124, '\n[TIMEOUT: a operação git demorou demais]'); }, timeoutMs);
     const onAbort = () => { try { child.kill('SIGKILL'); } catch {} finish(130, '\n[Cancelado pelo usuário]'); };
@@ -416,7 +421,10 @@ export function runGit(cwd, args, { token = null, timeoutMs = GIT_TIMEOUT_MS, si
 }
 
 // Devolve a posse dos arquivos ao uid do sandbox após escrita do backend.
-function chownTree(dir) {
+// Exportado para o handoff: aplicar um patch vindo do computador do usuário
+// escreve como root no clone, e sem devolver a posse o sandbox (uid 1000) não
+// conseguiria editar depois o arquivo que acabou de receber.
+export function chownTree(dir) {
   return new Promise((resolve) => {
     const child = spawn('chown', ['-R', '1000:1000', dir]);
     child.on('error', () => resolve());

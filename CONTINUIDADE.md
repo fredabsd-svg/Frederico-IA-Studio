@@ -24,7 +24,45 @@ que ainda segura o verde é o **pipeline multimodelo retomável**: o F-15 entreg
 tabela e as primitivas, mas o `runMultiModel` ainda não as usa, então o reinício continua
 sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** a **Frente 23 — Layout do Developer Workspace**
+- **Último trabalho:** a **Frente 24 — Handoff local ↔ worktree** (Fase 24).
+  O trabalho da tarefa mora no clone da conversa, na branch derivada da
+  Fase 23 — e até aqui só saía dali por `github_push` + Pull Request. Quem
+  quisesse **continuar no próprio computador** (rodar o app, abrir a IDE) ou
+  **devolver** uma correção feita localmente não tinha caminho: o trabalho não
+  commitado nunca chegava à máquina do usuário.
+  Agora há ponte nos dois sentidos, na mesma camada do ChangeSet (git local no
+  clone, sem token e sem sandbox): `agent/handoff.js` +
+  `GET /conversations/:id/handoff`, `GET .../handoff/patch` e
+  `POST .../handoff/apply`, com o painel na aba "Alterações".
+  **Três decisões que definem o comportamento:**
+  1. **A worktree é o caminho bom; o patch é o universal.** Com a branch
+     publicada, o painel entrega os comandos prontos
+     (`git worktree add --track -b <branch> ../<dir> origin/<branch>`) — o
+     checkout atual do usuário não é tocado. Sem branch publicada, o patch é a
+     única ponte honesta, e ele **leva os arquivos novos**: o `git add -A` roda
+     contra um `GIT_INDEX_FILE` temporário, então o índice do clone não é
+     tocado e o arquivo não rastreado (o que a IA mais produz) entra no diff.
+  2. **A base do patch não é sempre `HEAD`.** Com commit local ainda não
+     publicado, a base vira `origin/<branch>` — senão a worktree traria só o
+     publicado, o patch traria só o não commitado, e o commit do meio sumiria
+     dos dois caminhos. É o caso que o teste com remoto de verdade guarda.
+  3. **Aplicar patch não faz merge de três vias.** `git apply --check` antes: o
+     patch entra inteiro ou não entra. Um `--3way` deixaria marcador de
+     conflito dentro dos arquivos da tarefa — o oposto do que este projeto faz
+     em toda operação destrutiva. Caminho de destino é **recusado nomeando o
+     caminho** (absoluto, `C:\`, `..`), nunca normalizado; a rota recusa com a
+     tarefa em execução (409); e o clone é devolvido ao uid do sandbox
+     (`chownTree`), senão o agente não conseguiria editar o que acabou de
+     receber.
+  Duas mudanças mínimas no `runGit` sustentam isso: `env` (para o
+  `GIT_INDEX_FILE`) e `maxOutput` — o teto padrão de 8 KB truncaria o patch, e
+  **patch truncado é pior que nenhum**, porque parece válido.
+  **Limitações assumidas:** (a) sem branch publicada, os commits locais só saem
+  pelo GitHub — o patch cobre a partir de `HEAD`, não da base da branch;
+  (b) **sem prova visual** — o sandbox desta sessão não tem Chromium, então o
+  painel novo não foi conferido em tela (a lógica pura tem 6 testes e o backend
+  exercita git de verdade, inclusive com um remoto local).
+- **Último trabalho anterior:** a **Frente 23 — Layout do Developer Workspace**
   (Fases 51, 52 e 55). A grade de três colunas + terminal + compositor **já
   existia**; o que faltava era o que ela anuncia e quanto mostra por padrão.
   - **Contexto da sessão (Fase 55):** uma faixa abaixo da barra do workspace com
@@ -387,11 +425,13 @@ sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md
   (o Nino cobrindo o botão de enviar), **[#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)**
   (Playwright + suíte ponta a ponta) e **[#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)**
   (as sete falhas P0 dos sub-agentes).
-- **Última validação:** 2026-08-07 (Frente 23) — **backend `npm run check`:
-  1273 testes, 0 falhas, 144 pulados** e **frontend: 149/149** (bundle
-  890/920 KB, depois de mover as colunas do modo dev para chunks lazy).
-  **Sem prova visual nesta sessão** (sem Chromium/Postgres): os E2E de layout
-  rodam na CI. Antes dela, Frente 22 — backend 1273, frontend 140/140. Antes dela, Frente 21 — backend 1265, 0 falhas. Antes dela, Frente 20 — backend 1253 testes, 0 falhas. Antes dela, Frente 19 — **backend 1240 testes, 0 falhas, 144 pulados** (exigem PostgreSQL; esperado fora do
+- **Última validação:** 2026-08-07 (Frente 24) — **backend `npm run check`:
+  1293 testes, 0 falhas, 144 pulados** e **frontend: 155/155** (bundle
+  890/920 KB de entrada, 1058/1100 KB total; o painel de handoff é chunk
+  próprio). O ciclo do handoff foi exercitado contra git de verdade, com um
+  repositório bare local fazendo as vezes de remoto. **Sem prova visual nesta
+  sessão** (sem Chromium/Postgres). Antes dela, Frente 23 — backend 1273,
+  frontend 149/149. Antes dela, Frente 22 — backend 1273, frontend 140/140. Antes dela, Frente 21 — backend 1265, 0 falhas. Antes dela, Frente 20 — backend 1253 testes, 0 falhas. Antes dela, Frente 19 — **backend 1240 testes, 0 falhas, 144 pulados** (exigem PostgreSQL; esperado fora do
   Docker) e **frontend `npm run check`: 140/140** (lint + testes + build +
   budget + css:inventory verdes). Bundle: entrada 916/920 KB, total dentro do
   teto. Antes dela: Frente 18 (backend 1236/0, frontend 135/135) e Frente 17

@@ -1,7 +1,7 @@
 import React, { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import {
   Activity, Brain, PanelRightClose, PanelRightOpen, Loader, CheckCircle2, AlertCircle,
-  Terminal, FileCog, FolderOpen, Search, ShieldCheck, ChevronDown, FileText, ListTree, GitCompareArrows
+  Terminal, FileCog, FolderOpen, Search, ShieldCheck, ChevronDown, FileText, ListTree, GitCompareArrows, Laptop
 } from 'lucide-react';
 import { API } from '../constants.js';
 import { MEMORY_FIELDS } from '../hooks/useDevProjects.js';
@@ -9,6 +9,9 @@ import { describe, statusIcon, tryParse } from './ExecutionSession.jsx';
 // O visualizador de diff só aparece quando o usuário clica num arquivo
 // alterado — fica em chunk próprio para não pesar na primeira pintura.
 const LazyFileDiff = lazy(() => import('./FileDiff.jsx').then(m => ({ default: m.FileDiff })));
+// O handoff só é montado quando o usuário pede — é uma seção grande, e a
+// maioria das tarefas termina no próprio workspace.
+const LazyHandoff = lazy(() => import('./HandoffPanel.jsx').then(m => ({ default: m.HandoffPanel })));
 
 // Painel de atividades, arquivos, alterações e memória do Modo Desenvolvedor
 // (coluna direita do ambiente). Quatro abas sobre a MESMA fonte de dados — os
@@ -164,6 +167,7 @@ function ChangesTab({ steps, downloadUrl, conversationId, busy, askConfirm, show
   // Arquivo aberto no visualizador de diff (Fase 27): { repo, file }.
   const [aberto, setAberto] = useState(null);
   const [recarga, setRecarga] = useState(0);   // força reler o ChangeSet após reverter
+  const [handoff, setHandoff] = useState(false); // painel de handoff local ↔ worktree (Fase 24)
   useEffect(() => {
     // Busca ao abrir a aba e refaz quando a execução termina (busy → false):
     // é o momento em que o diff de verdade muda.
@@ -179,6 +183,19 @@ function ChangesTab({ steps, downloadUrl, conversationId, busy, askConfirm, show
   }, [conversationId, busy, recarga]);
 
   const repos = (real?.repos || []).filter(repo => repo.files.length);
+  // O handoff vale mesmo com o clone LIMPO — a branch publicada continua sendo
+  // algo a levar para o computador —, então o gatilho é ter repositório git,
+  // não ter arquivo alterado.
+  const temGit = (real?.repos || []).length > 0;
+  const blocoHandoff = temGit && <div className="handoffToggle">
+    <button type="button" className="devIconBtn" aria-expanded={handoff} onClick={() => setHandoff(v => !v)}>
+      <Laptop size={13}/> {handoff ? 'Ocultar o handoff' : 'Levar / trazer do meu computador'}
+    </button>
+    {handoff && <Suspense fallback={<p className="devRailHint">Carregando o handoff…</p>}>
+      <LazyHandoff conversationId={conversationId} busy={busy} askConfirm={askConfirm} showToast={showToast}/>
+    </Suspense>}
+  </div>;
+
   if (repos.length) {
     return <>
       {repos.map(repo => <div key={repo.name} className="devChangeRepo">
@@ -220,11 +237,15 @@ function ChangesTab({ steps, downloadUrl, conversationId, busy, askConfirm, show
           onReverted={() => setRecarga(n => n + 1)}/>
       </Suspense>}
       <p className="devRailHint">Diff real do git no repositório da tarefa{loading ? ' — atualizando…' : ''}. Clique num arquivo para ver e desfazer trechos.</p>
+      {blocoHandoff}
     </>;
   }
 
   if (!changed.length) {
-    return <div className="devRailEmpty"><GitCompareArrows size={22}/><p>{loading ? 'Consultando o repositório…' : 'Nenhuma alteração ainda. Os arquivos criados ou editados pela IA aparecem aqui.'}</p></div>;
+    return <>
+      <div className="devRailEmpty"><GitCompareArrows size={22}/><p>{loading ? 'Consultando o repositório…' : 'Nenhuma alteração ainda. Os arquivos criados ou editados pela IA aparecem aqui.'}</p></div>
+      {blocoHandoff}
+    </>;
   }
   return <>
     <ul className="devFileList devChangeList">
@@ -239,6 +260,7 @@ function ChangesTab({ steps, downloadUrl, conversationId, busy, askConfirm, show
       </li>)}
     </ul>
     <p className="devRailHint">Sem repositório git na conversa — lista derivada das gravações da IA (selo M/A é pista, não diff).</p>
+    {blocoHandoff}
   </>;
 }
 
