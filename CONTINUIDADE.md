@@ -24,7 +24,29 @@ que ainda segura o verde é o **pipeline multimodelo retomável**: o F-15 entreg
 tabela e as primitivas, mas o `runMultiModel` ainda não as usa, então o reinício continua
 sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** a **Frente 17 — Developer Workspace 3.0 (fundação)**
+- **Último trabalho:** a **Frente 18 — Developer Workspace 3.0: ChangeSet real,
+  Code Intelligence leve e doom loop**. Três respostas diretas às perguntas de
+  confiança da Fase 73 ("Quais arquivos mudaram?", "Está travado?"):
+  1. **ChangeSet real** (`agent/changeSet.js` + `GET /conversations/:id/changes`):
+     a aba "Alterações" passa a mostrar a VERDADE do git no clone da conversa —
+     status M/A/D/R + ±linhas por arquivo e totais, lidos pelo backend sem
+     token e sem sandbox. Sem repositório git, a UI mantém o fallback
+     heurístico, agora rotulado como pista ("selo M/A é pista, não diff").
+  2. **Code Intelligence leve (decisão 6A)** (`agent/codeIntel.js`): ferramentas
+     `find_file` (glob/trecho de nome) e `search_text` (literal/regex + filtro
+     glob → arquivo+linha+trecho), acompanhantes automáticas de quem já lê o
+     workspace (como a `ambiente` — a migration 011 é imutável e não foi
+     tocada). Contenção: só `ws.base`, sem symlink, sem node_modules/.git,
+     binário ignorado, limites com aviso explícito. Sem LSP nesta fase, de
+     propósito.
+  3. **Doom loop detection** (`agent/doomLoop.js`): a 3ª chamada idêntica
+     (ferramenta+argumentos) com o MESMO resultado é bloqueada antes do
+     executor, com erro estruturado mandando mudar de estratégia; resultado
+     novo zera a contagem. O bloqueio alimenta o freio de falhas consecutivas.
+  **Pendências que continuam abertas** (da Frente 17): worktrees/branch por
+  tarefa, layout de 3 colunas, review gate, projetos dev no banco, e o
+  streaming do terminal fora do event log durável.
+- **Último trabalho anterior:** a **Frente 17 — Developer Workspace 3.0 (fundação)**
   atacou as causas estruturais da fragilidade do Modo Desenvolvedor, mapeadas
   por uma auditoria completa (frontend, backend, durabilidade/SSE) + pesquisa
   da documentação oficial de Cursor, OpenCode e Codex. Cinco entregas:
@@ -275,13 +297,13 @@ sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md
   (o Nino cobrindo o botão de enviar), **[#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)**
   (Playwright + suíte ponta a ponta) e **[#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)**
   (as sete falhas P0 dos sub-agentes).
-- **Última validação:** 2026-08-07 (Frente 17) — **backend `npm run check`:
-  1208 testes, 0 falhas, 141 pulados** (exigem PostgreSQL; esperado fora do
-  Docker) e **frontend `npm run check`: 129/129** (lint + testes + build +
-  budget + css:inventory verdes). Atenção: a **entrada do bundle está em
-  920 KB — exatamente no teto de 920 KB**; a próxima adição ao chunk principal
-  precisa vir com code splitting. Antes dela: 2026-08-06 — frontend 81/81;
-  backend 1008/1008 com Postgres em 2026-08-05. Os 26 E2E
+- **Última validação:** 2026-08-07 (Frente 18) — **backend `npm run check`:
+  1236 testes, 0 falhas, 141 pulados** (exigem PostgreSQL; esperado fora do
+  Docker) e **frontend `npm run check`: 135/135** (lint + testes + build +
+  budget + css:inventory verdes). Bundle: entrada 911/920 KB (a Frente 17
+  destravou o teto movendo o DeveloperPanel para chunk lazy), total
+  1035/1100 KB. Antes dela: Frente 17 em 2026-08-07 (backend 1221/0 falhas);
+  2026-08-06 — frontend 81/81; backend 1008/1008 com Postgres em 2026-08-05. Os 26 E2E
   ponta a ponta exigem Postgres + Chromium do contêiner (`/opt/pw-browsers/`)
   e ficaram fora do escopo desta frente — a poda é conservadora e a
   catraca impede regredir.

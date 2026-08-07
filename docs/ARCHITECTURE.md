@@ -135,6 +135,23 @@ POST /chat
   passos da missão (id/título/status/evidência); um passo só fica `completed`
   com evidência (validado no backend). O plano vai ao stream (`plan_update`),
   ao run log e ao `execution_meta` da mensagem, e viaja no checkpoint.
+- **ChangeSet real:** `agent/changeSet.js` + `GET /conversations/:id/changes` —
+  a verdade do git sobre o(s) clone(s) da conversa (`status --porcelain` +
+  `diff HEAD --numstat`), lida pelo backend sem token e sem sandbox. A aba
+  "Alterações" exibe status M/A/D/R com ±linhas por arquivo; sem repositório
+  git, cai no fallback heurístico (apresentado como pista, não como diff).
+- **Code Intelligence leve (decisão 6A):** `agent/codeIntel.js` — ferramentas
+  `find_file` (glob/trecho do nome) e `search_text` (literal/regex + filtro
+  glob, resultado arquivo+linha+trecho), executadas no backend sobre o
+  workspace, com contenção (sem symlink, sem `node_modules`/`.git`, binário
+  ignorado) e limites explícitos. São ferramentas ACOMPANHANTES: entram
+  sozinhas quando o assistente já pode ler o workspace (como a `ambiente`),
+  sem mexer na configuração por assistente. Sem language server nesta fase.
+- **Doom loop:** `agent/doomLoop.js` — mesma ferramenta + mesmos argumentos +
+  mesmo resultado repetidos (3×) são BLOQUEADOS antes do executor, com erro
+  estruturado que instrui a mudar de estratégia; resultado novo zera a
+  contagem (progresso legítimo). O bloqueio conta no freio de falhas
+  consecutivas do loop.
 - **Política de comandos:** `agent/permissionPolicy.js` — allow/ask/deny por
   padrão de comando (glob, última regra que casa vence; compostos lineares
   divididos e vale a decisão mais restritiva). `ask` devolve

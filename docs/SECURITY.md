@@ -343,6 +343,14 @@ docker-guard, execGuard) — nunca as substitui nem afrouxa:
 Limite honesto: a divisão de comandos é textual (não interpreta aspas nem
 substituição). Testes: `agent/permissionPolicy.test.js`.
 
+Leituras locais correlatas, com a mesma régua de contenção: o ChangeSet
+(`agent/changeSet.js`) roda `git status/diff` no clone do workspace **sem
+token** (o `runGit` exportado nunca recebe credencial nesse caminho), e o Code
+Intelligence (`agent/codeIntel.js`) varre apenas `ws.base`, ignora links
+simbólicos (nada fora da base entra na lista), pula binários e limita bytes e
+resultados — as duas superfícies são somente-leitura e não tocam sandbox nem
+rede.
+
 ### 8.1 Delegação a sub-agentes — a fronteira de autorização
 
 Um sub-agente (`agent/subagents.js`) roda um `runAgent` COMPLETO, com ferramentas de
