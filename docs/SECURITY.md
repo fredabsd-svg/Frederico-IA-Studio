@@ -315,6 +315,34 @@ Testes: `agent/githubAccess.test.js` (matriz completa + catraca de inventário �
 `execGuard.remoteGit.test.js`, `frontend/src/hooks/useDevProjects.test.js`.
 Decisão em `docs/decisions/0002-autorizacao-estruturada-de-publicacao-no-github.md`.
 
+As rotas de **botão** (`POST /conversations/:id/github/push`) seguem a mesma régua: o
+clique é a autorização, mas o alvo precisa ser o repositório (e a branch, quando fixada)
+do vínculo do projeto desta conversa no servidor — falha fechada sem vínculo. Antes,
+uma request autenticada podia empurrar qualquer repo/branch do token, fora do escopo
+que o `githubAccess.js` impõe ao agente. O clone (leitura com o token do próprio
+usuário) continua exigindo só a posse da conversa.
+
+### 8.0b Política de comandos allow/ask/deny (`agent/permissionPolicy.js`)
+
+Camada de **política de produto** sobre as fronteiras duras (sandbox isolado,
+docker-guard, execGuard) — nunca as substitui nem afrouxa:
+
+- regras ordenadas com glob simples; a última que casa vence; comandos compostos
+  lineares (`&&`, `;`, `|`) são divididos e vale a decisão mais restritiva;
+- `deny` para o que já era fronteira (sudo, docker, git remoto pelo sandbox), com o
+  motivo de política na recusa; `ask` para comandos que destroem trabalho não
+  commitado (`git reset --hard`, `git clean`, `git restore`, `git checkout -- `);
+- `ask` devolve `PERMISSION_REQUIRED` ao modelo, que pergunta via `ask_user`; o
+  backend carimba na pergunta o padrão exato da política (nunca texto do modelo);
+  a confirmação vira `commandGrants` no projeto — re-validada a cada turno
+  (`normalizeCommandGrants`, falha fechada: só padrões `ask` sobrevivem, e um grant
+  nunca rebaixa um `deny`);
+- sub-agentes herdam os grants do pai pelo `DelegationContext` — nunca derivam
+  novos do texto da subtarefa (que é escrito pelo modelo).
+
+Limite honesto: a divisão de comandos é textual (não interpreta aspas nem
+substituição). Testes: `agent/permissionPolicy.test.js`.
+
 ### 8.1 Delegação a sub-agentes — a fronteira de autorização
 
 Um sub-agente (`agent/subagents.js`) roda um `runAgent` COMPLETO, com ferramentas de
