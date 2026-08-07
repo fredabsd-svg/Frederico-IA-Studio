@@ -17,7 +17,6 @@ import { DevProjectRail } from './components/DevProjectRail.jsx';
 import { DevActivityRail } from './components/DevActivityRail.jsx';
 import { PcFoldersPanel } from './PcFoldersPanel.jsx';
 import { ToolsPanel } from './ToolsPanel.jsx';
-import { DeveloperPanel } from './DeveloperPanel.jsx';
 import { SandboxPanel } from './SandboxPanel.jsx';
 import { RoutinesPanel } from './RoutinesPanel.jsx';
 import { InboxPanel } from './InboxPanel.jsx';
@@ -60,6 +59,9 @@ import { ClientPicker } from './components/ClientPicker.jsx';
 // Checklist do plano estruturado (update_plan): só existe em missões do Modo
 // Desenvolvedor — fora dele o chunk nem é baixado (orçamento de entrada).
 const LazyPlanChecklist = lazy(() => import('./components/PlanChecklist.jsx').then(m => ({ default: m.PlanChecklist })));
+// Drawer de configuração da tarefa dev: só aparece ao abrir o Modo
+// Desenvolvedor — fora da entrada pelo mesmo motivo.
+const LazyDeveloperPanel = lazy(() => import('./DeveloperPanel.jsx').then(m => ({ default: m.DeveloperPanel })));
 const LazyMemoryPanel = lazy(() => import('./MemoryPanel.jsx').then(m => ({ default: m.MemoryPanel })));
 const LazyProviderPanel = lazy(() => import('./ProviderPanel.jsx').then(m => ({ default: m.ProviderPanel })));
 const LazyPrivacyPanel = lazy(() => import('./PrivacyPanel.jsx').then(m => ({ default: m.PrivacyPanel })));
@@ -1476,7 +1478,7 @@ export default function App({ user } = {}) {
     {memoryOpen && <Suspense fallback={<PanelFallback/>}><LazyMemoryPanel assistants={assistants} clients={clients} clientId={clientId} showToast={showToast} askConfirm={askConfirm} askPrompt={askPrompt} onClose={() => setMemoryOpen(false)}/></Suspense>}
     {pcOpen && <PcFoldersPanel showToast={showToast} askConfirm={askConfirm} onClose={() => setPcOpen(false)}/>}
     {toolsOpen && <ToolsPanel onPick={pickTool} onClose={() => setToolsOpen(false)}/>}
-    {developerOpen && <DeveloperPanel devProjects={devProjects} team={team} initialMode={developerStartMode} onStart={startDeveloperTask} onManageFolders={() => { setDeveloperOpen(false); setPcOpen(true); }} onOpenConnectors={() => { setDeveloperOpen(false); setConnectorsOpen(true); }} onClose={() => setDeveloperOpen(false)}/>}
+    {developerOpen && <Suspense fallback={<PanelFallback/>}><LazyDeveloperPanel devProjects={devProjects} team={team} initialMode={developerStartMode} onStart={startDeveloperTask} onManageFolders={() => { setDeveloperOpen(false); setPcOpen(true); }} onOpenConnectors={() => { setDeveloperOpen(false); setConnectorsOpen(true); }} onClose={() => setDeveloperOpen(false)}/></Suspense>}
     {sandboxOpen && <SandboxPanel onClose={() => setSandboxOpen(false)}/>}
     {routinesOpen && <RoutinesPanel assistants={assistants} clients={clients} showToast={showToast} askConfirm={askConfirm} onClose={() => setRoutinesOpen(false)}/>}
     {inboxOpen && <InboxPanel clients={clients} clientId={clientId} showToast={showToast} askConfirm={askConfirm} onOpenConversation={(id) => { fetchConversations(); openConversation(id); }} onClose={() => setInboxOpen(false)}/>}

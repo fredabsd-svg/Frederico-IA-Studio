@@ -1,17 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ArrowRight, BookOpen, Code2, FolderCog, FolderOpen, GitBranch, Lock, Unlock, Info,
-  MessageCircleQuestion, ListChecks, Hammer, Bug, ShieldCheck, Bot, Plus, Trash2, FolderGit2
+  ShieldCheck, Plus, Trash2, FolderGit2
 } from 'lucide-react';
 import { API, DEV_WORK_MODES } from './constants.js';
 import { Drawer, useAppDialog } from './components.jsx';
 import { GitHubIcon } from './ConnectorsPanel.jsx';
 import { githubWritePermissionFor, newDevProject } from './hooks/useDevProjects.js';
-
-// Ícones de cada modo de trabalho (DEV_WORK_MODES.icon → componente lucide).
-export const DEV_MODE_ICON = {
-  ask: MessageCircleQuestion, plan: ListChecks, build: Hammer, fix: Bug, review: ShieldCheck, auto: Bot
-};
+// Ícones dos modos: módulo compartilhado (ver devModeIcons.js) para o import
+// estático do DevProjectRail não puxar este drawer para o chunk de entrada.
+import { DEV_MODE_ICON } from './devModeIcons.js';
 
 // Repositórios do conector GitHub entram no seletor de vínculo com o valor
 // prefixado ("gh:owner/repo") para distinguir das pastas do PC.

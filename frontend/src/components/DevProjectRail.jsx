@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import { GitHubIcon } from '../ConnectorsPanel.jsx';
 import { DEV_WORK_MODES } from '../constants.js';
-import { DEV_MODE_ICON } from '../DeveloperPanel.jsx';
+import { DEV_MODE_ICON } from '../devModeIcons.js';
 
 // Explorador do Modo Desenvolvedor (coluna esquerda do ambiente).
 // Reúne o projeto ativo (nome, vínculo, permissão, modo), os arquivos presentes
