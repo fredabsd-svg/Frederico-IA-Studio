@@ -47,6 +47,25 @@ test('lista vazia de ferramentas não libera tudo', () => {
   assert.deepEqual(toolsFor({ tools: ['consultar_cnpj'] }).map(tool => tool.function.name), ['consultar_cnpj']);
 });
 
+// Fase 38: quem pode PRODUZIR uma página precisa poder conferi-la no navegador.
+// A `validar_pagina` acompanha a escrita pela mesma lógica da `ambiente`, e por
+// isso não entra para quem só lê — validar não é uma capacidade de leitura.
+test('validar_pagina acompanha quem escreve no workspace, e só ele', () => {
+  const comEscrita = toolsFor({ tools: ['write_file'] }).map(tool => tool.function.name);
+  assert.ok(comEscrita.includes('validar_pagina'));
+
+  const soLeitura = toolsFor({ tools: ['read_file'] }).map(tool => tool.function.name);
+  assert.ok(!soLeitura.includes('validar_pagina'));
+  assert.deepEqual(toolsFor({ tools: ['consultar_cnpj'] }).map(tool => tool.function.name), ['consultar_cnpj']);
+
+  // E o inventário precisa ENSINAR quando usar: sem essa linha, a ferramenta
+  // existe e nunca é chamada — foi o que aconteceu com os sub-agentes.
+  const nota = toolAvailabilityNote(toolsFor({ tools: ['write_file'] }));
+  assert.match(nota, /validar_pagina/);
+  assert.match(nota, /ANTES de dizer que uma interface está pronta/);
+  assert.doesNotMatch(toolAvailabilityNote(toolsFor({ tools: ['consultar_cnpj'] })), /validar_pagina/);
+});
+
 // A delegação vivia num item que só dizia quando NÃO delegar. O gatilho positivo
 // é o que faz o modelo dividir uma tarefa de várias frentes em vez de executar
 // tudo em linha — e ele precisa aparecer no inventário, que é o que o modelo lê.

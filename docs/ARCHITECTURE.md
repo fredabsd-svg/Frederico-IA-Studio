@@ -172,6 +172,27 @@ POST /chat
   descartado. Contenção: repositório e caminho confinados ao clone da conversa
   (caminho absoluto e `..` são RECUSADOS, não normalizados), e a rota recusa
   reversão com a tarefa em execução.
+- **Validação por navegador (Fase 38):** `agent/pageCheck.js` +
+  `agent/pagePreviewServer.js`, expostos ao agente como a ferramenta
+  `validar_pagina`. O review gate mede o DIFF; esta fase mede o RESULTADO
+  RENDERIZADO — o defeito clássico de frontend (import quebrado → página em
+  branco com erro no console) não aparece em teste unitário nem no diff.
+  A página é servida por um servidor HTTP efêmero em `127.0.0.1`, porta
+  aleatória, raiz no workspace da conversa, somente leitura e derrubado ao fim
+  da chamada; o Chromium é o mesmo do `pageShot.js`, com uma guarda **mais
+  estreita**: só a origem fixada do servidor passa, e todo o resto — internet,
+  outra porta do loopback (inclusive a API do backend), `file:` — é abortado e
+  **registrado como evidência**. Coleta: erro de JS não tratado, erro de
+  console, resposta 4xx/5xx de recurso local, requisição externa bloqueada,
+  detector de tela em branco (sem texto visível **e** sem elemento visual — as
+  duas condições, para não reprovar página só de imagem) e as asserções que o
+  próprio agente declara (`esperar_seletor`, `esperar_texto`). A captura vai
+  para `outputs/`, onde o usuário a vê. **Sem Chromium no ambiente a ferramenta
+  devolve `disponivel: false` com o motivo — nunca um "validado" falso.**
+  **Limite honesto:** valida página servida do workspace, não o servidor de
+  desenvolvimento que o agente sobe no sandbox — o container nasce com
+  `NetworkDisabled` e sem publicação de portas, e abrir isso seria desfazer
+  uma fronteira de segurança por conveniência.
 - **Handoff local ↔ worktree (Fase 24):** `agent/handoff.js` +
   `GET /conversations/:id/handoff`, `GET .../handoff/patch` e
   `POST .../handoff/apply`. O trabalho da tarefa mora no clone da conversa e até

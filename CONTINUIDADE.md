@@ -24,7 +24,39 @@ que ainda segura o verde é o **pipeline multimodelo retomável**: o F-15 entreg
 tabela e as primitivas, mas o `runMultiModel` ainda não as usa, então o reinício continua
 sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** a **Frente 24 — Handoff local ↔ worktree** (Fase 24).
+- **Último trabalho:** a **Frente 25 — Validação por navegador dentro do
+  produto** (Fase 38). O agente construía uma interface e declarava "pronto".
+  Nada media isso: o defeito clássico de frontend — um import errado — não
+  aparece em teste unitário nem no diff, e a página abre **em branco** com um
+  erro no console. O review gate (Fase 28) mede o DIFF; esta fase mede o
+  RESULTADO RENDERIZADO.
+  A ferramenta `validar_pagina` abre uma página HTML do workspace num Chromium
+  de verdade e devolve o que ela FEZ: erro de JS não tratado, erro de console,
+  recurso local faltando (4xx/5xx), recurso externo bloqueado, tela em branco,
+  as asserções que o próprio agente declarou (`esperar_seletor`,
+  `esperar_texto`) e uma captura em `outputs/`.
+  **Como o navegador alcança a página, e por que não pelos caminhos óbvios:**
+  o servidor que o agente sobe DENTRO do sandbox não é alcançável de fora (o
+  container nasce com `NetworkDisabled` e sem publicação de portas), e `file://`
+  colocaria o disco do backend ao alcance de um HTML escrito pelo modelo — o
+  `page.route()` do Playwright não intercepta sub-requisição `file://` de forma
+  confiável. A saída é um terceiro caminho, mais estreito: um HTTP efêmero em
+  `127.0.0.1`, porta aleatória, raiz no workspace da conversa, só GET/HEAD,
+  derrubado ao fim da chamada. **A guarda só deixa passar a origem fixada** —
+  internet, outra porta do loopback (inclusive a API do backend) e `file:` são
+  abortados. Sem canal de saída não há exfiltração, e o que a página tentou
+  aparece no resultado.
+  **Três decisões:** (1) recurso EXTERNO bloqueado é **aviso**, não falha — a
+  página pode funcionar em produção com a CDN no ar, e chamar isso de falha
+  ensinaria o agente a ignorar o veredito; recurso LOCAL faltando é problema;
+  (2) "tela em branco" exige as DUAS condições (sem texto visível **e** sem
+  elemento visual), senão uma página só de imagem seria reprovada; (3) sem
+  Chromium no ambiente a ferramenta devolve `disponivel: false` com o motivo —
+  **nunca um "validado" falso**.
+  **Limitação assumida:** valida página servida do workspace (build, artefato,
+  relatório HTML), não o dev server do sandbox. Abrir a rede do container para
+  isso seria desfazer uma fronteira de segurança por conveniência.
+- **Último trabalho anterior:** a **Frente 24 — Handoff local ↔ worktree** (Fase 24).
   O trabalho da tarefa mora no clone da conversa, na branch derivada da
   Fase 23 — e até aqui só saía dali por `github_push` + Pull Request. Quem
   quisesse **continuar no próprio computador** (rodar o app, abrir a IDE) ou
@@ -425,8 +457,15 @@ sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md
   (o Nino cobrindo o botão de enviar), **[#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)**
   (Playwright + suíte ponta a ponta) e **[#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)**
   (as sete falhas P0 dos sub-agentes).
-- **Última validação:** 2026-08-07 (Frente 24) — **backend `npm run check`:
-  1293 testes, 0 falhas, 144 pulados** e **frontend: 155/155** (bundle
+- **Última validação:** 2026-08-07 (Frente 25) — **backend `npm run check`:
+  1316 testes, 0 falhas, 144 pulados**; frontend inalterado (a frente é só de
+  backend). O servidor de pré-visualização é exercitado com HTTP de verdade
+  (fetch contra a porta efêmera), inclusive a recusa de link simbólico que
+  aponta para fora da raiz; o veredito tem 12 testes. **O navegador em si não
+  roda aqui** (sem Chromium) — o teste que cobre esse contrato é o que prova
+  que a ferramenta devolve `disponivel: false` em vez de um "validado" falso.
+  Antes dela, Frente 24 — **backend 1293 testes, 0 falhas, 144 pulados** e
+  **frontend: 155/155** (bundle
   890/920 KB de entrada, 1058/1100 KB total; o painel de handoff é chunk
   próprio). O ciclo do handoff foi exercitado contra git de verdade, com um
   repositório bare local fazendo as vezes de remoto. **Sem prova visual nesta

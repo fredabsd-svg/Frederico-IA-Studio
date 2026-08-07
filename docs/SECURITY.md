@@ -368,6 +368,31 @@ controles próprios. Ao APLICAR um patch vindo do computador do usuário:
 - exportar o patch **não** altera o clone: o `git add -A` roda contra um
   `GIT_INDEX_FILE` temporário, removido em `finally`.
 
+### 8.0.1 O navegador da validação é offline (Fase 38)
+
+`validar_pagina` abre no Chromium do backend um HTML **escrito pelo modelo** —
+o mesmo tipo de conteúdo não confiável que o PDF do Modo Design já trata. Ele
+roda no contexto mais estreito do projeto:
+
+- a página é servida por um HTTP efêmero em `127.0.0.1`, porta aleatória, raiz
+  no workspace da conversa, **somente GET/HEAD**, derrubado ao fim da chamada;
+- a guarda de rota permite **apenas a origem fixada desse servidor**. Internet,
+  qualquer outra porta do loopback (inclusive a API do backend), `file:` e
+  `data:` são abortados. Sem canal de saída, uma página maliciosa não tem para
+  onde exfiltrar — o que ela tentou aparece no resultado como aviso;
+- `file://` foi descartado de propósito: o `page.route()` do Playwright não
+  intercepta sub-requisição `file://` de forma confiável, então a guarda não
+  valeria justamente onde precisaria valer;
+- o servidor resolve o caminho e o confere contra a raiz: `..`, caminho
+  absoluto, percent-encoding de travessia (`%2e%2e%2f`) e **link simbólico com
+  destino fora da raiz** dão 404, sem revelar o que existe fora;
+- extensão desconhecida é servida como `application/octet-stream`, nunca como
+  HTML, com `nosniff`, `X-Frame-Options: DENY` e `Referrer-Policy: no-referrer`.
+
+Testes: `agent/pagePreviewServer.test.js` (contenção, incluindo o link
+simbólico e o encoding) e `agent/pageCheck.test.js` (política de origem única e
+veredito).
+
 ### 8.1 Delegação a sub-agentes — a fronteira de autorização
 
 Um sub-agente (`agent/subagents.js`) roda um `runAgent` COMPLETO, com ferramentas de
