@@ -83,7 +83,7 @@ import { useSpeech } from './hooks/useSpeech.js';
 import { useFileUploads } from './hooks/useFileUploads.js';
 import { useChat } from './hooks/useChat.js';
 import { useTasks } from './hooks/useTasks.js';
-import { useDevProjects, projectContextText, developerSessionForConversation, githubWritePermissionFor } from './hooks/useDevProjects.js';
+import { useDevProjects, projectContextText, developerSessionForConversation, permissionsPayloadFor } from './hooks/useDevProjects.js';
 import { useComposerHeight } from './hooks/useComposerHeight.js';
 
 const QUICK_ACTION_ICON = {
@@ -357,6 +357,20 @@ export default function App({ user } = {}) {
         }
       } : prev);
       showToast('Publicação autorizada para esta branch. Pode continuar a tarefa.', 'ok');
+    }
+    // CONFIRMAÇÃO DE COMANDO (política allow/ask/deny): o backend carimbou o
+    // padrão exato que a confirmação libera. Confirmar registra o grant no
+    // projeto e na sessão em curso — o backend re-valida o padrão de novo.
+    if (grant?.kind === 'command_grant' && confirmou && devProjects.activeId && grant.pattern) {
+      devProjects.authorizeCommand(devProjects.activeId, { pattern: grant.pattern });
+      setDeveloperSession(prev => prev ? {
+        ...prev,
+        permissions: {
+          ...(prev.permissions || {}),
+          commandGrants: [...new Set([...(prev.permissions?.commandGrants || []), grant.pattern])]
+        }
+      } : prev);
+      showToast(`Comando autorizado para esta tarefa: ${grant.pattern}`, 'ok');
     }
     // O ENVIO é adiado para o próximo commit de propósito: `sendMessage` monta o
     // payload a partir do `developerSession` do render atual, e a autorização
@@ -692,10 +706,11 @@ export default function App({ user } = {}) {
       mode, projectId, github, rules: projectContextText(project),
       devProjectId: project?.id || null,
       conversationId: null,
-      // Autorização de publicação já registrada no projeto (e ainda válida para
-      // este vínculo). Sem ela no payload, `github_push`/`github_create_pr` não
-      // entram no inventário do agente.
-      permissions: githubWritePermissionFor(project)
+      // Autorizações já registradas no projeto: publicação (quando ainda válida
+      // para este vínculo) e comandos confirmados. Sem elas no payload,
+      // `github_push`/`github_create_pr` não entram no inventário e os
+      // comandos autorizados voltariam a pedir confirmação.
+      permissions: permissionsPayloadFor(project)
     });
     setInput(brief);
     setDeveloperOpen(false);

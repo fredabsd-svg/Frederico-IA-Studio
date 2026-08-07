@@ -366,7 +366,8 @@ export function buildDelegationContext({
   sandboxOptions = {},
   developerContext = null,
   networkEnabled = false,
-  pcWriteAuthorized = false
+  pcWriteAuthorized = false,
+  commandGrants = []
 } = {}) {
   const allowedToolNames = Object.freeze([...new Set(
     (Array.isArray(toolNames) ? toolNames : [])
@@ -382,7 +383,10 @@ export function buildDelegationContext({
     developerContext,
     networkEnabled: Boolean(networkEnabled),
     pcWriteAuthorized: Boolean(pcWriteAuthorized),
-    gitWriteAuthorized: false                     // escrita no GitHub nunca se herda
+    gitWriteAuthorized: false,                    // escrita no GitHub nunca se herda
+    // Autorizações de comando (permissionPolicy) concedidas pelo USUÁRIO para a
+    // tarefa: o filho herda as do pai — nunca deriva novas do texto da subtarefa.
+    commandGrants: Object.freeze([...(Array.isArray(commandGrants) ? commandGrants : [])])
   });
 }
 

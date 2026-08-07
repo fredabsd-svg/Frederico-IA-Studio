@@ -30,6 +30,7 @@ import { untrustedContext, untrustedToolResult } from './promptRegistry.js';
 import { finalExecutionState } from './executionState.js';
 import { createRunStateTracker } from './runStateMachine.js';
 import { resolveSandboxNetwork, isToolCallAllowed } from './assistantPolicy.js';
+import { evaluateShellCommand, normalizeCommandGrants } from './permissionPolicy.js';
 import { explicitlyAuthorizesPcWrite } from '../execGuard.js';
 import { takeSandboxRestartNotice, sandboxOpenTransaction } from '../sandbox.js';
 import { formatRestartNotice, formatOpenTransactionNotice } from '../agentEnv.js';
@@ -151,6 +152,13 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   // O parâmetro `gitWriteAuthorization` continua aceito (chamadores internos e
   // testes) e, quando vem `false`, VETA as duas fontes.
   const structuredGithubAuthorization = normalizeGithubWriteAuthorization(developer?.permissions);
+  // AUTORIZAÇÕES DE COMANDO (permissionPolicy, allow/ask/deny): concedidas pelo
+  // usuário ao confirmar um ask_user de permissão; re-validadas aqui (falha
+  // fechada — só padrões `ask` da política sobrevivem). No filho, herdadas do
+  // pai — nunca derivadas do texto da subtarefa, que é escrito pelo modelo.
+  const commandGrants = inherited
+    ? (inherited.commandGrants || [])
+    : normalizeCommandGrants(developer?.permissions);
   const turnAuthorizesGitWrite = gitWriteAuthorization == null
     ? explicitlyAuthorizesGitWrite(userText)
     : Boolean(gitWriteAuthorization);
@@ -315,7 +323,8 @@ export async function runAgent({ userId, conversationId, userText, model, assist
       sandboxOptions,
       developerContext,
       networkEnabled: sandboxNetworkEnabled,
-      pcWriteAuthorized
+      pcWriteAuthorized,
+      commandGrants
     })
     : null;
 
@@ -701,6 +710,10 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
   // `input_required` e para o `execution_meta` da mensagem — é o que permite à
   // interface reconstruir a pergunta depois de um reload ou de um replay.
   let inputRequest = null;
+  // Última decisão `ask` da política de comandos: quando o modelo perguntar
+  // (ask_user confirm), o backend carimba o escopo da autorização — o padrão da
+  // política, nunca texto do modelo (mesmo desenho da publicação GitHub).
+  let pendingCommandGrant = null;
   // Checkpoint: motivo da interrupção que JUSTIFICA salvar estado p/ retomar
   // (limite de ciclos, falha de provedor/stall exaurido, parada do usuário).
   // Falhas de QUALIDADE (degeneração, protocolo) NÃO viram checkpoint — ali o
@@ -1263,6 +1276,19 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
             actions: ['push', 'create_pr']
           };
         }
+        // CONFIRMAÇÃO DE COMANDO (permissionPolicy): quando um comando caiu em
+        // `ask` neste run, a pergunta de confirmação carrega o escopo carimbado
+        // pelo BACKEND (o padrão da política, o comando e o motivo — nunca
+        // texto livre do modelo). Ao confirmar, a interface registra o grant e
+        // o turno seguinte chega com o padrão autorizado.
+        if (inputRequest.kind === 'confirm' && !inputRequest.authorize && pendingCommandGrant) {
+          inputRequest.authorize = {
+            kind: 'command_grant',
+            pattern: pendingCommandGrant.pattern,
+            command: pendingCommandGrant.command,
+            reason: pendingCommandGrant.reason
+          };
+        }
         messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: true, awaiting_user: true, request_id: inputRequest.id, note: 'A pergunta foi entregue ao usuário e o turno termina aqui. A resposta dele chega como a próxima mensagem da conversa.' }) });
         // Fecha as chamadas RESTANTES do lote: o assistant já foi empilhado com
         // todas as tool_calls, e um array sem o `tool` correspondente é inválido
@@ -1292,8 +1318,33 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
         if (fetchUrl) seenWebFetches.add(fetchUrl);
         webFetchAttempts += 1;
       }
+      // POLÍTICA DE COMANDOS (allow/ask/deny): avaliada ANTES do executor. Um
+      // `deny` explica o motivo de política (as fronteiras duras do execGuard/
+      // sandbox continuam valendo por baixo); um `ask` devolve
+      // PERMISSION_REQUIRED instruindo o modelo a usar ask_user — a confirmação
+      // do usuário vira autorização estruturada no turno seguinte.
+      const shellPermission = (name === 'bash' && allowedToolCall)
+        ? evaluateShellCommand(String(args.command || ''), { grants: commandGrants })
+        : null;
       if (!allowedToolCall) {
         result = JSON.stringify({ error: 'Ferramenta não autorizada para esta chamada.', code: 'TOOL_NOT_ALLOWED', tool: name });
+      } else if (shellPermission?.decision === 'deny') {
+        result = JSON.stringify({
+          error: `Comando bloqueado pela política de permissões (padrão "${shellPermission.rule.pattern}"): ${shellPermission.rule.reason}.`,
+          code: 'PERMISSION_DENIED',
+          pattern: shellPermission.rule.pattern
+        });
+      } else if (shellPermission?.decision === 'ask') {
+        pendingCommandGrant = {
+          pattern: shellPermission.rule.pattern,
+          command: String(args.command || '').slice(0, 200),
+          reason: shellPermission.rule.reason
+        };
+        result = JSON.stringify({
+          error: `Este comando exige confirmação do usuário antes de executar (${shellPermission.rule.reason}). Use a ferramenta ask_user (tipo "confirm") explicando EXATAMENTE o comando e o efeito dele; se o usuário confirmar, o padrão "${shellPermission.rule.pattern}" fica autorizado para esta tarefa e você pode repetir o comando.`,
+          code: 'PERMISSION_REQUIRED',
+          pattern: shellPermission.rule.pattern
+        });
       } else if (isWebTool && webResearchStop) {
         result = JSON.stringify({ error: 'A pesquisa web já atingiu o limite desta tarefa. Conclua com as evidências obtidas.', code: 'WEB_RESEARCH_STOPPED' });
       } else if (repeatedFetch) {
