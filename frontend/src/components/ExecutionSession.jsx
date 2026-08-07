@@ -104,6 +104,10 @@ function summarize(steps, now) {
 export function statusIcon(status) {
   if (status === 'running') return <Loader size={15} className="esSpin" />;
   if (status === 'error') return <AlertCircle size={15} className="esErr" />;
+  // Etapa que estava rodando quando o run foi interrompido (parada, falha do
+  // provedor, restart). Mostrar ✓ aqui seria o sucesso falso que a auditoria
+  // apontou — o círculo vazio diz "não concluiu".
+  if (status === 'interrupted') return <Circle size={15} className="esErr" title="Interrompida antes de concluir" />;
   return <CheckCircle2 size={15} className="esOk" />;
 }
 

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { API } from '../constants.js';
 import { takeSseEvents } from '../sse.js';
+import { hydrateMessagesWithRuns } from '../runHydration.js';
 
 // Watchdog do SSE DO FRONTEND: timeout de ÚLTIMA INSTÂNCIA (5 min).
 // O backend (streamGuard.js) é a fonte de verdade com 3 min (STREAM_STALL_TIMEOUT_MS).
@@ -93,15 +94,11 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
   const anyBusy = Object.values(runs).some(r => r?.busy);
 
   const [controlPending, setControlPending] = useState(false);
-  const [nowTick, setNowTick] = useState(0);
   const busyRef = useRef(false);
   useEffect(() => { busyRef.current = busy; }, [busy]);
-  // Enquanto QUALQUER conversa processa, "bate um relógio" para contadores vivos
-  useEffect(() => {
-    if (!anyBusy) return;
-    const t = setInterval(() => setNowTick(n => n + 1), 1000);
-    return () => clearInterval(t);
-  }, [anyBusy]);
+  // O relógio de 1s que morava aqui (nowTick) foi REMOVIDO: nenhum consumidor
+  // restava (o contador vivo mudou-se para dentro do ExecutionTerminalDock) e o
+  // custo era um re-render do App inteiro por segundo durante qualquer execução.
 
   // ---- Controle: pausar / continuar / parar (da conversa ABERTA) ----
   async function control(action) {
@@ -279,6 +276,9 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
           execution: { ...(m.execution || {}), state: 'awaiting_user', terminal: true, inputRequest: ev.request }
         }));
         if (ev.type === 'prompt_meta') update(m => ({ ...m, prompt: ev.prompt }));
+        // PLANO ESTRUTURADO (update_plan): cada evento substitui o plano da
+        // mensagem. Replay é idempotente — o último evento vence, como no vivo.
+        if (ev.type === 'plan_update' && ev.plan) update(m => ({ ...m, plan: ev.plan }));
         if (ev.type === 'delta') update(m => {
           const blocks = [...(m.blocks || [])];
           const last = blocks[blocks.length - 1];
@@ -366,6 +366,12 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
   async function reconnectLiveRun(convId, ref, text = '') {
     if (currentRef.current?.id !== convId) return { attached: false, sawDone: false };
     const epoch = newStreamEpoch(convId);
+    // Um balão NOVO (ref ainda sem chave) significa que o conteúdo que o cursor
+    // alimentou não está mais na tela (reload → troca → volta). Reusar o
+    // fromSeq antigo pularia o replay e o balão ficaria "no meio da frase" até
+    // a reconciliação final — o cursor só vale enquanto o balão dele existir.
+    const hadBalloon = Boolean(ref.key);
+    if (!hadBalloon) delete liveCursorRef.current[convId];
     if (!ref.key) {
       const placeholderId = `live-${Date.now()}`;
       let reused = false;
@@ -441,11 +447,18 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
       if (!stillActive) break;
       await new Promise(r => setTimeout(r, 2000));
     }
-    // Reconcilia com o estado final salvo (mensagem canônica + arquivos).
+    // Reconcilia com o estado final salvo (mensagem canônica + arquivos). As
+    // etapas de ferramenta voltam do run durável — antes, esta reconciliação
+    // APAGAVA o terminal da execução que tinha acabado de terminar na frente
+    // do usuário (as mensagens do banco não têm blocks).
     if (currentRef.current?.id === convId) {
       try {
         const r = await fetch(`${API}/api/conversations/${convId}`);
-        if (r.ok) { const d = await r.json(); if (currentRef.current?.id === convId) { setMessages(d.messages || []); loadFiles(convId); } }
+        if (r.ok) {
+          const d = await r.json();
+          const hydrated = await hydrateMessagesWithRuns(convId, d.messages || []);
+          if (currentRef.current?.id === convId) { setMessages(hydrated); loadFiles(convId); }
+        }
       } catch {}
     }
     endRun(convId);
@@ -623,8 +636,14 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
       }
     }
     if (outcome?.stale) return; // outro consumidor assumiu esta conversa
-    // Fecha qualquer ferramenta que tenha ficado "rodando"
-    update(m => ({ ...m, blocks: (m.blocks || []).map(b => b.type === 'tool' && b.status === 'running' ? { ...b, status: 'done', ended: Date.now() } : b) }));
+    // Fecha qualquer ferramenta que tenha ficado "rodando". O status de
+    // fechamento vem do ESTADO FINAL do backend, não do fim do stream: numa
+    // execução interrompida (parada, falha, restart), marcar a etapa como
+    // concluída seria sucesso falso — ela fecha como `interrupted`.
+    update(m => {
+      const finished = !m.execution?.state || m.execution.state === 'completed';
+      return { ...m, blocks: (m.blocks || []).map(b => b.type === 'tool' && b.status === 'running' ? { ...b, status: finished ? 'done' : 'interrupted', ended: Date.now() } : b) };
+    });
     endRun(conv.id);
     if (currentRef.current?.id === conv.id) await loadFiles(conv.id);
     try {
@@ -688,7 +707,12 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
       else outcome = { sawDone: true, stale: false };
     }
     if (outcome?.stale) return;
-    update(m => ({ ...m, blocks: (m.blocks || []).map(b => b.type === 'tool' && b.status === 'running' ? { ...b, status: 'done', ended: Date.now() } : b) }));
+    // Mesma regra do envio: etapa aberta só fecha como `done` se o backend
+    // declarou o run concluído; senão fecha como `interrupted`.
+    update(m => {
+      const finished = !m.execution?.state || m.execution.state === 'completed';
+      return { ...m, blocks: (m.blocks || []).map(b => b.type === 'tool' && b.status === 'running' ? { ...b, status: finished ? 'done' : 'interrupted', ended: Date.now() } : b) };
+    });
     endRun(id);
     if (currentRef.current?.id === id) await loadFiles(id);
     try { const rows = await fetchConversations(); const u = rows.find(c => c.id === id); if (u && currentRef.current?.id === id) setCurrent(u); } catch {}
@@ -711,5 +735,5 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
     }
   }
 
-  return { busy, busyRef, paused, statusText, controlPending, nowTick, runs, anyBusy, sendMessage, retrySend, resumeRun, control, cancelMultiSlot };
+  return { busy, busyRef, paused, statusText, controlPending, runs, anyBusy, sendMessage, retrySend, resumeRun, control, cancelMultiSlot };
 }

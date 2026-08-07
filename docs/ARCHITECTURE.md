@@ -101,8 +101,48 @@ POST /chat
       └─ persistence.js: saveMessage + arquivos + indexAfterReply (memória)
 ```
 
-- **Eventos ao frontend:** `token`, `tool`, `tool_result`, `file`, `status`, `run_state`,
-  `input_required`, `execution_failed`, `free_queue`, `free_status`, `done`, `error`.
+- **Eventos ao frontend (contrato SSE real do canal de chat):** `status`, `delta`,
+  `response_reset`, `run_state`, `prompt_meta`, `memory_context`, `tool_start`,
+  `tool_progress`, `tool_result`, `plan_update`, `input_required`, `resumable`,
+  `files`, `file_checks`, `saved`, `execution_failed`, `free_queue`, `free_status`,
+  `done`, `error` e a família `mm_*` do multimodelo (`mm_start`, `mm_status`,
+  `mm_delta`, `mm_reset`, `mm_round`, `mm_done`). Todo evento é publicado no
+  `liveStream` antes do `res.write` e sai carimbado com `_seq`/`_runId` — tanto
+  no stream primário do `POST /chat` quanto na reconexão (`GET /stream`), o que
+  dá ao cliente um cursor exato para reconectar sem replay integral.
+
+### 4.0 Máquina de estados e runs duráveis (ADR 0003)
+
+- **Máquina de estados explícita:** `agent/runStateMachine.js` define a tabela de
+  transições válidas dos 14 estados de `executionState.js` e o rastreador
+  (`createRunStateTracker`) é o único emissor de `run_state` dentro de um run.
+  Transição inválida não derruba o run: é emitida com o carimbo
+  `invalidTransition` e logada (falha nos testes). O backend é a autoridade —
+  a UI não deduz "concluído" do fim do stream.
+- **Runs duráveis:** `agent_runs` + `agent_run_events` (migração 032). O
+  gravador (`agent/runLog.js`) mora nas rotas `/chat` e `/resume` — o único
+  ponto por onde todos os eventos passam — e persiste os estruturais
+  (`tool_start`, `tool_result`, `run_state`, `input_required`, `plan_update`,
+  `files`, `file_checks`); `delta`/`status`/`tool_progress` ficam de fora.
+  `GET /conversations/:id/runs` devolve os runs com as etapas e o plano
+  reconstruídos (timestamps reais do servidor) — é o que permite à interface
+  remontar terminal/atividade depois de reload. No boot, runs sem `ended_at`
+  são fechados como `recoverable_error` ("o servidor foi reiniciado") pela
+  varredura `sweepOrphanAgentRuns`. A retomada reutiliza o mesmo `run_id` e
+  continua a sequência de eventos.
+- **Plano estruturado:** a ferramenta interna `update_plan`
+  (`agent/planTool.js`), interceptada antes do `runTool`, mantém a lista de
+  passos da missão (id/título/status/evidência); um passo só fica `completed`
+  com evidência (validado no backend). O plano vai ao stream (`plan_update`),
+  ao run log e ao `execution_meta` da mensagem, e viaja no checkpoint.
+- **Política de comandos:** `agent/permissionPolicy.js` — allow/ask/deny por
+  padrão de comando (glob, última regra que casa vence; compostos lineares
+  divididos e vale a decisão mais restritiva). `ask` devolve
+  `PERMISSION_REQUIRED` instruindo o `ask_user`; a confirmação vira autorização
+  estruturada (`commandGrants`), re-validada no backend (só padrões `ask` da
+  política sobrevivem) e herdada pelos sub-agentes via `DelegationContext`.
+  É política de produto sobre as fronteiras duras (sandbox, docker-guard,
+  execGuard) — não as substitui.
 
 ### 4.1 `input_required` — pergunta interativa do agente
 
@@ -129,7 +169,7 @@ roda no sandbox, não toca arquivo nem rede — só encerra o turno.
 | Fallback | `endsAwaitingUserReply` (repair.js) continua reconhecendo a pergunta escrita no texto — inclusive fechamentos sem `?` ("aguardo sua confirmação"). Nesse caso a solicitação sai com `kind: 'text'` e `fallback: true`. |
 | Frontend | `components/UserInputRequest.jsx` (cartão inline) + `UserInputRequestDialog.jsx` (modal, chunk sob demanda). Fechar não descarta; a pergunta deixa de aparecer como pendente quando existe mensagem posterior do usuário (`executionSessions.js → pendingInputRequest`). |
 | Testes | `backend/src/agent/userInputRequest.test.js`, `agent/repair.awaiting.test.js`, `taskOutcome.test.js`, `frontend/src/executionSessions.test.js`, `e2e/tests/modo-desenvolvedor.spec.js`. |
-- **Persistido:** `messages` (+`execution_meta`, `memory_meta`, `multi_meta`), `files`, `usage`, `usage_daily`, `execution_checkpoints`, `conversation_chunks`.
+- **Persistido:** `messages` (+`execution_meta`, `memory_meta`, `multi_meta`), `files`, `usage`, `usage_daily`, `execution_checkpoints`, `agent_runs`/`agent_run_events` (ADR 0003), `conversation_chunks`.
 - **Erro:** `friendlyApiError` traduz o erro do provedor; `classifyTaskResult` decide se houve falha real.
 - **Recuperação:** failover de modelo (`MODEL_FALLBACKS`), retomada por checkpoint (`POST /resume`).
 - **Testes:** ~495 casos no backend cobrem prompts, reparo, protocolo, capacidades, controle, checkpoint.
@@ -150,11 +190,12 @@ roda no sandbox, não toca arquivo nem rede — só encerra o turno.
 - Versionamento de artefato por etapa: `snapshotArtifactVersion(userId, conversationId, ...)`
   copia `outputs/` para `.multimodel/<runId>/vNN/`.
 - Cancelamento individual: `POST /multimodel/cancel` com o slot.
-- **Persistido:** `multi_meta` na mensagem final; checkpoints por etapa via `runAgent`.
-- **Lacuna crítica (não corrigida nesta auditoria):** o pipeline **não tem coordenador durável**.
-  O checkpoint é do `runAgent` de **uma etapa**; não há `pipeline_run_id`/`current_stage`/
-  `completed_stages` persistidos. Se o backend reiniciar no meio, a próxima etapa pendente
-  **não** é retomada. Ver F-15.
+- **Persistido:** `multi_meta` na mensagem final; checkpoints por etapa via `runAgent`;
+  e o **coordenador durável** em `pipeline_runs` (migração 027, F-15 fechado): o
+  `runMultiModel` persiste `current_stage`/`state_json` entre etapas e o
+  `POST /resume` retoma do estágio correto; run órfão de crash é fechado como
+  `error` por mensagem nova (nunca herdado em silêncio) e o sweeper varre os
+  terminais antigos no boot.
 
 ---
 
@@ -364,9 +405,11 @@ ferramenta que vaze como texto (`sanitizeToolProtocolText`), na exibição **e**
 | Cancelamento | `agent/control.js` + `POST /control` | Pausa/parada cooperativa; `AbortSignal` chega ao sandbox e ao provedor. |
 | Estado de execução | `agent/executionState.js` + migração 009 | Etapas visíveis na UI. |
 
-- **Testes:** `agent/checkpoint.test.js`, `agent/executionState.test.js`, `agent.control.test.js`.
-- **Lacuna:** não há teste de retomada após **interrupção real do processo** (matar o Node no
-  meio e continuar). Ver F-14.
+- **Testes:** `agent/checkpoint.test.js`, `agent/executionState.test.js`,
+  `agent/runStateMachine.test.js`, `agent/runLog.test.js`, `agent.control.test.js`
+  e a retomada após **interrupção real do processo** em
+  `checkpoint.kill9.real.test.js` (F-14 fechado: processo A grava o checkpoint e
+  morre; processo B reconstrói via `buildResumeMessages` contra PostgreSQL real).
 
 ---
 

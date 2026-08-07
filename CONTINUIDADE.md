@@ -24,7 +24,45 @@ que ainda segura o verde é o **pipeline multimodelo retomável**: o F-15 entreg
 tabela e as primitivas, mas o `runMultiModel` ainda não as usa, então o reinício continua
 sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** o **Nino arrastado não cobre mais os controles do rodapé**.
+- **Último trabalho:** a **Frente 17 — Developer Workspace 3.0 (fundação)**
+  atacou as causas estruturais da fragilidade do Modo Desenvolvedor, mapeadas
+  por uma auditoria completa (frontend, backend, durabilidade/SSE) + pesquisa
+  da documentação oficial de Cursor, OpenCode e Codex. Cinco entregas:
+  1. **Máquina de estados explícita + runs duráveis (ADR 0003).**
+     `agent/runStateMachine.js` valida transições (inválida não derruba o run:
+     carimba `invalidTransition` e loga); `agent_runs`/`agent_run_events`
+     (migration 032) persistem a estrutura da execução — reload e restart
+     deixam de apagar terminal/etapas (`GET /conversations/:id/runs` +
+     `runHydration.js` remontam com timestamps reais); no boot, run órfão de
+     restart vira `recoverable_error` em vez de "executando" para sempre.
+  2. **Correções críticas da auditoria:** orçamento de sub-agente NUNCA era
+     aplicado (`subagentBudget` vs `subagentRunBudget` — o filho herdava 200
+     etapas sem teto); `ReferenceError` latente no deadline; TOCTOU em que um
+     segundo POST /chat destruía o LiveStream do run ativo (controle agora é
+     adquirido pela rota ANTES do stream); rotas de botão GitHub sem escopo
+     (push agora exige o vínculo do projeto no servidor); crash do diálogo de
+     pergunta (`CircleHelp` não importado); `clearCheckpoint` sem dono;
+     `_seq`/`_runId` ausentes do stream primário.
+  3. **Política de comandos allow/ask/deny** (`agent/permissionPolicy.js`):
+     comuns seguem sem prompt; destrutivos de trabalho não commitado pedem
+     confirmação via `ask_user` com escopo carimbado pelo backend; a
+     confirmação vira `commandGrants` re-validado (falha fechada) e herdado
+     pelos sub-agentes. Política de produto SOBRE as fronteiras duras.
+  4. **Plano estruturado visível** (`update_plan` + `PlanChecklist`): passos
+     com status e EVIDÊNCIA obrigatória para `completed` (validada no
+     backend); sobrevive a reload, replay e retomada.
+  5. **Frontend honesto:** etapa `running` no fim do stream só fecha como
+     `done` se o backend declarou `completed` (senão `interrupted`, com ícone
+     próprio); pill do modo dev lê o estado real da máquina (não
+     `messages.length`); cursor de replay não pula mais o balão recriado;
+     timer morto `nowTick` removido (re-render global de 1s).
+  **Limite conhecido:** `tool_progress` (saída ao vivo do terminal) segue fora
+  do event log durável de propósito (alta frequência) — a reconstrução pós-
+  reload mostra etapas e resultados, não o streaming intermediário. As fases
+  seguintes do Workspace 3.0 (worktrees, code intelligence leve, layout de 3
+  colunas, review gate) ficaram registradas no plano da frente e NÃO estão
+  implementadas.
+- **Último trabalho anterior:** o **Nino arrastado não cobre mais os controles do rodapé**.
   A Frente 16 corrigiu o personagem ANCORADO (o `bottom` do `companion.css` soma
   `--composer-h` + `--dock-h`) e o PR #184 corrigiu a **visibilidade** do
   personagem arrastado (revalidação por `clampCompanionPosition`). As duas
@@ -53,7 +91,7 @@ sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md
   catraca de CSS) e **41/41 ponta a ponta**, com os três casos novos de arraste
   conferidos nos dois sentidos — desligando o recuo, os três falham.
   Doc: `docs/FREDERICO_COMPANION.md` § "A faixa de controles do rodapé".
-- **Último trabalho:** a **Frente 16 — Modo Desenvolvedor: rolagem, perguntas,
+- **Último trabalho anterior:** a **Frente 16 — Modo Desenvolvedor: rolagem, perguntas,
   terminal e publicação no GitHub** fechou quatro defeitos que se reforçavam.
   1. **Smart Auto-scroll real.** O efeito antigo dependia da identidade do array
      `messages` e chamava `scrollIntoView({behavior:'smooth'})` — durante o
@@ -237,10 +275,13 @@ sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md
   (o Nino cobrindo o botão de enviar), **[#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)**
   (Playwright + suíte ponta a ponta) e **[#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)**
   (as sete falhas P0 dos sub-agentes).
-- **Última validação:** 2026-08-06 — **frontend 81/81** (lint + 81 testes +
-  build + budget + css:inventory — todos verdes neste sandbox). O backend
-  não foi tocado nesta frente, então a linha de base anterior permanece
-  (1008/1008 com Postgres em 2026-08-05, 916/916 sem banco). Os 26 E2E
+- **Última validação:** 2026-08-07 (Frente 17) — **backend `npm run check`:
+  1208 testes, 0 falhas, 141 pulados** (exigem PostgreSQL; esperado fora do
+  Docker) e **frontend `npm run check`: 129/129** (lint + testes + build +
+  budget + css:inventory verdes). Atenção: a **entrada do bundle está em
+  920 KB — exatamente no teto de 920 KB**; a próxima adição ao chunk principal
+  precisa vir com code splitting. Antes dela: 2026-08-06 — frontend 81/81;
+  backend 1008/1008 com Postgres em 2026-08-05. Os 26 E2E
   ponta a ponta exigem Postgres + Chromium do contêiner (`/opt/pw-browsers/`)
   e ficaram fora do escopo desta frente — a poda é conservadora e a
   catraca impede regredir.

@@ -17,7 +17,6 @@ import { DevProjectRail } from './components/DevProjectRail.jsx';
 import { DevActivityRail } from './components/DevActivityRail.jsx';
 import { PcFoldersPanel } from './PcFoldersPanel.jsx';
 import { ToolsPanel } from './ToolsPanel.jsx';
-import { DeveloperPanel } from './DeveloperPanel.jsx';
 import { SandboxPanel } from './SandboxPanel.jsx';
 import { RoutinesPanel } from './RoutinesPanel.jsx';
 import { InboxPanel } from './InboxPanel.jsx';
@@ -57,6 +56,12 @@ import { ClientPicker } from './components/ClientPicker.jsx';
 // remapeamento o `default` vem `undefined` e o React derruba a árvore inteira
 // no error boundary (erro #306) — e nada disso aparece no build nem nos testes
 // de módulo, só com o app aberto.
+// Checklist do plano estruturado (update_plan): só existe em missões do Modo
+// Desenvolvedor — fora dele o chunk nem é baixado (orçamento de entrada).
+const LazyPlanChecklist = lazy(() => import('./components/PlanChecklist.jsx').then(m => ({ default: m.PlanChecklist })));
+// Drawer de configuração da tarefa dev: só aparece ao abrir o Modo
+// Desenvolvedor — fora da entrada pelo mesmo motivo.
+const LazyDeveloperPanel = lazy(() => import('./DeveloperPanel.jsx').then(m => ({ default: m.DeveloperPanel })));
 const LazyMemoryPanel = lazy(() => import('./MemoryPanel.jsx').then(m => ({ default: m.MemoryPanel })));
 const LazyProviderPanel = lazy(() => import('./ProviderPanel.jsx').then(m => ({ default: m.ProviderPanel })));
 const LazyPrivacyPanel = lazy(() => import('./PrivacyPanel.jsx').then(m => ({ default: m.PrivacyPanel })));
@@ -83,7 +88,7 @@ import { useSpeech } from './hooks/useSpeech.js';
 import { useFileUploads } from './hooks/useFileUploads.js';
 import { useChat } from './hooks/useChat.js';
 import { useTasks } from './hooks/useTasks.js';
-import { useDevProjects, projectContextText, developerSessionForConversation, githubWritePermissionFor } from './hooks/useDevProjects.js';
+import { useDevProjects, projectContextText, developerSessionForConversation, permissionsPayloadFor } from './hooks/useDevProjects.js';
 import { useComposerHeight } from './hooks/useComposerHeight.js';
 
 const QUICK_ACTION_ICON = {
@@ -283,7 +288,7 @@ export default function App({ user } = {}) {
     contentKey: chatKey
   });
   const {
-    busy, busyRef, paused, statusText, controlPending, nowTick, runs, anyBusy, sendMessage, retrySend, resumeRun, control, cancelMultiSlot
+    busy, busyRef, paused, statusText, controlPending, runs, anyBusy, sendMessage, retrySend, resumeRun, control, cancelMultiSlot
   } = useChat({
     input, setInput, messages, setMessages, uploads, team, effectiveTeam,
     listening, recognitionRef, current, currentRef, setCurrent,
@@ -357,6 +362,20 @@ export default function App({ user } = {}) {
         }
       } : prev);
       showToast('Publicação autorizada para esta branch. Pode continuar a tarefa.', 'ok');
+    }
+    // CONFIRMAÇÃO DE COMANDO (política allow/ask/deny): o backend carimbou o
+    // padrão exato que a confirmação libera. Confirmar registra o grant no
+    // projeto e na sessão em curso — o backend re-valida o padrão de novo.
+    if (grant?.kind === 'command_grant' && confirmou && devProjects.activeId && grant.pattern) {
+      devProjects.authorizeCommand(devProjects.activeId, { pattern: grant.pattern });
+      setDeveloperSession(prev => prev ? {
+        ...prev,
+        permissions: {
+          ...(prev.permissions || {}),
+          commandGrants: [...new Set([...(prev.permissions?.commandGrants || []), grant.pattern])]
+        }
+      } : prev);
+      showToast(`Comando autorizado para esta tarefa: ${grant.pattern}`, 'ok');
     }
     // O ENVIO é adiado para o próximo commit de propósito: `sendMessage` monta o
     // payload a partir do `developerSession` do render atual, e a autorização
@@ -692,10 +711,11 @@ export default function App({ user } = {}) {
       mode, projectId, github, rules: projectContextText(project),
       devProjectId: project?.id || null,
       conversationId: null,
-      // Autorização de publicação já registrada no projeto (e ainda válida para
-      // este vínculo). Sem ela no payload, `github_push`/`github_create_pr` não
-      // entram no inventário do agente.
-      permissions: githubWritePermissionFor(project)
+      // Autorizações já registradas no projeto: publicação (quando ainda válida
+      // para este vínculo) e comandos confirmados. Sem elas no payload,
+      // `github_push`/`github_create_pr` não entram no inventário e os
+      // comandos autorizados voltariam a pedir confirmação.
+      permissions: permissionsPayloadFor(project)
     });
     setInput(brief);
     setDeveloperOpen(false);
@@ -914,19 +934,28 @@ export default function App({ user } = {}) {
     .filter(Boolean)
     .slice(0, 8);
 
-  // Pill de status do cabeçalho do Modo Desenvolvedor — só estados que dá para
-  // provar com sinais reais (sem inventar um pipeline de 5 etapas que o
-  // backend não expõe): aguardando / trabalhando / interrompido / erro / concluído.
+  // Pill de status do cabeçalho do Modo Desenvolvedor — o rótulo vem do ESTADO
+  // REAL da execução (execution_meta gravado pelo backend, autoridade da
+  // máquina de estados), não de heurística da UI. "Concluído" só aparece
+  // quando o backend declarou `completed` — mensagens sem estado (conversas
+  // antigas, texto puro) mostram "Pronto".
   const lastAssistantMsg = [...messages].reverse().find(m => m.role === 'assistant');
+  const lastExecState = lastAssistantMsg?.execution?.state || null;
   const devStagePill = busy
     ? { label: paused ? 'Pausado' : (statusText || 'Trabalhando...'), tone: 'live' }
-    : lastAssistantMsg?.failed
-      ? { label: 'Erro', tone: 'error' }
-      : lastAssistantMsg?.resumable
-        ? { label: 'Interrompido — pode continuar', tone: 'warn' }
-        : messages.length > 0
-          ? { label: 'Concluído', tone: 'done' }
-          : { label: 'Aguardando instrução', tone: 'idle' };
+    : lastExecState === 'awaiting_user'
+      ? { label: 'Aguardando sua resposta', tone: 'warn' }
+      : (lastExecState === 'fatal_error' || lastAssistantMsg?.failed)
+        ? { label: 'Erro', tone: 'error' }
+        : (lastExecState === 'recoverable_error' || lastExecState === 'paused' || lastAssistantMsg?.resumable)
+          ? { label: 'Interrompido — pode continuar', tone: 'warn' }
+          : lastExecState === 'stopped'
+            ? { label: 'Interrompido', tone: 'warn' }
+            : lastExecState === 'completed'
+              ? { label: 'Concluído', tone: 'done' }
+              : messages.length > 0
+                ? { label: 'Pronto', tone: 'idle' }
+                : { label: 'Aguardando instrução', tone: 'idle' };
 
   // Permissões reais desta tarefa (não um toggle fictício): modo ativo (ou o do
   // projeto, se ainda não há sessão preparada) e o vínculo de pasta/repositório.
@@ -1120,6 +1149,11 @@ export default function App({ user } = {}) {
                 que já mostra tudo, inclusive a "Conclusão". Só NÃO suprimimos
                 quando há execução real de ferramentas (pipeline do Modo
                 Desenvolvedor), pois aí o texto é o entregável de verdade. */}
+            {/* Plano estruturado da tarefa: ao vivo vem por `plan_update`
+                (m.plan); reaberto do banco, pelo execution_meta. O backend é
+                quem valida status/evidência — aqui só exibimos. */}
+            {m.role === 'assistant' && (m.plan || m.execution?.plan) &&
+              <Suspense fallback={null}><LazyPlanChecklist plan={m.plan || m.execution?.plan}/></Suspense>}
             {m.role === 'assistant' && m.multi && !(m.blocks || []).some(b => b.type === 'tool')
               ? null
               : m.blocks
@@ -1444,7 +1478,7 @@ export default function App({ user } = {}) {
     {memoryOpen && <Suspense fallback={<PanelFallback/>}><LazyMemoryPanel assistants={assistants} clients={clients} clientId={clientId} showToast={showToast} askConfirm={askConfirm} askPrompt={askPrompt} onClose={() => setMemoryOpen(false)}/></Suspense>}
     {pcOpen && <PcFoldersPanel showToast={showToast} askConfirm={askConfirm} onClose={() => setPcOpen(false)}/>}
     {toolsOpen && <ToolsPanel onPick={pickTool} onClose={() => setToolsOpen(false)}/>}
-    {developerOpen && <DeveloperPanel devProjects={devProjects} team={team} initialMode={developerStartMode} onStart={startDeveloperTask} onManageFolders={() => { setDeveloperOpen(false); setPcOpen(true); }} onOpenConnectors={() => { setDeveloperOpen(false); setConnectorsOpen(true); }} onClose={() => setDeveloperOpen(false)}/>}
+    {developerOpen && <Suspense fallback={<PanelFallback/>}><LazyDeveloperPanel devProjects={devProjects} team={team} initialMode={developerStartMode} onStart={startDeveloperTask} onManageFolders={() => { setDeveloperOpen(false); setPcOpen(true); }} onOpenConnectors={() => { setDeveloperOpen(false); setConnectorsOpen(true); }} onClose={() => setDeveloperOpen(false)}/></Suspense>}
     {sandboxOpen && <SandboxPanel onClose={() => setSandboxOpen(false)}/>}
     {routinesOpen && <RoutinesPanel assistants={assistants} clients={clients} showToast={showToast} askConfirm={askConfirm} onClose={() => setRoutinesOpen(false)}/>}
     {inboxOpen && <InboxPanel clients={clients} clientId={clientId} showToast={showToast} askConfirm={askConfirm} onOpenConversation={(id) => { fetchConversations(); openConversation(id); }} onClose={() => setInboxOpen(false)}/>}

@@ -38,6 +38,9 @@ class LiveStream {
     this.cleanupTimer = null;
   }
 
+  // Devolve o registro publicado ({ seq, runId, ... }): a rota usa o seq para
+  // carimbar `_seq`/`_runId` também no stream PRIMÁRIO — sem isso, o cliente do
+  // POST /chat não tinha cursor exato e a reconexão dependia de replay integral.
   publish(event) {
     const seq = ++this.seq;
     const size = jsonSize(event);
@@ -52,6 +55,7 @@ class LiveStream {
       this.bytes -= dropped.size;
     }
     for (const fn of this.subscribers) { try { fn(rec); } catch {} }
+    return rec;
   }
 
   // Reproduz o que já passou (passando o filtro) e passa a receber os próximos.

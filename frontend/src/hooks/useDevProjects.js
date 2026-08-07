@@ -33,7 +33,11 @@ function emptyMemory() {
 export const GITHUB_WRITE_ACTIONS = ['push', 'create_pr'];
 
 function emptyPermissions() {
-  return { githubWrite: false, githubWriteConfirmedAt: null, githubWriteScope: null };
+  // `commandGrants`: padrões de comando (política allow/ask/deny do backend)
+  // que o usuário autorizou para este projeto ao confirmar um ask_user de
+  // permissão. O backend RE-VALIDA cada padrão (só os `ask` da política dele
+  // sobrevivem) — isto é o registro da decisão, não a permissão em si.
+  return { githubWrite: false, githubWriteConfirmedAt: null, githubWriteScope: null, commandGrants: [] };
 }
 
 export function newDevProject(partial = {}) {
@@ -139,9 +143,20 @@ export function developerSessionForConversation(projects, conversationId) {
     // A autorização de publicação viaja junto: é ela que faz `github_push` e
     // `github_create_pr` continuarem no inventário em turnos seguintes e depois
     // de reabrir a conversa. Sem isto, a permissão morria com o turno em que o
-    // usuário a concedeu.
-    permissions: githubWritePermissionFor(project)
+    // usuário a concedeu. As autorizações de comando (commandGrants) viajam
+    // pelo mesmo canal e são re-validadas pelo backend.
+    permissions: permissionsPayloadFor(project)
   };
+}
+
+// Payload de permissões enviado ao backend: autorização de publicação (quando
+// o escopo ainda casa com o vínculo) + autorizações de comando. Null quando não
+// há nada a enviar. PURA (testável).
+export function permissionsPayloadFor(project, options = {}) {
+  const github = githubWritePermissionFor(project, options);
+  const grants = (project?.permissions?.commandGrants || []).filter(g => typeof g === 'string' && g.trim());
+  if (!github && !grants.length) return null;
+  return { ...(github || {}), ...(grants.length ? { commandGrants: grants } : {}) };
 }
 
 export function useDevProjects() {
@@ -217,7 +232,25 @@ export function useDevProjects() {
       : p));
   }, []);
 
+  // AUTORIZAR um padrão de comando (confirmação de um ask_user de permissão).
+  // O padrão vem do carimbo do BACKEND (inputRequest.authorize), nunca de texto
+  // do modelo; e o backend confere de novo antes de valer.
+  const authorizeCommand = useCallback((id, { pattern } = {}) => {
+    const clean = String(pattern || '').trim();
+    if (!id || !clean) return;
+    setProjects(prev => prev.map(p => {
+      if (p.id !== id) return p;
+      const current = p.permissions?.commandGrants || [];
+      if (current.includes(clean)) return p;
+      return {
+        ...p,
+        permissions: { ...emptyPermissions(), ...(p.permissions || {}), commandGrants: [...current, clean] },
+        updatedAt: new Date().toISOString()
+      };
+    }));
+  }, []);
+
   const active = useMemo(() => projects.find(p => p.id === activeId) || null, [projects, activeId]);
 
-  return { projects, activeId, active, setActiveId, createProject, updateProject, deleteProject, linkConversation, authorizeGithubWrite, revokeGithubWrite };
+  return { projects, activeId, active, setActiveId, createProject, updateProject, deleteProject, linkConversation, authorizeGithubWrite, revokeGithubWrite, authorizeCommand };
 }

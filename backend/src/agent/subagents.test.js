@@ -484,3 +484,27 @@ test('o lembrete oferece uma saída explícita para não forçar delegação rui
   assert.match(SUBAGENT_NUDGE_NOTE, /delegar_subagente/);
   assert.match(SUBAGENT_NUDGE_NOTE, /ignore este lembrete/i);
 });
+
+test('F-24: o orçamento chega ao runAgent pelo parâmetro certo (subagentRunBudget)', async () => {
+  // Regressão do bug em que runSubagent passava `subagentBudget` — um nome que
+  // o runAgent não declara — e o filho rodava sem teto nenhum (até 200 etapas,
+  // sem limite de tokens nem deadline). O teste injeta um runner falso e
+  // verifica o FIO, não só a função pura de construir o orçamento.
+  let received = null;
+  const runner = async (params) => { received = params; return { text: 'ok', usage: { total_tokens: 1 } }; };
+  const budget = { maxSteps: 3, hardMaxSteps: 4, maxTokens: 500, deadlineMs: Date.now() + 60_000, totalMs: 60_000 };
+  await runSubagent({
+    userId: 'u1',
+    conversationId: 'c1',
+    args: { tarefa: 'listar arquivos' },
+    model: 'prov::modelo',
+    onEvent: () => {},
+    runner,
+    budget
+  });
+  assert.ok(received, 'o runner deve ser chamado');
+  assert.deepEqual(received.subagentRunBudget, budget, 'o orçamento viaja em subagentRunBudget');
+  assert.equal('subagentBudget' in received, false, 'o nome antigo (descartado pelo runAgent) não pode voltar');
+  assert.equal(received.subagentDepth, 1);
+  assert.equal(received.gitWriteAuthorization, false);
+});

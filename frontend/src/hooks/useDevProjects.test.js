@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { developerSessionForConversation, githubWritePermissionFor, newDevProject } from './useDevProjects.js';
+import { developerSessionForConversation, githubWritePermissionFor, newDevProject, permissionsPayloadFor } from './useDevProjects.js';
 
 // Regressão do bug "ao reabrir a conversa de dev o repositório some": a sessão de
 // desenvolvedor (vínculo do repositório GitHub, modo e regras) precisa ser
@@ -140,4 +140,20 @@ test('projeto antigo (sem o campo permissions) carrega sem quebrar', () => {
   const antigo = { id: 'p_old', mode: 'build', binding: { type: 'github', repo: 'a/b', branch: 'main' }, conversationIds: ['c-old'] };
   const sessao = developerSessionForConversation([newDevProject(antigo)], 'c-old');
   assert.equal(sessao.permissions, null);
+});
+
+test('permissionsPayloadFor: comandos autorizados viajam mesmo sem publicação', () => {
+  const semNada = newDevProject({ binding: { type: 'github', repo: 'a/b', branch: 'main' } });
+  assert.equal(permissionsPayloadFor(semNada), null);
+
+  const comGrant = newDevProject({
+    binding: { type: 'github', repo: 'a/b', branch: 'main' },
+    permissions: { githubWrite: false, githubWriteConfirmedAt: null, githubWriteScope: null, commandGrants: ['git clean*'] }
+  });
+  assert.deepEqual(permissionsPayloadFor(comGrant), { commandGrants: ['git clean*'] });
+
+  // Sessão reconstruída de uma conversa também carrega os grants.
+  const projeto = { ...comGrant, conversationIds: ['c-grant'] };
+  const sessao = developerSessionForConversation([projeto], 'c-grant');
+  assert.deepEqual(sessao.permissions, { commandGrants: ['git clean*'] });
 });

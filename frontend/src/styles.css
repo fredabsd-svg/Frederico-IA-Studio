@@ -1429,3 +1429,17 @@ body.dockResizing{user-select:none;cursor:ns-resize}
    conteúdo, deixando `.messages` ser o único elemento que rola. */
 .app{grid-template-rows:minmax(0,1fr)}
 .chat{min-height:0;overflow:hidden}
+
+/* Plano estruturado da tarefa (update_plan) — checklist no balão da resposta. */
+.planChecklist{margin:4px 0 10px;border:1px solid var(--line);border-radius:var(--r-md);background:rgba(127,127,127,.06);padding:8px 10px;max-width:720px}
+.planHead{display:flex;align-items:center;gap:8px;font-size:var(--fs-xs);color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px}
+.planHead small{font-size:var(--fs-xs);color:var(--muted)}
+.planStep{display:flex;align-items:flex-start;gap:7px;padding:2px 0;font-size:var(--fs-sm);line-height:1.4}
+.planIcon{display:inline-flex;margin-top:2px;color:var(--muted)}
+.planStep-completed .planIcon{color:var(--ok,#2e9960)}
+.planStep-running .planIcon{color:var(--accent)}
+.planStep-failed .planIcon{color:var(--danger)}
+.planStep-skipped,.planStep-skipped .planIcon{color:var(--muted)}
+.planStep-completed .planTitle{color:var(--muted)}
+.planEvidence{color:var(--muted);font-size:var(--fs-xs)}
+.srOnly{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}

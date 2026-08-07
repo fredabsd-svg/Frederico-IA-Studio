@@ -16,6 +16,7 @@ import { createToolProtocolStreamGuard, parseTextToolCalls, sanitizeToolProtocol
 import { hasGithubConnection } from '../connectors/github.js';
 import { githubPreflight, githubPreflightNote, githubToolsForContext, normalizeGithubWriteAuthorization } from './githubAccess.js';
 import { ASK_USER_TOOL_NAME, askUserToolDefinition, normalizeInputRequest, shouldOfferAskUser, textInputRequest } from './userInputRequest.js';
+import { UPDATE_PLAN_TOOL_NAME, updatePlanToolDefinition, normalizePlanUpdate, shouldOfferUpdatePlan, PLAN_TOOL_NOTE } from './planTool.js';
 import { effortCfg, promptFor, promptManifestFor, toolsFor, temperatureFor, developerContextFor, toolAvailabilityNote, ENVIRONMENT_QUERY_RE, verifiedEnvironmentNote, pcFoldersNote, uploadsNote, clipForBriefing, BRIEFING_CHAR_LIMIT, QUALITY_BAR, PLAN_DELEGATION_TOPIC } from './prompts.js';
 import { listOutputs, mentionsOutputPath, recoverAlternateOutputs, referencedOutputFiles, fileSignature, validateOutputs } from './outputs.js';
 import { OUTPUT_DELIVERY_REPAIR_NOTE, MISSING_OUTPUT_NOTICE, EXECUTION_COMPLETION_REPAIR_NOTE, EXECUTION_INCOMPLETE_NOTICE, TOOL_PROTOCOL_REPAIR_NOTE, TOOL_PROTOCOL_FAILURE_NOTICE, RESPONSE_TRUNCATED_REPAIR_NOTE, RESPONSE_TRUNCATED_NOTICE, EXECUTION_CONTRACT_NOTE, MACRO_REQUEST_RE, MACRO_LIMITATION_NOTE, DEGEN_CHECK_STEP, looksDegenerate, shouldRepairOutputDelivery, shouldRepairExecution, shouldContinueAfterTruncation, materializeTextOutput, endsAwaitingUserReply } from './repair.js';
@@ -27,8 +28,10 @@ import { acquireConversationControl, releaseConversationControl, beginProviderRe
 import { clientScopeFor, memoryNote, saveMessage, persistAssistantReply } from './persistence.js';
 import { saveCheckpoint, clearCheckpoint, isResumableReason, buildResumeMessages, leadingSystemCount, trimCheckpointMessages, AUTO_CONTINUE_NOTE } from './checkpoint.js';
 import { untrustedContext, untrustedToolResult } from './promptRegistry.js';
-import { emitExecutionState, finalExecutionState } from './executionState.js';
+import { finalExecutionState } from './executionState.js';
+import { createRunStateTracker } from './runStateMachine.js';
 import { resolveSandboxNetwork, isToolCallAllowed } from './assistantPolicy.js';
+import { evaluateShellCommand, normalizeCommandGrants } from './permissionPolicy.js';
 import { explicitlyAuthorizesPcWrite } from '../execGuard.js';
 import { takeSandboxRestartNotice, sandboxOpenTransaction } from '../sandbox.js';
 import { formatRestartNotice, formatOpenTransactionNotice } from '../agentEnv.js';
@@ -96,6 +99,11 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   // reconexão por SSE não consegue dizer "ainda é o mesmo run" e o fromSeq
   // antigo pularia eventos do run novo.
   const runId = runIdOverride || resume?.runId || nanoid();
+  // MÁQUINA DE ESTADOS EXPLÍCITA (Developer Workspace 3.0): todo `run_state`
+  // deste run sai por este rastreador, que valida a transição contra a tabela
+  // de runStateMachine.js. O backend é a fonte de verdade do estado; a UI
+  // nunca deduz "concluído" do fim do stream.
+  const runState = createRunStateTracker({ runId, onEvent });
   // No resume, o modelo ativo é o que estava rodando quando parou (pode ser um
   // de reserva já acionado) — não voltamos ao modelo original.
   let chosenModel = requestedModel && requestedModel.includes('::') ? requestedModel : (provider.modelRef || requestedModel);
@@ -145,6 +153,13 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   // O parâmetro `gitWriteAuthorization` continua aceito (chamadores internos e
   // testes) e, quando vem `false`, VETA as duas fontes.
   const structuredGithubAuthorization = normalizeGithubWriteAuthorization(developer?.permissions);
+  // AUTORIZAÇÕES DE COMANDO (permissionPolicy, allow/ask/deny): concedidas pelo
+  // usuário ao confirmar um ask_user de permissão; re-validadas aqui (falha
+  // fechada — só padrões `ask` da política sobrevivem). No filho, herdadas do
+  // pai — nunca derivadas do texto da subtarefa, que é escrito pelo modelo.
+  const commandGrants = inherited
+    ? (inherited.commandGrants || [])
+    : normalizeCommandGrants(developer?.permissions);
   const turnAuthorizesGitWrite = gitWriteAuthorization == null
     ? explicitlyAuthorizesGitWrite(userText)
     : Boolean(gitWriteAuthorization);
@@ -287,6 +302,15 @@ export async function runAgent({ userId, conversationId, userText, model, assist
     hasTools: requestedTools.length > 0
   });
   if (askUserOffered) requestedTools = [...requestedTools, askUserToolDefinition];
+  // PLANO VISÍVEL (Fase 8): ferramenta interna, interceptada antes do runTool.
+  // Só na missão de desenvolvimento do agente principal — o plano é da tarefa.
+  const updatePlanOffered = shouldOfferUpdatePlan({
+    developerContext,
+    isSubagent,
+    lowSignalTurn,
+    hasTools: requestedTools.length > 0
+  });
+  if (updatePlanOffered) requestedTools = [...requestedTools, updatePlanToolDefinition];
   const subagentBudget = maxSubagentsPerRun();
   // Teto de delegações SIMULTÂNEAS (as do mesmo lote correm em paralelo).
   const delegationSlot = createSubagentLimiter();
@@ -309,7 +333,8 @@ export async function runAgent({ userId, conversationId, userText, model, assist
       sandboxOptions,
       developerContext,
       networkEnabled: sandboxNetworkEnabled,
-      pcWriteAuthorized
+      pcWriteAuthorized,
+      commandGrants
     })
     : null;
 
@@ -353,7 +378,7 @@ export async function runAgent({ userId, conversationId, userText, model, assist
         : (saveUserMessage || !existingUserMessageId
             ? await saveMessage(userId, conversationId, 'user', userText)
             : existingUserMessageId));
-  emitExecutionState(onEvent, developerContext ? 'planning' : 'analyzing', resume ? 'Retomando do checkpoint seguro' : 'Preparando a execução', { runId });
+  runState.to(developerContext ? 'planning' : 'analyzing', resume ? 'Retomando do checkpoint seguro' : 'Preparando a execução');
 
   // BYOK: sem chave de API configurada, orienta a cadastrar e encerra.
   if (!provider.hasKey) {
@@ -368,7 +393,7 @@ export async function runAgent({ userId, conversationId, userText, model, assist
         : 'Nenhuma chave de API configurada. Vá em **Configurações → Provedor de IA** e cadastre a sua chave (OpenRouter/DeepSeek) para começar a conversar.';
     onEvent({ type: 'status', content: 'Chave de API não configurada' });
     onEvent({ type: 'delta', content: finalText });
-    const execution = emitExecutionState(onEvent, 'awaiting_user', 'Configuração do provedor necessária', { runId });
+    const execution = runState.to('awaiting_user', 'Configuração do provedor necessária');
     if (!isSubagent) {
       const assistantMessageId = await saveMessage(userId, conversationId, 'assistant', finalText, { executionMeta: execution });
       onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId });
@@ -383,7 +408,7 @@ export async function runAgent({ userId, conversationId, userText, model, assist
       : 'Este modelo nao responde em texto.';
     onEvent({ type: 'status', content: status });
     onEvent({ type: 'delta', content: finalText });
-    const execution = emitExecutionState(onEvent, 'fatal_error', status, { runId, compatibility: modelPlan.blocked.capability });
+    const execution = runState.to('fatal_error', status, { compatibility: modelPlan.blocked.capability });
     if (!isSubagent) {
       const assistantMessageId = await saveMessage(userId, conversationId, 'assistant', finalText, { executionMeta: execution });
       onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId });
@@ -444,6 +469,7 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   // precisa ser decidida, não depois. Só entra quando a delegação está mesmo
   // disponível nesta chamada.
   if (developerContext?.canWrite && subagentsOffered) callNotes.push(PLAN_DELEGATION_TOPIC);
+  if (updatePlanOffered) callNotes.push(PLAN_TOOL_NOTE);
   if (eff.nudge) callNotes.push(eff.nudge);
   if (webSearchActive) callNotes.push(`PESQUISA NA INTERNET — o usuário ativou a busca. Você tem acesso real à web, pelas ferramentas web_search (procurar) e web_fetch (abrir uma página). Nunca diga que "não tem acesso à internet".
 
@@ -695,6 +721,14 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
   // `input_required` e para o `execution_meta` da mensagem — é o que permite à
   // interface reconstruir a pergunta depois de um reload ou de um replay.
   let inputRequest = null;
+  // Última decisão `ask` da política de comandos: quando o modelo perguntar
+  // (ask_user confirm), o backend carimba o escopo da autorização — o padrão da
+  // política, nunca texto do modelo (mesmo desenho da publicação GitHub).
+  let pendingCommandGrant = null;
+  // PLANO ESTRUTURADO da tarefa (update_plan). Na retomada, o plano do run
+  // interrompido volta do checkpoint e é reemitido para a interface remontar.
+  let currentPlan = resume?.meta?.plan || null;
+  if (currentPlan) onEvent({ type: 'plan_update', plan: currentPlan });
   // Checkpoint: motivo da interrupção que JUSTIFICA salvar estado p/ retomar
   // (limite de ciclos, falha de provedor/stall exaurido, parada do usuário).
   // Falhas de QUALIDADE (degeneração, protocolo) NÃO viram checkpoint — ali o
@@ -709,7 +743,15 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
     if (deadlineMs && Date.now() >= deadlineMs) {
       incomplete = true;
       checkpointReason = 'deadline';
-      failureMessage = `A subtarefa atingiu o tempo limite de ${Math.round((deadlineMs - startedAt) / 1000)}s. Conclua com o que tem.`;
+      // `deadlineMs` é um instante absoluto compartilhado entre as delegações
+      // do turno; a mensagem informa o teto configurado (totalMs), não uma
+      // conta com variáveis de outro escopo — a versão anterior referenciava
+      // `startedAt`, que não existe aqui, e explodiria com ReferenceError na
+      // primeira vez que o deadline fosse atingido.
+      const totalSeconds = Math.round((subagentRunBudget?.totalMs || 0) / 1000);
+      failureMessage = totalSeconds
+        ? `A subtarefa atingiu o tempo limite de ${totalSeconds}s. Conclua com o que tem.`
+        : 'A subtarefa atingiu o tempo limite. Conclua com o que tem.';
       break;
     }
     // F-24: teto de tokens do sub-agente. Impede que uma subtarefa queima a
@@ -746,7 +788,7 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
       applyPromptCache(messages, chosenModel, resumePrefixEnd, provider.baseURL);
       windowStart = step;
       onEvent({ type: 'status', content: `A tarefa está longa mas rendendo: compactei o histórico e continuei o trabalho (fôlego ${autoContinues} de ${maxAutoContinues}).` });
-      emitExecutionState(onEvent, 'continuing', `Orçamento de etapas renovado (fôlego ${autoContinues})`, { runId, step });
+      runState.to('continuing', `Orçamento de etapas renovado (fôlego ${autoContinues})`, { step });
     }
     reachedStep = step;
     // LEMBRETE DE DELEGAÇÃO: numa execução que já se alongou, o modelo não
@@ -1171,7 +1213,7 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
         let delegationArgs = {};
         try { delegationArgs = JSON.parse(call.function.arguments || '{}'); } catch {}
         onEvent({ type: 'tool_start', id: call.id, name: SUBAGENT_TOOL_NAME, preview: String(delegationArgs.tarefa || '').slice(0, 400) });
-        emitExecutionState(onEvent, 'tool_running', SUBAGENT_TOOL_NAME, { runId, step, tool: SUBAGENT_TOOL_NAME });
+        runState.to('tool_running', SUBAGENT_TOOL_NAME, { step, tool: SUBAGENT_TOOL_NAME });
         delegations.set(call.id, delegationSlot(() => startDelegation(call, delegationArgs)));
       }
     }
@@ -1211,6 +1253,22 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
       // conteúdo escrito (o resultado só traz o caminho) para o painel de detalhe
       // mostrar o que a IA de fato salvou. Limitado para não pesar no stream.
       const detail = name === 'write_file' ? String(args.content || '').slice(0, 4000) : '';
+      // ── update_plan: manutenção do plano visível, não execução ──────────────
+      // Interceptada antes do runTool (como o ask_user): nada roda no sandbox.
+      // Cada chamada substitui o plano; o evento vai ao stream e ao run log.
+      if (name === UPDATE_PLAN_TOOL_NAME) {
+        const normalized = isToolCallAllowed(name, tools)
+          ? normalizePlanUpdate(args)
+          : { error: 'Ferramenta não autorizada para esta chamada.' };
+        if (normalized.error) {
+          messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ error: normalized.error, code: 'PLAN_INVALID' }) });
+        } else {
+          currentPlan = normalized.plan;
+          onEvent({ type: 'plan_update', plan: currentPlan });
+          messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: true, steps: currentPlan.steps.length }) });
+        }
+        continue;
+      }
       // ── ask_user: pedido de DECISÃO, não execução ───────────────────────────
       // Interceptado ANTES de qualquer `tool_start`/`runTool`: nada roda no
       // sandbox, nada toca arquivo ou rede. Uma pergunta não é etapa de execução,
@@ -1249,6 +1307,19 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
             actions: ['push', 'create_pr']
           };
         }
+        // CONFIRMAÇÃO DE COMANDO (permissionPolicy): quando um comando caiu em
+        // `ask` neste run, a pergunta de confirmação carrega o escopo carimbado
+        // pelo BACKEND (o padrão da política, o comando e o motivo — nunca
+        // texto livre do modelo). Ao confirmar, a interface registra o grant e
+        // o turno seguinte chega com o padrão autorizado.
+        if (inputRequest.kind === 'confirm' && !inputRequest.authorize && pendingCommandGrant) {
+          inputRequest.authorize = {
+            kind: 'command_grant',
+            pattern: pendingCommandGrant.pattern,
+            command: pendingCommandGrant.command,
+            reason: pendingCommandGrant.reason
+          };
+        }
         messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: true, awaiting_user: true, request_id: inputRequest.id, note: 'A pergunta foi entregue ao usuário e o turno termina aqui. A resposta dele chega como a próxima mensagem da conversa.' }) });
         // Fecha as chamadas RESTANTES do lote: o assistant já foi empilhado com
         // todas as tool_calls, e um array sem o `tool` correspondente é inválido
@@ -1267,7 +1338,7 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
       // As delegações já anunciaram o início ao serem lançadas (acima).
       if (!pendingDelegation) {
         onEvent({ type: 'tool_start', id: call.id, name, preview, ...(detail ? { detail } : {}) });
-        emitExecutionState(onEvent, 'tool_running', name, { runId, step, tool: name });
+        runState.to('tool_running', name, { step, tool: name });
       }
       let result;
       const allowedToolCall = isToolCallAllowed(name, tools);
@@ -1278,8 +1349,33 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
         if (fetchUrl) seenWebFetches.add(fetchUrl);
         webFetchAttempts += 1;
       }
+      // POLÍTICA DE COMANDOS (allow/ask/deny): avaliada ANTES do executor. Um
+      // `deny` explica o motivo de política (as fronteiras duras do execGuard/
+      // sandbox continuam valendo por baixo); um `ask` devolve
+      // PERMISSION_REQUIRED instruindo o modelo a usar ask_user — a confirmação
+      // do usuário vira autorização estruturada no turno seguinte.
+      const shellPermission = (name === 'bash' && allowedToolCall)
+        ? evaluateShellCommand(String(args.command || ''), { grants: commandGrants })
+        : null;
       if (!allowedToolCall) {
         result = JSON.stringify({ error: 'Ferramenta não autorizada para esta chamada.', code: 'TOOL_NOT_ALLOWED', tool: name });
+      } else if (shellPermission?.decision === 'deny') {
+        result = JSON.stringify({
+          error: `Comando bloqueado pela política de permissões (padrão "${shellPermission.rule.pattern}"): ${shellPermission.rule.reason}.`,
+          code: 'PERMISSION_DENIED',
+          pattern: shellPermission.rule.pattern
+        });
+      } else if (shellPermission?.decision === 'ask') {
+        pendingCommandGrant = {
+          pattern: shellPermission.rule.pattern,
+          command: String(args.command || '').slice(0, 200),
+          reason: shellPermission.rule.reason
+        };
+        result = JSON.stringify({
+          error: `Este comando exige confirmação do usuário antes de executar (${shellPermission.rule.reason}). Use a ferramenta ask_user (tipo "confirm") explicando EXATAMENTE o comando e o efeito dele; se o usuário confirmar, o padrão "${shellPermission.rule.pattern}" fica autorizado para esta tarefa e você pode repetir o comando.`,
+          code: 'PERMISSION_REQUIRED',
+          pattern: shellPermission.rule.pattern
+        });
       } else if (isWebTool && webResearchStop) {
         result = JSON.stringify({ error: 'A pesquisa web já atingiu o limite desta tarefa. Conclua com as evidências obtidas.', code: 'WEB_RESEARCH_STOPPED' });
       } else if (repeatedFetch) {
@@ -1343,7 +1439,7 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
       let thumb = '';
       if (name === 'web_fetch') { try { thumb = JSON.parse(result).thumb || ''; } catch {} }
       onEvent({ type: 'tool_result', id: call.id, name, content: result.slice(0, 2000), ...(thumb ? { thumb } : {}) });
-      emitExecutionState(onEvent, 'processing_result', name, { runId, step, tool: name });
+      runState.to('processing_result', name, { step, tool: name });
       // O `result` CRU segue para a interface e para a classificação de falha —
       // quem precisa dele intacto. Para o MODELO ele vai embrulhado: é texto de
       // terceiro (página, arquivo, README, saída de comando) e, sem a marca de
@@ -1381,10 +1477,10 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
         onEvent({ type: 'delta', content: pergunta });
       }
       onEvent({ type: 'input_required', request: inputRequest });
-      emitExecutionState(onEvent, 'tool_waiting', 'Aguardando a resposta do usuário', { runId, step });
+      runState.to('tool_waiting', 'Aguardando a resposta do usuário', { step });
       break;
     }
-    emitExecutionState(onEvent, 'continuing', 'Resultado processado; escolhendo a próxima etapa', { runId, step });
+    runState.to('continuing', 'Resultado processado; escolhendo a próxima etapa', { step });
     // Checkpoint seguro entre lotes: nunca é gravado no meio de uma ferramenta.
     // Se o backend cair no próximo stream, a retomada parte daqui sem repetir
     // as chamadas que já terminaram. Uma conclusão limpa apaga este registro.
@@ -1401,7 +1497,7 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
         step: (resume?.step || 0) + step,
         messages,
         usage,
-        meta: { safePoint: 'after_tool_batch', webSearch: Boolean(webSearch), effort: effort || null, developer: developer || null, assistantId: assistant?.id || null }
+        meta: { safePoint: 'after_tool_batch', webSearch: Boolean(webSearch), effort: effort || null, developer: developer || null, assistantId: assistant?.id || null, ...(currentPlan ? { plan: currentPlan } : {}) }
       });
     }
     // Etapa produtiva: executou ferramenta(s) e a última não falhou em cadeia.
@@ -1498,7 +1594,7 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
   // vez só — validar duas vezes seria custo de sandbox repetido.
   let checks = {};
   if (newFiles.length && !stopped && !isSubagent) {
-    emitExecutionState(onEvent, 'validating', 'Validando os artefatos antes da entrega', { runId });
+    runState.to('validating', 'Validando os artefatos antes da entrega');
     checks = await validateOutputs(conversationId, newFiles, onEvent, sandboxOptions);
     if (Object.values(checks).some(check => check?.ok === false)) {
       incomplete = true;
@@ -1529,21 +1625,20 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
       step: (resume?.step || 0) + reachedStep,
       messages,
       usage,
-      meta: { webSearch: Boolean(webSearch), effort: effort || null, developer: developer || null, assistantId: assistant?.id || null, sandboxNetworkEnabled, prompt: promptManifest }
+      meta: { webSearch: Boolean(webSearch), effort: effort || null, developer: developer || null, assistantId: assistant?.id || null, sandboxNetworkEnabled, prompt: promptManifest, ...(currentPlan ? { plan: currentPlan } : {}) }
     });
     // Avisa a interface AO VIVO que dá para retomar (sem esperar um reload):
     // o botão "Continuar" aparece na mensagem interrompida.
     if (resumable) onEvent({ type: 'resumable', value: true });
   } else if (ownsCheckpoint) {
-    await clearCheckpoint(conversationId);
+    await clearCheckpoint(conversationId, userId);
   }
   const finalState = finalExecutionState({ stopped, awaitingUserReply, resumable, providerFailure, incomplete });
   // O fallback textual só é reconhecido no fim do stream; quando ele acontece, a
   // interface precisa do `input_required` também ao vivo (o `execution_meta`
   // cobre o reload e o replay).
   if (awaitingUserReply && inputRequest?.fallback) onEvent({ type: 'input_required', request: inputRequest });
-  const execution = emitExecutionState(onEvent, finalState, failureMessage || null, {
-    runId,
+  const execution = runState.to(finalState, failureMessage || null, {
     model: chosenModel,
     toolsExecuted: executedToolCalls,
     toolsAvailable: tools.map(tool => tool.function.name),
@@ -1554,6 +1649,9 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
     // Persistido junto da mensagem: é o que faz a pergunta sobreviver ao reload,
     // ao replay e à troca de conversa.
     ...(awaitingUserReply && inputRequest ? { inputRequest } : {}),
+    // Plano final da tarefa: persiste com a mensagem para a interface remontar
+    // o checklist ao reabrir a conversa (mesmo caminho do inputRequest).
+    ...(currentPlan ? { plan: currentPlan } : {}),
     // Estado real da integração com o GitHub nesta execução (sem token, sem
     // segredo): a interface mostra a CAUSA de um bloqueio em vez de "a ferramenta
     // não está habilitada".

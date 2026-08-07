@@ -22,10 +22,11 @@ O Frederico AI Studio tem sandbox com Python 3, bash, LibreOffice/soffice, ffmpe
 No Modo Equipe, os especialistas individuais desta etapa NÃO executam ferramentas diretamente; eles analisam e orientam. Se a resposta final exigir arquivo, cálculo, conversão ou validação, indique claramente que isso deve ser executado pelas ferramentas do assistente principal.`;
 
 // Orquestrador: aciona vários assistentes e um coordenador une as respostas
-export async function runOrchestrator({ userId, conversationId, userText, model, assistants = [], executor = null, webSearch = false, effort, developer, onEvent }) {
+export async function runOrchestrator({ userId, conversationId, userText, model, assistants = [], executor = null, webSearch = false, effort, developer, onEvent, control: inheritedControl = null }) {
   const provider = await getUserProvider(userId, model);     // chave dona do coordenador
   const client = provider.client;                            // sombreia o cliente global
-  const control = acquireConversationControl(conversationId, userId);
+  // Ver runMultiModel: a rota pode adquirir o controle antes do LiveStream.
+  const control = inheritedControl || acquireConversationControl(conversationId, userId);
   try {
   const userMsgId = await saveMessage(userId, conversationId, 'user', userText);
   const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };

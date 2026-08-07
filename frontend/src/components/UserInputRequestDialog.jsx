@@ -1,5 +1,5 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
-import { Check, X } from 'lucide-react';
+import { Check, CircleHelp, X } from 'lucide-react';
 import { KIND_ICON } from './UserInputRequest.jsx';
 
 // Modal de resposta a uma pergunta interativa da IA.
