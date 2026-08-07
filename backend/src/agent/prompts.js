@@ -11,6 +11,7 @@ import { COMPLETION_PROTOCOL, promptMeta } from './promptRegistry.js';
 import { allowedAssistantToolNames } from './assistantPolicy.js';
 import { IMMUTABLE_CORE_PROMPT, assistantProfileBlock, profileMeta } from './promptPolicy.js';
 import { ASK_USER_NOTE, ASK_USER_TOOL_NAME } from './userInputRequest.js';
+import { UPDATE_PLAN_TOOL_NAME } from './planTool.js';
 
 // Esforço da IA: controla o raciocínio (reasoning effort — funciona de verdade
 // nos modelos que raciocinam, via OpenRouter), o número máximo de etapas do
@@ -392,6 +393,7 @@ export function toolAvailabilityNote(tools, { includeInventory = false, sandboxN
   // aplicativo. Também é aqui que a proibição de contornar pelo bash aparece.
   if (githubNote) lines.push(`- ${githubNote}`);
   if (names.has(ASK_USER_TOOL_NAME)) lines.push(ASK_USER_NOTE);
+  if (names.has(UPDATE_PLAN_TOOL_NAME)) lines.push('- update_plan: manter o PLANO VISÍVEL da missão (Modo Desenvolvedor). Cada chamada substitui a lista completa de passos; um passo só pode ficar "completed" com a evidência (comando/arquivo/teste) no campo evidence.');
   // Delegação: o modelo precisa saber que o sub-agente NÃO vê a conversa, senão
   // manda "continue a análise" e o filho não tem contexto nenhum para trabalhar.
   if (names.has('delegar_subagente')) lines.push('- delegar_subagente: delegar uma subtarefa AUTOCONTIDA a um sub-agente com contexto próprio, que executa ferramentas e devolve só o resultado. GATILHO: pedido com TRÊS OU MAIS entregas independentes entre si — delegue as isoláveis, UMA chamada por entrega (as do mesmo lote correm em paralelo), em vez de executar todas em linha. Vale também para subtarefa única e pesada (varrer muitos arquivos, ler um documento longo, apurar um ponto específico). Ele NÃO enxerga o histórico daqui: escreva a tarefa inteira, com caminhos, números e regras. Fica com você o que é curto, o que depende deste contexto e a integração final das partes.');

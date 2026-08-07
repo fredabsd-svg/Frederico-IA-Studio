@@ -7,6 +7,7 @@ import { API, TOOL_INFO, TEMPLATES, QUICK_ACTIONS, THEMES, WORKSPACES, EFFORTS, 
 import { signOut } from './authClient.js';
 import { Slider, Modal, Drawer, Collapsible, useAppDialog, ModelPicker } from './components.jsx';
 import { ExecutionSessionLine } from './components/ExecutionSessionLine.jsx';
+import { PlanChecklist } from './components/PlanChecklist.jsx';
 import { ChatJumpToBottom } from './components/ChatJumpToBottom.jsx';
 import { UserInputRequestCard } from './components/UserInputRequest.jsx';
 import { collectExecutionSessions, pendingInputRequest, pickTerminalSession } from './executionSessions.js';
@@ -1135,6 +1136,11 @@ export default function App({ user } = {}) {
                 que já mostra tudo, inclusive a "Conclusão". Só NÃO suprimimos
                 quando há execução real de ferramentas (pipeline do Modo
                 Desenvolvedor), pois aí o texto é o entregável de verdade. */}
+            {/* Plano estruturado da tarefa: ao vivo vem por `plan_update`
+                (m.plan); reaberto do banco, pelo execution_meta. O backend é
+                quem valida status/evidência — aqui só exibimos. */}
+            {m.role === 'assistant' && (m.plan || m.execution?.plan) &&
+              <PlanChecklist plan={m.plan || m.execution?.plan}/>}
             {m.role === 'assistant' && m.multi && !(m.blocks || []).some(b => b.type === 'tool')
               ? null
               : m.blocks

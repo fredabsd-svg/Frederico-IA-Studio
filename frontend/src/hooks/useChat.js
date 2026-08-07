@@ -279,6 +279,9 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
           execution: { ...(m.execution || {}), state: 'awaiting_user', terminal: true, inputRequest: ev.request }
         }));
         if (ev.type === 'prompt_meta') update(m => ({ ...m, prompt: ev.prompt }));
+        // PLANO ESTRUTURADO (update_plan): cada evento substitui o plano da
+        // mensagem. Replay é idempotente — o último evento vence, como no vivo.
+        if (ev.type === 'plan_update' && ev.plan) update(m => ({ ...m, plan: ev.plan }));
         if (ev.type === 'delta') update(m => {
           const blocks = [...(m.blocks || [])];
           const last = blocks[blocks.length - 1];

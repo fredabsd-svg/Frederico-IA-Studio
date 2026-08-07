@@ -16,6 +16,7 @@ import { createToolProtocolStreamGuard, parseTextToolCalls, sanitizeToolProtocol
 import { hasGithubConnection } from '../connectors/github.js';
 import { githubPreflight, githubPreflightNote, githubToolsForContext, normalizeGithubWriteAuthorization } from './githubAccess.js';
 import { ASK_USER_TOOL_NAME, askUserToolDefinition, normalizeInputRequest, shouldOfferAskUser, textInputRequest } from './userInputRequest.js';
+import { UPDATE_PLAN_TOOL_NAME, updatePlanToolDefinition, normalizePlanUpdate, shouldOfferUpdatePlan, PLAN_TOOL_NOTE } from './planTool.js';
 import { effortCfg, promptFor, promptManifestFor, toolsFor, temperatureFor, developerContextFor, toolAvailabilityNote, ENVIRONMENT_QUERY_RE, verifiedEnvironmentNote, pcFoldersNote, uploadsNote, clipForBriefing, BRIEFING_CHAR_LIMIT, QUALITY_BAR, PLAN_DELEGATION_TOPIC } from './prompts.js';
 import { listOutputs, mentionsOutputPath, recoverAlternateOutputs, referencedOutputFiles, fileSignature, validateOutputs } from './outputs.js';
 import { OUTPUT_DELIVERY_REPAIR_NOTE, MISSING_OUTPUT_NOTICE, EXECUTION_COMPLETION_REPAIR_NOTE, EXECUTION_INCOMPLETE_NOTICE, TOOL_PROTOCOL_REPAIR_NOTE, TOOL_PROTOCOL_FAILURE_NOTICE, RESPONSE_TRUNCATED_REPAIR_NOTE, RESPONSE_TRUNCATED_NOTICE, EXECUTION_CONTRACT_NOTE, MACRO_REQUEST_RE, MACRO_LIMITATION_NOTE, DEGEN_CHECK_STEP, looksDegenerate, shouldRepairOutputDelivery, shouldRepairExecution, shouldContinueAfterTruncation, materializeTextOutput, endsAwaitingUserReply } from './repair.js';
@@ -301,6 +302,15 @@ export async function runAgent({ userId, conversationId, userText, model, assist
     hasTools: requestedTools.length > 0
   });
   if (askUserOffered) requestedTools = [...requestedTools, askUserToolDefinition];
+  // PLANO VISÍVEL (Fase 8): ferramenta interna, interceptada antes do runTool.
+  // Só na missão de desenvolvimento do agente principal — o plano é da tarefa.
+  const updatePlanOffered = shouldOfferUpdatePlan({
+    developerContext,
+    isSubagent,
+    lowSignalTurn,
+    hasTools: requestedTools.length > 0
+  });
+  if (updatePlanOffered) requestedTools = [...requestedTools, updatePlanToolDefinition];
   const subagentBudget = maxSubagentsPerRun();
   // Teto de delegações SIMULTÂNEAS (as do mesmo lote correm em paralelo).
   const delegationSlot = createSubagentLimiter();
@@ -459,6 +469,7 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   // precisa ser decidida, não depois. Só entra quando a delegação está mesmo
   // disponível nesta chamada.
   if (developerContext?.canWrite && subagentsOffered) callNotes.push(PLAN_DELEGATION_TOPIC);
+  if (updatePlanOffered) callNotes.push(PLAN_TOOL_NOTE);
   if (eff.nudge) callNotes.push(eff.nudge);
   if (webSearchActive) callNotes.push(`PESQUISA NA INTERNET — o usuário ativou a busca. Você tem acesso real à web, pelas ferramentas web_search (procurar) e web_fetch (abrir uma página). Nunca diga que "não tem acesso à internet".
 
@@ -714,6 +725,10 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
   // (ask_user confirm), o backend carimba o escopo da autorização — o padrão da
   // política, nunca texto do modelo (mesmo desenho da publicação GitHub).
   let pendingCommandGrant = null;
+  // PLANO ESTRUTURADO da tarefa (update_plan). Na retomada, o plano do run
+  // interrompido volta do checkpoint e é reemitido para a interface remontar.
+  let currentPlan = resume?.meta?.plan || null;
+  if (currentPlan) onEvent({ type: 'plan_update', plan: currentPlan });
   // Checkpoint: motivo da interrupção que JUSTIFICA salvar estado p/ retomar
   // (limite de ciclos, falha de provedor/stall exaurido, parada do usuário).
   // Falhas de QUALIDADE (degeneração, protocolo) NÃO viram checkpoint — ali o
@@ -1238,6 +1253,22 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
       // conteúdo escrito (o resultado só traz o caminho) para o painel de detalhe
       // mostrar o que a IA de fato salvou. Limitado para não pesar no stream.
       const detail = name === 'write_file' ? String(args.content || '').slice(0, 4000) : '';
+      // ── update_plan: manutenção do plano visível, não execução ──────────────
+      // Interceptada antes do runTool (como o ask_user): nada roda no sandbox.
+      // Cada chamada substitui o plano; o evento vai ao stream e ao run log.
+      if (name === UPDATE_PLAN_TOOL_NAME) {
+        const normalized = isToolCallAllowed(name, tools)
+          ? normalizePlanUpdate(args)
+          : { error: 'Ferramenta não autorizada para esta chamada.' };
+        if (normalized.error) {
+          messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ error: normalized.error, code: 'PLAN_INVALID' }) });
+        } else {
+          currentPlan = normalized.plan;
+          onEvent({ type: 'plan_update', plan: currentPlan });
+          messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: true, steps: currentPlan.steps.length }) });
+        }
+        continue;
+      }
       // ── ask_user: pedido de DECISÃO, não execução ───────────────────────────
       // Interceptado ANTES de qualquer `tool_start`/`runTool`: nada roda no
       // sandbox, nada toca arquivo ou rede. Uma pergunta não é etapa de execução,
@@ -1466,7 +1497,7 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
         step: (resume?.step || 0) + step,
         messages,
         usage,
-        meta: { safePoint: 'after_tool_batch', webSearch: Boolean(webSearch), effort: effort || null, developer: developer || null, assistantId: assistant?.id || null }
+        meta: { safePoint: 'after_tool_batch', webSearch: Boolean(webSearch), effort: effort || null, developer: developer || null, assistantId: assistant?.id || null, ...(currentPlan ? { plan: currentPlan } : {}) }
       });
     }
     // Etapa produtiva: executou ferramenta(s) e a última não falhou em cadeia.
@@ -1594,7 +1625,7 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
       step: (resume?.step || 0) + reachedStep,
       messages,
       usage,
-      meta: { webSearch: Boolean(webSearch), effort: effort || null, developer: developer || null, assistantId: assistant?.id || null, sandboxNetworkEnabled, prompt: promptManifest }
+      meta: { webSearch: Boolean(webSearch), effort: effort || null, developer: developer || null, assistantId: assistant?.id || null, sandboxNetworkEnabled, prompt: promptManifest, ...(currentPlan ? { plan: currentPlan } : {}) }
     });
     // Avisa a interface AO VIVO que dá para retomar (sem esperar um reload):
     // o botão "Continuar" aparece na mensagem interrompida.
@@ -1618,6 +1649,9 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
     // Persistido junto da mensagem: é o que faz a pergunta sobreviver ao reload,
     // ao replay e à troca de conversa.
     ...(awaitingUserReply && inputRequest ? { inputRequest } : {}),
+    // Plano final da tarefa: persiste com a mensagem para a interface remontar
+    // o checklist ao reabrir a conversa (mesmo caminho do inputRequest).
+    ...(currentPlan ? { plan: currentPlan } : {}),
     // Estado real da integração com o GitHub nesta execução (sem token, sem
     // segredo): a interface mostra a CAUSA de um bloqueio em vez de "a ferramenta
     // não está habilitada".
