@@ -36,9 +36,22 @@ function normalizeMemory(memory) {
   return out;
 }
 
+// Modos válidos do Modo Desenvolvedor (espelho de prompts.js DEV_MODES; a
+// validação real do modo acontece lá — aqui só evitamos lixo na coluna).
+const VALID_MODES = new Set(['ask', 'plan', 'build', 'fix', 'review', 'auto']);
+const normalizeMode = (value) => (VALID_MODES.has(String(value || '')) ? String(value) : null);
+
 function hydrate(row) {
   if (!row) return null;
-  return { ...row, memory: normalizeMemory(row.memory), binding: parseJson(row.binding, { type: 'none' }) };
+  return {
+    ...row,
+    memory: normalizeMemory(row.memory),
+    binding: parseJson(row.binding, { type: 'none' }),
+    // Permissões são REGISTRO da decisão do usuário; quem concede de fato é a
+    // re-validação no uso (githubAccess.js / permissionPolicy.js).
+    permissions: parseJson(row.permissions, null),
+    mode: normalizeMode(row.mode)
+  };
 }
 
 // Espelha o projeto do navegador. É idempotente: o mesmo id sempre atualiza a
@@ -49,11 +62,13 @@ export async function upsertProject(userId, project) {
   if (!id || !name) return null;
   const t = now();
   await db.prepare(`
-    INSERT INTO dev_projects (id, user_id, name, description, techs, rules, memory, binding, created_at, updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?)
+    INSERT INTO dev_projects (id, user_id, name, description, techs, rules, memory, binding, permissions, mode, created_at, updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
     ON CONFLICT (id) DO UPDATE SET
       name=excluded.name, description=excluded.description, techs=excluded.techs,
       rules=excluded.rules, memory=excluded.memory, binding=excluded.binding,
+      permissions=COALESCE(excluded.permissions, dev_projects.permissions),
+      mode=COALESCE(excluded.mode, dev_projects.mode),
       updated_at=excluded.updated_at
     WHERE dev_projects.user_id = excluded.user_id
   `).run(
@@ -61,9 +76,47 @@ export async function upsertProject(userId, project) {
     String(project.description || ''), String(project.techs || ''), String(project.rules || ''),
     JSON.stringify(normalizeMemory(project.memory)),
     JSON.stringify(project.binding || { type: 'none' }),
+    // COALESCE acima: um chamador antigo (sem os campos) não apaga o que o
+    // servidor já guardou — só quem envia o campo o substitui.
+    project.permissions !== undefined ? JSON.stringify(project.permissions) : null,
+    normalizeMode(project.mode),
     t, t
   );
   return getProject(userId, id);
+}
+
+// Lista os projetos do usuário com as conversas de cada um DERIVADAS de
+// conversations.project_id (a fonte que o backend mantém) — mais recentes
+// primeiro, teto de 50 por projeto, como o navegador fazia.
+export async function listProjects(userId) {
+  if (!userId) return [];
+  const rows = await db.prepare('SELECT * FROM dev_projects WHERE user_id=? ORDER BY created_at ASC').all(userId);
+  const projects = rows.map(hydrate);
+  if (!projects.length) return [];
+  const convRows = await db.prepare(`
+    SELECT id, project_id FROM conversations
+    WHERE user_id=? AND project_id IS NOT NULL
+    ORDER BY updated_at DESC
+  `).all(userId);
+  const byProject = new Map();
+  for (const row of convRows) {
+    const list = byProject.get(row.project_id) || [];
+    if (list.length < 50) list.push(row.id);
+    byProject.set(row.project_id, list);
+  }
+  return projects.map(project => ({ ...project, conversationIds: byProject.get(project.id) || [] }));
+}
+
+// Remove o projeto e SOLTA as conversas (project_id=NULL) — apagar um projeto
+// não pode apagar histórico de conversa.
+export async function deleteProject(userId, projectId) {
+  if (!userId || !projectId) return false;
+  const owned = await db.prepare('SELECT 1 FROM dev_projects WHERE id=? AND user_id=?').get(projectId, userId);
+  if (!owned) return false;
+  await db.prepare('UPDATE conversations SET project_id=NULL WHERE user_id=? AND project_id=?').run(userId, projectId);
+  await db.prepare('UPDATE conversation_chunks SET project_id=NULL WHERE user_id=? AND project_id=?').run(userId, projectId);
+  await db.prepare('DELETE FROM dev_projects WHERE id=? AND user_id=?').run(projectId, userId);
+  return true;
 }
 
 export async function getProject(userId, projectId) {

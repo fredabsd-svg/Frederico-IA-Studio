@@ -152,6 +152,13 @@ POST /chat
   estruturado que instrui a mudar de estratégia; resultado novo zera a
   contagem (progresso legítimo). O bloqueio conta no freio de falhas
   consecutivas do loop.
+- **Projetos dev no servidor (ADR 0004):** `dev_projects` carrega o projeto
+  INTEIRO (vínculo, regras, memória, `permissions`, `mode` — migração 033) e é
+  a fonte de verdade; o navegador é cache (`useDevProjects`: bootstrap por
+  `GET /api/dev-projects`, migração única do localStorage via `/import`,
+  mudanças por PUT com debounce, exclusão solta as conversas em vez de apagar
+  histórico). A lista de conversas do projeto deriva de
+  `conversations.project_id`.
 - **Política de comandos:** `agent/permissionPolicy.js` — allow/ask/deny por
   padrão de comando (glob, última regra que casa vence; compostos lineares
   divididos e vale a decisão mais restritiva). `ask` devolve
