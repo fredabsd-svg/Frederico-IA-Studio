@@ -80,7 +80,10 @@ if (dbReady) {
       `INSERT INTO user_ai_providers (id,user_id,provider_type,name,base_url,api_key_enc,models,default_model,created_at,updated_at)
        VALUES (?,?,?,?,?,?,?,?,?,?)`
     ).run(`prov-${id}`, id, 'openai', 'Falso', providerUrl, encryptSecret('sk-teste'),
-      JSON.stringify([{ id: 'fake-model' }]), 'fake-model', now(), now());
+      JSON.stringify([{
+        id: 'fake-model',
+        architecture: { input_modalities: ['text'], output_modalities: ['text', 'image'] },
+      }]), 'fake-model', now(), now());
   }
 
   const app = express();
@@ -88,7 +91,16 @@ if (dbReady) {
   // Autenticação simulada: o portão real (requireAuth) é exercitado por outros
   // caminhos; aqui o que importa é a rota funcionar com req.userId — e que a
   // troca de usuário prove o isolamento.
-  app.use('/api', (req, _res, next) => { req.userId = currentUser; req.user = { id: currentUser }; next(); });
+  app.use('/api', (req, _res, next) => {
+    // As rotas de imagem também aceitam token de preview sem cookie. O header
+    // existe só neste servidor falso para os testes exercerem esse caminho sem
+    // a sessão simulada mascarar um token inválido.
+    if (req.get('x-test-anonymous') !== '1') {
+      req.userId = currentUser;
+      req.user = { id: currentUser };
+    }
+    next();
+  });
   app.use('/api', designRouter);
   app.use((err, _req, res, _next) => { res.status(err.status || 500).json({ error: err.message }); });
   server = app.listen(0);
@@ -720,7 +732,10 @@ test('a imagem pode ser lida pelo token de preview (origem opaca do iframe)', { 
   const created = await call('POST', `/api/design/projects/${project.id}/images`, { prompt: 'paisagem' });
 
   // Sem sessão: passa o token do projeto na query string.
-  const r = await fetch(`${baseUrl}/api/design/images/${created.json.id}?token=${encodeURIComponent(project.previewToken)}`);
+  const r = await fetch(
+    `${baseUrl}/api/design/images/${created.json.id}?token=${encodeURIComponent(project.previewToken)}`,
+    { headers: { 'x-test-anonymous': '1' } },
+  );
   assert.equal(r.status, 200);
   assert.equal(r.headers.get('content-type'), 'image/png');
 });
@@ -731,7 +746,10 @@ test('token de preview de OUTRO projeto não libera a imagem', { skip: needsDb }
   const created = await call('POST', `/api/design/projects/${project.id}/images`, { prompt: 'paisagem' });
 
   const other = await newProject();
-  const r = await fetch(`${baseUrl}/api/design/images/${created.json.id}?token=${encodeURIComponent(other.previewToken)}`);
+  const r = await fetch(
+    `${baseUrl}/api/design/images/${created.json.id}?token=${encodeURIComponent(other.previewToken)}`,
+    { headers: { 'x-test-anonymous': '1' } },
+  );
   assert.equal(r.status, 404, 'a imagem pertence ao projeto A, não ao token do projeto B');
 });
 

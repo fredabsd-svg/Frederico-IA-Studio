@@ -129,7 +129,10 @@ async function callImageProvider(provider, model, prompt, signal) {
 // interface usa no `<img src>` — o iframe está em origem opaca e não envia
 // cookie, então a URL precisa ser absoluta (com o host do backend) para o
 // navegador resolver.
-export async function generateDesignImage({ userId, projectId, prompt, model = '', signal }) {
+export async function generateDesignImage(
+  { userId, projectId, prompt, model = '', signal },
+  { resolveProvider = resolveImageProvider, requestImage = callImageProvider } = {},
+) {
   const cleanPrompt = clampPrompt(prompt);
   if (!cleanPrompt) return { ok: false, error: 'Descreva a imagem que você quer.', code: 'IMAGE_PROMPT_VAZIO' };
 
@@ -138,7 +141,7 @@ export async function generateDesignImage({ userId, projectId, prompt, model = '
   const project = await db.prepare('SELECT id FROM design_projects WHERE id=? AND user_id=?').get(projectId, userId);
   if (!project) return { ok: false, error: 'Projeto de design não encontrado.', code: 'NOT_FOUND', status: 404 };
 
-  const choice = await resolveImageProvider(userId, model);
+  const choice = await resolveProvider(userId, model);
   if (choice.error) return { ok: false, error: choice.error, code: choice.code, status: 400 };
 
   const used = await projectBytesUsed(projectId);
@@ -151,7 +154,7 @@ export async function generateDesignImage({ userId, projectId, prompt, model = '
     };
   }
 
-  const result = await callImageProvider(choice.provider, choice.model, cleanPrompt, signal);
+  const result = await requestImage(choice.provider, choice.model, cleanPrompt, signal);
   if (!result.ok) return { ok: false, error: result.error, code: result.code, status: result.status || 502 };
 
   // Compressão transparente. Roda ANTES da checagem de cota: o teto vale sobre
@@ -214,6 +217,7 @@ export async function generateDesignImage({ userId, projectId, prompt, model = '
     createdAt: t,
     compression: compression.changed
       ? {
+          changed: true,
           saved: compression.bytesSaved || 0,
           originalMime: orig.mime,
           originalSize: orig.size,
