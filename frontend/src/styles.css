@@ -1469,3 +1469,22 @@ body.dockResizing{user-select:none;cursor:ns-resize}
 .reviewIcon{display:inline-flex;margin-top:2px;color:var(--muted)}
 .reviewList li.rv-blocker .reviewIcon,.reviewList li.rv-high .reviewIcon{color:var(--danger)}
 .reviewText{display:block}
+
+/* Diff por arquivo com reversão por hunk (aba Alterações). */
+.fileDiff{margin-top:8px;border:1px solid var(--line);border-radius:var(--r-md);overflow:hidden}
+.fileDiffHead{display:flex;align-items:center;gap:7px;flex-wrap:wrap;padding:7px 9px;background:rgba(127,127,127,.08);border-bottom:1px solid var(--line)}
+.fileDiffHead code{font-size:var(--fs-xs);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.diffHunk{border-top:1px solid var(--line)}
+.diffHunk:first-of-type{border-top:0}
+.diffHunkHead{display:flex;align-items:center;gap:8px;padding:5px 9px;background:rgba(127,127,127,.05);font-size:var(--fs-xs)}
+.diffHunkHead code{color:var(--muted)}
+.diffHunkStat{margin-left:auto}
+.diffHunkStat ins{color:var(--ok);text-decoration:none}
+.diffHunkStat del{color:var(--danger);text-decoration:none}
+.diffBody{margin:0;padding:6px 9px;overflow-x:auto;font-size:var(--fs-xs);line-height:1.45;background:var(--code-bg)}
+.diffBody span{display:block;white-space:pre}
+.diffAdd{background:color-mix(in srgb,var(--ok) 14%,transparent);color:var(--text)}
+.diffDel{background:color-mix(in srgb,var(--danger) 14%,transparent);color:var(--text)}
+.diffCtx{color:var(--muted)}
+.devFileBtn{width:100%;text-align:left;background:none;border:0;cursor:pointer;font:inherit;color:inherit;padding:0}
+.devFileBtn:hover .devFileName{text-decoration:underline}

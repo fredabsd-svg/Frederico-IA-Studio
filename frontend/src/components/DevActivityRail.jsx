@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import {
   Activity, Brain, PanelRightClose, PanelRightOpen, Loader, CheckCircle2, AlertCircle,
   Terminal, FileCog, FolderOpen, Search, ShieldCheck, ChevronDown, FileText, ListTree, GitCompareArrows
@@ -6,6 +6,9 @@ import {
 import { API } from '../constants.js';
 import { MEMORY_FIELDS } from '../hooks/useDevProjects.js';
 import { describe, statusIcon, tryParse } from './ExecutionSession.jsx';
+// O visualizador de diff só aparece quando o usuário clica num arquivo
+// alterado — fica em chunk próprio para não pesar na primeira pintura.
+const LazyFileDiff = lazy(() => import('./FileDiff.jsx').then(m => ({ default: m.FileDiff })));
 
 // Painel de atividades, arquivos, alterações e memória do Modo Desenvolvedor
 // (coluna direita do ambiente). Quatro abas sobre a MESMA fonte de dados — os
@@ -154,10 +157,13 @@ const CHANGE_BADGE_CLASS = { A: 'add', M: 'mod', D: 'del', R: 'mod' };
 // Sem repositório git (vínculo por pasta, ou nada clonado), cai no fallback
 // heurístico anterior — o selo M/A deduzido dos write_file, que continua sendo
 // apresentado como pista, não como diff.
-function ChangesTab({ steps, downloadUrl, conversationId, busy }) {
+function ChangesTab({ steps, downloadUrl, conversationId, busy, askConfirm, showToast }) {
   const { changed } = useMemo(() => buildFileTabs(steps), [steps]);
   const [real, setReal] = useState(null);      // { repos } | null (sem dados)
   const [loading, setLoading] = useState(false);
+  // Arquivo aberto no visualizador de diff (Fase 27): { repo, file }.
+  const [aberto, setAberto] = useState(null);
+  const [recarga, setRecarga] = useState(0);   // força reler o ChangeSet após reverter
   useEffect(() => {
     // Busca ao abrir a aba e refaz quando a execução termina (busy → false):
     // é o momento em que o diff de verdade muda.
@@ -170,7 +176,7 @@ function ChangesTab({ steps, downloadUrl, conversationId, busy }) {
       .catch(() => { if (alive) setReal(null); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [conversationId, busy]);
+  }, [conversationId, busy, recarga]);
 
   const repos = (real?.repos || []).filter(repo => repo.files.length);
   if (repos.length) {
@@ -185,16 +191,35 @@ function ChangesTab({ steps, downloadUrl, conversationId, busy }) {
         </div>
         <ul className="devFileList devChangeList">
           {repo.files.map((f, i) => <li key={`${f.path}-${i}`}>
-            <span className="devFileItem" title={f.from ? `${f.from} → ${f.path}` : f.path}>
-              <span className={`devBadge ${CHANGE_BADGE_CLASS[f.status] || 'mod'}`}>{f.status}</span>
-              <span className="devFileName">{f.path}</span>
-              {f.additions != null && <span className="devChangeStat"><ins>+{f.additions}</ins> <del>−{f.deletions}</del></span>}
-              {f.untracked && <span className="devFileKind">novo</span>}
-            </span>
+            {/* Clicar abre o diff do arquivo (com reversão por trecho). Arquivo
+                apagado não tem diff para abrir — fica como linha simples. */}
+            {f.status === 'D'
+              ? <span className="devFileItem" title={f.path}>
+                  <span className="devBadge del">D</span>
+                  <span className="devFileName">{f.path}</span>
+                </span>
+              : <button type="button" className="devFileItem devFileBtn"
+                  title={f.from ? `${f.from} → ${f.path} — ver diff` : `${f.path} — ver diff`}
+                  onClick={() => setAberto(aberto?.file === f.path && aberto?.repo === repo.name ? null : { repo: repo.name, file: f.path })}>
+                  <span className={`devBadge ${CHANGE_BADGE_CLASS[f.status] || 'mod'}`}>{f.status}</span>
+                  <span className="devFileName">{f.path}</span>
+                  {f.additions != null && <span className="devChangeStat"><ins>+{f.additions}</ins> <del>−{f.deletions}</del></span>}
+                  {f.untracked && <span className="devFileKind">novo</span>}
+                </button>}
           </li>)}
         </ul>
       </div>)}
-      <p className="devRailHint">Diff real do git no repositório da tarefa{loading ? ' — atualizando…' : ''}.</p>
+      {aberto && <Suspense fallback={<p className="devRailHint">Carregando o diff…</p>}>
+        <LazyFileDiff
+          conversationId={conversationId}
+          repo={aberto.repo}
+          file={aberto.file}
+          askConfirm={askConfirm}
+          showToast={showToast}
+          onClose={() => setAberto(null)}
+          onReverted={() => setRecarga(n => n + 1)}/>
+      </Suspense>}
+      <p className="devRailHint">Diff real do git no repositório da tarefa{loading ? ' — atualizando…' : ''}. Clique num arquivo para ver e desfazer trechos.</p>
     </>;
   }
 
@@ -217,7 +242,7 @@ function ChangesTab({ steps, downloadUrl, conversationId, busy }) {
   </>;
 }
 
-export function DevActivityRail({ collapsed, onToggle, busy, statusText, messages, project, onUpdateMemory, downloadUrl, conversationId = null }) {
+export function DevActivityRail({ collapsed, onToggle, busy, statusText, messages, project, onUpdateMemory, downloadUrl, conversationId = null, askConfirm, showToast }) {
   const act = useActivity(messages);
   const [tab, setTab] = useState('atividade');
   const dlUrl = downloadUrl || (() => '#');
@@ -272,7 +297,7 @@ export function DevActivityRail({ collapsed, onToggle, busy, statusText, message
 
       {tab === 'alteracoes' && <div className="devRailSection">
         <label className="devRailLabel">Arquivos alterados</label>
-        <ChangesTab steps={act.steps} downloadUrl={dlUrl} conversationId={conversationId} busy={busy}/>
+        <ChangesTab steps={act.steps} downloadUrl={dlUrl} conversationId={conversationId} busy={busy} askConfirm={askConfirm} showToast={showToast}/>
       </div>}
 
       {tab === 'memoria' && <div className="devRailSection">

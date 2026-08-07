@@ -380,7 +380,9 @@ export async function buildRepoDigest({ userId, repo, branch = null, signal, max
 // Exportado para leituras locais SEM token (ChangeSet do Modo Desenvolvedor):
 // status/diff no clone do workspace. Escrita/remoto continuam só pelas
 // ferramentas github_* — o token nunca sai deste módulo.
-export function runGit(cwd, args, { token = null, timeoutMs = GIT_TIMEOUT_MS, signal } = {}) {
+// `stdin`: texto entregue ao processo (usado por `git apply -` na reversão por
+// hunk). Sem ele, um patch teria de virar arquivo temporário no disco.
+export function runGit(cwd, args, { token = null, timeoutMs = GIT_TIMEOUT_MS, signal, stdin = null } = {}) {
   return new Promise((resolve) => {
     const authArgs = token
       ? ['-c', `http.https://github.com/.extraheader=Authorization: Basic ${Buffer.from(`x-access-token:${token}`).toString('base64')}`]
@@ -402,6 +404,10 @@ export function runGit(cwd, args, { token = null, timeoutMs = GIT_TIMEOUT_MS, si
     const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch {} finish(124, '\n[TIMEOUT: a operação git demorou demais]'); }, timeoutMs);
     const onAbort = () => { try { child.kill('SIGKILL'); } catch {} finish(130, '\n[Cancelado pelo usuário]'); };
     if (signal?.aborted) onAbort(); else signal?.addEventListener('abort', onAbort, { once: true });
+    if (stdin != null) {
+      // `end` fecha a entrada: sem isso o `git apply -` esperaria para sempre.
+      try { child.stdin.end(String(stdin)); } catch { /* o close/erro abaixo resolve */ }
+    }
     child.stdout.on('data', d => { out += d; });
     child.stderr.on('data', d => { err += d; });
     child.on('error', e => finish(-1, `\n${e.code === 'ENOENT' ? 'O git não está instalado no servidor. Reconstrua a imagem do backend (docker compose build backend).' : e.message}`));

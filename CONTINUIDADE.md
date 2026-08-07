@@ -24,7 +24,22 @@ que ainda segura o verde é o **pipeline multimodelo retomável**: o F-15 entreg
 tabela e as primitivas, mas o `runMultiModel` ainda não as usa, então o reinício continua
 sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** a **Frente 21 — Review gate e painel de confiança**
+- **Último trabalho:** a **Frente 22 — Diff por arquivo e reversão por hunk**
+  fecha a Fase 27. A aba "Alterações" já dizia a verdade (Frente 18); agora dá
+  para VER o diff do arquivo e DESFAZER — o arquivo inteiro ou um trecho — sem
+  sair do painel.
+  A reversão por hunk usa `git apply --reverse` com um patch reconstruído do
+  diff ATUAL, nunca edição de texto na mão: se o arquivo mudou desde a leitura,
+  o git recusa o patch e nada acontece (o pior caso é "recarregue e tente de
+  novo", não um patch aplicado no lugar errado). O teste que guarda isso é o
+  central da suíte: reverter um trecho desfaz só ele e **preserva a outra
+  edição** do mesmo arquivo.
+  Contenção: repositório e caminho confinados ao clone da conversa — caminho
+  absoluto e `..` são **recusados**, não normalizados (reinterpretar
+  `/etc/passwd` como `<repo>/etc/passwd` ficaria contido, mas esconderia do
+  usuário o que ele pediu). A rota recusa reverter com a tarefa em execução,
+  para não brigar com o que a IA está escrevendo.
+- **Último trabalho anterior:** a **Frente 21 — Review gate e painel de confiança**
   (Fases 28 e 44) fecha o ciclo VERIFY→REVIEW→DELIVER com evidência medida, não
   declarada. Antes de a tarefa se apresentar como entregue, o backend passa um
   pente automático no que foi REALMENTE alterado (o ChangeSet da Frente 18 +
@@ -350,9 +365,10 @@ sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md
   (o Nino cobrindo o botão de enviar), **[#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)**
   (Playwright + suíte ponta a ponta) e **[#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)**
   (as sete falhas P0 dos sub-agentes).
-- **Última validação:** 2026-08-07 (Frente 21) — **backend `npm run check`:
-  1265 testes, 0 falhas, 144 pulados** e **frontend: 140/140** (bundle
-  916/920 KB). Antes dela, Frente 20 — backend 1253 testes, 0 falhas. Antes dela, Frente 19 — **backend 1240 testes, 0 falhas, 144 pulados** (exigem PostgreSQL; esperado fora do
+- **Última validação:** 2026-08-07 (Frente 22) — **backend `npm run check`:
+  1273 testes, 0 falhas, 144 pulados** e **frontend: 140/140** (bundle
+  917/920 KB — o visualizador de diff entrou em chunk lazy justamente por
+  ter encostado no teto). Antes dela, Frente 21 — backend 1265, 0 falhas. Antes dela, Frente 20 — backend 1253 testes, 0 falhas. Antes dela, Frente 19 — **backend 1240 testes, 0 falhas, 144 pulados** (exigem PostgreSQL; esperado fora do
   Docker) e **frontend `npm run check`: 140/140** (lint + testes + build +
   budget + css:inventory verdes). Bundle: entrada 916/920 KB, total dentro do
   teto. Antes dela: Frente 18 (backend 1236/0, frontend 135/135) e Frente 17

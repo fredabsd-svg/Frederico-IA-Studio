@@ -1383,6 +1383,8 @@ export default function App({ user } = {}) {
       onUpdateMemory={(key, value) => devProjects.activeId && devProjects.updateProject(devProjects.activeId, p => ({ ...p, memory: { ...p.memory, [key]: value } }))}
       downloadUrl={(path) => conversationDownloadUrl(current?.id, path)}
       conversationId={current?.id || null}
+      askConfirm={askConfirm}
+      showToast={showToast}
     />}
 
     {filesDrawerOpen && <Drawer title="Arquivos da conversa" icon={<FolderOpen size={18}/>} onClose={() => setFilesDrawerOpen(false)} className="filesDrawer">
