@@ -95,6 +95,33 @@ export function mergeChanges(statusFiles, numstatByPath) {
   return { files, totals };
 }
 
+// Diff unificado (texto) dos clones da conversa — insumo do review gate, que
+// precisa das LINHAS ADICIONADAS, não só dos nomes de arquivo. Limitado para
+// não crescer sem teto num commit gigante.
+export async function collectConversationDiff(userId, conversationId, { maxChars = 400_000 } = {}) {
+  const root = path.join(workspaceFor(conversationId, userId).base, 'repo');
+  let entries = [];
+  try {
+    entries = fs.readdirSync(root, { withFileTypes: true })
+      .filter(entry => entry.isDirectory() && fs.existsSync(path.join(root, entry.name, '.git')))
+      .slice(0, MAX_REPOS);
+  } catch {
+    return '';
+  }
+  const parts = [];
+  let size = 0;
+  for (const entry of entries) {
+    // `--no-color`/`-U0` mantêm o texto compacto: o gate só lê linhas '+'.
+    const result = await runGit(path.join(root, entry.name), ['diff', 'HEAD', '--no-color', '-U0']);
+    if (result.code !== 0 || !result.stdout) continue;
+    const chunk = result.stdout.slice(0, Math.max(0, maxChars - size));
+    parts.push(chunk);
+    size += chunk.length;
+    if (size >= maxChars) break;
+  }
+  return parts.join('\n');
+}
+
 // Alterações reais de TODOS os clones da conversa (normalmente um).
 export async function collectConversationChanges(userId, conversationId) {
   const root = path.join(workspaceFor(conversationId, userId).base, 'repo');

@@ -33,6 +33,8 @@ import { createRunStateTracker } from './runStateMachine.js';
 import { resolveSandboxNetwork, isToolCallAllowed } from './assistantPolicy.js';
 import { evaluateShellCommand, normalizeCommandGrants } from './permissionPolicy.js';
 import { createDoomLoopDetector, doomLoopResult } from './doomLoop.js';
+import { collectConversationChanges, collectConversationDiff } from './changeSet.js';
+import { reviewFindings, reviewNote, summarizeReview } from './reviewGate.js';
 import { explicitlyAuthorizesPcWrite } from '../execGuard.js';
 import { takeSandboxRestartNotice, sandboxOpenTransaction } from '../sandbox.js';
 import { formatRestartNotice, formatOpenTransactionNotice } from '../agentEnv.js';
@@ -1627,6 +1629,40 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
       onEvent({ type: 'delta', content: validationNotice });
     }
   }
+  // REVIEW GATE (Fase 28) + painel de confiança (Fase 44): antes de a tarefa se
+  // apresentar como entregue, o backend passa um pente automático no que foi
+  // REALMENTE alterado (ChangeSet + diff do git) procurando segredo, código de
+  // depuração, teste desligado, remoção sensível, código sem teste e trabalho
+  // fora do plano. Não é opinião do modelo: são sinais medidos no diff.
+  //
+  // Só roda quando faz sentido: modo desenvolvedor com escrita, no agente
+  // principal, com trabalho executado — e nunca derruba o run (qualquer falha
+  // aqui é registrada e a entrega segue, sem review).
+  let review = null;
+  if (!isSubagent && developerContext?.canWrite && executedToolCalls > 0 && !stopped) {
+    try {
+      const changes = await collectConversationChanges(userId, conversationId);
+      if (changes.repos.some(repo => repo.files.length)) {
+        const diffText = await collectConversationDiff(userId, conversationId);
+        review = summarizeReview(reviewFindings({ changes, diffText, plan: currentPlan }));
+        onEvent({ type: 'verification', review });
+        // Achados que exigem decisão humana entram no TEXTO da resposta: o
+        // usuário não pode depender de abrir um painel para saber que há um
+        // segredo no diff. Os demais ficam só no painel, para não poluir.
+        const graves = review.findings.filter(item => item.severity === 'blocker' || item.severity === 'high');
+        if (graves.length) {
+          const lista = graves.slice(0, 5)
+            .map(item => `- **${item.severity}** ${item.file ? `\`${item.file}${item.line ? `:${item.line}` : ''}\` — ` : ''}${item.message}`)
+            .join('\n');
+          const aviso = `\n\n**Revisão automática das alterações (${graves.length} ponto${graves.length > 1 ? 's' : ''} a conferir antes de publicar):**\n${lista}`;
+          finalText += aviso;
+          onEvent({ type: 'delta', content: aviso });
+        }
+      }
+    } catch (err) {
+      console.error('[review-gate] falhou (a entrega segue sem revisão):', err.message);
+    }
+  }
   // CHECKPOINT: interrompida por limite/infra/parada com progresso real → salva
   // o estado (mesmo mecanismo p/ limite de ciclos E watchdog/provedor). Caso
   // contrário (conclusão limpa, ou falha de qualidade), limpa qualquer
@@ -1675,6 +1711,9 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
     // Plano final da tarefa: persiste com a mensagem para a interface remontar
     // o checklist ao reabrir a conversa (mesmo caminho do inputRequest).
     ...(currentPlan ? { plan: currentPlan } : {}),
+    // Revisão automática das alterações (Fase 28): vai para o painel de
+    // confiança e sobrevive ao reload junto da mensagem.
+    ...(review ? { review } : {}),
     // Estado real da integração com o GitHub nesta execução (sem token, sem
     // segredo): a interface mostra a CAUSA de um bloqueio em vez de "a ferramenta
     // não está habilitada".

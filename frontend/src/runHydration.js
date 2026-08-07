@@ -51,7 +51,8 @@ export function applyRunsToMessages(messages, runs) {
     return {
       ...message,
       blocks: blocksFromRunSteps(run.steps, message.content),
-      ...(run.plan && !message.plan ? { plan: run.plan } : {})
+      ...(run.plan && !message.plan ? { plan: run.plan } : {}),
+      ...(run.review && !message.review ? { review: run.review } : {})
     };
   });
 }

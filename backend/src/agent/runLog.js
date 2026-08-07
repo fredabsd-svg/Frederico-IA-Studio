@@ -18,7 +18,7 @@ import { isTerminalExecutionState } from './executionState.js';
 
 // Eventos que valem reconstrução. `run_state` também atualiza a linha do run.
 const PERSISTED_EVENTS = new Set([
-  'tool_start', 'tool_result', 'run_state', 'input_required', 'plan_update', 'files', 'file_checks'
+  'tool_start', 'tool_result', 'run_state', 'input_required', 'plan_update', 'files', 'file_checks', 'verification'
 ]);
 // Teto do payload serializado de UM evento. Acima disso o evento é gravado
 // truncado com aviso — nunca descartado em silêncio.
@@ -219,6 +219,7 @@ export async function listConversationRuns(userId, conversationId, { limit = 20 
       return { seq: row.seq, type: row.type, payload, created_at: row.created_at };
     });
     const planEvents = parsed.filter(record => record.type === 'plan_update');
+    const reviewEvents = parsed.filter(record => record.type === 'verification');
     result.push({
       runId: run.run_id,
       kind: run.kind,
@@ -229,7 +230,8 @@ export async function listConversationRuns(userId, conversationId, { limit = 20 
       startedAt: run.started_at,
       endedAt: run.ended_at || null,
       steps: stepsFromRunEvents(parsed, { finalState: run.state }),
-      plan: planEvents.length ? (planEvents[planEvents.length - 1].payload.plan || null) : null
+      plan: planEvents.length ? (planEvents[planEvents.length - 1].payload.plan || null) : null,
+      review: reviewEvents.length ? (reviewEvents[reviewEvents.length - 1].payload.review || null) : null
     });
   }
   return result;

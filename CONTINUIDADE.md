@@ -24,7 +24,24 @@ que ainda segura o verde é o **pipeline multimodelo retomável**: o F-15 entreg
 tabela e as primitivas, mas o `runMultiModel` ainda não as usa, então o reinício continua
 sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** a **Frente 20 — Branch de trabalho por tarefa**
+- **Último trabalho:** a **Frente 21 — Review gate e painel de confiança**
+  (Fases 28 e 44) fecha o ciclo VERIFY→REVIEW→DELIVER com evidência medida, não
+  declarada. Antes de a tarefa se apresentar como entregue, o backend passa um
+  pente automático no que foi REALMENTE alterado (o ChangeSet da Frente 18 +
+  `git diff HEAD -U0`): segredo em linha adicionada (blocker), teste desligado
+  com `.only`/`.skip` (high), código alterado sem teste tocado (high), remoção
+  de caminho sensível (CI, compose, migrations), código de depuração, TODO novo
+  e arquivos que nenhum passo do plano menciona.
+  **Três decisões que definem o comportamento:** (1) os achados vêm do diff, não
+  de autoavaliação do modelo — ele os recebe como fato e precisa tratá-los;
+  (2) achado NÃO bloqueia publicação por conta própria: aparece no painel, no
+  prompt e — quando é blocker/high — no texto da resposta, mas a autorização
+  continua sendo do usuário; (3) falso positivo é barato (o achado cita arquivo
+  e linha), falso negativo é caro — na dúvida o sinal aparece.
+  Falha do gate nunca derruba a entrega. O resultado viaja no evento
+  `verification`, no `execution_meta` e no event log durável, então sobrevive ao
+  reload como o plano.
+- **Último trabalho anterior:** a **Frente 20 — Branch de trabalho por tarefa**
   (decisão 2A) fechou o isolamento de HISTÓRICO — o de arquivos já vinha do
   clone por conversa. Em modo de escrita sobre branch protegida (main/master/
   develop…) ou sem branch fixada, a tarefa passa a commitar numa branch
@@ -333,9 +350,9 @@ sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md
   (o Nino cobrindo o botão de enviar), **[#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)**
   (Playwright + suíte ponta a ponta) e **[#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)**
   (as sete falhas P0 dos sub-agentes).
-- **Última validação:** 2026-08-07 (Frente 20) — **backend `npm run check`:
-  1253 testes, 0 falhas, 144 pulados** e **frontend: 140/140** (bundle
-  916/920 KB). Antes dela, Frente 19 — **backend 1240 testes, 0 falhas, 144 pulados** (exigem PostgreSQL; esperado fora do
+- **Última validação:** 2026-08-07 (Frente 21) — **backend `npm run check`:
+  1265 testes, 0 falhas, 144 pulados** e **frontend: 140/140** (bundle
+  916/920 KB). Antes dela, Frente 20 — backend 1253 testes, 0 falhas. Antes dela, Frente 19 — **backend 1240 testes, 0 falhas, 144 pulados** (exigem PostgreSQL; esperado fora do
   Docker) e **frontend `npm run check`: 140/140** (lint + testes + build +
   budget + css:inventory verdes). Bundle: entrada 916/920 KB, total dentro do
   teto. Antes dela: Frente 18 (backend 1236/0, frontend 135/135) e Frente 17
