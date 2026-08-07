@@ -152,6 +152,16 @@ POST /chat
   estruturado que instrui a mudar de estratégia; resultado novo zera a
   contagem (progresso legítimo). O bloqueio conta no freio de falhas
   consecutivas do loop.
+- **Diff por arquivo e reversão por hunk (Fase 27 completa):**
+  `agent/diffView.js` + `GET /conversations/:id/diff` e
+  `POST /conversations/:id/revert`. O arquivo alterado abre em hunks; cada
+  trecho pode ser desfeito isoladamente com `git apply --reverse` sobre um
+  patch reconstruído do diff ATUAL — se o arquivo mudou desde a leitura, o git
+  recusa e nada é aplicado (melhor que aplicar no lugar errado). Arquivo
+  inteiro volta por `git checkout HEAD --`; arquivo novo (não rastreado) é
+  descartado. Contenção: repositório e caminho confinados ao clone da conversa
+  (caminho absoluto e `..` são RECUSADOS, não normalizados), e a rota recusa
+  reversão com a tarefa em execução.
 - **Review gate + painel de confiança (Fases 28 e 44):** `agent/reviewGate.js`
   — antes de a tarefa se apresentar como entregue, o backend passa um pente
   automático no que foi REALMENTE alterado (ChangeSet + `git diff HEAD -U0`),

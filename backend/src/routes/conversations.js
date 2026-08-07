@@ -9,6 +9,7 @@ import { loadPipelineRun } from '../agent/pipelineRuns.js';
 import { acquireConversationControl, releaseConversationControl } from '../agent/control.js';
 import { createRunLog, listConversationRuns } from '../agent/runLog.js';
 import { collectConversationChanges } from '../agent/changeSet.js';
+import { fileDiff, revertChange } from '../agent/diffView.js';
 import { openLiveStream, getLiveStream } from '../liveStream.js';
 import { runTool } from '../tools.js';
 import { classifyTaskResult } from '../taskOutcome.js';
@@ -688,6 +689,39 @@ router.get('/conversations/:id/changes', async (req, res) => {
   const conv = await db.prepare('SELECT id FROM conversations WHERE id=? AND user_id=?').get(req.params.id, req.userId);
   if (!conv) return res.status(404).json({ error: 'Não encontrado' });
   res.json(await collectConversationChanges(req.userId, req.params.id));
+});
+
+// DIFF de UM arquivo, em hunks (Fase 27). Leitura local, sem token.
+router.get('/conversations/:id/diff', async (req, res) => {
+  const conv = await db.prepare('SELECT id FROM conversations WHERE id=? AND user_id=?').get(req.params.id, req.userId);
+  if (!conv) return res.status(404).json({ error: 'Não encontrado' });
+  const result = await fileDiff(req.userId, req.params.id, {
+    repo: String(req.query.repo || ''),
+    file: String(req.query.file || '')
+  });
+  if (result?.error) return res.status(400).json(result);
+  res.json(result);
+});
+
+// REVERTER um arquivo inteiro ou UM hunk. Operação destrutiva sobre trabalho
+// não commitado: o clique do usuário é a autorização (como no botão de push),
+// e o backend confina o alvo ao clone desta conversa. Um hunk é revertido com
+// `git apply --reverse` — se o arquivo mudou desde a leitura do diff, o git
+// recusa e nada é aplicado.
+router.post('/conversations/:id/revert', async (req, res) => {
+  const conv = await db.prepare('SELECT id FROM conversations WHERE id=? AND user_id=?').get(req.params.id, req.userId);
+  if (!conv) return res.status(404).json({ error: 'Não encontrado' });
+  if (isConversationActive(req.params.id)) {
+    return res.status(409).json({ error: 'A tarefa ainda está em execução. Pare o processamento antes de reverter alterações — reverter agora pode conflitar com o que a IA está escrevendo.' });
+  }
+  const hunkIndex = req.body?.hunkIndex;
+  const result = await revertChange(req.userId, req.params.id, {
+    repo: String(req.body?.repo || ''),
+    file: String(req.body?.file || ''),
+    hunkIndex: Number.isInteger(hunkIndex) ? hunkIndex : null
+  });
+  if (result?.error) return res.status(400).json(result);
+  res.json(result);
 });
 
 // RETOMADA REAL: continua uma tarefa interrompida A PARTIR DO CHECKPOINT (não
