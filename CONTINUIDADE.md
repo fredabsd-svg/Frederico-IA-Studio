@@ -24,7 +24,24 @@ que ainda segura o verde é o **pipeline multimodelo retomável**: o F-15 entreg
 tabela e as primitivas, mas o `runMultiModel` ainda não as usa, então o reinício continua
 sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** a **Frente 18 — Developer Workspace 3.0: ChangeSet real,
+- **Último trabalho:** a **Frente 19 — Projetos dev no servidor (ADR 0004)**
+  fechou o risco R7 da auditoria: a fonte de verdade dos projetos do Modo
+  Desenvolvedor (vínculo repo/pasta, regras, memória permanente, permissões
+  concedidas, modo) saiu do localStorage e foi para o banco.
+  - Migration 033 completa `dev_projects` com `permissions`/`mode` (COALESCE no
+    upsert: chamador antigo não apaga o registro); a lista de conversas deriva
+    de `conversations.project_id`.
+  - Rotas autenticadas `GET/PUT/DELETE /api/dev-projects` + `POST /import`
+    (migração única do acervo local, idempotente, guardada por marcador no
+    navegador — servidor esvaziado em outro dispositivo não é re-populado por
+    cache antigo). Excluir projeto SOLTA as conversas, nunca apaga histórico.
+  - `useDevProjects` virou cache sincronizado: bootstrap do servidor, mudanças
+    por PUT com debounce, exclusão imediata; offline segue funcionando no
+    cache. `projectFromServer` pura e testada.
+  **Consequência prática:** trocar de navegador/dispositivo não perde mais o
+  vínculo nem as autorizações; o pré-voo e as rotas de botão GitHub validam
+  contra o MESMO registro que a UI mostra.
+- **Último trabalho anterior:** a **Frente 18 — Developer Workspace 3.0: ChangeSet real,
   Code Intelligence leve e doom loop**. Três respostas diretas às perguntas de
   confiança da Fase 73 ("Quais arquivos mudaram?", "Está travado?"):
   1. **ChangeSet real** (`agent/changeSet.js` + `GET /conversations/:id/changes`):
@@ -297,13 +314,13 @@ sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md
   (o Nino cobrindo o botão de enviar), **[#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)**
   (Playwright + suíte ponta a ponta) e **[#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)**
   (as sete falhas P0 dos sub-agentes).
-- **Última validação:** 2026-08-07 (Frente 18) — **backend `npm run check`:
-  1236 testes, 0 falhas, 141 pulados** (exigem PostgreSQL; esperado fora do
-  Docker) e **frontend `npm run check`: 135/135** (lint + testes + build +
-  budget + css:inventory verdes). Bundle: entrada 911/920 KB (a Frente 17
-  destravou o teto movendo o DeveloperPanel para chunk lazy), total
-  1035/1100 KB. Antes dela: Frente 17 em 2026-08-07 (backend 1221/0 falhas);
-  2026-08-06 — frontend 81/81; backend 1008/1008 com Postgres em 2026-08-05. Os 26 E2E
+- **Última validação:** 2026-08-07 (Frente 19) — **backend `npm run check`:
+  1240 testes, 0 falhas, 144 pulados** (exigem PostgreSQL; esperado fora do
+  Docker) e **frontend `npm run check`: 140/140** (lint + testes + build +
+  budget + css:inventory verdes). Bundle: entrada 916/920 KB, total dentro do
+  teto. Antes dela: Frente 18 (backend 1236/0, frontend 135/135) e Frente 17
+  (backend 1221/0) em 2026-08-07; 2026-08-06 — frontend 81/81; backend
+  1008/1008 com Postgres em 2026-08-05. Os 26 E2E
   ponta a ponta exigem Postgres + Chromium do contêiner (`/opt/pw-browsers/`)
   e ficaram fora do escopo desta frente — a poda é conservadora e a
   catraca impede regredir.
