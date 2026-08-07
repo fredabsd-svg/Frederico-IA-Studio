@@ -24,6 +24,35 @@ que ainda segura o verde é o **pipeline multimodelo retomável**: o F-15 entreg
 tabela e as primitivas, mas o `runMultiModel` ainda não as usa, então o reinício continua
 sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
+- **Último trabalho:** o **Nino arrastado não cobre mais os controles do rodapé**.
+  A Frente 16 corrigiu o personagem ANCORADO (o `bottom` do `companion.css` soma
+  `--composer-h` + `--dock-h`) e o PR #184 corrigiu a **visibilidade** do
+  personagem arrastado (revalidação por `clampCompanionPosition`). As duas
+  convivem — medido: 16px de folga no caso padrão —, mas sobrava uma lacuna que
+  nenhuma das duas cobria: **arrastado**, o Nino tem `left`/`top` absolutos, o CSS
+  deixa de valer, e ele voltava a pousar sobre o botão de enviar e sobre o
+  cabeçalho do terminal. Provado por hit test em navegador real:
+  `elementFromPoint` no botão "Maximizar o terminal" devolvia o SVG do mascote e o
+  clique era recusado. A lacuna é anterior às duas frentes — o arraste vem do
+  #130/#142 —, porque a revalidação reservava só o recuo DIREITO (a coluna
+  Atividade), e o inferior ficava na margem padrão de 8px.
+  Agora a regra é uma só, pura e testada, em `frontend/src/companionPosition.js`:
+  `PROTECTED_CONTROL_SELECTORS` (`.composerWrap`, `.dockHead`, `.chatJump`) +
+  `protectedBottomInset`, que converte as medidas reais desses controles no recuo
+  inferior que o `clampCompanionPosition` já sabia aplicar. Cobrir a **área de
+  log** do terminal continua permitido — quem arrastou para lá quis isso; cobrir
+  **botão** não. O recuo entra nos dois caminhos (no arraste, medido uma vez no
+  início do gesto; e na revalidação), e como a faixa muda de altura sem a janela
+  mudar de tamanho, o `useComposerHeight` anuncia cada mudança no evento
+  `BOTTOM_BAND_EVENT` (`fred:bottom-band`) — sem ele, abrir o terminal por baixo
+  de um Nino já arrastado o deixaria parado em cima dos botões.
+  **Limite conhecido:** o botão "Ir para o final" aparece conforme a rolagem, sem
+  passar pela faixa medida — é respeitado no arraste, mas um Nino já parado ali
+  não sai do caminho quando o botão surge.
+  **Validação:** frontend 130/130 (lint + testes + build + budget 918/920 KB +
+  catraca de CSS) e **41/41 ponta a ponta**, com os três casos novos de arraste
+  conferidos nos dois sentidos — desligando o recuo, os três falham.
+  Doc: `docs/FREDERICO_COMPANION.md` § "A faixa de controles do rodapé".
 - **Último trabalho:** a **Frente 16 — Modo Desenvolvedor: rolagem, perguntas,
   terminal e publicação no GitHub** fechou quatro defeitos que se reforçavam.
   1. **Smart Auto-scroll real.** O efeito antigo dependia da identidade do array

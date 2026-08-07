@@ -150,3 +150,40 @@ o tamanho da janela, essa posição é validada e ajustada para permanecer dentr
 Em **Configurações › Agente › Copiloto — Personalização**, a ação **Restaurar na
 tela** remove a posição e o estado minimizado salvos e reativa o personagem ao
 salvar.
+
+### A faixa de controles do rodapé
+
+Enquanto o Nino está ancorado no canto, quem o mantém fora do caminho é o CSS:
+`companion.css` calcula o `bottom` a partir de `--composer-h` e `--dock-h`, as
+alturas reais publicadas por `useComposerHeight`. **Arrastado**, ele passa a ter
+`left`/`top` absolutos e o CSS deixa de valer — e voltava a pousar sobre o botão
+de enviar e sobre o cabeçalho do terminal inferior, engolindo os cliques de
+recolher, expandir e maximizar (medido por hit test: `elementFromPoint` no botão
+devolvia o SVG do mascote).
+
+A regra agora é uma só, em `frontend/src/companionPosition.js`:
+
+- `PROTECTED_CONTROL_SELECTORS` lista os controles que o personagem **nunca**
+  pode cobrir — `.composerWrap`, `.dockHead` e o botão `.chatJump`. Cobrir a
+  *área de log* do terminal continua permitido: quem arrastou o Nino para lá
+  quis isso; cobrir botão é outra coisa.
+- `protectedBottomInset` converte as medidas desses controles no recuo inferior
+  que `clampCompanionPosition` já sabia aplicar. O personagem para acima do
+  controle mais alto da faixa, com 8px de folga.
+
+O recuo é aplicado nos dois caminhos: no arraste (medido uma vez, no início do
+gesto — medir a cada `pointermove` forçaria layout dezenas de vezes por segundo)
+e na revalidação de visibilidade. Como a faixa muda de altura sem que a janela
+mude de tamanho — abrir, expandir ou redimensionar o terminal —, o
+`useComposerHeight` anuncia cada mudança no evento `BOTTOM_BAND_EVENT`
+(`fred:bottom-band`), e o personagem recalcula. Sem esse evento, abrir o terminal
+por baixo de um Nino já arrastado o deixaria parado em cima dos botões.
+
+Limite conhecido: o botão **Ir para o final** aparece e desaparece conforme a
+rolagem, sem passar pela faixa medida. Ele é respeitado no arraste, mas um Nino
+já parado ali não sai do caminho quando o botão surge — o botão é transitório e
+a conversa continua rolável pelo teclado e pela roda.
+
+Os guardas: `frontend/src/companionPosition.test.js` para a regra pura e
+`e2e/tests/layout.spec.js` para o comportamento no navegador, com hit test e
+clique real (os três casos de arraste falham se o recuo for removido).

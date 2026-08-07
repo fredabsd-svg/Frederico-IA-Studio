@@ -1,5 +1,17 @@
 import { useCallback, useEffect, useRef } from 'react';
 
+// Anunciado a cada mudança de altura de uma faixa do rodapé. Quem posiciona algo
+// por cima dela e NÃO consegue usar a variável CSS direto — o Nino arrastado tem
+// coordenadas absolutas em `left`/`top` — precisa saber que a faixa cresceu para
+// recalcular. Sem isso, abrir ou aumentar o terminal embaixo de um personagem já
+// arrastado voltaria a cobrir os botões.
+export const BOTTOM_BAND_EVENT = 'fred:bottom-band';
+
+function anunciar(variavel, altura) {
+  if (typeof window === 'undefined' || typeof CustomEvent === 'undefined') return;
+  window.dispatchEvent(new CustomEvent(BOTTOM_BAND_EVENT, { detail: { variavel, altura } }));
+}
+
 // Publica a altura do compositor na variável CSS `--composer-h` (no elemento
 // raiz), para quem flutua por cima da tela conseguir desviar dele.
 //
@@ -26,6 +38,7 @@ import { useCallback, useEffect, useRef } from 'react';
 // real, em `e2e/tests/modo-desenvolvedor.spec.js`).
 export function useComposerHeight(variavel = '--composer-h') {
   const observadorRef = useRef(null);
+  const alturaRef = useRef(null);
 
   const limpar = useCallback(() => {
     if (observadorRef.current) {
@@ -33,6 +46,10 @@ export function useComposerHeight(variavel = '--composer-h') {
       observadorRef.current = null;
     }
     document.documentElement.style.removeProperty(variavel);
+    if (alturaRef.current !== null) {
+      alturaRef.current = null;
+      anunciar(variavel, 0);
+    }
   }, [variavel]);
 
   // Some com a variável ao desmontar: deixá-la para trás faria o personagem
@@ -46,6 +63,9 @@ export function useComposerHeight(variavel = '--composer-h') {
     const medir = () => {
       const altura = Math.round(elemento.getBoundingClientRect().height);
       document.documentElement.style.setProperty(variavel, `${altura}px`);
+      if (altura === alturaRef.current) return;
+      alturaRef.current = altura;
+      anunciar(variavel, altura);
     };
     medir();
 
