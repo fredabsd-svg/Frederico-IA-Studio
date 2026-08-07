@@ -27,6 +27,7 @@
 // precisar de um segundo clique), mas ela também é ESCOPADA ao repositório e à
 // branch do vínculo — nunca é permissão global.
 import { githubToolDefinitions, GITHUB_WRITE_TOOLS, isValidBranchName, isValidRepoFullName } from '../connectors/github.js';
+import { resolveWorkBranch } from './workBranch.js';
 
 export const GITHUB_WRITE_ACTIONS = Object.freeze(['push', 'create_pr']);
 
@@ -96,14 +97,33 @@ export function githubPreflight({
   turnAuthorizesWrite = false,
   base = null,
   lowSignalTurn = false,
-  isSubagent = false
+  isSubagent = false,
+  // Identidade da tarefa: alimenta a BRANCH DE TRABALHO derivada (Fase 23).
+  conversationId = '',
+  projectName = ''
 } = {}) {
   const binding = developerContext?.github || null;
+  // BRANCH DE TRABALHO (decisão 2A): em modo de escrita sobre branch protegida
+  // (ou sem branch fixada), a tarefa trabalha numa branch derivada e o PR tem a
+  // vinculada como base. A decisão é pura (workBranch.js) e acontece AQUI, no
+  // pré-voo — a mesma fonte que decide o inventário, informa a interface e
+  // orienta o prompt, para os três nunca divergirem.
+  const work = resolveWorkBranch({
+    boundBranch: binding?.branch || '',
+    canWrite: Boolean(developerContext?.canWrite),
+    projectName,
+    conversationId
+  });
+  const effectiveBranch = work.branch || binding?.branch || null;
   const state = {
     connected: Boolean(githubConnected),
     repository: binding?.repo || null,
-    branch: binding?.branch || null,
-    base: base || null,
+    branch: effectiveBranch,
+    // A branch vinculada continua visível: é a base do PR quando houve derivação.
+    boundBranch: binding?.branch || null,
+    workBranchDerived: work.derived,
+    workBranchReason: work.derived ? work.reason : null,
+    base: base || (work.derived ? work.base : null),
     mode: developerContext?.mode || null,
     canRead: false,
     canWrite: Boolean(developerContext?.canWrite),
@@ -126,8 +146,11 @@ export function githubPreflight({
   if (!state.canWrite) { state.blockingReason = 'read_only_mode'; return state; }
 
   // Caminho 1 — autorização ESTRUTURADA, escopada a repo/branch/base/ações.
+  // O escopo é conferido contra a branch EFETIVA (a de trabalho, quando houve
+  // derivação): é nela que o push acontece, então é ela que precisa constar da
+  // autorização que o usuário confirmou.
   if (authorization) {
-    const bindingScope = { repo: binding.repo, branch: binding.branch, base: base || null };
+    const bindingScope = { repo: binding.repo, branch: state.branch, base: state.base || null };
     if (!authorizationMatchesBinding(authorization, bindingScope)) {
       state.blockingReason = 'scope_mismatch';
       return state;
@@ -146,7 +169,16 @@ export function githubPreflight({
   // abra o PR"). Vale só para o vínculo atual, e a branch precisa existir no
   // vínculo: sem branch declarada não há escopo, e sem escopo não há permissão.
   if (turnAuthorizesWrite) {
+    // Este caminho (regex sobre o texto do turno) é o mais frágil e NÃO ganha
+    // alcance com a branch de trabalho derivada: continua exigindo que o
+    // VÍNCULO tenha uma branch explícita. Sem vínculo de branch não há escopo,
+    // e sem escopo o texto não vira permissão. A branch efetiva do push segue
+    // sendo a de trabalho (derivada quando a vinculada é protegida).
     if (!binding.branch || !isValidBranchName(binding.branch)) {
+      state.blockingReason = 'invalid_branch';
+      return state;
+    }
+    if (!state.branch || !isValidBranchName(state.branch)) {
       state.blockingReason = 'invalid_branch';
       return state;
     }
@@ -193,7 +225,10 @@ export function githubPreflightNote(preflight) {
       preflight.tools.push ? 'github_push' : null,
       preflight.tools.createPr ? 'github_create_pr' : null
     ].filter(Boolean).join(' e ');
-    return `PUBLICAÇÃO AUTORIZADA nesta tarefa para ${preflight.repository} na branch "${preflight.branch}"${preflight.base ? ` (destino "${preflight.base}")` : ''}: você tem ${acoes}. Antes de enviar, confira o diff e publique somente o que está no escopo da missão. Só informe o link do Pull Request DEPOIS que a ferramenta devolver a URL.`;
+    const derivada = preflight.workBranchDerived
+      ? ` A branch "${preflight.branch}" é a BRANCH DE TRABALHO desta tarefa (criada a partir de "${preflight.boundBranch || 'branch padrão do repositório'}"); nunca commite direto na branch protegida.`
+      : '';
+    return `PUBLICAÇÃO AUTORIZADA nesta tarefa para ${preflight.repository} na branch "${preflight.branch}"${preflight.base ? ` (destino "${preflight.base}")` : ''}: você tem ${acoes}.${derivada} Antes de enviar, confira o diff e publique somente o que está no escopo da missão. Só informe o link do Pull Request DEPOIS que a ferramenta devolver a URL.`;
   }
   const causa = githubBlockingMessage(preflight.blockingReason);
   if (!causa) return null;

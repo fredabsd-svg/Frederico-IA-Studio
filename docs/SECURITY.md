@@ -302,7 +302,8 @@ Controles:
 | Superfície | Regra |
 | --- | --- |
 | Origem | Ação explícita do usuário: o botão **Autorizar publicação** (que mostra repositório, branch, destino e ações antes de confirmar) ou a confirmação de um `ask_user` cujo escopo o **backend** carimba a partir do vínculo — nunca do texto do modelo. |
-| Escopo | Repositório + branch + branch base + ações (`push`, `create_pr`). Não vale para outro repositório, outra branch ou outra base. Não é permissão global. |
+| Escopo | Repositório + branch + branch base + ações (`push`, `create_pr`). Não vale para outro repositório, outra branch ou outra base. Não é permissão global. Com **branch de trabalho derivada** (Fase 23), o escopo é conferido contra a branch EFETIVA — uma autorização emitida para a branch protegida não publica o trabalho, e vice-versa. |
+| Branch protegida | Em modo de escrita, o agente nunca commita direto em `main`/`master`/`develop`/…: o trabalho vai para uma branch própria da tarefa e o PR tem a protegida como base (`agent/workBranch.js`). O caminho legado de autorização por texto do turno continua exigindo branch explícita no vínculo — a derivação não amplia o alcance dele. |
 | Re-validação | O backend normaliza tudo (`normalizeGithubWriteAuthorization`): campos desconhecidos e ações fora do enum são **descartados**, branch inválida (ex.: `--force`) é recusada. O frontend não amplia nada. |
 | Modo | Só `build`/`fix`/`auto` podem publicar; `ask`/`plan`/`review` ficam em leitura mesmo com autorização registrada. |
 | Sub-agente | Nunca publica (ver 8.1). |
