@@ -24,6 +24,7 @@ import {
 import { runGithubTool } from './connectors/github.js';
 import { createCache } from './cache.js';
 import { captureThumbnail } from './agent/pageShot.js';
+import { findFiles, searchText } from './agent/codeIntel.js';
 import { guardCommand, guardPythonCode, PC_MOUNT_ROOT, networkAllowlistFromEnv } from './execGuard.js';
 import { audit } from './companion/audit.js';
 
@@ -45,6 +46,8 @@ export const toolDefinitions = [
   { type: 'function', function: { name: 'write_file', description: 'Cria ou sobrescreve arquivo no workspace da sessão.', parameters: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path','content'] } } },
   { type: 'function', function: { name: 'read_file', description: 'Lê um arquivo de texto do workspace da sessão.', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } } },
   { type: 'function', function: { name: 'list_files', description: 'Lista arquivos enviados e gerados na sessão.', parameters: { type: 'object', properties: { folder: { type: 'string', enum: ['uploads','outputs','.'] } } } } },
+  { type: 'function', function: { name: 'find_file', description: 'Localiza arquivos do workspace pelo nome: aceita glob ("src/**/*.js", "repo/**/package.json") ou um trecho do nome ("useChat"). Mais barato e preciso que find/ls pelo bash — devolve a lista de caminhos relativos, com aviso quando cortada no limite.', parameters: { type: 'object', properties: { pattern: { type: 'string', description: 'Glob (com * ? **) ou trecho do nome do arquivo' }, limit: { type: 'number', description: '(opcional) máximo de resultados; padrão 100' } }, required: ['pattern'] } } },
+  { type: 'function', function: { name: 'search_text', description: 'Busca texto no CONTEÚDO dos arquivos do workspace (código, config, docs) e devolve arquivo + linha + trecho, já estruturado. Use em vez de grep pelo bash. Por padrão a busca é literal; regex=true ativa expressão regular; glob (ex.: "repo/**/*.py") restringe os arquivos. node_modules/.git/binários ficam de fora; resultados cortados vêm com aviso.', parameters: { type: 'object', properties: { pattern: { type: 'string', description: 'Texto literal (ou regex, com regex=true)' }, regex: { type: 'boolean', description: '(opcional) tratar pattern como expressão regular' }, glob: { type: 'string', description: '(opcional) restringir a arquivos que casem este glob' }, limit: { type: 'number', description: '(opcional) máximo de ocorrências; padrão 80' } }, required: ['pattern'] } } },
   { type: 'function', function: { name: 'zip_outputs', description: 'Compacta a pasta outputs em um arquivo ZIP.', parameters: { type: 'object', properties: { zip_name: { type: 'string' } } } } },
   { type: 'function', function: { name: 'ambiente', description: 'Estado e continuidade do ambiente de execução (o sandbox desta conversa). Use quando: (a) um comando falhar e você não souber se a causa é o ambiente ou o código; (b) souber que o sandbox reiniciou e precisar descobrir o que sobreviveu; (c) for começar uma alteração arriscada em vários arquivos e quiser um ponto de retorno; (d) precisar saber memória, CPU ou espaço em disco. (e) um comando for cortado por timeout e você precisar ver a saída COMPLETA (o resultado só traz o fim; o começo, onde o erro costuma estar, fica no log). Ações: "status" (limites, identificadores, o que é persistente e o que é temporário), "recursos" (CPU, memória, disco e maiores processos), "ultima_execucao" (log integral do último comando: começo, fim, duração e se ficou mudo), "dependencias" (pacotes instalados em runtime nesta conversa, que somem quando o sandbox reinicia), "servicos" (portas e servidores que você subiu neste sandbox, com o que está REALMENTE escutando agora), "checkpoint_criar" (fotografa o workspace), "checkpoint_listar", "checkpoint_restaurar" (volta o workspace a um checkpoint — o estado atual é salvo antes), "transacao_iniciar"/"transacao_confirmar"/"transacao_desfazer" (edição em vários arquivos com ponto de retorno: abra antes, confirme quando a validação passar, desfaça se quebrar), "limpar_temporarios".', parameters: { type: 'object', properties: { acao: { type: 'string', enum: ['status','recursos','ultima_execucao','dependencias','servicos','checkpoint_criar','checkpoint_listar','checkpoint_restaurar','transacao_iniciar','transacao_confirmar','transacao_desfazer','limpar_temporarios'] }, id: { type: 'string', description: 'Id do checkpoint (só para checkpoint_restaurar).' }, rotulo: { type: 'string', description: 'Rótulo curto do checkpoint (só para checkpoint_criar).' } }, required: ['acao'] } } },
   { type: 'function', function: { name: 'consultar_cnpj', description: 'Consulta os dados cadastrais OFICIAIS de um CNPJ nas bases públicas (BrasilAPI/ReceitaWS): razão social, nome fantasia, situação cadastral, natureza jurídica, porte, CNAE principal e secundários, endereço, telefone, e-mail, capital social, opção pelo Simples/MEI e quadro de sócios (QSA). Funciona SEM o botão de pesquisa. Use SEMPRE que o pedido envolver dados de uma empresa por CNPJ — NÃO use web_search para isso.', parameters: { type: 'object', properties: { cnpj: { type: 'string', description: 'CNPJ com ou sem pontuação (14 dígitos)' } }, required: ['cnpj'] } } }
@@ -699,6 +702,13 @@ export async function runEnvironmentTool(conversationId, args = {}, sandboxOptio
   }
 }
 
+// Teto de resultados vindo do modelo: número finito, entre 1 e o padrão.
+function normalizedResultLimit(value, fallback) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 1) return fallback;
+  return Math.min(Math.floor(n), fallback);
+}
+
 export async function runTool(conversationId, name, args = {}, sandboxOptions = {}, runtime = {}) {
   const signal = runtime?.signal;
   // Progresso ao vivo: só as ferramentas que executam no sandbox têm o que
@@ -782,6 +792,17 @@ export async function runTool(conversationId, name, args = {}, sandboxOptions = 
     const base = folder === '.' ? ws.base : safeJoin(ws.base, folder);
     const files = walk(base).map(p => path.relative(ws.base, p));
     return JSON.stringify({ files });
+  }
+  // Code Intelligence leve (Fase 9/6A): buscas estruturadas no workspace,
+  // executadas no backend — sem sandbox, sem rede, contidas em ws.base.
+  if (name === 'find_file') return JSON.stringify(findFiles(ws.base, args.pattern, { limit: normalizedResultLimit(args.limit, 100) }));
+  if (name === 'search_text') {
+    return JSON.stringify(searchText(ws.base, {
+      pattern: args.pattern,
+      regex: args.regex === true,
+      glob: typeof args.glob === 'string' && args.glob.trim() ? args.glob.trim() : null,
+      limit: normalizedResultLimit(args.limit, 80)
+    }));
   }
   if (name === 'zip_outputs') {
     const zip = (args.zip_name || 'outputs.zip').replace(/[^a-zA-Z0-9._-]/g, '_');

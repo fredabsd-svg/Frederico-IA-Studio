@@ -8,6 +8,7 @@ import { runAgent, runOrchestrator, runMultiModel, normalizeMultiModelConfig, ca
 import { loadPipelineRun } from '../agent/pipelineRuns.js';
 import { acquireConversationControl, releaseConversationControl } from '../agent/control.js';
 import { createRunLog, listConversationRuns } from '../agent/runLog.js';
+import { collectConversationChanges } from '../agent/changeSet.js';
 import { openLiveStream, getLiveStream } from '../liveStream.js';
 import { runTool } from '../tools.js';
 import { classifyTaskResult } from '../taskOutcome.js';
@@ -678,6 +679,15 @@ router.get('/conversations/:id/runs', async (req, res) => {
   const conv = await db.prepare('SELECT id FROM conversations WHERE id=? AND user_id=?').get(req.params.id, req.userId);
   if (!conv) return res.status(404).json({ error: 'Não encontrado' });
   res.json({ runs: await listConversationRuns(req.userId, req.params.id) });
+});
+
+// CHANGESET REAL (Fases 26–27): a verdade do git sobre o(s) clone(s) desta
+// conversa — status + numstat lidos pelo backend, sem token e sem sandbox.
+// Sem repositório git, devolve lista vazia e a UI mantém o fallback heurístico.
+router.get('/conversations/:id/changes', async (req, res) => {
+  const conv = await db.prepare('SELECT id FROM conversations WHERE id=? AND user_id=?').get(req.params.id, req.userId);
+  if (!conv) return res.status(404).json({ error: 'Não encontrado' });
+  res.json(await collectConversationChanges(req.userId, req.params.id));
 });
 
 // RETOMADA REAL: continua uma tarefa interrompida A PARTIR DO CHECKPOINT (não

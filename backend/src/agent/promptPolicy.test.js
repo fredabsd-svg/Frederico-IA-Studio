@@ -35,7 +35,16 @@ test('assistente neutro não presume profissão contábil', () => {
 test('lista vazia de ferramentas não libera tudo', () => {
   assert.deepEqual(toolsFor({ tools: [] }), []);
   assert.ok(toolsFor({}).length > 0);
-  assert.deepEqual(toolsFor({ tools: ['read_file', 'inexistente'] }).map(tool => tool.function.name), ['read_file']);
+  // Ferramenta desconhecida é filtrada. As acompanhantes de LEITURA
+  // (find_file/search_text — Code Intelligence leve) entram sozinhas quando o
+  // assistente já pode ler o workspace, como a `ambiente` entra com bash — são
+  // busca estruturada, nunca ampliam escrita nem rede.
+  assert.deepEqual(
+    toolsFor({ tools: ['read_file', 'inexistente'] }).map(tool => tool.function.name).sort(),
+    ['find_file', 'read_file', 'search_text']
+  );
+  // Sem leitura de workspace na lista, as acompanhantes NÃO entram.
+  assert.deepEqual(toolsFor({ tools: ['consultar_cnpj'] }).map(tool => tool.function.name), ['consultar_cnpj']);
 });
 
 // A delegação vivia num item que só dizia quando NÃO delegar. O gatilho positivo

@@ -261,11 +261,19 @@ export function promptManifestFor(assistant, extraModules = []) {
 // diagnosticá-lo, que é justamente o problema que o plano de estabilização ataca.
 const ENVIRONMENT_TOOL_NAME = 'ambiente';
 const EXECUTION_TOOL_NAMES = ['run_python', 'bash'];
+// Code Intelligence leve (find_file/search_text): ferramentas ACOMPANHANTES,
+// como a `ambiente` — não entram na configuração por assistente (a migration
+// 011 é imutável e o teste de compatibilidade a trava). Entram sozinhas quando
+// o assistente já pode LER o workspace: são leitura estruturada, nunca ampliam
+// escrita nem rede.
+const CODE_INTEL_TOOL_NAMES = ['find_file', 'search_text'];
+const WORKSPACE_READ_TOOL_NAMES = ['read_file', 'list_files', 'run_python', 'bash'];
 
 export function toolsFor(assistant) {
   const all = [...toolDefinitions, ...imageToolDefinitions];
   const allowed = new Set(allowedAssistantToolNames(assistant?.tools));
   if (EXECUTION_TOOL_NAMES.some(name => allowed.has(name))) allowed.add(ENVIRONMENT_TOOL_NAME);
+  if (WORKSPACE_READ_TOOL_NAMES.some(name => allowed.has(name))) for (const name of CODE_INTEL_TOOL_NAMES) allowed.add(name);
   return all.filter(t => allowed.has(t.function.name));
 }
 
@@ -377,6 +385,8 @@ export function toolAvailabilityNote(tools, { includeInventory = false, sandboxN
   if (names.has('write_file')) lines.push('- write_file: criar ou sobrescrever arquivos no workspace.');
   if (names.has('read_file')) lines.push('- read_file: ler arquivos de texto do workspace.');
   if (names.has('list_files')) lines.push('- list_files: listar uploads, outputs e arquivos da conversa.');
+  if (names.has('find_file')) lines.push('- find_file: localizar arquivos por glob ("repo/**/*.js") ou trecho do nome — prefira a find/ls no bash.');
+  if (names.has('search_text')) lines.push('- search_text: buscar texto/regex no conteúdo dos arquivos (devolve arquivo+linha+trecho) — prefira a grep no bash.');
   if (names.has('zip_outputs')) lines.push('- zip_outputs: compactar /workspace/outputs em ZIP.');
   if (names.has('ambiente')) lines.push('- ambiente: estado do sandbox (limites, o que é persistente, geração), recursos (CPU/memória/disco), log integral da última execução ("ultima_execucao" — a saída completa de um comando cortado por timeout), dependências instaladas em runtime, serviços/portas de pé no sandbox, checkpoints do workspace (criar/listar/restaurar) e transação de workspace (iniciar/confirmar/desfazer). Use ao investigar uma falha que pode ser do AMBIENTE e antes de alterações arriscadas em vários arquivos.');
   if (names.has('consultar_cnpj')) lines.push('- consultar_cnpj: dados cadastrais oficiais de um CNPJ (razão social, situação, CNAE, endereço, sócios etc.). Use SEMPRE para consulta de empresa por CNPJ — funciona sem o botão de pesquisa; NÃO use web_search para CNPJ.');

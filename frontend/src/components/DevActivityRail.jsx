@@ -1,8 +1,9 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Activity, Brain, PanelRightClose, PanelRightOpen, Loader, CheckCircle2, AlertCircle,
   Terminal, FileCog, FolderOpen, Search, ShieldCheck, ChevronDown, FileText, ListTree, GitCompareArrows
 } from 'lucide-react';
+import { API } from '../constants.js';
 import { MEMORY_FIELDS } from '../hooks/useDevProjects.js';
 import { describe, statusIcon, tryParse } from './ExecutionSession.jsx';
 
@@ -146,23 +147,77 @@ function FilesTab({ steps, downloadUrl }) {
   </ul>;
 }
 
-function ChangesTab({ steps, downloadUrl }) {
+const CHANGE_BADGE_CLASS = { A: 'add', M: 'mod', D: 'del', R: 'mod' };
+
+// Aba "Alterações": a VERDADE do git sobre o clone da conversa
+// (GET /conversations/:id/changes → status + numstat lidos pelo backend).
+// Sem repositório git (vínculo por pasta, ou nada clonado), cai no fallback
+// heurístico anterior — o selo M/A deduzido dos write_file, que continua sendo
+// apresentado como pista, não como diff.
+function ChangesTab({ steps, downloadUrl, conversationId, busy }) {
   const { changed } = useMemo(() => buildFileTabs(steps), [steps]);
-  if (!changed.length) return <div className="devRailEmpty"><GitCompareArrows size={22}/><p>Nenhuma alteração ainda. Os arquivos criados ou editados pela IA aparecem aqui.</p></div>;
-  return <ul className="devFileList devChangeList">
-    {changed.map((f, i) => <li key={`${f.path}-${i}`}>
-      {f.error
-        ? <span className="devFileItem devFileError" title={f.error}><span className={`devBadge ${f.badge === 'A' ? 'add' : 'mod'}`}>{f.badge}</span><span className="devFileName">{f.path}</span><small>falhou</small></span>
-        : <a className="devFileItem" href={downloadUrl(f.path)} target="_blank" rel="noreferrer" title={`${f.path} — abrir`}>
-            <span className={`devBadge ${f.badge === 'A' ? 'add' : 'mod'}`}>{f.badge}</span>
-            <span className="devFileName">{f.path}</span>
-            {f.size != null && <span className="devFileKind">{Math.ceil(f.size / 1024) || 1} KB</span>}
-          </a>}
-    </li>)}
-  </ul>;
+  const [real, setReal] = useState(null);      // { repos } | null (sem dados)
+  const [loading, setLoading] = useState(false);
+  useEffect(() => {
+    // Busca ao abrir a aba e refaz quando a execução termina (busy → false):
+    // é o momento em que o diff de verdade muda.
+    if (!conversationId || busy) return;
+    let alive = true;
+    setLoading(true);
+    fetch(`${API}/api/conversations/${conversationId}/changes`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(data => { if (alive) setReal(data); })
+      .catch(() => { if (alive) setReal(null); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [conversationId, busy]);
+
+  const repos = (real?.repos || []).filter(repo => repo.files.length);
+  if (repos.length) {
+    return <>
+      {repos.map(repo => <div key={repo.name} className="devChangeRepo">
+        <div className="devChangeHead">
+          <b>{repo.name}</b>{repo.branch && <span className="devChangeBranch">{repo.branch}</span>}
+          <span className="devChangeTotals">
+            {repo.totals.files} arquivo{repo.totals.files > 1 ? 's' : ''}
+            {(repo.totals.additions || repo.totals.deletions) ? <> · <ins>+{repo.totals.additions}</ins> <del>−{repo.totals.deletions}</del></> : null}
+          </span>
+        </div>
+        <ul className="devFileList devChangeList">
+          {repo.files.map((f, i) => <li key={`${f.path}-${i}`}>
+            <span className="devFileItem" title={f.from ? `${f.from} → ${f.path}` : f.path}>
+              <span className={`devBadge ${CHANGE_BADGE_CLASS[f.status] || 'mod'}`}>{f.status}</span>
+              <span className="devFileName">{f.path}</span>
+              {f.additions != null && <span className="devChangeStat"><ins>+{f.additions}</ins> <del>−{f.deletions}</del></span>}
+              {f.untracked && <span className="devFileKind">novo</span>}
+            </span>
+          </li>)}
+        </ul>
+      </div>)}
+      <p className="devRailHint">Diff real do git no repositório da tarefa{loading ? ' — atualizando…' : ''}.</p>
+    </>;
+  }
+
+  if (!changed.length) {
+    return <div className="devRailEmpty"><GitCompareArrows size={22}/><p>{loading ? 'Consultando o repositório…' : 'Nenhuma alteração ainda. Os arquivos criados ou editados pela IA aparecem aqui.'}</p></div>;
+  }
+  return <>
+    <ul className="devFileList devChangeList">
+      {changed.map((f, i) => <li key={`${f.path}-${i}`}>
+        {f.error
+          ? <span className="devFileItem devFileError" title={f.error}><span className={`devBadge ${f.badge === 'A' ? 'add' : 'mod'}`}>{f.badge}</span><span className="devFileName">{f.path}</span><small>falhou</small></span>
+          : <a className="devFileItem" href={downloadUrl(f.path)} target="_blank" rel="noreferrer" title={`${f.path} — abrir`}>
+              <span className={`devBadge ${f.badge === 'A' ? 'add' : 'mod'}`}>{f.badge}</span>
+              <span className="devFileName">{f.path}</span>
+              {f.size != null && <span className="devFileKind">{Math.ceil(f.size / 1024) || 1} KB</span>}
+            </a>}
+      </li>)}
+    </ul>
+    <p className="devRailHint">Sem repositório git na conversa — lista derivada das gravações da IA (selo M/A é pista, não diff).</p>
+  </>;
 }
 
-export function DevActivityRail({ collapsed, onToggle, busy, statusText, messages, project, onUpdateMemory, downloadUrl }) {
+export function DevActivityRail({ collapsed, onToggle, busy, statusText, messages, project, onUpdateMemory, downloadUrl, conversationId = null }) {
   const act = useActivity(messages);
   const [tab, setTab] = useState('atividade');
   const dlUrl = downloadUrl || (() => '#');
@@ -217,7 +272,7 @@ export function DevActivityRail({ collapsed, onToggle, busy, statusText, message
 
       {tab === 'alteracoes' && <div className="devRailSection">
         <label className="devRailLabel">Arquivos alterados</label>
-        <ChangesTab steps={act.steps} downloadUrl={dlUrl}/>
+        <ChangesTab steps={act.steps} downloadUrl={dlUrl} conversationId={conversationId} busy={busy}/>
       </div>}
 
       {tab === 'memoria' && <div className="devRailSection">
