@@ -15,7 +15,8 @@ const RULES = [
   {
     id: 'pdf_docling',
     test: (c) => c.files.some(f => /\.pdf$/i.test(f)),
-    suggestion: 'Você anexou um PDF. Se ele for escaneado ou tiver tabelas, posso usar o Docling/OCR para reduzir perdas na extração antes da análise.',
+    suggestion: 'Você anexou um PDF. Quer que eu analise o conteúdo agora? Quando disponível, vou aproveitar o Docling/OCR para ler páginas escaneadas e tabelas com menos perdas.',
+    action: { id: 'analyze_pdf', label: 'Analisar PDF' },
     severity: 'info',
   },
   {
@@ -88,7 +89,15 @@ export function contextualSuggestions(ctx = {}) {
   const seen = new Set();
   for (const r of RULES) {
     try {
-      if (r.test(c) && !seen.has(r.id)) { seen.add(r.id); out.push({ id: r.id, suggestion: typeof r.suggestion === 'function' ? r.suggestion(c) : r.suggestion, severity: r.severity }); }
+      if (r.test(c) && !seen.has(r.id)) {
+        seen.add(r.id);
+        out.push({
+          id: r.id,
+          suggestion: typeof r.suggestion === 'function' ? r.suggestion(c) : r.suggestion,
+          severity: r.severity,
+          ...(r.action ? { action: { ...r.action } } : {}),
+        });
+      }
     } catch { /* regra robusta: nunca derruba */ }
   }
   return out;

@@ -9,6 +9,7 @@ import {
   ShieldCheck, Gauge, SearchCheck, Sparkles,
 } from 'lucide-react';
 import { NinoAvatar, NINO_CAPTION } from './NinoAvatar.jsx';
+import { actionForCompanionEvent } from '../companionEventActions.js';
 
 const DOC_KIND_LABEL = {
   texto: 'Nota', texto_revisado: 'Texto revisado', log: 'Registro', print: 'Captura', relatorio: 'Relatório',
@@ -39,7 +40,7 @@ function fmtSize(bytes) {
 // que ele mantém entre conversas) e Documentos (a caixa própria dele).
 export function CopilotWorkspace({
   copilot, companion, state = 'aguardando', onClose,
-  conversationId = null, conversationTitle = '', onApplyDraft, showToast,
+  conversationId = null, conversationTitle = '', onApplyDraft, onEventAction, showToast,
 }) {
   const [tab, setTab] = useState('chat');
   const name = companion?.settings?.characterName || 'Nino';
@@ -79,7 +80,7 @@ export function CopilotWorkspace({
         <ChatTab
           copilot={copilot} companion={companion} name={name} unread={unread} quiet={quiet}
           conversationId={conversationId} conversationTitle={conversationTitle}
-          onApplyDraft={onApplyDraft} showToast={showToast}
+          onApplyDraft={onApplyDraft} onEventAction={onEventAction} showToast={showToast}
         />
       )}
       {tab === 'memory' && <MemoryTab copilot={copilot} name={name} quiet={quiet} showToast={showToast} />}
@@ -91,13 +92,14 @@ export function CopilotWorkspace({
 
 // ---- Conversa ----------------------------------------------------------------
 
-function ChatTab({ copilot, companion, name, unread, quiet, conversationId, conversationTitle, onApplyDraft, showToast }) {
+function ChatTab({ copilot, companion, name, unread, quiet, conversationId, conversationTitle, onApplyDraft, onEventAction, showToast }) {
   const { messages, sending, loading, error, send, clearChat, prefs } = copilot;
   const [text, setText] = useState('');
   const [tools, setTools] = useState(false);
   // null = segue a preferência; true/false = decisão só desta mensagem.
   const [shareOverride, setShareOverride] = useState(null);
   const [summarizing, setSummarizing] = useState(false);
+  const [eventWorking, setEventWorking] = useState(null);
   const scrollRef = useRef(null);
 
   const access = prefs?.contextAccess || 'sempre';
@@ -133,6 +135,12 @@ function ChatTab({ copilot, companion, name, unread, quiet, conversationId, conv
     setSummarizing(false);
     if (r?.document) showToast?.('Resumo guardado em Documentos.');
   }
+  async function confirmEvent(event, action) {
+    if (!action || eventWorking) return;
+    setEventWorking(event.id);
+    await onEventAction?.(event, action);
+    setEventWorking(null);
+  }
 
   return (
     <div className="cwChat">
@@ -146,7 +154,17 @@ function ChatTab({ copilot, companion, name, unread, quiet, conversationId, conv
             <div key={e.id} className={`cwAlert level-${e.level}`}>
               <div className="cwAlertTitle">{e.title}</div>
               {e.detail && <div className="cwAlertDetail">{e.detail}</div>}
-              <button className="cwLink" onClick={() => companion.dismissEvent(e.id)}>Dispensar</button>
+              <div className="cwAlertActions">
+                {(() => {
+                  const action = actionForCompanionEvent(e);
+                  return action && (
+                    <button className="cwAlertConfirm" onClick={() => confirmEvent(e, action)} disabled={!!eventWorking}>
+                      {eventWorking === e.id ? <><span className="cmpBubbleSpin" /> {action.pendingLabel}</> : <><Check size={13} /> {action.label}</>}
+                    </button>
+                  );
+                })()}
+                <button className="cwLink" onClick={() => companion.dismissEvent(e.id)} disabled={!!eventWorking}>Dispensar</button>
+              </div>
             </div>
           ))}
         </div>

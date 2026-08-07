@@ -413,6 +413,32 @@ export default function App({ user } = {}) {
   const [devGitBusy, setDevGitBusy] = useState(null); // null | 'clone' | 'push'
   const [settingsHubOpen, setSettingsHubOpen] = useState(false);
 
+  function handleCompanionEventAction(_event, action) {
+    if (action?.id !== 'analyze_pdf') return false;
+    if (!current?.id) {
+      showToast('Abra a conversa que contém o PDF antes de iniciar a análise.');
+      return false;
+    }
+    if (busy) {
+      showToast('Aguarde a resposta atual terminar para analisar o PDF.');
+      return false;
+    }
+    if (team && effectiveTeam.length === 0) {
+      showToast('Selecione ao menos um assistente da Equipe antes de analisar o PDF.');
+      return false;
+    }
+    if (!uploads.some(file => /\.pdf$/i.test(String(file.name || file.path || '')))) {
+      showToast('O PDF deste aviso não está mais anexado à conversa atual.');
+      return false;
+    }
+    // O envio principal possui a barreira de uploads e acesso ao conteúdo
+    // processado pelo Docling. A confirmação do Nino inicia a análise real, em
+    // vez de apenas copiar uma sugestão para o campo de texto.
+    showToast('Análise do PDF iniciada.', 'ok');
+    void sendMessage(action.prompt);
+    return true;
+  }
+
   function changeMultiModel(next) {
     setMultiModel(next);
     try { localStorage.setItem('fred_multimodel', JSON.stringify(next)); } catch {}
@@ -1659,6 +1685,7 @@ export default function App({ user } = {}) {
       conversationId={current?.id || null}
       conversationTitle={current?.title || ''}
       rightInset={workspace === 'developer' ? (devRightCollapsed ? 58 : 286) : 22}
+      onEventAction={handleCompanionEventAction}
       showToast={showToast}
     />}
     {copilotOpen && <Suspense fallback={<PanelFallback/>}><LazyCopilotPanel copilot={copilot} onClose={() => setCopilotOpen(false)} /></Suspense>}

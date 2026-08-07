@@ -38,7 +38,8 @@ test('sugere Docling de forma condicional para PDF', () => {
   const s = contextualSuggestions({ files: ['documento.pdf'] });
   const item = s.find(x => x.id === 'pdf_docling');
   assert.ok(item);
-  assert.match(item.suggestion, /se ele for escaneado/i);
+  assert.match(item.suggestion, /analise o conteúdo agora/i);
+  assert.deepEqual(item.action, { id: 'analyze_pdf', label: 'Analisar PDF' });
 });
 
 test('propõe delegação para campanha de marketing', () => {
