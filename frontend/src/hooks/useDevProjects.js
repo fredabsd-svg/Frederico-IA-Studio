@@ -1,17 +1,24 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 // Projetos do Modo Desenvolvedor.
 //
 // Cada trabalho é um projeto independente com nome, descrição, tecnologias, um
 // vínculo (pasta do PC, repositório GitHub ou nenhum), regras e uma "memória
-// permanente" categorizada (item 8 da especificação). Tudo fica salvo neste
-// navegador — o contexto do projeto NÃO se mistura com conversas comuns nem com
-// outros projetos. A memória e as regras viajam para a IA pelo canal `rules`
-// (que já chega ao system prompt do backend), então a IA "lembra" do projeto
-// sem o usuário reexplicar tudo a cada conversa.
+// permanente" categorizada. Desde o ADR 0004, a FONTE DE VERDADE é o SERVIDOR
+// (GET/PUT /api/dev-projects): trocar de navegador ou limpar dados não perde
+// mais o vínculo repo/branch nem as permissões concedidas. O localStorage
+// continua como CACHE (partida rápida e modo offline) e a migração do acervo
+// antigo acontece UMA vez (POST /import), guardada por um marcador local.
+//
+// `constants.js` usa import.meta.env (Vite) — os imports dele são DINÂMICOS,
+// dentro das funções de rede, para as funções puras continuarem testáveis em nó.
 
 const STORE_KEY = 'fred_dev_projects_v1';
 const ACTIVE_KEY = 'fred_dev_active_project_v1';
+// Marcador do primeiro sync bem-sucedido: sem ele, um servidor vazio (projetos
+// apagados em OUTRO dispositivo) seria "re-populado" pelo cache local antigo.
+const SYNCED_KEY = 'fred_dev_projects_synced_v1';
+const SYNC_DEBOUNCE_MS = 800;
 
 // Categorias da memória permanente (rótulo exibido nas telas).
 export const MEMORY_FIELDS = [
@@ -149,6 +156,27 @@ export function developerSessionForConversation(projects, conversationId) {
   };
 }
 
+// Converte a linha do SERVIDOR (snake_case, campos JSON já hidratados) para a
+// forma do projeto no cliente. PURA (testável). Campos ausentes caem nos
+// defaults de newDevProject — um projeto antigo do servidor nunca quebra a UI.
+export function projectFromServer(row) {
+  if (!row?.id || !row?.name) return null;
+  return newDevProject({
+    id: row.id,
+    name: row.name,
+    description: row.description || '',
+    techs: row.techs || '',
+    rules: row.rules || '',
+    binding: row.binding && typeof row.binding === 'object' ? row.binding : { type: 'none' },
+    memory: row.memory || {},
+    permissions: row.permissions || {},
+    mode: row.mode || 'plan',
+    conversationIds: Array.isArray(row.conversationIds) ? row.conversationIds : [],
+    createdAt: row.created_at || new Date().toISOString(),
+    updatedAt: row.updated_at || new Date().toISOString()
+  });
+}
+
 // Payload de permissões enviado ao backend: autorização de publicação (quando
 // o escopo ainda casa com o vínculo) + autorizações de comando. Null quando não
 // há nada a enviar. PURA (testável).
@@ -162,6 +190,68 @@ export function permissionsPayloadFor(project, options = {}) {
 export function useDevProjects() {
   const [projects, setProjects] = useState(load);
   const [activeId, setActiveIdState] = useState(() => localStorage.getItem(ACTIVE_KEY) || '');
+  const projectsRef = useRef(projects);
+  useEffect(() => { projectsRef.current = projects; }, [projects]);
+  // Ids com mudança local ainda não enviada ao servidor (debounce por lote).
+  const dirtyRef = useRef(new Set());
+  const markDirty = useCallback((id) => { if (id) dirtyRef.current.add(id); }, []);
+
+  // BOOTSTRAP (ADR 0004): o servidor é a fonte de verdade. Na primeira vez,
+  // o acervo do localStorage sobe pelo /import; depois disso, o que o servidor
+  // diz vale — inclusive "nenhum projeto" (apagado em outro dispositivo).
+  // Falha de rede mantém o cache local, sem quebrar nada.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const { API } = await import('../constants.js');
+        const res = await fetch(`${API}/api/dev-projects`);
+        if (!res.ok) return;
+        let serverProjects = ((await res.json()).projects || []).map(projectFromServer).filter(Boolean);
+        const alreadySynced = localStorage.getItem(SYNCED_KEY) === '1';
+        const local = load();
+        if (!serverProjects.length && local.length && !alreadySynced) {
+          const imported = await fetch(`${API}/api/dev-projects/import`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ projects: local })
+          });
+          if (!imported.ok) return; // tenta de novo na próxima carga
+          serverProjects = ((await imported.json()).projects || []).map(projectFromServer).filter(Boolean);
+        }
+        if (!alive) return;
+        try { localStorage.setItem(SYNCED_KEY, '1'); } catch {}
+        setProjects(serverProjects);
+      } catch { /* offline: o cache local segue valendo */ }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  // Sincronização das mudanças locais (debounce): cada projeto sujo sobe por
+  // PUT com o estado MAIS RECENTE (projectsRef). Falha fica para a próxima
+  // mudança ou o próximo bootstrap — nunca derruba a UI.
+  useEffect(() => {
+    if (!dirtyRef.current.size) return;
+    const timer = setTimeout(() => {
+      const ids = [...dirtyRef.current];
+      dirtyRef.current.clear();
+      (async () => {
+        try {
+          const { API } = await import('../constants.js');
+          for (const id of ids) {
+            const project = projectsRef.current.find(p => p.id === id);
+            if (!project) continue;
+            fetch(`${API}/api/dev-projects/${encodeURIComponent(id)}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(project)
+            }).catch(() => {});
+          }
+        } catch {}
+      })();
+    }, SYNC_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [projects]);
 
   useEffect(() => {
     try { localStorage.setItem(STORE_KEY, JSON.stringify(projects)); } catch {}
@@ -180,8 +270,9 @@ export function useDevProjects() {
     const project = newDevProject(partial);
     setProjects(prev => [...prev, project]);
     setActiveIdState(project.id);
+    markDirty(project.id);
     return project;
-  }, []);
+  }, [markDirty]);
 
   const updateProject = useCallback((id, patch) => {
     setProjects(prev => prev.map(p => {
@@ -189,11 +280,21 @@ export function useDevProjects() {
       const next = typeof patch === 'function' ? patch(p) : { ...p, ...patch };
       return { ...next, memory: { ...emptyMemory(), ...(next.memory || {}) }, updatedAt: new Date().toISOString() };
     }));
-  }, []);
+    markDirty(id);
+  }, [markDirty]);
 
   const deleteProject = useCallback((id) => {
     setProjects(prev => prev.filter(p => p.id !== id));
     setActiveIdState(cur => (cur === id ? '' : cur));
+    dirtyRef.current.delete(id);
+    // Exclusão vai direto ao servidor (sem debounce): é a mudança que não pode
+    // se perder — e o servidor solta as conversas em vez de apagar histórico.
+    (async () => {
+      try {
+        const { API } = await import('../constants.js');
+        fetch(`${API}/api/dev-projects/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => {});
+      } catch {}
+    })();
   }, []);
 
   // Registra a conversa como pertencente ao projeto (histórico de conversas).
@@ -204,7 +305,8 @@ export function useDevProjects() {
       if ((p.conversationIds || []).includes(conversationId)) return p;
       return { ...p, conversationIds: [conversationId, ...(p.conversationIds || [])].slice(0, 50) };
     }));
-  }, []);
+    markDirty(id);
+  }, [markDirty]);
 
   // AUTORIZAR a publicação — só por ação explícita do usuário (o botão
   // "Autorizar publicação", ou a confirmação de um `ask_user`). O escopo é
@@ -223,14 +325,16 @@ export function useDevProjects() {
       },
       updatedAt: new Date().toISOString()
     } : p));
-  }, []);
+    markDirty(id);
+  }, [markDirty]);
 
   const revokeGithubWrite = useCallback((id) => {
     if (!id) return;
     setProjects(prev => prev.map(p => p.id === id
       ? { ...p, permissions: emptyPermissions(), updatedAt: new Date().toISOString() }
       : p));
-  }, []);
+    markDirty(id);
+  }, [markDirty]);
 
   // AUTORIZAR um padrão de comando (confirmação de um ask_user de permissão).
   // O padrão vem do carimbo do BACKEND (inputRequest.authorize), nunca de texto
@@ -248,7 +352,8 @@ export function useDevProjects() {
         updatedAt: new Date().toISOString()
       };
     }));
-  }, []);
+    markDirty(id);
+  }, [markDirty]);
 
   const active = useMemo(() => projects.find(p => p.id === activeId) || null, [projects, activeId]);
 

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { developerSessionForConversation, githubWritePermissionFor, newDevProject, permissionsPayloadFor } from './useDevProjects.js';
+import { developerSessionForConversation, githubWritePermissionFor, newDevProject, permissionsPayloadFor, projectFromServer } from './useDevProjects.js';
 
 // Regressão do bug "ao reabrir a conversa de dev o repositório some": a sessão de
 // desenvolvedor (vínculo do repositório GitHub, modo e regras) precisa ser
@@ -156,4 +156,39 @@ test('permissionsPayloadFor: comandos autorizados viajam mesmo sem publicação'
   const projeto = { ...comGrant, conversationIds: ['c-grant'] };
   const sessao = developerSessionForConversation([projeto], 'c-grant');
   assert.deepEqual(sessao.permissions, { commandGrants: ['git clean*'] });
+});
+
+test('projectFromServer: linha do servidor vira projeto completo do cliente', () => {
+  const row = {
+    id: 'p_abc', name: 'Meu app', description: 'd', techs: 'node', rules: 'r',
+    binding: { type: 'github', repo: 'a/b', branch: 'main' },
+    memory: { arquitetura: 'x' },
+    permissions: { githubWrite: true, githubWriteConfirmedAt: '2026-08-07T00:00:00Z', githubWriteScope: { repo: 'a/b', branch: 'main', actions: ['push'] }, commandGrants: ['git clean*'] },
+    mode: 'build',
+    conversationIds: ['c1', 'c2'],
+    created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-07T00:00:00Z'
+  };
+  const p = projectFromServer(row);
+  assert.equal(p.id, 'p_abc');
+  assert.equal(p.mode, 'build');
+  assert.equal(p.binding.repo, 'a/b');
+  assert.equal(p.memory.arquitetura, 'x');
+  assert.equal(p.memory.decisoes, '', 'chaves de memória ausentes viram vazias');
+  assert.deepEqual(p.permissions.commandGrants, ['git clean*']);
+  assert.deepEqual(p.conversationIds, ['c1', 'c2']);
+  assert.equal(p.createdAt, '2026-08-01T00:00:00Z');
+  // A sessão reconstruída a partir dele carrega a autorização inteira.
+  const sessao = developerSessionForConversation([p], 'c1');
+  assert.equal(sessao.permissions.githubWrite, true);
+  assert.deepEqual(sessao.permissions.commandGrants, ['git clean*']);
+});
+
+test('projectFromServer: linha inválida ou incompleta devolve null / defaults', () => {
+  assert.equal(projectFromServer(null), null);
+  assert.equal(projectFromServer({ id: 'x' }), null, 'sem nome não vira projeto');
+  const minimal = projectFromServer({ id: 'p1', name: 'Mínimo' });
+  assert.equal(minimal.mode, 'plan');
+  assert.deepEqual(minimal.conversationIds, []);
+  assert.equal(minimal.binding.type, 'none');
+  assert.equal(minimal.permissions.githubWrite, false);
 });
