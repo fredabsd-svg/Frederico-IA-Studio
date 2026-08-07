@@ -4,7 +4,13 @@ import { API } from './constants.js';
 import { useCopilotChat } from './hooks/useCopilotChat.js';
 import { CopilotWorkspace } from './components/CopilotWorkspace.jsx';
 import { NinoAvatar, NINO_CAPTION } from './components/NinoAvatar.jsx';
-import { clampCompanionPosition, parseCompanionPosition } from './companionPosition.js';
+import {
+  PROTECTED_CONTROL_SELECTORS,
+  clampCompanionPosition,
+  parseCompanionPosition,
+  protectedBottomInset,
+} from './companionPosition.js';
+import { BOTTOM_BAND_EVENT } from './hooks/useComposerHeight.js';
 
 // Frederico Companion — a representação visual e interativa do Studio. É a
 // CAMADA de experiência: a inteligência vem do núcleo do Studio. O avatar abre
@@ -155,6 +161,20 @@ function WritingBubble({ settings, draft, onApply, name, onPhase }) {
   );
 }
 
+// Recuos da área útil do personagem. A leitura do DOM fica aqui, e não no módulo
+// puro: `protectedBottomInset` decide quanto reservar, este trecho só mede.
+function companionInsets(rightInset) {
+  if (typeof window === 'undefined') return {};
+  const rects = typeof document === 'undefined'
+    ? []
+    : PROTECTED_CONTROL_SELECTORS.flatMap(selector =>
+      Array.from(document.querySelectorAll(selector), el => el.getBoundingClientRect()));
+  return {
+    right: window.innerWidth > 1180 ? rightInset : 8,
+    bottom: protectedBottomInset(window.innerHeight, rects),
+  };
+}
+
 export function Companion({
   companion,
   busy, statusText, listening,
@@ -185,12 +205,11 @@ export function Companion({
       setPos(current => {
         if (!current) return current;
         const rect = rootRef.current?.getBoundingClientRect();
-        const reserveRight = window.innerWidth > 1180 ? rightInset : 8;
         const next = clampCompanionPosition(
           current,
           { width: window.innerWidth, height: window.innerHeight },
           { width: rect?.width, height: rect?.height },
-          { right: reserveRight },
+          companionInsets(rightInset),
         );
         if (!next || (next.x === current.x && next.y === current.y)) return current;
         localStorage.setItem('fred_companion_pos', JSON.stringify(next));
@@ -206,9 +225,11 @@ export function Companion({
     };
     keepVisible();
     window.addEventListener('resize', keepVisible);
+    window.addEventListener(BOTTOM_BAND_EVENT, keepVisible);
     window.addEventListener('fred:companion-reset-position', reset);
     return () => {
       window.removeEventListener('resize', keepVisible);
+      window.removeEventListener(BOTTOM_BAND_EVENT, keepVisible);
       window.removeEventListener('fred:companion-reset-position', reset);
     };
   }, [minimized, rightInset]);
@@ -272,12 +293,21 @@ export function Companion({
     if (!rect) return;
     let moved = false;
     dragRef.current = { x: rect.left, y: rect.top };
+    // Os recuos são medidos uma vez, no início do gesto: a faixa de controles não
+    // muda de altura enquanto se arrasta, e medir a cada `pointermove` forçaria
+    // layout dezenas de vezes por segundo.
+    const insets = companionInsets(rightInset);
+    const size = { width: rect.width, height: rect.height };
     function move(ev) {
       const dx = ev.clientX - startX, dy = ev.clientY - startY;
       if (Math.abs(dx) > 4 || Math.abs(dy) > 4) moved = true;
-      const nx = Math.min(window.innerWidth - 60, Math.max(8, dragRef.current.x + dx));
-      const ny = Math.min(window.innerHeight - 60, Math.max(8, dragRef.current.y + dy));
-      setPos({ x: nx, y: ny });
+      const next = clampCompanionPosition(
+        { x: dragRef.current.x + dx, y: dragRef.current.y + dy },
+        { width: window.innerWidth, height: window.innerHeight },
+        size,
+        insets,
+      );
+      if (next) setPos(next);
     }
     function up() {
       document.removeEventListener('pointermove', move);
