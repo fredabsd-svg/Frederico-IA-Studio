@@ -11,6 +11,7 @@ import {
   protectedBottomInset,
 } from './companionPosition.js';
 import { BOTTOM_BAND_EVENT } from './hooks/useComposerHeight.js';
+import { actionForCompanionEvent } from './companionEventActions.js';
 
 // Frederico Companion — a representação visual e interativa do Studio. É a
 // CAMADA de experiência: a inteligência vem do núcleo do Studio. O avatar abre
@@ -175,6 +176,41 @@ function companionInsets(rightInset) {
   };
 }
 
+// Alertas do Nino precisam aparecer no momento em que surgem, não apenas depois
+// que o usuário abre o painel. Quando há uma ação conhecida, o botão executa a
+// confirmação; avisos informativos continuam oferecendo acesso aos detalhes.
+function ProactiveEventBubble({ event, name, onAccept, onDismiss, onOpen }) {
+  const [working, setWorking] = useState(false);
+  const action = actionForCompanionEvent(event);
+
+  async function accept() {
+    if (!action || working) return;
+    setWorking(true);
+    const accepted = await onAccept?.(event, action);
+    if (accepted === false) setWorking(false);
+  }
+
+  return (
+    <div className="cmpBubble cmpEventBubble" role="dialog" aria-label={`${name} — sugestão proativa`}>
+      <span className="cmpBubbleArrow" aria-hidden="true" />
+      <div className="cmpBubbleBody">
+        <div className="cmpEventTitle">{event.title || 'Posso ajudar no próximo passo'}</div>
+        {event.detail && <div className="cmpEventDetail">{event.detail}</div>}
+        <div className="cmpBubbleBtns">
+          {action ? (
+            <button className="cmpBubbleYes" onClick={accept} disabled={working}>
+              {working ? <><span className="cmpBubbleSpin" /> {action.pendingLabel}</> : <><Check size={13} /> {action.label}</>}
+            </button>
+          ) : (
+            <button className="cmpBubbleYes" onClick={onOpen}>Ver detalhes</button>
+          )}
+          <button className="cmpBubbleNo" onClick={() => onDismiss?.(event.id)} disabled={working}>Agora não</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function Companion({
   companion,
   busy, statusText, listening,
@@ -182,6 +218,7 @@ export function Companion({
   draft = '', onApplyDraft,
   conversationId = null, conversationTitle = '',
   rightInset = 22,
+  onEventAction,
   showToast,
 }) {
   const { settings, persona, events } = companion;
@@ -237,6 +274,7 @@ export function Companion({
   const unread = useMemo(() => events.filter(e => e.status === 'novo' || e.status === 'visto'), [events]);
   const hasCritical = unread.some(e => e.level === 'critico');
   const hasWarning = unread.some(e => e.level === 'aviso');
+  const leadEvent = unread[0] || null;
 
   // Pequena reação positiva quando uma execução termina (busy: true -> false).
   useEffect(() => {
@@ -330,6 +368,14 @@ export function Companion({
     setMinimized(m => { const nv = !m; localStorage.setItem('fred_companion_min', nv ? '1' : '0'); if (nv) setOpen(false); return nv; });
   }
 
+  async function acceptEvent(event, action) {
+    const accepted = await onEventAction?.(event, action);
+    if (accepted === false || accepted == null) return false;
+    await companion.resolveEvent(event.id, `Ação confirmada: ${action.label}`);
+    setOpen(false);
+    return true;
+  }
+
   const rootStyle = pos
     ? { left: pos.x, top: pos.y, right: 'auto', bottom: 'auto' }
     : { '--companion-right': `${rightInset}px` };
@@ -342,9 +388,17 @@ export function Companion({
         className={`companionRoot anim-${settings.animationLevel} ${minimized ? 'min' : ''} ${open ? 'open' : ''} ${tucked ? 'tucked' : ''}`}
         style={rootStyle}
       >
-        {/* Balão proativo de revisão de escrita (só quando o painel está fechado). */}
+        {/* Alertas contextuais têm prioridade sobre a revisão de escrita. */}
         {!minimized && !open && (
-          <WritingBubble settings={settings} draft={draft} onApply={onApplyDraft} name={characterName} onPhase={setBubblePhase} />
+          leadEvent
+            ? <ProactiveEventBubble
+                event={leadEvent}
+                name={characterName}
+                onAccept={acceptEvent}
+                onDismiss={companion.dismissEvent}
+                onOpen={() => setOpen(true)}
+              />
+            : <WritingBubble settings={settings} draft={draft} onApply={onApplyDraft} name={characterName} onPhase={setBubblePhase} />
         )}
 
         {/* Balão quando minimizado (só a carinha espiando) */}
@@ -380,6 +434,7 @@ export function Companion({
           conversationId={conversationId}
           conversationTitle={conversationTitle}
           onApplyDraft={onApplyDraft}
+          onEventAction={acceptEvent}
           showToast={showToast}
           onClose={() => setOpen(false)}
         />

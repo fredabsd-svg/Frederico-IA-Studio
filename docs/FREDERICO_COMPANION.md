@@ -119,6 +119,13 @@ proposta de auditoria/relatório/dashboard; PDFs recebem uma sugestão condicion
 de Docling/OCR. Arquivos já presentes quando a tela abre não geram alertas
 retroativos.
 
+Sugestões geradas por anexos aparecem imediatamente em um balão junto ao Nino,
+sem exigir que o painel seja aberto primeiro. Para PDFs, **Analisar PDF** é uma
+ação real: após a confirmação, o pedido é enviado ao agente principal da conversa,
+que aguarda o upload e usa o conteúdo do Docling/OCR quando disponível. O mesmo
+botão aparece no cartão do aviso dentro da aba **Conversa**; **Agora não** ou
+**Dispensar** encerram a sugestão sem executar nada.
+
 A aba **Ações** expõe ferramentas separadas e auditáveis:
 
 - `POST /api/copilot/tools/sandbox-audit`: verifica conteúdo textual, estrutura

@@ -209,10 +209,10 @@ export function useCompanion({ tasks = [], uploads = [], devConversationId = nul
         for (const item of suggestions.slice(0, 3)) {
           if (cancelled) break;
           await addEvent({
-            kind: 'antecipacao_intencao', level: item.severity || 'info',
+            kind: `antecipacao_${item.id || 'intencao'}`, level: item.severity || 'info',
             title: 'Posso antecipar o próximo passo', detail: item.suggestion,
-            origin: 'metadados_do_anexo', proposedAction: item.suggestion,
-            authorization: 'Nenhuma ação executada sem sua confirmação',
+            origin: 'metadados_do_anexo', proposedAction: item.action?.label || item.suggestion,
+            authorization: item.action ? 'Aguardando sua confirmação' : 'Nenhuma ação executada sem sua confirmação',
           });
         }
       } catch { /* sugestão não bloqueia o upload */ }

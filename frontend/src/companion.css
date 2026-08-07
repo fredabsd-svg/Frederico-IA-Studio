@@ -181,6 +181,8 @@ body:not(.dark) .companionPanel {
 }
 .cmpBubbleBody { display: flex; flex-direction: column; gap: 9px; }
 .cmpBubbleText { font-size: 13px; line-height: 1.4; color: #eef2fb; display: flex; align-items: center; gap: 7px; }
+.cmpEventTitle { font-size: 13px; font-weight: 800; color: #eef2fb; }
+.cmpEventDetail { font-size: 12.5px; line-height: 1.45; color: #cdd6ea; }
 .cmpBubbleErr { color: #fca5a5; }
 .cmpBubbleLabel { font-size: 11px; color: #8b96af; }
 .cmpBubbleBtns { display: flex; gap: 8px; }
@@ -190,6 +192,7 @@ body:not(.dark) .companionPanel {
 }
 .cmpBubbleYes { background: #4f8cff; color: #fff; }
 .cmpBubbleYes:hover { background: #3f7cf0; }
+.cmpBubbleYes:disabled, .cmpBubbleNo:disabled { opacity: .6; cursor: wait; }
 .cmpBubbleNo { background: rgba(255, 255, 255, 0.08); color: #cdd6ea; }
 .cmpBubbleNo:hover { background: rgba(255, 255, 255, 0.14); }
 .cmpBubbleCard {
@@ -286,6 +289,10 @@ body:not(.dark) .companionPanel {
 .cwAlert:first-of-type { border-top: none; }
 .cwAlertTitle { color: #eef2fb; font-weight: 600; }
 .cwAlertDetail { color: #b9c2d6; margin: 2px 0; line-height: 1.4; }
+.cwAlertActions { display: flex; align-items: center; gap: 10px; margin-top: 7px; }
+.cwAlertConfirm { display: inline-flex; align-items: center; gap: 5px; min-height: 30px; padding: 5px 11px; border: 1px solid rgba(198, 113, 57, .55); border-radius: 999px; background: rgba(198, 113, 57, .16); color: #f1c39f; font-size: 11.5px; font-weight: 700; }
+.cwAlertConfirm:hover:not(:disabled) { background: rgba(198, 113, 57, .28); border-color: #c67139; }
+.cwAlertConfirm:disabled, .cwAlertActions .cwLink:disabled { opacity: .6; cursor: wait; }
 .cwLink { background: none; border: none; color: #4f8cff; cursor: pointer; font-size: 11.5px; padding: 0; }
 .cwLink:hover { text-decoration: underline; }
 
@@ -373,6 +380,8 @@ body:not(.dark) .companionPanel {
 }
 .cmpBubbleArrow { background: #f5ead8; border-right-color: rgba(198, 113, 57, .4); border-bottom-color: rgba(198, 113, 57, .4); }
 .cmpBubbleText { color: #201e1d; font-size: 14px; font-weight: 600; }
+.cmpEventTitle { color: #201e1d; }
+.cmpEventDetail { color: #5c5347; }
 .cmpBubbleLabel { color: #6b6154; }
 .cmpBubbleErr { color: #a33; }
 .cmpBubbleBtns button, .cmpBubbleDismiss { border-radius: 999px; font-weight: 600; }
