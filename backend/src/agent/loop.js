@@ -27,7 +27,8 @@ import { acquireConversationControl, releaseConversationControl, beginProviderRe
 import { clientScopeFor, memoryNote, saveMessage, persistAssistantReply } from './persistence.js';
 import { saveCheckpoint, clearCheckpoint, isResumableReason, buildResumeMessages, leadingSystemCount, trimCheckpointMessages, AUTO_CONTINUE_NOTE } from './checkpoint.js';
 import { untrustedContext, untrustedToolResult } from './promptRegistry.js';
-import { emitExecutionState, finalExecutionState } from './executionState.js';
+import { finalExecutionState } from './executionState.js';
+import { createRunStateTracker } from './runStateMachine.js';
 import { resolveSandboxNetwork, isToolCallAllowed } from './assistantPolicy.js';
 import { explicitlyAuthorizesPcWrite } from '../execGuard.js';
 import { takeSandboxRestartNotice, sandboxOpenTransaction } from '../sandbox.js';
@@ -96,6 +97,11 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   // reconexão por SSE não consegue dizer "ainda é o mesmo run" e o fromSeq
   // antigo pularia eventos do run novo.
   const runId = runIdOverride || resume?.runId || nanoid();
+  // MÁQUINA DE ESTADOS EXPLÍCITA (Developer Workspace 3.0): todo `run_state`
+  // deste run sai por este rastreador, que valida a transição contra a tabela
+  // de runStateMachine.js. O backend é a fonte de verdade do estado; a UI
+  // nunca deduz "concluído" do fim do stream.
+  const runState = createRunStateTracker({ runId, onEvent });
   // No resume, o modelo ativo é o que estava rodando quando parou (pode ser um
   // de reserva já acionado) — não voltamos ao modelo original.
   let chosenModel = requestedModel && requestedModel.includes('::') ? requestedModel : (provider.modelRef || requestedModel);
@@ -353,7 +359,7 @@ export async function runAgent({ userId, conversationId, userText, model, assist
         : (saveUserMessage || !existingUserMessageId
             ? await saveMessage(userId, conversationId, 'user', userText)
             : existingUserMessageId));
-  emitExecutionState(onEvent, developerContext ? 'planning' : 'analyzing', resume ? 'Retomando do checkpoint seguro' : 'Preparando a execução', { runId });
+  runState.to(developerContext ? 'planning' : 'analyzing', resume ? 'Retomando do checkpoint seguro' : 'Preparando a execução');
 
   // BYOK: sem chave de API configurada, orienta a cadastrar e encerra.
   if (!provider.hasKey) {
@@ -368,7 +374,7 @@ export async function runAgent({ userId, conversationId, userText, model, assist
         : 'Nenhuma chave de API configurada. Vá em **Configurações → Provedor de IA** e cadastre a sua chave (OpenRouter/DeepSeek) para começar a conversar.';
     onEvent({ type: 'status', content: 'Chave de API não configurada' });
     onEvent({ type: 'delta', content: finalText });
-    const execution = emitExecutionState(onEvent, 'awaiting_user', 'Configuração do provedor necessária', { runId });
+    const execution = runState.to('awaiting_user', 'Configuração do provedor necessária');
     if (!isSubagent) {
       const assistantMessageId = await saveMessage(userId, conversationId, 'assistant', finalText, { executionMeta: execution });
       onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId });
@@ -383,7 +389,7 @@ export async function runAgent({ userId, conversationId, userText, model, assist
       : 'Este modelo nao responde em texto.';
     onEvent({ type: 'status', content: status });
     onEvent({ type: 'delta', content: finalText });
-    const execution = emitExecutionState(onEvent, 'fatal_error', status, { runId, compatibility: modelPlan.blocked.capability });
+    const execution = runState.to('fatal_error', status, { compatibility: modelPlan.blocked.capability });
     if (!isSubagent) {
       const assistantMessageId = await saveMessage(userId, conversationId, 'assistant', finalText, { executionMeta: execution });
       onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId });
@@ -709,7 +715,15 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
     if (deadlineMs && Date.now() >= deadlineMs) {
       incomplete = true;
       checkpointReason = 'deadline';
-      failureMessage = `A subtarefa atingiu o tempo limite de ${Math.round((deadlineMs - startedAt) / 1000)}s. Conclua com o que tem.`;
+      // `deadlineMs` é um instante absoluto compartilhado entre as delegações
+      // do turno; a mensagem informa o teto configurado (totalMs), não uma
+      // conta com variáveis de outro escopo — a versão anterior referenciava
+      // `startedAt`, que não existe aqui, e explodiria com ReferenceError na
+      // primeira vez que o deadline fosse atingido.
+      const totalSeconds = Math.round((subagentRunBudget?.totalMs || 0) / 1000);
+      failureMessage = totalSeconds
+        ? `A subtarefa atingiu o tempo limite de ${totalSeconds}s. Conclua com o que tem.`
+        : 'A subtarefa atingiu o tempo limite. Conclua com o que tem.';
       break;
     }
     // F-24: teto de tokens do sub-agente. Impede que uma subtarefa queima a
@@ -746,7 +760,7 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
       applyPromptCache(messages, chosenModel, resumePrefixEnd, provider.baseURL);
       windowStart = step;
       onEvent({ type: 'status', content: `A tarefa está longa mas rendendo: compactei o histórico e continuei o trabalho (fôlego ${autoContinues} de ${maxAutoContinues}).` });
-      emitExecutionState(onEvent, 'continuing', `Orçamento de etapas renovado (fôlego ${autoContinues})`, { runId, step });
+      runState.to('continuing', `Orçamento de etapas renovado (fôlego ${autoContinues})`, { step });
     }
     reachedStep = step;
     // LEMBRETE DE DELEGAÇÃO: numa execução que já se alongou, o modelo não
@@ -1171,7 +1185,7 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
         let delegationArgs = {};
         try { delegationArgs = JSON.parse(call.function.arguments || '{}'); } catch {}
         onEvent({ type: 'tool_start', id: call.id, name: SUBAGENT_TOOL_NAME, preview: String(delegationArgs.tarefa || '').slice(0, 400) });
-        emitExecutionState(onEvent, 'tool_running', SUBAGENT_TOOL_NAME, { runId, step, tool: SUBAGENT_TOOL_NAME });
+        runState.to('tool_running', SUBAGENT_TOOL_NAME, { step, tool: SUBAGENT_TOOL_NAME });
         delegations.set(call.id, delegationSlot(() => startDelegation(call, delegationArgs)));
       }
     }
@@ -1267,7 +1281,7 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
       // As delegações já anunciaram o início ao serem lançadas (acima).
       if (!pendingDelegation) {
         onEvent({ type: 'tool_start', id: call.id, name, preview, ...(detail ? { detail } : {}) });
-        emitExecutionState(onEvent, 'tool_running', name, { runId, step, tool: name });
+        runState.to('tool_running', name, { step, tool: name });
       }
       let result;
       const allowedToolCall = isToolCallAllowed(name, tools);
@@ -1343,7 +1357,7 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
       let thumb = '';
       if (name === 'web_fetch') { try { thumb = JSON.parse(result).thumb || ''; } catch {} }
       onEvent({ type: 'tool_result', id: call.id, name, content: result.slice(0, 2000), ...(thumb ? { thumb } : {}) });
-      emitExecutionState(onEvent, 'processing_result', name, { runId, step, tool: name });
+      runState.to('processing_result', name, { step, tool: name });
       // O `result` CRU segue para a interface e para a classificação de falha —
       // quem precisa dele intacto. Para o MODELO ele vai embrulhado: é texto de
       // terceiro (página, arquivo, README, saída de comando) e, sem a marca de
@@ -1381,10 +1395,10 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
         onEvent({ type: 'delta', content: pergunta });
       }
       onEvent({ type: 'input_required', request: inputRequest });
-      emitExecutionState(onEvent, 'tool_waiting', 'Aguardando a resposta do usuário', { runId, step });
+      runState.to('tool_waiting', 'Aguardando a resposta do usuário', { step });
       break;
     }
-    emitExecutionState(onEvent, 'continuing', 'Resultado processado; escolhendo a próxima etapa', { runId, step });
+    runState.to('continuing', 'Resultado processado; escolhendo a próxima etapa', { step });
     // Checkpoint seguro entre lotes: nunca é gravado no meio de uma ferramenta.
     // Se o backend cair no próximo stream, a retomada parte daqui sem repetir
     // as chamadas que já terminaram. Uma conclusão limpa apaga este registro.
@@ -1498,7 +1512,7 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
   // vez só — validar duas vezes seria custo de sandbox repetido.
   let checks = {};
   if (newFiles.length && !stopped && !isSubagent) {
-    emitExecutionState(onEvent, 'validating', 'Validando os artefatos antes da entrega', { runId });
+    runState.to('validating', 'Validando os artefatos antes da entrega');
     checks = await validateOutputs(conversationId, newFiles, onEvent, sandboxOptions);
     if (Object.values(checks).some(check => check?.ok === false)) {
       incomplete = true;
@@ -1535,15 +1549,14 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
     // o botão "Continuar" aparece na mensagem interrompida.
     if (resumable) onEvent({ type: 'resumable', value: true });
   } else if (ownsCheckpoint) {
-    await clearCheckpoint(conversationId);
+    await clearCheckpoint(conversationId, userId);
   }
   const finalState = finalExecutionState({ stopped, awaitingUserReply, resumable, providerFailure, incomplete });
   // O fallback textual só é reconhecido no fim do stream; quando ele acontece, a
   // interface precisa do `input_required` também ao vivo (o `execution_meta`
   // cobre o reload e o replay).
   if (awaitingUserReply && inputRequest?.fallback) onEvent({ type: 'input_required', request: inputRequest });
-  const execution = emitExecutionState(onEvent, finalState, failureMessage || null, {
-    runId,
+  const execution = runState.to(finalState, failureMessage || null, {
     model: chosenModel,
     toolsExecuted: executedToolCalls,
     toolsAvailable: tools.map(tool => tool.function.name),

@@ -189,7 +189,7 @@ export function multiModelExecutionPolicy({ mode, requirement, developer = false
   };
 }
 
-export async function runMultiModel({ userId, conversationId, userText, config, webSearch = false, effort, developer = null, onEvent, pipelineResume = null, saveUserMessage = true }) {
+export async function runMultiModel({ userId, conversationId, userText, config, webSearch = false, effort, developer = null, onEvent, pipelineResume = null, saveUserMessage = true, control: inheritedControl = null }) {
   const memberProviders = await Promise.all(config.models.map(member => getUserProvider(userId, member.id)));
   const coordinatorProvider = await getUserProvider(userId, config.coordinator);
   config.models.forEach((member, index) => {
@@ -198,7 +198,11 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
   if (config.coordinator && !config.coordinator.includes('::') && coordinatorProvider.modelRef) {
     config.coordinator = coordinatorProvider.modelRef;
   }
-  const control = acquireConversationControl(conversationId, userId);
+  // `inheritedControl`: a rota adquire o controle ANTES de abrir o LiveStream
+  // (fecha o TOCTOU em que um segundo POST concorrente substituía o stream do
+  // run ativo). Liberar um controle herdado aqui é seguro: o release confere a
+  // identidade e o da rota vira no-op.
+  const control = inheritedControl || acquireConversationControl(conversationId, userId);
   const registry = { cancelled: new Set(), requests: new Map() };
   slotRegistries.set(conversationId, registry);
   const startedAt = Date.now();

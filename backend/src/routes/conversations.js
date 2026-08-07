@@ -6,6 +6,8 @@ import { nanoid } from 'nanoid';
 import { db, now } from '../db.js';
 import { runAgent, runOrchestrator, runMultiModel, normalizeMultiModelConfig, cancelMultiModelSlot, setControl, isConversationActive, countActiveRunsForUser, friendlyApiError, loadCheckpoint, hasCheckpoint } from '../agent.js';
 import { loadPipelineRun } from '../agent/pipelineRuns.js';
+import { acquireConversationControl, releaseConversationControl } from '../agent/control.js';
+import { createRunLog, listConversationRuns } from '../agent/runLog.js';
 import { openLiveStream, getLiveStream } from '../liveStream.js';
 import { runTool } from '../tools.js';
 import { classifyTaskResult } from '../taskOutcome.js';
@@ -19,6 +21,7 @@ import { acquireFreeSlot, cancelFreeJob, freeQueueSnapshot } from '../freeQueue.
 import { makeRouter, upload, scanOrReject, decodeUploadName, loadAssistant, ensureConversation, enforceDailyLimit, looksLikeFailedAssistantReply, beginUpload, enforceUploadLimits, cleanupRequestUploads } from './helpers.js';
 import { commitUploadedFile, hashFileStreamSync } from '../uploads.js';
 import { runGithubTool } from '../connectors/github.js';
+import { projectIdForConversation, getProject } from '../memory/projectStore.js';
 import { validateAttachmentManifest } from '../attachments.js';
 import { kickProcessing, mimeForName } from '../docling/service.js';
 import { purgeIfOrphan } from '../docling/retention.js';
@@ -319,12 +322,15 @@ router.post('/conversations/:id/control', validate(schemas.control), async (req,
   const conv = await db.prepare('SELECT id FROM conversations WHERE id=? AND user_id=?').get(req.params.id, req.userId);
   if (!conv) return res.status(404).json({ error: 'Não encontrado' });
   const control = setControl(req.params.id, action);
+  // "Parar" também cancela uma solicitação que AINDA aguarda na fila do modo
+  // gratuito. Desde que a rota /chat passou a adquirir o controle ANTES da fila
+  // (fechamento do TOCTOU do LiveStream), um job na fila TEM controle ativo —
+  // então o cancelamento da fila roda nos dois casos, não só no "sem controle".
+  if (action === 'stop') {
+    const cancelledInQueue = cancelFreeJob(req.params.id);
+    if (!control && cancelledInQueue) return res.json({ ok: true, action, cancelled: true });
+  }
   if (!control) {
-    // "Parar" também cancela uma solicitação que AINDA aguarda na fila do modo
-    // gratuito (ela não tem controle ativo porque nem começou a processar).
-    if (action === 'stop' && cancelFreeJob(req.params.id)) {
-      return res.json({ ok: true, action, cancelled: true });
-    }
     return res.status(409).json({ error: 'Não há processamento ativo nesta conversa.' });
   }
   res.json({ ok: true, action, paused: control.paused, stopped: control.stopped });
@@ -341,6 +347,27 @@ async function conversationGithubAction(req, res, tool) {
   if (!conv) return res.status(404).json({ error: 'Não encontrado' });
   const repo = String(req.body?.repo || '').trim();
   if (!repo) return res.status(400).json({ error: 'Nenhum repositório vinculado a esta conversa.' });
+  // ESCOPO DA AUTORIZAÇÃO (auditoria DW3): o clique é a autorização, mas o
+  // ALVO precisa ser o repositório realmente vinculado ao projeto desta
+  // conversa. Sem esta checagem, uma request autenticada podia empurrar
+  // qualquer repo/branch do token — fora do escopo que o resto do sistema
+  // (githubAccess.js) impõe ao agente. Falha fechada: sem vínculo no servidor,
+  // a escrita por botão é recusada (o clone continua exigindo só a posse, pois
+  // é leitura com o token do próprio usuário).
+  if (tool === 'github_push') {
+    const projectId = await projectIdForConversation(req.userId, req.params.id);
+    const project = projectId ? await getProject(req.userId, projectId) : null;
+    const binding = project?.binding || null;
+    if (!binding || binding.type !== 'github' || !binding.repo) {
+      return res.status(403).json({ error: 'Esta conversa não tem um repositório GitHub vinculado no servidor. Abra o Modo Desenvolvedor, vincule o repositório ao projeto e tente de novo.' });
+    }
+    if (binding.repo !== repo) {
+      return res.status(403).json({ error: `O repositório informado (${repo}) não é o vinculado a este projeto (${binding.repo}).` });
+    }
+    if (binding.branch && req.body?.branch && String(req.body.branch) !== binding.branch) {
+      return res.status(403).json({ error: `A branch informada (${req.body.branch}) não é a vinculada a este projeto (${binding.branch}).` });
+    }
+  }
   const args = { repo };
   if (req.body?.branch) args.branch = String(req.body.branch);
   if (tool === 'github_push' && req.body?.commit_message) args.commit_message = String(req.body.commit_message);
@@ -448,6 +475,18 @@ router.post('/conversations/:id/chat', validate(schemas.chat), async (req, res) 
       return res.status(status).json({ error: denial.error, code: denial.code, resetAt: denial.resetAt, used: denial.used, limit: denial.limit });
     }
   }
+  // FECHAMENTO DO TOCTOU: o controle da conversa é adquirido AQUI, de forma
+  // síncrona, ANTES de abrir o LiveStream. Sem isto, um segundo POST /chat
+  // concorrente passava pelo isConversationActive (checado lá em cima, com
+  // vários awaits no meio) e SUBSTITUÍA o LiveStream do run ativo — o run
+  // legítimo seguia publicando num objeto fora do Map e a reconexão via um
+  // stream vazio. A aquisição é atômica (event loop único) e o controle é
+  // repassado ao runner, que não tenta adquirir de novo.
+  let control;
+  try { control = acquireConversationControl(req.params.id, req.userId); }
+  catch {
+    return res.status(409).json({ error: 'Esta conversa já está processando uma resposta. Aguarde terminar ou pare o processamento antes de enviar outra mensagem.' });
+  }
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
@@ -465,10 +504,19 @@ router.post('/conversations/:id/chat', validate(schemas.chat), async (req, res) 
   // distinguir "ainda estou vendo o mesmo run" de "um run novo começou".
   const runId = nanoid();
   const live = openLiveStream(req.params.id, runId);
+  // RUN DURÁVEL (ADR 0002): a rota é o único ponto por onde TODOS os eventos
+  // passam — o gravador persiste os estruturais (tool_start/result, run_state,
+  // input_required, plan_update, files) para a execução ser reconstruível
+  // depois de reload ou restart. Nunca bloqueia nem derruba o stream.
+  const runKind = req.body?.multiModel ? 'multimodelo' : (req.body?.orchestrate ? 'orquestrador' : 'chat');
+  const runLog = createRunLog({ runId, conversationId: req.params.id, userId: req.userId, kind: runKind });
   const send = (event) => {
-    live.publish(event);
+    const rec = live.publish(event);
+    runLog.record(event);
     if (clientGone || res.writableEnded) return;
-    try { res.write(`data: ${JSON.stringify(event)}\n\n`); }
+    // `_seq`/`_runId` também no stream primário: o cliente do POST /chat passa a
+    // ter cursor exato para reconectar sem replay integral nem duplicação.
+    try { res.write(`data: ${JSON.stringify({ ...event, _seq: rec.seq, _runId: rec.runId || null })}\n\n`); }
     catch { clientGone = true; }
   };
   // Pulso (heartbeat): comentário SSE a cada 15s para a conexão nunca ficar
@@ -494,6 +542,9 @@ router.post('/conversations/:id/chat', validate(schemas.chat), async (req, res) 
     if (!res.writableEnded) cancelFreeJob(req.params.id);
   });
   let releaseFreeSlot = null;
+  // Estado final do run para o registro durável (o run_state terminal do
+  // runAgent tem precedência — ver runLog.finish).
+  const runOutcome = { state: null, detail: null, messageId: null };
   try {
     // FILA DO MODO GRATUITO: concorrência limitada na chave da plataforma. O
     // usuário vê os estados (preparando/aguardando/posição) e pode cancelar
@@ -530,7 +581,8 @@ router.post('/conversations/:id/chat', validate(schemas.chat), async (req, res) 
         webSearch: !!req.body?.webSearch,
         effort: req.body?.effort,
         developer: req.body?.developer,
-        onEvent: send
+        onEvent: send,
+        control
       });
     } else if (req.body?.orchestrate) {
       const assistants = (await Promise.all((req.body?.orchestrateIds || []).map(id => loadAssistant(req.userId, id)))).filter(Boolean);
@@ -546,15 +598,19 @@ router.post('/conversations/:id/chat', validate(schemas.chat), async (req, res) 
         webSearch: !!req.body?.webSearch,
         effort: req.body?.effort,
         developer: req.body?.developer,
-        onEvent: send
+        onEvent: send,
+        control
       });
     } else {
       const assistant = await loadAssistant(req.userId, req.body?.assistantId);
-      result = await runAgent({ userId: req.userId, conversationId: req.params.id, userText: text, model: req.body?.model, assistant, webSearch: !!req.body?.webSearch, effort: req.body?.effort, developer: req.body?.developer, onEvent: send, runIdOverride: runId });
+      result = await runAgent({ userId: req.userId, conversationId: req.params.id, userText: text, model: req.body?.model, assistant, webSearch: !!req.body?.webSearch, effort: req.body?.effort, developer: req.body?.developer, onEvent: send, runIdOverride: runId, control });
     }
+    runOutcome.messageId = result?.messageId || null;
     const chatOutcome = classifyTaskResult(result);
     if (chatOutcome.status === 'error') {
       send({ type: 'execution_failed', content: chatOutcome.error });
+      runOutcome.state = 'fatal_error';
+      runOutcome.detail = String(chatOutcome.error || '').slice(0, 500);
     }
     // Registra o consumo de tokens para o painel de análises
     if (result?.usage) {
@@ -585,22 +641,43 @@ router.post('/conversations/:id/chat', validate(schemas.chat), async (req, res) 
       logFreeTierEvent({ userId: req.userId, model: provider.model, status: 'cancelled', detail: 'cancelado na fila' });
       send({ type: 'free_queue', state: 'cancelled' });
       send({ type: 'done' });
+      runOutcome.state = 'stopped';
+      runOutcome.detail = 'Cancelado na fila do modo gratuito.';
     } else if (err?.code === 'FREE_QUEUE_FULL') {
       logFreeTierEvent({ userId: req.userId, model: provider.model, status: 'limited', detail: 'fila cheia' });
       send({ type: 'error', content: 'O modo gratuito está com muitas solicitações agora. Aguarde alguns minutos e tente de novo — ou adicione a sua própria chave de API em Configurações para não depender da fila.' });
+      runOutcome.state = 'fatal_error';
+      runOutcome.detail = 'Fila do modo gratuito cheia.';
     } else {
       console.error('[chat]', err);
       if (freeMode) logFreeTierEvent({ userId: req.userId, model: provider.model, status: 'error', detail: String(err?.message || err).slice(0, 300) });
       send({ type: 'error', content: friendlyApiError(err) });
+      runOutcome.state = 'fatal_error';
+      runOutcome.detail = String(err?.message || err).slice(0, 500);
     }
   } finally {
     releaseFreeSlot?.();
     clearInterval(heartbeat);
+    // O controle foi adquirido pela ROTA (fechamento do TOCTOU) — o release é
+    // idempotente por identidade, então liberar aqui e no runner é seguro.
+    releaseConversationControl(req.params.id, control);
+    // Fecha o registro durável do run (não bloqueia o encerramento da resposta).
+    runLog.finish(runOutcome);
     // Encerra o run no registro ao vivo: mantém o buffer por uma janela de
     // carência para quem reconectar no último segundo, depois se apaga sozinho.
     live.finish();
     res.end();
   }
+});
+
+// RUNS DA CONVERSA (Developer Workspace 3.0): devolve as execuções persistidas
+// com etapas e plano reconstruídos do event log durável. É o que permite ao
+// frontend remontar o terminal e a atividade depois de um reload — inclusive de
+// execuções antigas, que antes evaporavam com o buffer em memória.
+router.get('/conversations/:id/runs', async (req, res) => {
+  const conv = await db.prepare('SELECT id FROM conversations WHERE id=? AND user_id=?').get(req.params.id, req.userId);
+  if (!conv) return res.status(404).json({ error: 'Não encontrado' });
+  res.json({ runs: await listConversationRuns(req.userId, req.params.id) });
 });
 
 // RETOMADA REAL: continua uma tarefa interrompida A PARTIR DO CHECKPOINT (não
@@ -625,6 +702,10 @@ router.post('/conversations/:id/resume', async (req, res) => {
     // de usuário da conversa (o pipeline run guarda o config, não o userText).
     const lastUser = await db.prepare("SELECT content FROM messages WHERE conversation_id=? AND role='user' ORDER BY created_at DESC, seq DESC LIMIT 1").get(conversationId);
     const userText = lastUser?.content || '';
+    // Mesmo fechamento de TOCTOU do /chat: controle antes do LiveStream.
+    let control;
+    try { control = acquireConversationControl(conversationId, req.userId); }
+    catch { return res.status(409).json({ error: 'Esta conversa já está processando. Aguarde terminar antes de continuar.' }); }
     // ...rota SSE e execução iguais ao /chat (a stream é a mesma)
     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -634,10 +715,13 @@ router.post('/conversations/:id/resume', async (req, res) => {
     let clientGone = false;
     const runId = `resume_${nanoid(8)}`;
     const live = openLiveStream(conversationId, runId);
+    const runLog = createRunLog({ runId, conversationId, userId: req.userId, kind: 'multimodelo' });
+    const runOutcome = { state: null, detail: null, messageId: null };
     const send = (event) => {
-      live.publish(event);
+      const rec = live.publish(event);
+      runLog.record(event);
       if (clientGone || res.writableEnded) return;
-      try { res.write(`data: ${JSON.stringify(event)}\n\n`); }
+      try { res.write(`data: ${JSON.stringify({ ...event, _seq: rec.seq, _runId: rec.runId || null })}\n\n`); }
       catch { clientGone = true; }
     };
     const heartbeat = setInterval(() => { if (!clientGone && !res.writableEnded) { try { res.write(': ping\n\n'); } catch { clientGone = true; } } }, 15000);
@@ -669,8 +753,10 @@ router.post('/conversations/:id/resume', async (req, res) => {
         config,
         pipelineResume: activePipeline,
         saveUserMessage: false,
-        onEvent: send
+        onEvent: send,
+        control
       });
+      runOutcome.messageId = result?.messageId || null;
       if (result?.usage) {
         await recordUsage({
           userId: req.userId,
@@ -687,8 +773,12 @@ router.post('/conversations/:id/resume', async (req, res) => {
     } catch (err) {
       console.error('[resume/pipeline]', err);
       send({ type: 'error', content: friendlyApiError(err) });
+      runOutcome.state = 'fatal_error';
+      runOutcome.detail = String(err?.message || err).slice(0, 500);
     } finally {
       clearInterval(heartbeat);
+      releaseConversationControl(conversationId, control);
+      runLog.finish(runOutcome);
       live.finish();
       res.end();
     }
@@ -714,6 +804,10 @@ router.post('/conversations/:id/resume', async (req, res) => {
       return res.status(status).json({ error: denial.error, code: denial.code, resetAt: denial.resetAt, used: denial.used, limit: denial.limit });
     }
   }
+  // Mesmo fechamento de TOCTOU do /chat: controle antes do LiveStream.
+  let control;
+  try { control = acquireConversationControl(conversationId, req.userId); }
+  catch { return res.status(409).json({ error: 'Esta conversa já está processando. Aguarde terminar antes de continuar.' }); }
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
@@ -723,11 +817,17 @@ router.post('/conversations/:id/resume', async (req, res) => {
   // runId: a retomada continua O run interrompido (checkpoint.runId) — não
   // geramos um novo. Sem isto, o cliente que reconectou com fromSeq do run
   // antigo acharia que estamos num run novo e pediria replay do começo.
-  const live = openLiveStream(conversationId, checkpoint.runId || nanoid());
+  const resumeRunId = checkpoint.runId || nanoid();
+  const live = openLiveStream(conversationId, resumeRunId);
+  // O run durável é o MESMO do run interrompido: o gravador continua a
+  // sequência de eventos e reabre o ended_at (ver createRunLog).
+  const runLog = createRunLog({ runId: resumeRunId, conversationId, userId: req.userId, kind: 'chat' });
+  const runOutcome = { state: null, detail: null, messageId: null };
   const send = (event) => {
-    live.publish(event);
+    const rec = live.publish(event);
+    runLog.record(event);
     if (clientGone || res.writableEnded) return;
-    try { res.write(`data: ${JSON.stringify(event)}\n\n`); }
+    try { res.write(`data: ${JSON.stringify({ ...event, _seq: rec.seq, _runId: rec.runId || null })}\n\n`); }
     catch { clientGone = true; }
   };
   const heartbeat = setInterval(() => { if (!clientGone && !res.writableEnded) { try { res.write(': ping\n\n'); } catch { clientGone = true; } } }, 15000);
@@ -766,12 +866,18 @@ router.post('/conversations/:id/resume', async (req, res) => {
       saveUserMessage: false,
       existingUserMessageId: lastUser?.id || null,
       onEvent: send,
+      control,
       // runIdOverride: usar o mesmo do checkpoint (e do live stream) para que a
       // reconexão ao /stream saiba que ESTE run é continuação do anterior.
-      runIdOverride: checkpoint.runId || nanoid()
+      runIdOverride: resumeRunId
     });
+    runOutcome.messageId = result?.messageId || null;
     const chatOutcome = classifyTaskResult(result);
-    if (chatOutcome.status === 'error') send({ type: 'execution_failed', content: chatOutcome.error });
+    if (chatOutcome.status === 'error') {
+      send({ type: 'execution_failed', content: chatOutcome.error });
+      runOutcome.state = 'fatal_error';
+      runOutcome.detail = String(chatOutcome.error || '').slice(0, 500);
+    }
     if (result?.usage) {
       await recordUsage({
         userId: req.userId,
@@ -803,10 +909,14 @@ router.post('/conversations/:id/resume', async (req, res) => {
       console.error('[resume]', err);
       if (freeMode) logFreeTierEvent({ userId: req.userId, model: provider.model, status: 'error', detail: String(err?.message || err).slice(0, 300) });
       send({ type: 'error', content: friendlyApiError(err) });
+      runOutcome.state = 'fatal_error';
+      runOutcome.detail = String(err?.message || err).slice(0, 500);
     }
   } finally {
     releaseFreeSlot?.();
     clearInterval(heartbeat);
+    releaseConversationControl(conversationId, control);
+    runLog.finish(runOutcome);
     live.finish();
     res.end();
   }
