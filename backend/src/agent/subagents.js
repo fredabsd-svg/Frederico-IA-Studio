@@ -65,7 +65,10 @@ export function buildSubagentBudget({ now = Date.now(), deadlineMs = null, total
     maxSteps: SUBAGENT_DEFAULTS.maxSteps,
     hardMaxSteps: SUBAGENT_DEFAULTS.hardMaxSteps,
     maxTokens: SUBAGENT_DEFAULTS.maxTokens,
-    deadlineMs: effectiveDeadline
+    deadlineMs: effectiveDeadline,
+    // Informativo: o teto total configurado, para a mensagem de estouro do
+    // deadline dizer o limite real sem recalcular a partir do instante.
+    totalMs
   };
 }
 
@@ -486,7 +489,13 @@ export async function runSubagent({
       gitWriteAuthorization: false,     // escrita no GitHub não se herda
       delegation,                       // permissões, sandbox e escopo do pai
       outputsSubdir,                    // F-25: isola outputs por delegação
-      subagentBudget: effectiveBudget   // F-24: teto de tempo/etapas/tokens
+      // F-24: teto de tempo/etapas/tokens. O NOME do parâmetro é
+      // `subagentRunBudget` (loop.js) — a versão anterior passava
+      // `subagentBudget`, que o runAgent nem declara: o objeto era descartado
+      // em silêncio e o filho rodava com o teto cheio do pai (até 200 etapas,
+      // sem limite de tokens nem deadline). O teste de fiação em
+      // subagents.test.js guarda este contrato para o erro não voltar.
+      subagentRunBudget: effectiveBudget
     });
   } catch (err) {
     onEvent({ type: 'status', content: `O sub-agente ${label} falhou.` });

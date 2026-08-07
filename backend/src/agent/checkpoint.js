@@ -186,11 +186,18 @@ export async function hasCheckpoint(userId, conversationId) {
 }
 
 // Remove o checkpoint (chamado quando o run conclui de forma limpa — não há mais
-// o que retomar).
-export async function clearCheckpoint(conversationId) {
+// o que retomar). `userId` escopa a remoção ao dono, como no load/save — a
+// versão sem escopo era a única operação da tabela que não provava a posse.
+// O parâmetro é opcional para compatibilidade com testes antigos; o caminho de
+// produção (loop.js) sempre o informa.
+export async function clearCheckpoint(conversationId, userId = null) {
   if (!conversationId) return;
   try {
-    await db.prepare('DELETE FROM execution_checkpoints WHERE conversation_id=?').run(conversationId);
+    if (userId) {
+      await db.prepare('DELETE FROM execution_checkpoints WHERE conversation_id=? AND user_id=?').run(conversationId, userId);
+    } else {
+      await db.prepare('DELETE FROM execution_checkpoints WHERE conversation_id=?').run(conversationId);
+    }
   } catch (err) {
     console.error('[checkpoint] falha ao limpar:', err.message);
   }
