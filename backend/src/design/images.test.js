@@ -171,26 +171,24 @@ try {
 } catch { sharpAvailable = false; }
 const needsSharp = sharpAvailable ? false : 'requer sharp';
 
-// Stub do provedor de imagem. Devolve o buffer que o teste passa — assim
-// conseguimos simular "PNG de 3 MB devolvido pelo provedor" sem precisar
-// de rede nem do OpenRouter.
-const stubbedImages = [];
-let stubbedProvider = null;
-async function withStubbedProvider(providerFn, fn) {
-  // Importa o imageProvider dinamicamente e substitui resolveImageProvider
-  // no módulo images.js. Como images.js já importou o original, precisamos
-  // de um caminho diferente: vamos pelo módulo que ele importa.
-  const ip = await import('../imageProvider.js');
-  const original = ip.resolveImageProvider;
-  ip.resolveImageProvider = providerFn;
-  try { return await fn(); } finally { ip.resolveImageProvider = original; }
+// Dependências falsas explícitas. Módulos ESM expõem bindings somente leitura;
+// tentar sobrescrever `resolveImageProvider` no namespace importado funciona em
+// CommonJS, mas falha no Node usado pelo CI. A injeção mantém o teste isolado e
+// entrega exatamente o buffer que cada cenário precisa exercitar.
+function imageDependencies(buffer, mime = 'image/png') {
+  return {
+    resolveProvider: async () => ({ provider: { baseURL: 'https://stub', apiKey: 'x' }, model: 'stub' }),
+    requestImage: async () => ({ ok: true, buffer, mime, model: 'stub', usage: null }),
+  };
 }
 
 async function bigPngBuffer() {
   const sharp = (await import('sharp')).default;
   const { randomBytes } = await import('node:crypto');
-  const noise = randomBytes(4000 * 3000 * 3);
-  return sharp(noise, { raw: { width: 4000, height: 3000, channels: 3 } })
+  // Grande o bastante para disparar a compressão, mas com JPEG final abaixo do
+  // teto de 5 MB que `generateDesignImage` aplica depois de comprimir.
+  const noise = randomBytes(2000 * 1500 * 3);
+  return sharp(noise, { raw: { width: 2000, height: 1500, channels: 3 } })
     .png({ compressionLevel: 0 }).toBuffer();
 }
 
@@ -204,9 +202,9 @@ test('generateDesignImage comprime PNG grande e grava auditoria', { skip: needsD
   const big = await bigPngBuffer();
   assert.ok(big.length > 1024 * 1024, `precisamos de PNG > 1 MB (foi ${big.length})`);
 
-  const result = await withStubbedProvider(
-    async () => ({ provider: { baseURL: 'https://stub', apiKey: 'x' }, model: 'stub' }),
-    () => images.generateDesignImage({ userId: OWNER, projectId: project.id, prompt: 'compress me' })
+  const result = await images.generateDesignImage(
+    { userId: OWNER, projectId: project.id, prompt: 'compress me' },
+    imageDependencies(big),
   );
 
   assert.equal(result.ok, true);
@@ -234,9 +232,9 @@ test('generateDesignImage NÃO comprime PNG pequeno e deixa original nulo', { sk
   const small = await smallPngBuffer();
   assert.ok(small.length < 1024 * 1024);
 
-  const result = await withStubbedProvider(
-    async () => ({ provider: { baseURL: 'https://stub', apiKey: 'x' }, model: 'stub' }),
-    () => images.generateDesignImage({ userId: OWNER, projectId: project.id, prompt: 'tiny' })
+  const result = await images.generateDesignImage(
+    { userId: OWNER, projectId: project.id, prompt: 'tiny' },
+    imageDependencies(small),
   );
 
   assert.equal(result.ok, true);
@@ -255,9 +253,9 @@ test('generateDesignImage NÃO comprime PNG pequeno e deixa original nulo', { sk
 test('listDesignImages inclui metadados de compressão quando houve mudança', { skip: needsDb || needsSharp }, async () => {
   const project = await newProject();
   const big = await bigPngBuffer();
-  const result = await withStubbedProvider(
-    async () => ({ provider: { baseURL: 'https://stub', apiKey: 'x' }, model: 'stub' }),
-    () => images.generateDesignImage({ userId: OWNER, projectId: project.id, prompt: 'list test' })
+  const result = await images.generateDesignImage(
+    { userId: OWNER, projectId: project.id, prompt: 'list test' },
+    imageDependencies(big),
   );
   assert.equal(result.ok, true);
 
