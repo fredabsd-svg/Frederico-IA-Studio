@@ -377,7 +377,10 @@ export async function buildRepoDigest({ userId, repo, branch = null, signal, max
 
 // ---- git no backend (nunca no sandbox: o token não pode vazar para lá) ----
 
-function runGit(cwd, args, { token = null, timeoutMs = GIT_TIMEOUT_MS, signal } = {}) {
+// Exportado para leituras locais SEM token (ChangeSet do Modo Desenvolvedor):
+// status/diff no clone do workspace. Escrita/remoto continuam só pelas
+// ferramentas github_* — o token nunca sai deste módulo.
+export function runGit(cwd, args, { token = null, timeoutMs = GIT_TIMEOUT_MS, signal } = {}) {
   return new Promise((resolve) => {
     const authArgs = token
       ? ['-c', `http.https://github.com/.extraheader=Authorization: Basic ${Buffer.from(`x-access-token:${token}`).toString('base64')}`]
