@@ -188,7 +188,12 @@ export async function runAgent({ userId, conversationId, userText, model, assist
     turnAuthorizesWrite: turnAuthorizesGitWrite && gitWriteAuthorization !== false,
     base: structuredGithubAuthorization?.base || null,
     lowSignalTurn,
-    isSubagent
+    isSubagent,
+    // Identidade da tarefa para a branch de trabalho derivada (Fase 23): o
+    // nome é determinístico por conversa, então a retomada volta para a MESMA
+    // branch em vez de criar uma nova a cada turno.
+    conversationId,
+    projectName: developer?.project?.name || ''
   });
   const gitWriteAuthorized = githubState.writeAuthorized;
   const developerContext = inherited

@@ -292,3 +292,91 @@ test('o inventário anunciado no prompt casa exatamente com as ferramentas liber
     }
   }
 });
+
+// ---- Branch de trabalho por tarefa (Fase 23 / decisão 2A) -------------------
+
+test('vínculo em branch PROTEGIDA: o trabalho vai para a branch derivada e a protegida vira base', () => {
+  const pre = githubPreflight({
+    githubConnected: true,
+    developerContext: devContext({ github: { repo: REPO, branch: 'main' } }),
+    conversationId: 'conv_ABC12345',
+    projectName: 'Meu App'
+  });
+  assert.equal(pre.workBranchDerived, true);
+  assert.equal(pre.workBranchReason, 'protected_branch');
+  assert.match(pre.branch, /^frederico\/meu-app-/);
+  assert.equal(pre.boundBranch, 'main', 'a branch vinculada continua visível');
+  assert.equal(pre.base, 'main', 'a protegida vira base do PR');
+});
+
+test('branch de trabalho explícita no vínculo não é atropelada pela derivação', () => {
+  const pre = githubPreflight({
+    githubConnected: true,
+    developerContext: devContext(),
+    conversationId: 'conv_ABC12345',
+    projectName: 'Meu App'
+  });
+  assert.equal(pre.workBranchDerived, false);
+  assert.equal(pre.branch, BRANCH);
+});
+
+test('modo somente-leitura não deriva branch nenhuma', () => {
+  const pre = githubPreflight({
+    githubConnected: true,
+    developerContext: devContext({ mode: 'review', canWrite: false, github: { repo: REPO, branch: 'main' } }),
+    conversationId: 'c1',
+    projectName: 'App'
+  });
+  assert.equal(pre.workBranchDerived, false);
+  assert.equal(pre.branch, 'main');
+});
+
+test('a autorização estruturada é conferida contra a branch EFETIVA (a de trabalho)', () => {
+  const contexto = devContext({ github: { repo: REPO, branch: 'main' } });
+  const derivada = githubPreflight({ githubConnected: true, developerContext: contexto, conversationId: 'conv_ABC12345', projectName: 'Meu App' }).branch;
+
+  // Autorização emitida para a branch de trabalho: publica.
+  const ok = githubPreflight({
+    githubConnected: true,
+    developerContext: contexto,
+    conversationId: 'conv_ABC12345',
+    projectName: 'Meu App',
+    authorization: normalizeGithubWriteAuthorization({
+      githubWrite: true,
+      githubWriteScope: { repo: REPO, branch: derivada, base: 'main', actions: ['push', 'create_pr'] }
+    })
+  });
+  assert.equal(ok.writeAuthorized, true);
+
+  // Autorização emitida para a branch PROTEGIDA não vale para o trabalho atual.
+  const mismatch = githubPreflight({
+    githubConnected: true,
+    developerContext: contexto,
+    conversationId: 'conv_ABC12345',
+    projectName: 'Meu App',
+    authorization: normalizeGithubWriteAuthorization({
+      githubWrite: true,
+      githubWriteScope: { repo: REPO, branch: 'main', base: 'main', actions: ['push'] }
+    })
+  });
+  assert.equal(mismatch.writeAuthorized, false);
+  assert.equal(mismatch.blockingReason, 'scope_mismatch');
+});
+
+test('a nota avisa que a branch é de trabalho e proíbe commit na protegida', () => {
+  const contexto = devContext({ github: { repo: REPO, branch: 'main' } });
+  const branch = githubPreflight({ githubConnected: true, developerContext: contexto, conversationId: 'c9', projectName: 'App' }).branch;
+  const liberado = githubPreflight({
+    githubConnected: true,
+    developerContext: contexto,
+    conversationId: 'c9',
+    projectName: 'App',
+    authorization: normalizeGithubWriteAuthorization({
+      githubWrite: true,
+      githubWriteScope: { repo: REPO, branch, base: 'main', actions: ['push', 'create_pr'] }
+    })
+  });
+  const nota = githubPreflightNote(liberado);
+  assert.match(nota, /BRANCH DE TRABALHO/);
+  assert.match(nota, /nunca commite direto na branch protegida/i);
+});

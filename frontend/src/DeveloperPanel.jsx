@@ -108,6 +108,11 @@ export function DeveloperPanel({ devProjects, onStart, onManageFolders, onOpenCo
   // Autorização já registrada e AINDA VÁLIDA para o vínculo atual (mudar de
   // repositório, branch ou destino invalida — e a interface volta a pedir).
   const grant = githubWritePermissionFor(project, { base: baseBranch });
+  // Branch de trabalho automática (decisão 2A): espelha a regra do backend
+  // (agent/workBranch.js) só para EXPLICAR a configuração — quem decide de
+  // fato é o pré-voo, na execução, onde a conversa já existe.
+  const PROTEGIDAS = new Set(['main', 'master', 'develop', 'development', 'trunk', 'release', 'prod']);
+  const trabalhoEmBranchPropria = canWriteProject && !!binding.branch && PROTEGIDAS.has(String(binding.branch).toLowerCase());
 
   // ── PRÉ-VOO DA PUBLICAÇÃO ─────────────────────────────────────────────────
   // A mesma função que o loop do agente usa para montar o inventário responde
@@ -278,6 +283,13 @@ export function DeveloperPanel({ devProjects, onStart, onManageFolders, onOpenCo
         </li>
         <li className="yes"><span>Repositório</span><b>{githubRepoName}</b></li>
         <li className={binding.branch ? 'yes' : 'no'}><span>Branch</span><b>{binding.branch || 'nenhuma selecionada'}</b></li>
+        {/* Branch de trabalho (decisão 2A): com o vínculo numa branch protegida
+            e modo de escrita, a tarefa commita numa branch própria, criada a
+            partir dela. O NOME exato depende da conversa (que ainda não
+            existe aqui), então o painel anuncia a regra, não um nome falso. */}
+        {trabalhoEmBranchPropria && <li className="yes">
+          <span>Branch de trabalho</span><b>própria da tarefa (a partir de {binding.branch})</b>
+        </li>}
         <li className="yes"><span>Destino do PR</span><b>{preflight?.base || baseBranch}</b></li>
         <li className={canWriteProject ? 'yes' : 'no'}><span>Modo</span><b>{canWriteProject ? 'escrita' : 'leitura'}</b></li>
         <li className={preflight?.writeAuthorized ? 'yes' : 'no'}>
@@ -301,6 +313,11 @@ export function DeveloperPanel({ devProjects, onStart, onManageFolders, onOpenCo
             <span className="devPreflightOk"><ShieldCheck size={14}/> Autorizado{grant?.githubWriteConfirmedAt ? ` em ${new Date(grant.githubWriteConfirmedAt).toLocaleString('pt-BR')}` : ''}</span>
             <button type="button" className="devIconBtn danger" onClick={() => revokeGithubWrite(project?.id)}>Revogar</button>
           </div>
+        : trabalhoEmBranchPropria
+        ? <p className="devPreflightWhy">
+            <Info size={14}/>
+            <span>Como o vínculo está numa branch protegida ({binding.branch}), a tarefa vai commitar numa <b>branch própria</b> criada a partir dela — e a autorização de publicação será pedida <b>dentro da tarefa</b>, já com o nome real dessa branch. Assim o que você autoriza é exatamente o que será publicado.</span>
+          </p>
         : <div className="devPreflightActions">
             <button type="button" className="primary" onClick={autorizarPublicacao}
               disabled={isDraft || !canWriteProject || !binding.branch || preflight?.connected === false}

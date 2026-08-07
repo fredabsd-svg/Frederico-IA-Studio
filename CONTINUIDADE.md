@@ -24,7 +24,26 @@ que ainda segura o verde é o **pipeline multimodelo retomável**: o F-15 entreg
 tabela e as primitivas, mas o `runMultiModel` ainda não as usa, então o reinício continua
 sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** a **Frente 19 — Projetos dev no servidor (ADR 0004)**
+- **Último trabalho:** a **Frente 20 — Branch de trabalho por tarefa**
+  (decisão 2A) fechou o isolamento de HISTÓRICO — o de arquivos já vinha do
+  clone por conversa. Em modo de escrita sobre branch protegida (main/master/
+  develop…) ou sem branch fixada, a tarefa passa a commitar numa branch
+  derivada determinística (`frederico/<projeto>-<conversa>`), com a vinculada
+  como base do PR; a mesma conversa retomada volta para a MESMA branch, em vez
+  de criar uma nova a cada turno. Branch de trabalho explícita no vínculo
+  continua mandando.
+  A decisão mora no `githubPreflight` (fonte única de inventário, interface e
+  prompt) e o escopo da autorização estruturada passou a ser conferido contra a
+  branch EFETIVA: uma autorização emitida para a protegida agora dá
+  `scope_mismatch` em vez de liberar o push do trabalho. **O caminho legado de
+  autorização por texto do turno NÃO ganhou alcance** — continua exigindo
+  branch explícita no vínculo (era o ponto de atenção do teste de
+  compatibilidade, que pegou a regressão).
+  No painel do projeto, com vínculo em branch protegida, o botão "Autorizar
+  publicação" dá lugar a uma explicação honesta: a autorização é pedida
+  **dentro da tarefa**, já com o nome real da branch — o painel roda antes de a
+  conversa existir e não pode prometer um nome que ainda não é conhecido.
+- **Último trabalho anterior:** a **Frente 19 — Projetos dev no servidor (ADR 0004)**
   fechou o risco R7 da auditoria: a fonte de verdade dos projetos do Modo
   Desenvolvedor (vínculo repo/pasta, regras, memória permanente, permissões
   concedidas, modo) saiu do localStorage e foi para o banco.
@@ -314,8 +333,9 @@ sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md
   (o Nino cobrindo o botão de enviar), **[#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)**
   (Playwright + suíte ponta a ponta) e **[#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)**
   (as sete falhas P0 dos sub-agentes).
-- **Última validação:** 2026-08-07 (Frente 19) — **backend `npm run check`:
-  1240 testes, 0 falhas, 144 pulados** (exigem PostgreSQL; esperado fora do
+- **Última validação:** 2026-08-07 (Frente 20) — **backend `npm run check`:
+  1253 testes, 0 falhas, 144 pulados** e **frontend: 140/140** (bundle
+  916/920 KB). Antes dela, Frente 19 — **backend 1240 testes, 0 falhas, 144 pulados** (exigem PostgreSQL; esperado fora do
   Docker) e **frontend `npm run check`: 140/140** (lint + testes + build +
   budget + css:inventory verdes). Bundle: entrada 916/920 KB, total dentro do
   teto. Antes dela: Frente 18 (backend 1236/0, frontend 135/135) e Frente 17

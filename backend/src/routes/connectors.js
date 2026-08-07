@@ -138,7 +138,13 @@ router.get('/connectors/github/preflight', async (req, res) => {
     githubConnected: connected,
     developerContext,
     authorization,
-    base: base || authorization?.base || null
+    base: base || authorization?.base || null,
+    // A branch de trabalho é determinística por conversa+projeto: o painel
+    // informa os dois para exibir (e autorizar) exatamente a branch em que o
+    // agente vai commitar — sem isso, o painel autorizaria a branch vinculada
+    // e o executor pediria autorização para outra.
+    conversationId: String(req.query.conversationId || '').trim(),
+    projectName: String(req.query.projectName || '').trim()
   });
   res.json({
     ...state,

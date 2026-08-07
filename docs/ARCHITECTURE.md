@@ -152,6 +152,17 @@ POST /chat
   estruturado que instrui a mudar de estratégia; resultado novo zera a
   contagem (progresso legítimo). O bloqueio conta no freio de falhas
   consecutivas do loop.
+- **Branch de trabalho por tarefa (Fase 23):** `agent/workBranch.js` — o
+  isolamento de ARQUIVOS já vem do clone por conversa; o de HISTÓRICO vem
+  daqui. Em modo de escrita sobre branch protegida (main/master/develop…) ou
+  sem branch fixada, a tarefa commita numa branch derivada determinística
+  (`frederico/<slug-do-projeto>-<sufixo-da-conversa>`) e a vinculada vira base
+  do PR — a mesma conversa retomada volta para a MESMA branch. Branch de
+  trabalho explícita no vínculo não é atropelada. A decisão acontece no
+  `githubPreflight` (fonte única de inventário, interface e prompt), e o escopo
+  da autorização estruturada é conferido contra a branch EFETIVA. O caminho
+  legado de autorização por texto do turno **não** ganha alcance: continua
+  exigindo branch explícita no vínculo.
 - **Projetos dev no servidor (ADR 0004):** `dev_projects` carrega o projeto
   INTEIRO (vínculo, regras, memória, `permissions`, `mode` — migração 033) e é
   a fonte de verdade; o navegador é cache (`useDevProjects`: bootstrap por
