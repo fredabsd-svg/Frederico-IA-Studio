@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { API } from '../constants.js';
+import { hydrateMessagesWithRuns } from '../runHydration.js';
 
 // Lista, seleção e CRUD de conversas + arquivos da conversa aberta.
 // Recebe as dependências do App por parâmetro e devolve { estado, ações }.
@@ -90,6 +91,15 @@ export function useConversations({ clientId, model, setModel, showToast, blockCo
       const devSession = resolveDeveloperSessionRef?.current?.(id) || null;
       setDeveloperSession(devSession);
       loadFiles(id);
+      // RUNS DURÁVEIS: reconstrói as etapas de ferramenta/terminal/plano das
+      // execuções persistidas (agent_run_events) — antes, reabrir a conversa
+      // apagava toda a evidência do que o agente fez. Com a conversa AINDA
+      // ativa, quem remonta é o replay do stream (followActiveConversation).
+      if (!data.active) {
+        hydrateMessagesWithRuns(id, data.messages || []).then(hydrated => {
+          if (currentRef.current?.id === id && hydrated !== data.messages) setMessages(hydrated);
+        }).catch(() => {});
+      }
       // Se a conversa AINDA está processando (o usuário saiu e voltou), reconecta
       // ao stream ao vivo e segue acompanhando o andamento — com pausar/parar
       // funcionando — como se nunca tivesse saído. currentRef é atualizado por um

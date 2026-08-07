@@ -7,7 +7,6 @@ import { API, TOOL_INFO, TEMPLATES, QUICK_ACTIONS, THEMES, WORKSPACES, EFFORTS, 
 import { signOut } from './authClient.js';
 import { Slider, Modal, Drawer, Collapsible, useAppDialog, ModelPicker } from './components.jsx';
 import { ExecutionSessionLine } from './components/ExecutionSessionLine.jsx';
-import { PlanChecklist } from './components/PlanChecklist.jsx';
 import { ChatJumpToBottom } from './components/ChatJumpToBottom.jsx';
 import { UserInputRequestCard } from './components/UserInputRequest.jsx';
 import { collectExecutionSessions, pendingInputRequest, pickTerminalSession } from './executionSessions.js';
@@ -58,6 +57,9 @@ import { ClientPicker } from './components/ClientPicker.jsx';
 // remapeamento o `default` vem `undefined` e o React derruba a árvore inteira
 // no error boundary (erro #306) — e nada disso aparece no build nem nos testes
 // de módulo, só com o app aberto.
+// Checklist do plano estruturado (update_plan): só existe em missões do Modo
+// Desenvolvedor — fora dele o chunk nem é baixado (orçamento de entrada).
+const LazyPlanChecklist = lazy(() => import('./components/PlanChecklist.jsx').then(m => ({ default: m.PlanChecklist })));
 const LazyMemoryPanel = lazy(() => import('./MemoryPanel.jsx').then(m => ({ default: m.MemoryPanel })));
 const LazyProviderPanel = lazy(() => import('./ProviderPanel.jsx').then(m => ({ default: m.ProviderPanel })));
 const LazyPrivacyPanel = lazy(() => import('./PrivacyPanel.jsx').then(m => ({ default: m.PrivacyPanel })));
@@ -284,7 +286,7 @@ export default function App({ user } = {}) {
     contentKey: chatKey
   });
   const {
-    busy, busyRef, paused, statusText, controlPending, nowTick, runs, anyBusy, sendMessage, retrySend, resumeRun, control, cancelMultiSlot
+    busy, busyRef, paused, statusText, controlPending, runs, anyBusy, sendMessage, retrySend, resumeRun, control, cancelMultiSlot
   } = useChat({
     input, setInput, messages, setMessages, uploads, team, effectiveTeam,
     listening, recognitionRef, current, currentRef, setCurrent,
@@ -930,19 +932,28 @@ export default function App({ user } = {}) {
     .filter(Boolean)
     .slice(0, 8);
 
-  // Pill de status do cabeçalho do Modo Desenvolvedor — só estados que dá para
-  // provar com sinais reais (sem inventar um pipeline de 5 etapas que o
-  // backend não expõe): aguardando / trabalhando / interrompido / erro / concluído.
+  // Pill de status do cabeçalho do Modo Desenvolvedor — o rótulo vem do ESTADO
+  // REAL da execução (execution_meta gravado pelo backend, autoridade da
+  // máquina de estados), não de heurística da UI. "Concluído" só aparece
+  // quando o backend declarou `completed` — mensagens sem estado (conversas
+  // antigas, texto puro) mostram "Pronto".
   const lastAssistantMsg = [...messages].reverse().find(m => m.role === 'assistant');
+  const lastExecState = lastAssistantMsg?.execution?.state || null;
   const devStagePill = busy
     ? { label: paused ? 'Pausado' : (statusText || 'Trabalhando...'), tone: 'live' }
-    : lastAssistantMsg?.failed
-      ? { label: 'Erro', tone: 'error' }
-      : lastAssistantMsg?.resumable
-        ? { label: 'Interrompido — pode continuar', tone: 'warn' }
-        : messages.length > 0
-          ? { label: 'Concluído', tone: 'done' }
-          : { label: 'Aguardando instrução', tone: 'idle' };
+    : lastExecState === 'awaiting_user'
+      ? { label: 'Aguardando sua resposta', tone: 'warn' }
+      : (lastExecState === 'fatal_error' || lastAssistantMsg?.failed)
+        ? { label: 'Erro', tone: 'error' }
+        : (lastExecState === 'recoverable_error' || lastExecState === 'paused' || lastAssistantMsg?.resumable)
+          ? { label: 'Interrompido — pode continuar', tone: 'warn' }
+          : lastExecState === 'stopped'
+            ? { label: 'Interrompido', tone: 'warn' }
+            : lastExecState === 'completed'
+              ? { label: 'Concluído', tone: 'done' }
+              : messages.length > 0
+                ? { label: 'Pronto', tone: 'idle' }
+                : { label: 'Aguardando instrução', tone: 'idle' };
 
   // Permissões reais desta tarefa (não um toggle fictício): modo ativo (ou o do
   // projeto, se ainda não há sessão preparada) e o vínculo de pasta/repositório.
@@ -1140,7 +1151,7 @@ export default function App({ user } = {}) {
                 (m.plan); reaberto do banco, pelo execution_meta. O backend é
                 quem valida status/evidência — aqui só exibimos. */}
             {m.role === 'assistant' && (m.plan || m.execution?.plan) &&
-              <PlanChecklist plan={m.plan || m.execution?.plan}/>}
+              <Suspense fallback={null}><LazyPlanChecklist plan={m.plan || m.execution?.plan}/></Suspense>}
             {m.role === 'assistant' && m.multi && !(m.blocks || []).some(b => b.type === 'tool')
               ? null
               : m.blocks

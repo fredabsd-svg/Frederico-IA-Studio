@@ -12,7 +12,9 @@ import { sessionSummaryLine, summarizeSession, terminalStatus } from '../executi
 // Mora num módulo próprio (e não junto do terminal) porque ela é renderizada em
 // TODA mensagem com ferramentas: mantendo-a leve, o terminal e a janela em tela
 // cheia podem ficar em chunks separados, baixados só quando aparecem.
-export function ExecutionSessionLine({ session, awaitingUser = false, onOpenInDock }) {
+// Memoizada: é renderizada em TODA mensagem com ferramentas e o App re-renderiza
+// por token durante o streaming — sem memo, cada delta re-derivava o resumo.
+export const ExecutionSessionLine = React.memo(function ExecutionSessionLine({ session, awaitingUser = false, onOpenInDock }) {
   const steps = session?.steps || [];
   // Relógio congelado no primeiro render: a linha do histórico não precisa
   // contar segundos — quem faz isso é o terminal, com relógio próprio.
@@ -32,4 +34,4 @@ export function ExecutionSessionLine({ session, awaitingUser = false, onOpenInDo
       </button>
     </div>
   );
-}
+});
