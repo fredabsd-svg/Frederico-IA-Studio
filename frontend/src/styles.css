@@ -1488,3 +1488,11 @@ body.dockResizing{user-select:none;cursor:ns-resize}
 .diffCtx{color:var(--muted)}
 .devFileBtn{width:100%;text-align:left;background:none;border:0;cursor:pointer;font:inherit;color:inherit;padding:0}
 .devFileBtn:hover .devFileName{text-decoration:underline}
+
+/* Contexto da sessão de desenvolvimento (projeto · branch · ambiente · modelo · permissões). */
+.devSessionBarCtx{display:flex;flex-wrap:wrap;gap:6px 16px;padding:6px 16px;border-bottom:1px solid var(--line);background:rgba(127,127,127,.04);font-size:var(--fs-xs)}
+.devCtxItem{display:flex;align-items:baseline;gap:5px;min-width:0}
+.devCtxItem small{color:var(--muted);text-transform:uppercase;letter-spacing:.04em;font-size:10px}
+.devCtxItem b{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:38ch}
+.devCtxItem em{color:var(--muted);font-style:normal}
+@media(max-width:720px){.devSessionBarCtx{gap:4px 12px;padding:5px 12px}.devCtxItem b{max-width:22ch}}

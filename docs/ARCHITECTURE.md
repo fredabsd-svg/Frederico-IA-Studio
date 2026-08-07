@@ -152,6 +152,16 @@ POST /chat
   estruturado que instrui a mudar de estratégia; resultado novo zera a
   contagem (progresso legítimo). O bloqueio conta no freio de falhas
   consecutivas do loop.
+- **Layout do workspace (Fases 51, 52 e 55):** `frontend/src/devWorkspaceLayout.js`
+  — módulo PURO que decide o que a sessão anuncia (projeto, branch de
+  TRABALHO vinda do pré-voo real, ambiente, modelo, permissões) e quanto do
+  workspace aparece por padrão. A **simplicidade progressiva** começa em Chat +
+  Tarefa + Terminal e abre o resto sob demanda ("Mostrar tudo"); a escolha
+  explícita do usuário sobre uma coluna sempre vence o padrão do nível
+  (`null` = ainda não decidiu). A grade de três colunas + terminal + compositor
+  já existia e **não foi reescrita**: a frente mexeu na lógica, não no grid.
+  As colunas do modo desenvolvedor passaram a chunks lazy (a entrada do bundle
+  caiu de 920 para 890 KB).
 - **Diff por arquivo e reversão por hunk (Fase 27 completa):**
   `agent/diffView.js` + `GET /conversations/:id/diff` e
   `POST /conversations/:id/revert`. O arquivo alterado abre em hunks; cada
