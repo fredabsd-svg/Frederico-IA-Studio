@@ -24,7 +24,26 @@ que ainda segura o verde é o **pipeline multimodelo retomável**: o F-15 entreg
 tabela e as primitivas, mas o `runMultiModel` ainda não as usa, então o reinício continua
 sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** a **Frente 26 — Telemetria local de confiabilidade**
+- **Último trabalho:** o **veredito da `validar_pagina` alimenta o review gate**
+  (Fase 38 → Fase 28). Eram duas evidências que não se falavam: o gate media o
+  DIFF, a validação media a PÁGINA RENDERIZADA, e uma página podia reprovar no
+  navegador — tela em branco, erro de console — com a entrega se apresentando
+  limpa, porque o diff não tem como saber o que a página fez ao renderizar.
+  O loop guarda os vereditos da execução e o `pageCheckFindings` os converte
+  em achados. **A diferença de peso entre os três sinais é a decisão:**
+  página **reprovada** é `high` (defeito medido, no mesmo nível de "código
+  alterado sem teste"); página HTML alterada e **nunca validada** é `medium`
+  (ausência de evidência, o irmão do `missing_test`); validação que **não pôde
+  rodar** é `low` e existe para uma coisa só — impedir que a entrega diga
+  "validado" quando nada foi validado. Tentativa que só deu erro (caminho
+  errado, página inexistente) **não conta como validação**: o "faltou validar"
+  continua de pé.
+  Como `high` entra no texto da resposta pelo caminho que já existia, uma
+  página reprovada agora aparece para o usuário sem ele precisar abrir painel.
+  **Limitação:** o sinal de "faltou validar" enxerga só HTML dentro do
+  repositório git da tarefa — artefato solto em `outputs/` não entra no
+  ChangeSet e não é cobrado.
+- **Último trabalho anterior:** a **Frente 26 — Telemetria local de confiabilidade**
   (Fase 66). O painel da Frente 14 mede CONSUMO. Uma execução podia consumir
   tokens exemplarmente e terminar em `fatal_error` — no painel de consumo ela
   some no meio da média. Esta frente responde a outra pergunta: **o trabalho
@@ -498,8 +517,10 @@ sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md
   (o Nino cobrindo o botão de enviar), **[#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)**
   (Playwright + suíte ponta a ponta) e **[#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)**
   (as sete falhas P0 dos sub-agentes).
-- **Última validação:** 2026-08-08 (Frente 26) — **backend `npm run check`:
-  1347 testes, 0 falhas, 144 pulados** e **frontend: 162/162** (entrada
+- **Última validação:** 2026-08-08 (veredito → review gate) — **backend
+  `npm run check`: 1355 testes, 0 falhas, 144 pulados**; frontend inalterado
+  (a mudança é só de backend). Antes dela, Frente 26 — **backend 1347 testes,
+  0 falhas, 144 pulados** e **frontend: 162/162** (entrada
   890/920 KB, total 1063/1100 KB, catraca de CSS 3 ≤ 3). O portão de
   autenticação do CI passou a cobrir `/api/reliability`.
   Antes dela, Frente 25 — **backend 1331 testes, 0 falhas, 144 pulados**;

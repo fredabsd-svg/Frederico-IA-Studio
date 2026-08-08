@@ -246,6 +246,15 @@ POST /chat
   `verification`, ao `execution_meta` (sobrevive ao reload) e, quando é
   blocker/high, ao TEXTO da resposta; a autorização continua sendo do usuário.
   Falha do gate nunca derruba o run (a entrega segue sem revisão).
+  **O gate também lê o navegador** (`pageCheckFindings`): os vereditos da
+  `validar_pagina` (Fase 38) executados na mesma tarefa entram como achados —
+  página **reprovada** no navegador é `high` (defeito medido, no mesmo nível de
+  "código sem teste"); página HTML alterada e **nunca validada** é `medium`
+  (ausência de evidência, o irmão do `missing_test`); e validação que **não
+  pôde rodar** é `low`, existindo para impedir que a entrega diga "validado"
+  quando nada foi. Uma tentativa que só deu erro não conta como validação.
+  **Limite:** o sinal de "faltou validar" vê apenas HTML dentro do repositório
+  git da tarefa — artefato solto em `outputs/` não entra no ChangeSet.
 - **Branch de trabalho por tarefa (Fase 23):** `agent/workBranch.js` — o
   isolamento de ARQUIVOS já vem do clone por conversa; o de HISTÓRICO vem
   daqui. Em modo de escrita sobre branch protegida (main/master/develop…) ou
