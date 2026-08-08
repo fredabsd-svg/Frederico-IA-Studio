@@ -24,7 +24,34 @@ que ainda segura o verde é o **pipeline multimodelo retomável**: o F-15 entreg
 tabela e as primitivas, mas o `runMultiModel` ainda não as usa, então o reinício continua
 sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** a **Frente 25 — Validação por navegador dentro do
+- **Último trabalho:** a **Frente 26 — Telemetria local de confiabilidade**
+  (Fase 66). O painel da Frente 14 mede CONSUMO. Uma execução podia consumir
+  tokens exemplarmente e terminar em `fatal_error` — no painel de consumo ela
+  some no meio da média. Esta frente responde a outra pergunta: **o trabalho
+  deu certo?**
+  `agent/reliability.js` + `GET /api/reliability` + um bloco recolhido na aba
+  "Atividade": distribuição de desfechos, taxa de falha por ferramenta,
+  duração (mediana/p90) e sinais medidos.
+  **LOCAL é literal: nada sai da instalação e NADA NOVO é coletado.** Tudo
+  deriva de `agent_runs`/`agent_run_events` (migration 032), que a Fase 17 já
+  grava para reconstruir o terminal após reload. Por isso **não há migration**
+  — é leitura e agregação, não instrumentação nova.
+  **Quatro decisões definem os números:** (1) `awaiting_user` e `paused` não
+  são falha nem sucesso — a execução parou porque era assim que deveria parar,
+  e eles ficam FORA do denominador; (2) falha de ferramenta usa o MESMO
+  `toolResultLooksFailed` que pinta a etapa de vermelho no terminal, senão
+  painel e tela discordariam sobre o mesmo fato; (3) sinal só aparece com
+  amostra mínima de 5 — "100% de falha" em uma execução é ruído travestido de
+  alarme, e cada sinal cita os números que o produziram; (4) o corte de
+  amostra é DECLARADO (`amostra.truncado`), porque painel que corta em
+  silêncio conta uma história falsa com números verdadeiros.
+  **Escopo é do próprio usuário**, com filtro opcional por projeto: um
+  agregado global misturaria conversas de pessoas diferentes num número que
+  ninguém pode acionar. A rota entrou no portão de autenticação do CI.
+  **Limitação assumida:** sem prova visual (sem Chromium aqui) e sem teste
+  contra PostgreSQL nesta sessão — a agregação é pura justamente por isso, e
+  carrega 16 testes; a apresentação, 6.
+- **Último trabalho anterior:** a **Frente 25 — Validação por navegador dentro do
   produto** (Fase 38). O agente construía uma interface e declarava "pronto".
   Nada media isso: o defeito clássico de frontend — um import errado — não
   aparece em teste unitário nem no diff, e a página abre **em branco** com um
@@ -471,9 +498,12 @@ sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md
   (o Nino cobrindo o botão de enviar), **[#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)**
   (Playwright + suíte ponta a ponta) e **[#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)**
   (as sete falhas P0 dos sub-agentes).
-- **Última validação:** 2026-08-08 (Frente 25) — **backend `npm run check`:
-  1331 testes, 0 falhas, 144 pulados**; frontend inalterado (a frente é só de
-  backend). O servidor de pré-visualização é exercitado com HTTP de verdade
+- **Última validação:** 2026-08-08 (Frente 26) — **backend `npm run check`:
+  1347 testes, 0 falhas, 144 pulados** e **frontend: 162/162** (entrada
+  890/920 KB, total 1063/1100 KB, catraca de CSS 3 ≤ 3). O portão de
+  autenticação do CI passou a cobrir `/api/reliability`.
+  Antes dela, Frente 25 — **backend 1331 testes, 0 falhas, 144 pulados**;
+  frontend inalterado (aquela frente era só de backend). O servidor de pré-visualização é exercitado com HTTP de verdade
   (fetch contra a porta efêmera), inclusive a recusa de link simbólico que
   aponta para fora da raiz; o veredito tem 12 testes; e o modo sandbox roda com
   o `execInSandbox` INJETADO, o que exercita de verdade o parser de saída suja,

@@ -172,6 +172,18 @@ POST /chat
   descartado. Contenção: repositório e caminho confinados ao clone da conversa
   (caminho absoluto e `..` são RECUSADOS, não normalizados), e a rota recusa
   reversão com a tarefa em execução.
+- **Telemetria local de confiabilidade (Fase 66):** `agent/reliability.js` +
+  `GET /api/reliability` + o bloco recolhido na aba "Atividade". O painel da
+  Frente 14 mede CONSUMO; este responde **se o trabalho deu certo** —
+  distribuição de desfechos dos runs, taxa de falha por ferramenta, duração
+  (mediana/p90) e sinais medidos. **Não há migration nem coleta nova:** tudo
+  deriva de `agent_runs`/`agent_run_events`, que a Fase 17 já grava, e nada sai
+  da instalação. `awaiting_user`/`paused` ficam fora do denominador (parar
+  esperando o usuário não é falha nem sucesso); a falha de ferramenta usa o
+  MESMO `toolResultLooksFailed` do terminal; sinal só aparece com amostra
+  mínima; e o corte de amostra é declarado no resultado. Escopo é do próprio
+  usuário, opcionalmente filtrado por projeto. Detalhes em
+  `docs/OBSERVABILITY.md`.
 - **Validação por navegador (Fase 38):** `agent/pageCheck.js` +
   `agent/pagePreviewServer.js`, expostos ao agente como a ferramenta
   `validar_pagina`. O review gate mede o DIFF; esta fase mede o RESULTADO

@@ -1506,6 +1506,29 @@ body.dockResizing{user-select:none;cursor:ns-resize}
 .handoffDownload{margin-top:8px}
 .handoffPatch{width:100%;margin:7px 0;min-height:96px;resize:vertical;font-family:var(--mono,monospace);font-size:var(--fs-xs);line-height:1.4;background:var(--code-bg);color:var(--text);border:1px solid var(--line);border-radius:var(--r-sm);padding:6px 8px}
 
+/* Telemetria local de confiabilidade (aba Atividade). O tom vem do pior sinal
+   e sai dos tokens semânticos — nada de hex fixo (regra das 7 paletas). */
+.reliability{margin-top:8px;border:1px solid var(--line);border-left-width:3px;border-radius:var(--r-md);padding:9px 11px;font-size:var(--fs-sm)}
+.reliability.rl-ok{border-left-color:color-mix(in srgb,var(--ok) 55%,var(--line))}
+.reliability.rl-attn{border-left-color:color-mix(in srgb,var(--warn,var(--accent)) 55%,var(--line))}
+.reliability.rl-warn{border-left-color:color-mix(in srgb,var(--danger) 55%,var(--line))}
+.reliabilityHead{display:flex;align-items:flex-start;gap:7px;margin:0 0 7px;line-height:1.4}
+.reliabilityHead>svg{flex:none;margin-top:2px;color:var(--muted)}
+.reliabilityTitle{margin:10px 0 5px;font-size:var(--fs-xs);text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+.reliabilityGrupos{list-style:none;display:flex;flex-wrap:wrap;gap:4px 12px;margin:0;padding:0;font-size:var(--fs-xs);color:var(--muted)}
+.reliabilityGrupos b{color:var(--text)}
+.reliabilityTools{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:5px}
+.reliabilityTools li{display:grid;grid-template-columns:minmax(0,1fr) 60px auto;align-items:center;gap:8px;font-size:var(--fs-xs)}
+.reliabilityTools code{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.reliabilityTools small{color:var(--muted);white-space:nowrap}
+.reliabilityBar{display:block;height:5px;border-radius:3px;background:color-mix(in srgb,var(--line) 70%,transparent);overflow:hidden}
+.reliabilityBar i{display:block;height:100%;background:var(--danger)}
+.reliabilitySinais{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:5px;font-size:var(--fs-xs);line-height:1.4}
+.reliabilitySinais li{display:flex;align-items:flex-start;gap:7px}
+.reliabilitySinais li>svg{flex:none;margin-top:2px;color:var(--muted)}
+.reliabilitySinais li.rl-alto>svg{color:var(--danger)}
+.reliabilitySinais li.rl-medio>svg{color:var(--warn,var(--accent))}
+
 /* Contexto da sessão de desenvolvimento (projeto · branch · ambiente · modelo · permissões). */
 .devSessionBarCtx{display:flex;flex-wrap:wrap;gap:6px 16px;padding:6px 16px;border-bottom:1px solid var(--line);background:rgba(127,127,127,.04);font-size:var(--fs-xs)}
 .devCtxItem{display:flex;align-items:baseline;gap:5px;min-width:0}

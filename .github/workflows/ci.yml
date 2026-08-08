@@ -166,7 +166,7 @@ jobs:
           BOOT=$!
           for i in $(seq 1 30); do curl -sf http://localhost:3198/api/health -o /dev/null && break; sleep 1; done
           FALHAS=0
-          for rota in conversations memories tasks schedules backup me clients templates assistants; do
+          for rota in conversations memories tasks schedules backup me clients templates assistants reliability; do
             CODIGO=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:3198/api/$rota")
             echo "GET /api/$rota -> $CODIGO"
             [ "$CODIGO" = "401" ] || { echo "::error::/api/$rota respondeu $CODIGO sem autenticação (esperado 401)"; FALHAS=1; }
