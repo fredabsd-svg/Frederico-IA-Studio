@@ -574,6 +574,13 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .workspaceAction.primary:hover{color:var(--on-accent);filter:brightness(1.06)}
 .workspaceIconAction{display:flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:var(--r-sm);padding:0;color:var(--muted)}
 .workspaceIconAction:hover{border-color:var(--accent);color:var(--accent)}
+.workspaceIconAction.on{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,var(--panel2))}
+.workspaceNinoControl{display:flex;align-items:center;gap:5px;height:34px;padding:0 4px 0 9px;border:1px solid var(--line);border-radius:var(--r-sm);color:var(--muted);font-size:var(--fs-2xs);font-weight:700}
+.workspaceNinoControl select{height:28px;padding:3px 22px 3px 6px;border:0;background:transparent;border-radius:var(--r-sm);font-size:var(--fs-2xs);font-weight:700}
+.workspaceActionMenu{position:relative}
+.workspaceActionPanel{position:absolute;right:0;top:calc(100% + 7px);z-index:75;width:220px;padding:6px;display:flex;flex-direction:column;gap:2px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);box-shadow:0 14px 38px rgba(0,0,0,.38)}
+.workspaceActionPanel button{display:flex;align-items:center;gap:8px;width:100%;padding:8px 9px;border:0;background:transparent;border-radius:var(--r-sm);color:var(--text);font-size:var(--fs-xs);text-align:left}
+.workspaceActionPanel button:hover{background:var(--panel2);color:var(--accent)}
 
 @media(min-width:981px){
   .app.workspace-essential{grid-template-columns:232px minmax(0,1fr)}
@@ -581,6 +588,12 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
   .app.workspace-focus.sideHidden{grid-template-columns:0 minmax(0,1fr)}
   /* Ambiente de desenvolvimento: barra lateral · explorador · chat · atividade */
   .app.workspace-developer{grid-template-columns:290px auto minmax(0,1fr) auto}
+}
+@media(min-width:1181px){
+  .app.workspace-developer.devFocus{grid-template-columns:0 42px minmax(0,1fr) 42px}
+}
+@media(min-width:981px) and (max-width:1180px){
+  .app.workspace-developer.devFocus{grid-template-columns:0 minmax(0,1fr)}
 }
 
 /* Essential keeps the whole app available while making repeated work denser. */
@@ -635,6 +648,12 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .workspace-developer .composerWrap{padding:10px 22px 18px;border-top:1px solid var(--line);background:var(--side)}
 .workspace-developer .composer{max-width:1080px;border-radius:var(--r-sm);background:var(--panel)}
 .workspace-developer .quickCard{border-radius:var(--r-sm)}
+.workspace-developer.devFocus .sidebar{padding-left:0;padding-right:0;border-right:0;overflow:hidden}
+.workspace-developer.devFocus .topbar{min-height:48px;padding-top:4px;padding-bottom:4px}
+.workspace-developer.devFocus .workspaceTopLabel,.workspace-developer.devFocus .desktopPickers,.workspace-developer.devFocus .devSessionBarCtx{display:none}
+.workspace-developer.devFocus .developerWorkspaceBar{padding-top:6px;padding-bottom:6px}
+.workspace-developer.devFocus .workspaceBarLead>div>span{display:none}
+.workspace-developer.devFocus .messages{padding-top:18px;padding-bottom:18px}
 
 /* ── Colunas do ambiente de desenvolvimento (Explorador · Atividade) ──────── */
 .devRail{display:flex;flex-direction:column;min-height:0;height:100vh;width:270px;background:var(--panel2);border-right:1px solid var(--line);overflow:hidden}
@@ -809,6 +828,11 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
   .workspaceTopLabel>span{display:none}
   .workspaceBarLead span{white-space:normal;overflow:visible;text-overflow:clip}
   .workspaceBarActions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr)) auto}
+  .developerWorkspaceBar .workspaceBarActions{display:flex}
+  .developerWorkspaceBar .devStagePill{order:-1}
+  .workspaceNinoControl>span{display:none}
+  .workspaceNinoControl select{max-width:92px}
+  .devPrimaryAction{flex:1}
   .workspaceAction{min-width:0;padding:7px 5px;font-size:var(--fs-2xs)}
   .workspaceAction svg{flex:none}
   .workspace-developer .composerWrap{padding:8px 14px 16px}

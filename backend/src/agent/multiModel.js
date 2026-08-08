@@ -32,7 +32,7 @@ import { loadCheckpoint } from './checkpoint.js';
 import { persistAssistantReply, saveMessage } from './persistence.js';
 import { MULTI_ARTIFACT_PROTOCOL, untrustedContext } from './promptRegistry.js';
 import { snapshotArtifactVersion } from './artifacts.js';
-import { createPipelineRun, updatePipelineRun, loadPipelineRun, completePipelineRun } from './pipelineRuns.js';
+import { createPipelineRun, updatePipelineRun, completePipelineRun } from './pipelineRuns.js';
 import { nanoid } from 'nanoid';
 
 export const MULTI_MODES = ['compare', 'council', 'debate', 'pipeline'];
@@ -189,7 +189,7 @@ export function multiModelExecutionPolicy({ mode, requirement, developer = false
   };
 }
 
-export async function runMultiModel({ userId, conversationId, userText, config, webSearch = false, effort, developer = null, onEvent, pipelineResume = null, saveUserMessage = true, control: inheritedControl = null }) {
+export async function runMultiModel({ userId, conversationId, userText, config, webSearch = false, effort, developer = null, onEvent, pipelineResume = null, pipelineReservation = null, saveUserMessage = true, control: inheritedControl = null, runIdOverride = null }) {
   const memberProviders = await Promise.all(config.models.map(member => getUserProvider(userId, member.id)));
   const coordinatorProvider = await getUserProvider(userId, config.coordinator);
   config.models.forEach((member, index) => {
@@ -206,34 +206,52 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
   const registry = { cancelled: new Set(), requests: new Map() };
   slotRegistries.set(conversationId, registry);
   const startedAt = Date.now();
-  // Coordenador durável (F-15): a RETOMADA é sempre explícita — só acontece
-  // quando a rota /resume carrega o run ativo e o passa em `pipelineResume`.
-  // Um run deixado em `running` por um crash NÃO pode ser herdado por uma
-  // mensagem NOVA: o sweeper só varre runs terminais, então o órfão ficaria
-  // `running` para sempre e sequestraria o próximo pedido de pipeline da
-  // conversa — a resposta nova sairia costurada sobre as etapas da tarefa
-  // ANTIGA, começando do meio. Mensagem nova fecha o órfão como `error`
-  // (interrompido e não retomado) e parte do zero.
-  let pipelineRunId = null;
+  // A rota reserva o coordenador ANTES de abrir o SSE. O fallback mantém
+  // chamadas internas compatíveis, mas também falha fechado: sem linha
+  // persistida não há pipeline em memória.
+  let pipelineRunId = pipelineResume?.id || pipelineReservation?.id || null;
   let resumeFromStage = 0;
-  let resumedState = null;
+  let resumedState = pipelineResume?.state || pipelineReservation?.state || null;
   if (pipelineResume && config.mode === 'pipeline') {
-    pipelineRunId = pipelineResume.id;
     resumeFromStage = pipelineResume.currentStage || 0;
-    resumedState = pipelineResume.state || null;
     if (resumeFromStage >= pipelineResume.totalStages) resumeFromStage = 0;
-  } else {
-    const orphan = await loadPipelineRun(conversationId);
-    if (orphan) await completePipelineRun(orphan.id, { status: 'error' });
+  } else if (config.mode === 'pipeline' && !pipelineRunId) {
+    resumedState = {
+      execution: {
+        objective: userText,
+        webSearch: Boolean(webSearch),
+        effort: effort ?? null,
+        developer: developer || null,
+        runId: runIdOverride || null
+      }
+    };
+    pipelineRunId = await createPipelineRun({
+      conversationId,
+      userId,
+      mode: 'pipeline',
+      totalStages: config.models.length,
+      config,
+      state: resumedState,
+      rounds: 1
+    });
   }
+  let runContext = resumedState?.execution || {};
   let pipelineClosedCleanly = false;
   try {
     let userMsgId = saveUserMessage ? await saveMessage(userId, conversationId, 'user', userText) : null;
     // Na retomada, o userMsgId não é gravado (já existe) — buscamos o id
     // real para que os eventos 'saved' referenciem a mensagem correta.
     if (!userMsgId) {
-      const row = await db.prepare("SELECT id FROM messages WHERE conversation_id=? AND role='user' ORDER BY created_at DESC, seq DESC LIMIT 1").get(conversationId);
-      userMsgId = row?.id || null;
+      userMsgId = runContext.userMessageId || null;
+      if (!userMsgId) {
+        const row = await db.prepare("SELECT id FROM messages WHERE conversation_id=? AND role='user' ORDER BY created_at DESC, seq DESC LIMIT 1").get(conversationId);
+        userMsgId = row?.id || null;
+      }
+    }
+    if (pipelineRunId && userMsgId && runContext.userMessageId !== userMsgId) {
+      runContext = { ...runContext, userMessageId: userMsgId };
+      resumedState = { ...(resumedState || {}), execution: runContext };
+      await updatePipelineRun(pipelineRunId, userId, { state: resumedState });
     }
     const usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
     if (!coordinatorProvider.hasKey && !memberProviders.some(provider => provider.hasKey)) {
@@ -605,26 +623,17 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
       let previousOutputs = resumedState?.completedStages?.map(s => ({ name: s.name, roleLabel: s.roleLabel, text: s.text })) || [];
       const artifactOutputPaths = new Set(resumedState?.artifactOutputPaths || []);
       let executorResult = null;
-      // Coordenador durável (F-15): cria o pipeline run na primeira execução.
-      if (!pipelineRunId && !resumeFromStage) {
-        pipelineRunId = await createPipelineRun({
-          conversationId, userId,
-          mode: 'pipeline',
-          totalStages: slots.length,
-          config: config,
-          rounds: 1
-        });
-      }
       const persistPipelineProgress = async (stageIndex) => {
         if (!pipelineRunId) return;
         const state = {
+          execution: runContext,
           artifactRunId,
           completedStages: previousOutputs.map((p, i) => ({
             slot: slots[i]?.slot ?? i, text: p.text, name: p.name, roleLabel: p.roleLabel
           })),
           artifactOutputPaths: [...artifactOutputPaths]
         };
-        await updatePipelineRun(pipelineRunId, { currentStage: stageIndex, state });
+        await updatePipelineRun(pipelineRunId, userId, { currentStage: stageIndex, state });
       };
       const executableStates = slots.filter(state => state.status !== STATUS.error && !registry.cancelled.has(state.slot));
       if (!executableStates.length) {
@@ -632,7 +641,7 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
         onEvent({ type: 'delta', content: finalText });
         const assistantMessageId = await saveMessage(userId, conversationId, 'assistant', finalText);
         onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId });
-        if (pipelineRunId) await completePipelineRun(pipelineRunId, { status: 'error' });
+        if (pipelineRunId) await completePipelineRun(pipelineRunId, userId, { status: 'error' });
         pipelineClosedCleanly = true;
         return { text: finalText, usage, model: config.coordinator, incomplete: true, compatibility: 'tools' };
       }
@@ -760,7 +769,7 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
         // o pipeline NÃO terminou — registrar `done` seria sucesso falso no
         // histórico. `stopped` é o rótulo honesto; a retomada da etapa em si
         // segue pelo checkpoint de agente único (limitação pré-existente).
-        await completePipelineRun(pipelineRunId, { status: (executorResult.stopped || executorResult.resumable) ? 'stopped' : 'done' });
+        await completePipelineRun(pipelineRunId, userId, { status: (executorResult.stopped || executorResult.resumable) ? 'stopped' : 'done' });
         pipelineClosedCleanly = true;
         return { delegated: true, value: { ...executorResult, usage } };
       }
@@ -768,7 +777,7 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
       const text = last
         ? `${slots.length > 1 ? `_Execução sequencial: ${slots.map(s => s.name).join(' → ')}_\n\n` : ''}${last.text}`
         : '_Nenhuma etapa da sequência produziu resposta._';
-      await completePipelineRun(pipelineRunId, { status: 'done' });
+      await completePipelineRun(pipelineRunId, userId, { status: 'done' });
       pipelineClosedCleanly = true;
       return { text };
     }
@@ -813,7 +822,7 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
     return { text: finalText, usage, model: config.coordinator, stopped: control.stopped };
   } finally {
     if (pipelineRunId && !pipelineClosedCleanly) {
-      await completePipelineRun(pipelineRunId, { status: control.stopped ? 'stopped' : 'error' });
+      await completePipelineRun(pipelineRunId, userId, { status: control.stopped ? 'stopped' : 'error' });
     }
     slotRegistries.delete(conversationId);
     releaseConversationControl(conversationId, control);

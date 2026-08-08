@@ -33,6 +33,8 @@ test('SUBAGENT_DEFAULTS tem valores finitos e não-zero', () => {
     assert.ok(Number.isFinite(SUBAGENT_DEFAULTS[k]), `${k} deve ser finito`);
     assert.ok(SUBAGENT_DEFAULTS[k] > 0, `${k} deve ser > 0`);
   }
+  assert.ok(SUBAGENT_DEFAULTS.maxSteps > 2, 'um subagente deve poder concluir missões com mais de duas etapas');
+  assert.ok(SUBAGENT_DEFAULTS.hardMaxSteps > 2, 'o teto duro não pode reintroduzir o corte histórico em duas etapas');
 });
 
 test('SUBAGENT_DEFAULTS.totalMs é maior que o timeout duro do stream (defesa em profundidade)', () => {

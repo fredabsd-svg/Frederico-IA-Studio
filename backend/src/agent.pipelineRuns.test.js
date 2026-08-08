@@ -5,8 +5,15 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { db, pool } from './db.js';
 import {
-  createPipelineRun, updatePipelineRun, loadPipelineRun,
-  completePipelineRun, sweepStalePipelineRuns, newPipelineRunId
+  createPipelineRun,
+  updatePipelineRun as updatePipelineRunForUser,
+  loadPipelineRun as loadPipelineRunForUser,
+  completePipelineRun as completePipelineRunForUser,
+  stopActivePipelineRun,
+  sweepStalePipelineRuns,
+  newPipelineRunId,
+  PipelineRunConflictError,
+  PipelineRunScopeError
 } from './agent/pipelineRuns.js';
 
 let dbReady = true;
@@ -23,6 +30,9 @@ const USER = 'f15-user';
 const CONV_PREFIX = 'f15-conv-';
 let seq = 0;
 function nextConv() { return `${CONV_PREFIX}${Date.now()}-${++seq}`; }
+const updatePipelineRun = (id, patch) => updatePipelineRunForUser(id, USER, patch);
+const loadPipelineRun = (conversationId, options) => loadPipelineRunForUser(conversationId, USER, options);
+const completePipelineRun = (id, options) => completePipelineRunForUser(id, USER, options);
 
 t('cria run com id único e total_stages correto', async () => {
   const conv = nextConv();
@@ -218,6 +228,77 @@ t('config_json preserva a configuração completa entre save/load', async () => 
   const loaded = await loadPipelineRun(conv);
   assert.deepEqual(loaded.config, fullConfig, 'config deve ser preservado integralmente');
   await completePipelineRun(id, { status: 'done' });
+});
+
+t('reserva preserva objetivo, opções e runId originais para o resume', async () => {
+  const conv = nextConv();
+  const execution = {
+    objective: 'Audite o motor sem recomeçar.',
+    webSearch: true,
+    effort: 'high',
+    developer: { projectId: 'projeto-1', mode: 'implement' },
+    runId: 'run-original-123'
+  };
+  const id = await createPipelineRun({
+    conversationId: conv,
+    userId: USER,
+    mode: 'pipeline',
+    totalStages: 3,
+    config: { mode: 'pipeline', models: [{ id: 'a/b' }, { id: 'c/d' }] },
+    state: { execution }
+  });
+
+  const loaded = await loadPipelineRun(conv);
+  assert.deepEqual(loaded.state.execution, execution);
+  await completePipelineRun(id, { status: 'done' });
+});
+
+t('índice ativo vira conflito explícito e não cria segundo pipeline', async () => {
+  const conv = nextConv();
+  const firstId = await createPipelineRun({
+    conversationId: conv,
+    userId: USER,
+    mode: 'pipeline',
+    totalStages: 2,
+    config: { mode: 'pipeline', models: [{ id: 'a/b' }, { id: 'c/d' }] }
+  });
+
+  await assert.rejects(
+    createPipelineRun({
+      conversationId: conv,
+      userId: USER,
+      mode: 'pipeline',
+      totalStages: 2,
+      config: { mode: 'pipeline', models: [{ id: 'x/y' }, { id: 'z/w' }] }
+    }),
+    (err) => err instanceof PipelineRunConflictError && err.code === 'PIPELINE_RUN_ACTIVE'
+  );
+  assert.equal((await loadPipelineRun(conv)).id, firstId);
+  await completePipelineRun(firstId, { status: 'done' });
+});
+
+t('pipeline exige escopo e outro usuário não lê, altera nem cancela o run', async () => {
+  const conv = nextConv();
+  const otherUser = 'f15-outro-user';
+  const id = await createPipelineRun({
+    conversationId: conv,
+    userId: USER,
+    mode: 'pipeline',
+    totalStages: 2,
+    config: { mode: 'pipeline', models: [{ id: 'a/b' }, { id: 'c/d' }] }
+  });
+
+  await assert.rejects(loadPipelineRunForUser(conv), PipelineRunScopeError);
+  assert.equal(await loadPipelineRunForUser(conv, otherUser), null);
+  assert.equal(await updatePipelineRunForUser(id, otherUser, { currentStage: 1 }), false);
+  assert.equal(await completePipelineRunForUser(id, otherUser, { status: 'stopped' }), false);
+  assert.equal(await stopActivePipelineRun(conv, otherUser), false);
+  assert.equal((await loadPipelineRun(conv)).status, 'running');
+
+  assert.equal(await stopActivePipelineRun(conv, USER), true);
+  const stopped = await loadPipelineRunForUser(conv, USER, { includeTerminal: true });
+  assert.equal(stopped.status, 'stopped');
+  assert.ok(stopped.completedAt);
 });
 
 t('run órfão em running NUNCA é varrido pelo sweeper — o fechamento explícito é obrigatório', async () => {
