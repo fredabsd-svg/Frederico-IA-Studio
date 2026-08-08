@@ -33,9 +33,10 @@ reconferidos F-05b, F-12, F-13 e F-14 (fechados) e F-18 e F-19 (parciais).
 **A cor segue amarela porque ninguém decidiu mudá-la** — reclassificar prontidão é
 chamada de quem opera, não efeito colateral de uma tabela de status. O **F-23 fechou**
 nesta sessão (validador extraído para `sandbox/validar_artefato.py`, 38 casos com
-arquivos reais). O que falta é de outra natureza: F-18 (corpus do Docling) é o próximo
-da fila, com F-11, F-16, F-19 e F-20 a F-22 atrás. Matriz e critérios em
-`docs/AUDITORIA_2026-07.md` §2 e §6.
+arquivos reais) e o **F-18 avançou** (corpus fiscal atravessando o pipeline, 19 casos —
+segue **parcial**, porque a extração por ML do Docling exige o serviço). O que falta:
+F-19, F-11, F-16 e F-20 a F-22. Matriz e critérios em `docs/AUDITORIA_2026-07.md`
+§2 e §6.
 
 **O caminho de admissão do pipeline foi endurecido** (PR #200): a reserva no
 PostgreSQL acontece ANTES de abrir o SSE e de gravar a mensagem, colisão vira
@@ -54,7 +55,7 @@ ressalva acima continua valendo — quem retoma é o cliente, pelo `/resume`.
 | Reconciliação da matriz da auditoria (F-05b, F-12 a F-15, F-18, F-19) | [#199](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/199) | mesclado (`dbbaabe`) |
 | Motor durável e UX do Modo Desenvolvedor | [#200](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/200) | mesclado (`cecc9c2`) |
 | Teto de tamanho para o CSS (Frente 11) | [#202](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/202) | mesclado (`9309ccd`) |
-| **Fechamento do F-23** — validador de artefato com arquivos reais | [#203](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/203) | **aberto** |
+| **F-23** (validador de artefato) + **F-18** (corpus fiscal no pipeline) | [#203](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/203) | **aberto** |
 
 **Tudo, menos o F-23, está na `main`.** A CI foi conferida verde em `58a0209`
 (Fase 66) e `2d416f4` (Fase 38 → 28); os merges seguintes entraram com a CI da
@@ -63,7 +64,24 @@ a cada merge, em vez de empilhar sobre histórico já mesclado — por isso cada
 traz só a frente dele. O F-23 nasceu na branch enquanto o #199 era mesclado, e
 por isso foi **rebaseado** sobre a `main` nova e saiu em PR próprio.
 
-- **Último trabalho:** o **F-23 fechou** — PR
+- **Último trabalho:** o **F-18 avançou** (segue parcial) — mesmo PR
+  [#203](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/203).
+  19 casos levam DRE, certidão PGFN, NF escaneada e razão analítico pelo pipeline
+  real. As asserções foram escritas **depois** de sondar o comportamento — o
+  contrário fixa o defeito achando que testou.
+  **O corpus achou um defeito, corrigido junto:** tabela colada a uma frase cai
+  em chunk `mixed`, e o `summarizeTables` só olhava chunks `table`. DRE com
+  colunas inconsistentes saía como `count: 0, withWarnings: 0` — lê-se "nenhuma
+  tabela com problema" quando o certo era "não procurei". E não era só métrica:
+  a tabela não aparecia na listagem nem podia ser baixada em CSV. O `findTables`
+  varre todos os chunks, e listagem e CSV usam a MESMA função (cada uma
+  filtrava por conta própria, e duas listas derivadas em lugares diferentes
+  acabam discordando).
+  **Parcial, não fechado:** a extração por ML exige o serviço, que não roda aqui
+  nem na CI. **Dado antigo:** o botão "Tabelas" depende do `tableCount` gravado
+  no processamento — documento anterior à correção só mostra a tabela nova
+  depois de reprocessar.
+- **Último trabalho anterior:** o **F-23 fechou** — PR
   [#203](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/203).
   O código que decide se um `.xlsx`/`.docx`/`.pdf` entregue "está bom" eram **233
   linhas de Python dentro de uma template string** do `outputs.js`, onde nenhum
