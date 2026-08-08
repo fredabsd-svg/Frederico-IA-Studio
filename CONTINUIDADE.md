@@ -33,7 +33,7 @@ demais lacunas listadas em `docs/TESTING.md`, não por este coordenador.
 | Frente 26 — telemetria local de confiabilidade (Fase 66) | [#196](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/196) | mesclado |
 | Veredito da `validar_pagina` → review gate (Fase 38 → 28) | [#197](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/197) | mesclado |
 | Série temporal da confiabilidade (Fase 66) | [#198](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/198) | **aberto**, CI verde |
-| Motor durável e UX do Modo Desenvolvedor | a abrir nesta branch | implementação e checks locais concluídos |
+| Motor durável e UX do Modo Desenvolvedor | [#200](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/200) | **aberto em rascunho**, implementação e checks locais concluídos |
 
 CI da `main` conferida **verde** nos dois merges desta sessão que já entraram —
 `58a0209` (Fase 66) e `2d416f4` (Fase 38 → 28). A branch de trabalho foi
