@@ -110,6 +110,50 @@ devolve `configured: false` em vez de inventar número.
 - **Testes**: `backend/src/usage.test.js`,
   `backend/src/routes/usageDashboard.test.js`
 
+## Confiabilidade — a outra pergunta (Fase 66)
+
+Tudo acima mede **consumo**. Uma execução pode consumir tokens
+exemplarmente e terminar em `fatal_error`: no painel de consumo ela some no
+meio da média. A telemetria de confiabilidade responde a outra pergunta —
+**o trabalho deu certo?** — e é deliberadamente separada da de consumo.
+
+**LOCAL tem sentido literal:** nada é enviado a lugar nenhum e **nada novo é
+coletado**. Todos os números derivam de `agent_runs` e `agent_run_events`
+(migration 032), que a Fase 17 já grava para reconstruir o terminal após um
+reload. Por isso a fase não tem migration: é leitura e agregação.
+
+| Onde | O quê |
+|---|---|
+| `backend/src/agent/reliability.js` | agregação **pura** (desfechos, durações, falha por ferramenta, sinais) + coletor fino |
+| `GET /api/reliability` | escopo do **próprio usuário**; `?dias=30`, `?project=<id>` |
+| `frontend/src/reliabilityView.js` | apresentação pura (frase, unidades, corte declarado) |
+| `components/ReliabilityPanel.jsx` | bloco recolhido na aba "Atividade" |
+
+### Quatro decisões que definem os números
+
+1. **`awaiting_user` e `paused` não são falha nem sucesso.** A execução parou
+   porque era assim que deveria parar. Contá-los como falha inflaria o
+   problema; como sucesso, o esconderia. Eles formam o grupo `aguardando` e
+   ficam **fora** do denominador das taxas.
+2. **Falha de ferramenta usa `toolResultLooksFailed`** — a MESMA função que
+   pinta a etapa de vermelho no terminal. Critério diferente faria o painel e
+   a tela discordarem sobre o mesmo fato.
+3. **Sem amostra, nenhum sinal.** `MIN_RUNS_PARA_SINAL` e
+   `MIN_CHAMADAS_PARA_SINAL` valem 5: "100% de falha" em uma execução é ruído
+   travestido de alarme. Cada sinal cita os números que o produziram.
+4. **Corte declarado, nunca silencioso.** A amostra é limitada
+   (`MAX_RUNS`/`MAX_EVENTS`) e a resposta carrega `amostra.truncado` — um
+   painel que corta em silêncio conta uma história falsa com números
+   verdadeiros. Vale também na tela: a lista de ferramentas mostra as 5
+   piores e **conta** as demais.
+
+**Escopo é do usuário, não da instalação.** Um agregado global misturaria
+conversas de pessoas diferentes num número que ninguém pode acionar, e
+exporia padrão de uso alheio sem necessidade. Testes:
+`backend/src/agent/reliability.test.js` e
+`frontend/src/reliabilityView.test.js` — os dois rodam sem PostgreSQL, que é o
+motivo de a agregação ser pura.
+
 ## Próximos passos sugeridos (não parte desta frente)
 
 1. UI admin consumindo `/api/admin/usage/dashboard` (hoje o painel admin

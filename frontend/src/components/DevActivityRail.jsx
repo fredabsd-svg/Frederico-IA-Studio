@@ -1,7 +1,7 @@
 import React, { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import {
   Activity, Brain, PanelRightClose, PanelRightOpen, Loader, CheckCircle2, AlertCircle,
-  Terminal, FileCog, FolderOpen, Search, ShieldCheck, ChevronDown, FileText, ListTree, GitCompareArrows, Laptop
+  Terminal, FileCog, FolderOpen, Search, ShieldCheck, ChevronDown, FileText, ListTree, GitCompareArrows, Laptop, Gauge
 } from 'lucide-react';
 import { API } from '../constants.js';
 import { MEMORY_FIELDS } from '../hooks/useDevProjects.js';
@@ -12,6 +12,9 @@ const LazyFileDiff = lazy(() => import('./FileDiff.jsx').then(m => ({ default: m
 // O handoff só é montado quando o usuário pede — é uma seção grande, e a
 // maioria das tarefas termina no próprio workspace.
 const LazyHandoff = lazy(() => import('./HandoffPanel.jsx').then(m => ({ default: m.HandoffPanel })));
+// Confiabilidade (Fase 66): fica recolhida por padrão — é uma leitura de
+// TENDÊNCIA, e a aba Atividade existe primeiro para a execução de agora.
+const LazyReliability = lazy(() => import('./ReliabilityPanel.jsx').then(m => ({ default: m.ReliabilityPanel })));
 
 // Painel de atividades, arquivos, alterações e memória do Modo Desenvolvedor
 // (coluna direita do ambiente). Quatro abas sobre a MESMA fonte de dados — os
@@ -267,6 +270,7 @@ function ChangesTab({ steps, downloadUrl, conversationId, busy, askConfirm, show
 export function DevActivityRail({ collapsed, onToggle, busy, statusText, messages, project, onUpdateMemory, downloadUrl, conversationId = null, askConfirm, showToast }) {
   const act = useActivity(messages);
   const [tab, setTab] = useState('atividade');
+  const [confiabilidade, setConfiabilidade] = useState(false);
   const dlUrl = downloadUrl || (() => '#');
 
   if (collapsed) {
@@ -310,6 +314,17 @@ export function DevActivityRail({ collapsed, onToggle, busy, statusText, message
           {act.errors > 0 && <span className="err"><AlertCircle size={13}/> <b>{act.errors}</b> {act.errors > 1 ? 'erros' : 'erro'}</span>}
         </div>}
         <ActivityList steps={act.steps}/>
+        {/* Confiabilidade: como as execuções DESTE projeto vêm terminando.
+            Abaixo da atividade de agora, e recolhida — é tendência, não o que
+            está acontecendo neste segundo. */}
+        <div className="handoffToggle">
+          <button type="button" className="devIconBtn" aria-expanded={confiabilidade} onClick={() => setConfiabilidade(v => !v)}>
+            <Gauge size={13}/> {confiabilidade ? 'Ocultar a confiabilidade' : 'Confiabilidade das execuções'}
+          </button>
+          {confiabilidade && <Suspense fallback={<p className="devRailHint">Carregando…</p>}>
+            <LazyReliability projectId={project?.id || null} busy={busy}/>
+          </Suspense>}
+        </div>
       </div>}
 
       {tab === 'arquivos' && <div className="devRailSection">

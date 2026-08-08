@@ -41,6 +41,7 @@ import doclingRouter from './routes/docling.js';
 import designRouter from './routes/design.js';
 import designAdminRouter from './routes/designAdmin.js';
 import usageDashboardRouter from './routes/usageDashboard.js';
+import reliabilityRouter from './routes/reliability.js';
 import toolProbeRouter from './routes/toolProbe.js';
 import { healthMetrics } from './healthMetrics.js';
 import { sweepStaleUploadTemps } from './uploads.js';
@@ -182,6 +183,7 @@ app.use('/api', doclingRouter);
 app.use('/api', designRouter);
 app.use('/api', designAdminRouter);
 app.use('/api', usageDashboardRouter);
+app.use('/api', reliabilityRouter);
 app.use('/api', toolProbeRouter);
 
 // LGPD — retenção automática: com CONVERSATION_RETENTION_DAYS > 0, apaga
