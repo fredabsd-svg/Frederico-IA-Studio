@@ -19,10 +19,22 @@ frontend React 19 + Vite; autenticação Better Auth (e-mail/senha, GitHub, Goog
 socket do Docker — ver `docs/SECURITY.md` §4.3). A cobertura deu um salto nesta
 integração: a retomada após interrupção real do processo **passou a ter teste** (F-14,
 contra PostgreSQL de verdade), o tool calling nativo e o watchdog do provedor entraram
-nos testes de navegador (F-13) e o SSE ganhou o caso de reconexão com cursor (F-12). O
-que ainda segura o verde é o **pipeline multimodelo retomável**: o F-15 entregou a
-tabela e as primitivas, mas o `runMultiModel` ainda não as usa, então o reinício continua
-sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
+nos testes de navegador (F-13) e o SSE ganhou o caso de reconexão com cursor (F-12).
+
+**O motivo declarado do amarelo não vale mais** (conferido em 2026-08-08, contra o
+código). Este arquivo dizia que o pipeline multimodelo retomável segurava o verde —
+que o F-15 tinha entregue "a tabela e as primitivas, mas o `runMultiModel` ainda não as
+usa". **Isso estava errado:** o `runMultiModel` grava o estágio entre as etapas e retoma
+por `pipelineResume`, com a rota `/resume` carregando o run ativo e teste de integração
+contra PostgreSQL real. A ressalva verdadeira é outra e é menor — **não há retomada
+automática no boot**: quem retoma é o cliente, pelo `/resume`. Junto com o F-15 foram
+reconferidos F-05b, F-12, F-13 e F-14 (fechados) e F-18 e F-19 (parciais).
+
+**A cor segue amarela porque ninguém decidiu mudá-la** — reclassificar prontidão é
+chamada de quem opera, não efeito colateral de uma tabela de status. O que falta é de
+outra natureza: F-23 (validação de artefato com arquivos reais) é o próximo da fila,
+com F-11, F-16, F-18, F-19 e F-20 a F-22 atrás. Matriz e critérios em
+`docs/AUDITORIA_2026-07.md` §2 e §6.
 
 **Frentes desta sessão e onde cada uma parou** (2026-08-08):
 
