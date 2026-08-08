@@ -19,11 +19,28 @@ frontend React 19 + Vite; autenticação Better Auth (e-mail/senha, GitHub, Goog
 socket do Docker — ver `docs/SECURITY.md` §4.3). A cobertura deu um salto nesta
 integração: a retomada após interrupção real do processo **passou a ter teste** (F-14,
 contra PostgreSQL de verdade), o tool calling nativo e o watchdog do provedor entraram
-nos testes de navegador (F-13) e o SSE ganhou o caso de reconexão com cursor (F-12). O
-O **pipeline multimodelo retomável (F-15) está fechado**: a reserva ocorre antes
-do SSE, duplicidade falha fechada, objetivo/opções/runId sobrevivem ao restart e
-retomada/stop são escopados pelo usuário. A prontidão continua amarela pelas
-demais lacunas listadas em `docs/TESTING.md`, não por este coordenador.
+nos testes de navegador (F-13) e o SSE ganhou o caso de reconexão com cursor (F-12).
+
+**O motivo declarado do amarelo não vale mais** (conferido em 2026-08-08, contra o
+código). Este arquivo dizia que o pipeline multimodelo retomável segurava o verde —
+que o F-15 tinha entregue "a tabela e as primitivas, mas o `runMultiModel` ainda não as
+usa". **Isso estava errado:** o `runMultiModel` grava o estágio entre as etapas e retoma
+por `pipelineResume`, com a rota `/resume` carregando o run ativo e teste de integração
+contra PostgreSQL real. A ressalva verdadeira é outra e é menor — **não há retomada
+automática no boot**: quem retoma é o cliente, pelo `/resume`. Junto com o F-15 foram
+reconferidos F-05b, F-12, F-13 e F-14 (fechados) e F-18 e F-19 (parciais).
+
+**A cor segue amarela porque ninguém decidiu mudá-la** — reclassificar prontidão é
+chamada de quem opera, não efeito colateral de uma tabela de status. O que falta é de
+outra natureza: F-23 (validação de artefato com arquivos reais) é o próximo da fila,
+com F-11, F-16, F-18, F-19 e F-20 a F-22 atrás. Matriz e critérios em
+`docs/AUDITORIA_2026-07.md` §2 e §6.
+
+**O caminho de admissão do pipeline foi endurecido** (esta frente): a reserva no
+PostgreSQL acontece ANTES de abrir o SSE e de gravar a mensagem, colisão vira
+conflito recuperável em vez de execução degradada só em memória, e leitura,
+atualização, conclusão e cancelamento passaram a ser escopados por usuário. A
+ressalva acima continua valendo — quem retoma é o cliente, pelo `/resume`.
 
 **Frentes desta sessão e onde cada uma parou** (2026-08-08):
 
@@ -32,24 +49,22 @@ demais lacunas listadas em `docs/TESTING.md`, não por este coordenador.
 | Frente 24 (handoff) + Frente 25 (`validar_pagina`) | [#195](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/195) | mesclado |
 | Frente 26 — telemetria local de confiabilidade (Fase 66) | [#196](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/196) | mesclado |
 | Veredito da `validar_pagina` → review gate (Fase 38 → 28) | [#197](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/197) | mesclado |
-| Série temporal da confiabilidade (Fase 66) | [#198](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/198) | **aberto**, CI verde |
-| Motor durável e UX do Modo Desenvolvedor | [#200](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/200) | **aberto em rascunho**, implementação e checks locais concluídos |
+| Série temporal da confiabilidade (Fase 66) + poda deste arquivo | [#198](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/198) | mesclado (`fb2198d`) |
+| Motor durável e UX do Modo Desenvolvedor | [#200](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/200) | **aberto em rascunho** |
 
-CI da `main` conferida **verde** nos dois merges desta sessão que já entraram —
-`58a0209` (Fase 66) e `2d416f4` (Fase 38 → 28). A branch de trabalho foi
-**recomeçada a partir da `main` atualizada** a cada merge, em vez de empilhar
-sobre histórico já mesclado — por isso o #198 traz só a série temporal.
+**As quatro frentes da sessão estão na `main`.** A CI foi conferida verde em
+`58a0209` (Fase 66) e `2d416f4` (Fase 38 → 28); os merges seguintes entraram
+com a CI da branch verde. A branch de trabalho foi **recomeçada a partir da
+`main` atualizada** a cada merge, em vez de empilhar sobre histórico já
+mesclado — por isso cada PR traz só a frente dele.
 
 - **Último trabalho:** motor durável e hierarquia do **Modo Desenvolvedor**.
   O pipeline agora é admitido pelo banco antes do stream, retoma o contrato
   original e não aceita segundo run após restart. A interface tem ação primária
-  contextual, modo foco persistente e Nino Ativo/Silencioso/Desligado. Backend
-  ficou sem regressão além das duas falhas basais do Windows; frontend passou
-  169/169, build e budgets. Sem prova visual interativa porque nenhum navegador
-  estava conectado à sessão.
+  contextual, modo foco persistente e Nino Ativo/Silencioso/Desligado.
 - **Último trabalho anterior:** a **série temporal da confiabilidade** (Fase 66) —
-  **PR [#198](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/198), aberto,
-  CI verde**, aguardando revisão do usuário. A foto
+  PR [#198](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/198),
+  **mesclado**. A foto
   da janela respondia "como está"; faltava "melhorou ou piorou". Sem série, uma
   queda de 90% para 60% aparece como **75%** e ninguém percebe que algo quebrou
   na semana passada.
