@@ -23,14 +23,20 @@ import tempfile
 import unittest
 import zipfile
 
+# O módulo sob teste só usa a biblioteca padrão no nível de módulo (as libs
+# pesadas entram dentro das funções), então ele importa SEMPRE. Deixá-lo dentro
+# do try abaixo era um erro: num ambiente com openpyxl mas sem python-docx, o
+# `va` ficava indefinido e o TestConfig — que não precisa de lib nenhuma —
+# quebrava com NameError em vez de rodar. Foi assim que o job de contagem do CI
+# ficou vermelho enquanto o de artefatos passava.
+import validar_artefato as va
+
 try:
     from docx import Document
     from openpyxl import Workbook
     from openpyxl.chart import BarChart, Reference
     from reportlab.lib.pagesizes import A4
     from reportlab.pdfgen import canvas as pdfcanvas
-
-    import validar_artefato as va
 
     TEM_LIBS = True
 except Exception:  # libs ausentes no ambiente — o CI e o sandbox as instalam
