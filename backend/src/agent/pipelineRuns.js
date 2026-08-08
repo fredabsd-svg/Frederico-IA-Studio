@@ -15,6 +15,31 @@ import { nanoid } from 'nanoid';
 
 const GRACE_MS = 90_000; // mesma janela de carência do liveStream
 
+export class PipelineRunConflictError extends Error {
+  constructor(conversationId) {
+    super('Já existe um pipeline ativo nesta conversa. Continue ou cancele a execução salva antes de iniciar outra.');
+    this.name = 'PipelineRunConflictError';
+    this.code = 'PIPELINE_RUN_ACTIVE';
+    this.conversationId = conversationId;
+  }
+}
+
+export class PipelineRunScopeError extends Error {
+  constructor() {
+    super('O escopo de usuário é obrigatório para acessar um pipeline.');
+    this.name = 'PipelineRunScopeError';
+    this.code = 'PIPELINE_RUN_SCOPE_REQUIRED';
+  }
+}
+
+function requireScope(userId) {
+  if (!userId) throw new PipelineRunScopeError();
+}
+
+function isActiveRunConflict(err) {
+  return err?.code === '23505' && err?.constraint === 'uniq_pipeline_runs_active';
+}
+
 function parseJSON(value, fallback) {
   if (value == null) return fallback;
   if (typeof value === 'object') return value;
@@ -25,30 +50,31 @@ export function newPipelineRunId() {
   return `pipe_${nanoid(16)}`;
 }
 
-// Cria uma linha nova para o run. Retorna o pipelineRunId. Falha se já
-// houver um run ativo para a conversa (UNIQUE parcial na migration 027).
-export async function createPipelineRun({ conversationId, userId, mode, totalStages, config, rounds = 1 }) {
-  if (!conversationId || !userId || !mode) return null;
+// Cria uma linha nova para o run. A persistência é parte da admissão: sem a
+// reserva durável, o pipeline NÃO começa. Isso faz o índice parcial da migration
+// 027 funcionar como exclusão mútua também entre processos/restarts.
+export async function createPipelineRun({ conversationId, userId, mode, totalStages, config, state = {}, rounds = 1 }) {
+  requireScope(userId);
+  if (!conversationId || !mode) throw new TypeError('conversationId e mode são obrigatórios para criar um pipeline.');
   const id = newPipelineRunId();
   const t = now();
   try {
     await db.prepare(`
       INSERT INTO pipeline_runs
         (pipeline_run_id, conversation_id, user_id, mode, status, current_stage, total_stages, rounds_run, config_json, state_json, started_at, updated_at)
-      VALUES (?, ?, ?, ?, 'running', 0, ?, ?, ?, '{}', ?, ?)
-    `).run(id, conversationId, userId, mode, Math.max(1, Number(totalStages) || 1), Math.max(1, Number(rounds) || 1), JSON.stringify(config || {}), t, t);
+      VALUES (?, ?, ?, ?, 'running', 0, ?, ?, ?, ?, ?, ?)
+    `).run(id, conversationId, userId, mode, Math.max(1, Number(totalStages) || 1), Math.max(1, Number(rounds) || 1), JSON.stringify(config || {}), JSON.stringify(state || {}), t, t);
     return id;
   } catch (err) {
-    // UNIQUE race ou DB indisponível: o run continua em memória (a API
-    // aceita), só sem retomada. Falha de DB aqui NÃO derruba o fluxo.
-    console.warn('[pipeline_runs] falha ao criar:', err.message);
-    return null;
+    if (isActiveRunConflict(err)) throw new PipelineRunConflictError(conversationId);
+    throw err;
   }
 }
 
 // Atualiza o estado após uma fronteira de estágio/round. Pode ser chamado
 // múltiplas vezes — o último estado gravado é o que vale para a retomada.
-export async function updatePipelineRun(pipelineRunId, patch = {}) {
+export async function updatePipelineRun(pipelineRunId, userId, patch = {}) {
+  requireScope(userId);
   if (!pipelineRunId) return false;
   const sets = [];
   const values = [];
@@ -59,50 +85,57 @@ export async function updatePipelineRun(pipelineRunId, patch = {}) {
   if ('completedAt' in patch) { sets.push('completed_at=?'); values.push(String(patch.completedAt)); }
   if (!sets.length) return false;
   sets.push('updated_at=?'); values.push(now());
-  values.push(pipelineRunId);
-  try {
-    await db.prepare(`UPDATE pipeline_runs SET ${sets.join(', ')} WHERE pipeline_run_id=?`).run(...values);
-    return true;
-  } catch (err) {
-    console.warn('[pipeline_runs] falha ao atualizar:', err.message);
-    return false;
-  }
+  values.push(pipelineRunId, userId);
+  const result = await db.prepare(`UPDATE pipeline_runs SET ${sets.join(', ')} WHERE pipeline_run_id=? AND user_id=?`).run(...values);
+  return Number(result?.changes || 0) === 1;
 }
 
 // Carrega um pipeline run. Devolve { id, mode, status, currentStage,
 // totalStages, roundsRun, config, state } ou null.
-export async function loadPipelineRun(conversationId, { includeTerminal = false } = {}) {
+export async function loadPipelineRun(conversationId, userId, { includeTerminal = false } = {}) {
+  requireScope(userId);
   if (!conversationId) return null;
-  try {
-    const where = includeTerminal ? 'conversation_id=?' : "conversation_id=? AND status='running'";
-    const row = await db.prepare(
-      `SELECT pipeline_run_id, mode, status, current_stage, total_stages, rounds_run, config_json, state_json, started_at, updated_at, completed_at
-       FROM pipeline_runs WHERE ${where} ORDER BY started_at DESC LIMIT 1`
-    ).get(conversationId);
-    if (!row) return null;
-    return {
-      id: row.pipeline_run_id,
-      mode: row.mode,
-      status: row.status,
-      currentStage: Number(row.current_stage || 0),
-      totalStages: Number(row.total_stages || 0),
-      roundsRun: Number(row.rounds_run || 1),
-      config: parseJSON(row.config_json, {}),
-      state: parseJSON(row.state_json, {}),
-      startedAt: row.started_at,
-      updatedAt: row.updated_at,
-      completedAt: row.completed_at
-    };
-  } catch (err) {
-    console.warn('[pipeline_runs] falha ao carregar:', err.message);
-    return null;
-  }
+  const where = includeTerminal
+      ? 'conversation_id=? AND user_id=?'
+      : "conversation_id=? AND user_id=? AND status='running'";
+  const row = await db.prepare(
+    `SELECT pipeline_run_id, mode, status, current_stage, total_stages, rounds_run, config_json, state_json, started_at, updated_at, completed_at
+     FROM pipeline_runs WHERE ${where} ORDER BY started_at DESC LIMIT 1`
+  ).get(conversationId, userId);
+  if (!row) return null;
+  return {
+    id: row.pipeline_run_id,
+    mode: row.mode,
+    status: row.status,
+    currentStage: Number(row.current_stage || 0),
+    totalStages: Number(row.total_stages || 0),
+    roundsRun: Number(row.rounds_run || 1),
+    config: parseJSON(row.config_json, {}),
+    state: parseJSON(row.state_json, {}),
+    startedAt: row.started_at,
+    updatedAt: row.updated_at,
+    completedAt: row.completed_at
+  };
 }
 
 // Marca como terminal. completedAt = agora; o sweeper apaga depois de GRACE_MS.
-export async function completePipelineRun(pipelineRunId, { status = 'done' } = {}) {
+export async function completePipelineRun(pipelineRunId, userId, { status = 'done' } = {}) {
   if (!['done', 'stopped', 'error'].includes(status)) status = 'done';
-  return updatePipelineRun(pipelineRunId, { status, completedAt: now() });
+  return updatePipelineRun(pipelineRunId, userId, { status, completedAt: now() });
+}
+
+// Cancela um coordenador persistente quando não existe mais processo vivo no
+// Map local (caso típico: restart). A atualização atômica evita read-then-write.
+export async function stopActivePipelineRun(conversationId, userId) {
+  requireScope(userId);
+  if (!conversationId) return false;
+  const t = now();
+  const result = await db.prepare(`
+    UPDATE pipeline_runs
+       SET status='stopped', completed_at=?, updated_at=?
+     WHERE conversation_id=? AND user_id=? AND status='running'
+  `).run(t, t, conversationId, userId);
+  return Number(result?.changes || 0) > 0;
 }
 
 // Remove linhas terminais com mais de GRACE_MS. Defensivo: roda em erro.

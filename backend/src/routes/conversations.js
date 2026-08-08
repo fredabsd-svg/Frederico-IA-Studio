@@ -5,7 +5,13 @@ import path from 'path';
 import { nanoid } from 'nanoid';
 import { db, now } from '../db.js';
 import { runAgent, runOrchestrator, runMultiModel, normalizeMultiModelConfig, cancelMultiModelSlot, setControl, isConversationActive, countActiveRunsForUser, friendlyApiError, loadCheckpoint, hasCheckpoint } from '../agent.js';
-import { loadPipelineRun } from '../agent/pipelineRuns.js';
+import {
+  createPipelineRun,
+  loadPipelineRun,
+  completePipelineRun,
+  stopActivePipelineRun,
+  PipelineRunConflictError
+} from '../agent/pipelineRuns.js';
 import { acquireConversationControl, releaseConversationControl } from '../agent/control.js';
 import { createRunLog, listConversationRuns } from '../agent/runLog.js';
 import { collectConversationChanges } from '../agent/changeSet.js';
@@ -331,7 +337,12 @@ router.post('/conversations/:id/control', validate(schemas.control), async (req,
   // então o cancelamento da fila roda nos dois casos, não só no "sem controle".
   if (action === 'stop') {
     const cancelledInQueue = cancelFreeJob(req.params.id);
-    if (!control && cancelledInQueue) return res.json({ ok: true, action, cancelled: true });
+    if (!control) {
+      const stoppedPipeline = await stopActivePipelineRun(req.params.id, req.userId);
+      if (cancelledInQueue || stoppedPipeline) {
+        return res.json({ ok: true, action, cancelled: true, recovered: stoppedPipeline || undefined });
+      }
+    }
   }
   if (!control) {
     return res.status(409).json({ error: 'Não há processamento ativo nesta conversa.' });
@@ -440,8 +451,23 @@ router.get('/conversations/:id/stream', async (req, res) => {
 router.post('/conversations/:id/chat', validate(schemas.chat), async (req, res) => {
   // Tipo/tamanho/trim de `message` já garantidos por validate(schemas.chat).
   const text = req.body.message;
+  const multiConfig = req.body?.multiModel ? normalizeMultiModelConfig(req.body.multiModel) : null;
   if (isConversationActive(req.params.id)) {
     return res.status(409).json({ error: 'Esta conversa já está processando uma resposta. Aguarde terminar ou pare o processamento antes de enviar outra mensagem.' });
+  }
+  if (!await ensureConversation(req.userId, req.params.id, req.body?.model)) {
+    return res.status(404).json({ error: 'Não encontrado' });
+  }
+  // Depois de restart o Map local está vazio, mas o coordenador persistente
+  // continua sendo a autoridade. Mensagem nova não pode fechar ou substituir
+  // silenciosamente o trabalho recuperável.
+  const activePipeline = await loadPipelineRun(req.params.id, req.userId);
+  if (activePipeline) {
+    return res.status(409).json({
+      error: 'Existe uma execução interrompida que pode ser retomada. Continue do checkpoint ou cancele essa execução antes de iniciar outra.',
+      code: 'pipeline_recovery_required',
+      runId: activePipeline.state?.execution?.runId || activePipeline.id
+    });
   }
   // Multiconversa: várias conversas podem processar AO MESMO TEMPO, mas com um
   // teto por usuário para proteger a VPS (cada execução consome provedor,
@@ -450,7 +476,6 @@ router.post('/conversations/:id/chat', validate(schemas.chat), async (req, res) 
   if (countActiveRunsForUser(req.userId) >= maxRuns) {
     return res.status(429).json({ error: `Você já tem ${maxRuns} conversas processando ao mesmo tempo. Aguarde alguma terminar (o indicador na barra lateral para de girar) ou pare uma delas antes de iniciar outra.` });
   }
-  if (!await ensureConversation(req.userId, req.params.id, req.body?.model)) return res.status(404).json({ error: 'Não encontrado' });
   // O frontend envia o manifesto que estava visível no compositor. Conferimos
   // os mesmos caminhos ANTES de abrir o stream/modelo: se o upload ainda está
   // terminando ou o arquivo sumiu do disco, não deixamos a IA concluir
@@ -490,6 +515,50 @@ router.post('/conversations/:id/chat', validate(schemas.chat), async (req, res) 
   catch {
     return res.status(409).json({ error: 'Esta conversa já está processando uma resposta. Aguarde terminar ou pare o processamento antes de enviar outra mensagem.' });
   }
+  const runId = nanoid();
+  let pipelineReservation = null;
+  if (multiConfig?.mode === 'pipeline') {
+    const state = {
+      execution: {
+        objective: text,
+        webSearch: Boolean(req.body?.webSearch),
+        effort: req.body?.effort ?? null,
+        developer: req.body?.developer || null,
+        runId
+      }
+    };
+    try {
+      const id = await createPipelineRun({
+        conversationId: req.params.id,
+        userId: req.userId,
+        mode: 'pipeline',
+        totalStages: multiConfig.models.length,
+        config: multiConfig,
+        state,
+        rounds: 1
+      });
+      pipelineReservation = {
+        id,
+        currentStage: 0,
+        totalStages: multiConfig.models.length,
+        config: multiConfig,
+        state
+      };
+    } catch (err) {
+      releaseConversationControl(req.params.id, control);
+      if (err instanceof PipelineRunConflictError) {
+        return res.status(409).json({
+          error: err.message,
+          code: 'pipeline_recovery_required'
+        });
+      }
+      console.error('[pipeline_runs] não foi possível reservar a execução:', err);
+      return res.status(503).json({
+        error: 'Não foi possível registrar a execução com segurança. Tente novamente em instantes.',
+        code: 'pipeline_persistence_unavailable'
+      });
+    }
+  }
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
@@ -505,7 +574,6 @@ router.post('/conversations/:id/chat', validate(schemas.chat), async (req, res) 
   // O runId é gerado AQUI (e passado ao runAgent) para carimbar todos os eventos
   // do run com o mesmo identificador — sem ele, a reconexão não consegue
   // distinguir "ainda estou vendo o mesmo run" de "um run novo começou".
-  const runId = nanoid();
   const live = openLiveStream(req.params.id, runId);
   // RUN DURÁVEL (ADR 0002): a rota é o único ponto por onde TODOS os eventos
   // passam — o gravador persiste os estruturais (tool_start/result, run_state,
@@ -573,7 +641,6 @@ router.post('/conversations/:id/chat', validate(schemas.chat), async (req, res) 
     let result, kind = 'chat', usageAssistantId = req.body?.assistantId || null;
     // MULTIMODELO tem prioridade sobre os demais modos: 2+ modelos executam a
     // mesma solicitação (comparação, conselho, debate ou pipeline sequencial).
-    const multiConfig = req.body?.multiModel ? normalizeMultiModelConfig(req.body.multiModel) : null;
     if (multiConfig) {
       kind = 'multimodelo'; usageAssistantId = null;
       result = await runMultiModel({
@@ -585,8 +652,13 @@ router.post('/conversations/:id/chat', validate(schemas.chat), async (req, res) 
         effort: req.body?.effort,
         developer: req.body?.developer,
         onEvent: send,
-        control
+        control,
+        pipelineReservation,
+        runIdOverride: runId
       });
+      // A partir do retorno, o próprio runner já fechou o coordenador como
+      // done/stopped/error. Antes disso, a rota ainda é dona da limpeza.
+      pipelineReservation = null;
     } else if (req.body?.orchestrate) {
       const assistants = (await Promise.all((req.body?.orchestrateIds || []).map(id => loadAssistant(req.userId, id)))).filter(Boolean);
       kind = 'orquestrador'; usageAssistantId = null;
@@ -661,6 +733,17 @@ router.post('/conversations/:id/chat', validate(schemas.chat), async (req, res) 
   } finally {
     releaseFreeSlot?.();
     clearInterval(heartbeat);
+    if (pipelineReservation) {
+      try {
+        await completePipelineRun(
+          pipelineReservation.id,
+          req.userId,
+          { status: control.stopped ? 'stopped' : 'error' }
+        );
+      } catch (err) {
+        console.error('[pipeline_runs] falha ao fechar reserva não iniciada:', err);
+      }
+    }
     // O controle foi adquirido pela ROTA (fechamento do TOCTOU) — o release é
     // idempotente por identidade, então liberar aqui e no runner é seguro.
     releaseConversationControl(req.params.id, control);
@@ -785,12 +868,17 @@ router.post('/conversations/:id/resume', async (req, res) => {
   // Coordenador durável (F-15): pipeline run ativo tem precedência sobre
   // checkpoint de agente único. Se o pipeline foi interrompido entre etapas,
   // retoma do currentStage em vez de cair no erro "não há execução salva".
-  const activePipeline = await loadPipelineRun(conversationId);
+  const activePipeline = await loadPipelineRun(conversationId, req.userId);
   if (activePipeline) {
-    // Reconstrói a execução multimodelo com o config salvo e a última mensagem
-    // de usuário da conversa (o pipeline run guarda o config, não o userText).
-    const lastUser = await db.prepare("SELECT content FROM messages WHERE conversation_id=? AND role='user' ORDER BY created_at DESC, seq DESC LIMIT 1").get(conversationId);
-    const userText = lastUser?.content || '';
+    // Pipelines novos preservam o contrato original completo. O fallback para
+    // a última mensagem existe apenas para checkpoints legados anteriores a
+    // esse campo — nunca vence um objetivo já persistido.
+    const execution = activePipeline.state?.execution || {};
+    let userText = execution.objective || '';
+    if (!userText) {
+      const lastUser = await db.prepare("SELECT content FROM messages WHERE conversation_id=? AND role='user' ORDER BY created_at DESC, seq DESC LIMIT 1").get(conversationId);
+      userText = lastUser?.content || '';
+    }
     // Mesmo fechamento de TOCTOU do /chat: controle antes do LiveStream.
     let control;
     try { control = acquireConversationControl(conversationId, req.userId); }
@@ -802,7 +890,7 @@ router.post('/conversations/:id/resume', async (req, res) => {
     res.setHeader('X-Accel-Buffering', 'no');
     res.flushHeaders?.();
     let clientGone = false;
-    const runId = `resume_${nanoid(8)}`;
+    const runId = execution.runId || `resume_${nanoid(8)}`;
     const live = openLiveStream(conversationId, runId);
     const runLog = createRunLog({ runId, conversationId, userId: req.userId, kind: 'multimodelo' });
     const runOutcome = { state: null, detail: null, messageId: null };
@@ -840,10 +928,14 @@ router.post('/conversations/:id/resume', async (req, res) => {
         conversationId,
         userText,
         config,
+        webSearch: Boolean(execution.webSearch),
+        effort: execution.effort ?? undefined,
+        developer: execution.developer || null,
         pipelineResume: activePipeline,
         saveUserMessage: false,
         onEvent: send,
-        control
+        control,
+        runIdOverride: runId
       });
       runOutcome.messageId = result?.messageId || null;
       if (result?.usage) {

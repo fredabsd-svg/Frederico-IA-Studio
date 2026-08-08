@@ -103,26 +103,30 @@ com texto, caminhos de artefato e config original) na tabela `pipeline_runs`
 (migration 027). Na saída normal, o run é marcado como `done`; em cancelamento,
 `stopped`; em erro, `error`.
 
-**Retomada (boot ou `/resume`):**
+**Admissão, retomada e cancelamento:**
 
 1. No boot, `sweepStalePipelineRuns()` remove runs **terminais** antigos
    (`done`/`stopped`/`error`, 90s de carência, mesma janela do liveStream).
    Repare no limite: o sweeper **não** toca em `running`, de propósito — apagar
    um run `running` destruiria uma execução viva. A consequência é que um órfão
    deixado por um kill-9 não expira sozinho; quem o fecha é o item 3.
-2. Na rota `POST /conversations/:id/resume`, o sistema verifica primeiro se há
-   um `pipeline_runs` ativo. Se houver, reconstrói a configuração multimodelo do
-   `config_json` e chama `runMultiModel` com `pipelineResume`, que pula os
-   estágios já concluídos (`currentStage`) e continua do próximo. **Esta é a
-   única porta de retomada.**
-3. Uma mensagem NOVA (`POST /chat`) numa conversa com run órfão **não** o
-   retoma: `runMultiModel` fecha o órfão como `error` e parte do zero. Herdá-lo
-   seria pior que perdê-lo — a resposta nova sairia costurada sobre as etapas
-   de uma tarefa antiga, começando do meio, e o usuário não pediu isso. É
-   também o que impede o órfão de ficar `running` para sempre (item 1).
-4. O `finally` de `runMultiModel` garante que qualquer saída anormal
-   (exceção não tratada) completa o run como `error` — sem órfãos.
-5. Uma etapa que para no meio por orçamento ou checkpoint (`resumable`) fecha o
+2. `POST /chat` consulta o coordenador persistente antes de qualquer efeito
+   colateral. Se existir um run ativo, responde `409
+   pipeline_recovery_required`: uma mensagem nova nunca fecha, herda ou
+   substitui silenciosamente a tarefa anterior.
+3. Para um pipeline novo, a rota reserva `pipeline_runs` **antes de abrir SSE
+   ou gravar a mensagem**. O índice parcial é a exclusão mútua entre processos.
+   Colisão vira conflito explícito; indisponibilidade do banco vira `503
+   pipeline_persistence_unavailable`. Não existe execução degradada só em memória.
+4. Na rota `POST /conversations/:id/resume`, o sistema carrega o run pelo par
+   conversa + usuário e restaura configuração, objetivo, busca web, esforço,
+   contexto de desenvolvimento, id da mensagem e o mesmo `runId`. Estágios
+   concluídos são pulados pelo `currentStage`. **Esta é a única porta de retomada.**
+5. Se não houver processo vivo depois de restart, `POST /control` com
+   `action=stop` encerra atomicamente o coordenador persistente do próprio usuário.
+6. O `finally` da rota e o de `runMultiModel` fecham reservas não concluídas
+   como `stopped` ou `error`.
+7. Uma etapa que para no meio por orçamento ou checkpoint (`resumable`) fecha o
    run como `stopped`, não `done`: o pipeline não terminou, e o histórico não
    pode dizer que terminou. A retomada dessa etapa específica continua sendo do
    checkpoint de agente único — limitação conhecida.

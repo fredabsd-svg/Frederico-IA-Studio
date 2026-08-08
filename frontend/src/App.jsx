@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState, lazy, Suspense } from 'rea
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Download, FileText, FileSpreadsheet, FilePenLine, Plus, ArrowUp, Upload, Trash2, Bot, Brain, X, BarChart3, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench, CalendarClock, Inbox, Palette, Gauge, SlidersHorizontal, Paperclip, MoreHorizontal, FolderOpen, Code2, ChevronRight, ShieldCheck, LogOut, KeyRound, Camera, Cable, LayoutTemplate, MessageCircleQuestion, Bug, PanelRight, Lock, Unlock } from 'lucide-react';
+import { Download, FileText, FileSpreadsheet, FilePenLine, Plus, ArrowUp, Upload, Trash2, Bot, Brain, X, BarChart3, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench, CalendarClock, Inbox, Palette, Gauge, SlidersHorizontal, Paperclip, MoreHorizontal, FolderOpen, Code2, ChevronRight, ShieldCheck, LogOut, KeyRound, Camera, Cable, LayoutTemplate, MessageCircleQuestion, Bug, PanelRight, Lock, Unlock, Maximize2, Minimize2 } from 'lucide-react';
 import { API, TOOL_INFO, TEMPLATES, QUICK_ACTIONS, THEMES, WORKSPACES, EFFORTS, EFFORT_DESC, ASSISTANT_ICONS, ASSISTANT_COLORS, isAssistantIcon, DEV_WORK_MODES, MAX_ASSISTANT_PROFILE_CHARS } from './constants.js';
 import { signOut } from './authClient.js';
 import { Slider, Modal, Drawer, Collapsible, useAppDialog, ModelPicker } from './components.jsx';
@@ -95,6 +95,7 @@ import { useChat } from './hooks/useChat.js';
 import { useTasks } from './hooks/useTasks.js';
 import { useDevProjects, projectContextText, developerSessionForConversation, permissionsPayloadFor } from './hooks/useDevProjects.js';
 import { LAYOUT_KEY, normalizeLayoutLevel, resolveLayout, sessionContextItems } from './devWorkspaceLayout.js';
+import { COMPANION_CONTROL_MODES, companionControlMode, settingsForCompanionMode } from './companionMode.js';
 import { useComposerHeight } from './hooks/useComposerHeight.js';
 
 const QUICK_ACTION_ICON = {
@@ -179,9 +180,11 @@ export default function App({ user } = {}) {
   const [devLeftPref, setDevLeftPref] = useState(() => readCollapsed('fred_dev_left'));
   const [devRightPref, setDevRightPref] = useState(() => readCollapsed('fred_dev_right'));
   const [devLayoutLevel, setDevLayoutLevel] = useState(() => normalizeLayoutLevel(localStorage.getItem(LAYOUT_KEY)));
+  const [devFocus, setDevFocus] = useState(() => localStorage.getItem('fred_dev_focus') === '1');
+  const [devActionsOpen, setDevActionsOpen] = useState(false);
   const devLayout = resolveLayout({ level: devLayoutLevel, leftCollapsed: devLeftPref, rightCollapsed: devRightPref });
-  const devLeftCollapsed = devLayout.leftCollapsed;
-  const devRightCollapsed = devLayout.rightCollapsed;
+  const devLeftCollapsed = devFocus || devLayout.leftCollapsed;
+  const devRightCollapsed = devFocus || devLayout.rightCollapsed;
   const [routinesOpen, setRoutinesOpen] = useState(false);
   const [inboxOpen, setInboxOpen] = useState(false);
   const [providerOpen, setProviderOpen] = useState(false);
@@ -419,6 +422,7 @@ export default function App({ user } = {}) {
   // a sessão do modo dev, ou a conversa aberta quando o workspace é o "developer".
   const devConversationId = developerSession?.conversationId || (workspace === 'developer' ? current?.id : null) || null;
   const companion = useCompanion({ tasks, uploads, devConversationId, showToast });
+  const ninoControlMode = companionControlMode(companion.settings);
   // Docling — andamento e resultados do processamento documental da conversa.
   const docling = useDocling(current?.id);
   // Copiloto — central de diagnósticos, saúde e permissões.
@@ -870,6 +874,37 @@ export default function App({ user } = {}) {
     setDevRightPref(null);
     setDevLayoutLevel(next);
   }
+  function toggleDevFocus() {
+    const next = !devFocus;
+    localStorage.setItem('fred_dev_focus', next ? '1' : '0');
+    setDevFocus(next);
+    setDevActionsOpen(false);
+    if (next) setWorkspaceOpen(false);
+  }
+  function changeNinoControlMode(next) {
+    void companion.saveSettings(settingsForCompanionMode(next, companion.settings));
+  }
+
+  useEffect(() => {
+    if (workspace !== 'developer') return undefined;
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        setDevActionsOpen(false);
+        return;
+      }
+      const target = event.target;
+      if (target?.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target?.tagName)) return;
+      if (!event.altKey || !event.shiftKey || event.key.toLowerCase() !== 'f') return;
+      event.preventDefault();
+      const next = !devFocus;
+      localStorage.setItem('fred_dev_focus', next ? '1' : '0');
+      setDevFocus(next);
+      setDevActionsOpen(false);
+      if (next) setWorkspaceOpen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [workspace, devFocus]);
 
   // ---- Clientes / Projetos ----
   async function loadClients() {
@@ -1050,6 +1085,22 @@ export default function App({ user } = {}) {
               : messages.length > 0
                 ? { label: 'Pronto', tone: 'idle' }
                 : { label: 'Aguardando instrução', tone: 'idle' };
+  const devCanResume = !busy && Boolean(
+    lastAssistantMsg?.resumable
+    || ['recoverable_error', 'paused'].includes(lastExecState)
+  );
+  const devPrimaryAction = busy
+    ? paused
+      ? { label: 'Continuar', icon: Play, run: () => control('resume') }
+      : { label: 'Pausar', icon: Pause, run: () => control('pause') }
+    : devCanResume
+      ? { label: 'Retomar', icon: Play, run: () => resumeRun(current?.id) }
+      : lastExecState === 'completed'
+        ? { label: 'Revisar alterações', icon: Check, run: () => openDeveloper('review') }
+        : (lastExecState === 'fatal_error' || lastAssistantMsg?.failed)
+          ? { label: 'Corrigir', icon: Bug, run: () => openDeveloper('fix') }
+          : { label: 'Implementar', icon: Code2, run: () => openDeveloper('build') };
+  const DevPrimaryIcon = devPrimaryAction.icon;
 
   // Permissões reais desta tarefa (não um toggle fictício): modo ativo (ou o do
   // projeto, se ainda não há sessão preparada) e o vínculo de pasta/repositório.
@@ -1063,7 +1114,7 @@ export default function App({ user } = {}) {
       ? 'Pasta do computador vinculada'
       : 'Sem vínculo — workspace temporário da conversa';
 
-  return <div className={`app workspace-${workspace} ${sideHidden ? 'sideHidden' : ''}`}>
+  return <div className={`app workspace-${workspace} ${sideHidden ? 'sideHidden' : ''} ${workspace === 'developer' && devFocus ? 'devFocus' : ''}`}>
     {menuOpen && <div className="scrim" onClick={() => setMenuOpen(false)}/>}
     <Sidebar
       user={user}
@@ -1179,19 +1230,44 @@ export default function App({ user } = {}) {
         </div>
         <div className="workspaceBarActions">
           <span className={`devStagePill ${devStagePill.tone}`}><span className="devStagePillDot"/>{devStagePill.label}</span>
-          <button type="button" className="workspaceAction" onClick={() => openDeveloper('plan')}><ListTodo size={15}/> Planejar</button>
-          <button type="button" className="workspaceAction primary" onClick={() => openDeveloper('build')}><Code2 size={15}/> Implementar</button>
-          <button type="button" className="workspaceAction" onClick={() => openDeveloper('fix')}><Bug size={15}/> Corrigir</button>
-          <button type="button" className="workspaceAction" onClick={() => openDeveloper('review')}><Check size={15}/> Revisar</button>
-          {/* Simplicidade progressiva (Fase 52): começa em Chat + Tarefa +
-              Terminal; o resto entra por este botão, e a escolha fica salva. */}
-          <button type="button" className="workspaceAction" onClick={toggleDevLayoutLevel}
-            title={devLayout.level === 'simples'
-              ? 'Mostrar tudo: arquivos, alterações, agentes e memória'
-              : 'Voltar ao essencial: chat, tarefa e terminal'}>
-            {devLayout.level === 'simples' ? <><PanelRight size={15}/> Mostrar tudo</> : <><PanelLeft size={15}/> Modo essencial</>}
+          <label className="workspaceNinoControl" title="Comportamento do Nino neste ambiente">
+            <Bot size={14}/><span>Nino</span>
+            <select aria-label="Estado do Nino" value={ninoControlMode} onChange={event => changeNinoControlMode(event.target.value)}>
+              <option value={COMPANION_CONTROL_MODES.ACTIVE}>Ativo</option>
+              <option value={COMPANION_CONTROL_MODES.SILENT}>Silencioso</option>
+              <option value={COMPANION_CONTROL_MODES.OFF}>Desligado</option>
+            </select>
+          </label>
+          <button type="button" className="workspaceAction primary devPrimaryAction"
+            onClick={() => { setDevActionsOpen(false); devPrimaryAction.run(); }}
+            disabled={busy && controlPending}>
+            <DevPrimaryIcon size={15}/>{devPrimaryAction.label}
           </button>
-          {devRightCollapsed && <button type="button" className="workspaceIconAction" onClick={toggleDevRight} title="Mostrar atividades e memória" aria-label="Mostrar atividades e memória"><PanelRight size={16}/></button>}
+          <div className="workspaceActionMenu">
+            <button type="button" className="workspaceIconAction" onClick={() => setDevActionsOpen(open => !open)}
+              aria-label="Mais ações de desenvolvimento" aria-haspopup="menu" aria-expanded={devActionsOpen}><MoreHorizontal size={17}/></button>
+            {devActionsOpen && <div className="workspaceActionPanel" role="menu">
+              {busy ? <>
+                <button type="button" role="menuitem" onClick={() => { setDevActionsOpen(false); control('stop'); }}><Square size={14}/> Parar execução</button>
+                {terminalSession && <button type="button" role="menuitem" onClick={() => { setDevActionsOpen(false); setWorkspaceOpen(true); }}><Maximize2 size={14}/> Abrir execução</button>}
+              </> : <>
+                <button type="button" role="menuitem" onClick={() => { setDevActionsOpen(false); openDeveloper('plan'); }}><ListTodo size={14}/> Planejar</button>
+                <button type="button" role="menuitem" onClick={() => { setDevActionsOpen(false); openDeveloper('build'); }}><Code2 size={14}/> Implementar</button>
+                <button type="button" role="menuitem" onClick={() => { setDevActionsOpen(false); openDeveloper('fix'); }}><Bug size={14}/> Corrigir</button>
+                <button type="button" role="menuitem" onClick={() => { setDevActionsOpen(false); openDeveloper('review'); }}><Check size={14}/> Revisar</button>
+              </>}
+              <button type="button" role="menuitem" onClick={() => { setDevActionsOpen(false); toggleDevLayoutLevel(); }}>
+                {devLayout.level === 'simples' ? <PanelRight size={14}/> : <PanelLeft size={14}/>}
+                {devLayout.level === 'simples' ? 'Mostrar painéis completos' : 'Usar layout essencial'}
+              </button>
+            </div>}
+          </div>
+          <button type="button" className={`workspaceIconAction ${devFocus ? 'on' : ''}`} onClick={toggleDevFocus}
+            title={`${devFocus ? 'Sair do' : 'Entrar no'} modo foco (Alt+Shift+F)`}
+            aria-label={`${devFocus ? 'Sair do' : 'Entrar no'} modo foco`} aria-pressed={devFocus}>
+            {devFocus ? <Minimize2 size={16}/> : <Maximize2 size={16}/>}
+          </button>
+          {devRightCollapsed && !devFocus && <button type="button" className="workspaceIconAction" onClick={toggleDevRight} title="Mostrar atividades e memória" aria-label="Mostrar atividades e memória"><PanelRight size={16}/></button>}
         </div>
       </section>}
       {/* CONTEXTO DA SESSÃO (Fase 55): projeto, branch de TRABALHO (real, vinda
@@ -1349,7 +1425,7 @@ export default function App({ user } = {}) {
         onClick={chatScroll.resumeFollowing}/>
       {/* TERMINAL INFERIOR: filho normal do layout, entre as mensagens e o
           compositor. Reserva a própria altura em vez de flutuar por cima. */}
-      {terminalSession && <Suspense fallback={<PanelFallback/>}>
+      {!devFocus && terminalSession && <Suspense fallback={<PanelFallback/>}>
         <LazyExecutionTerminalDock
           session={terminalSession}
           conversationId={current?.id}
