@@ -50,7 +50,7 @@ ressalva acima continua valendo — quem retoma é o cliente, pelo `/resume`.
 | Frente 26 — telemetria local de confiabilidade (Fase 66) | [#196](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/196) | mesclado |
 | Veredito da `validar_pagina` → review gate (Fase 38 → 28) | [#197](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/197) | mesclado |
 | Série temporal da confiabilidade (Fase 66) + poda deste arquivo | [#198](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/198) | mesclado (`fb2198d`) |
-| Motor durável e UX do Modo Desenvolvedor | [#200](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/200) | **aberto em rascunho** |
+| Motor durável e UX do Modo Desenvolvedor | [#200](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/200) | mesclado |
 
 **As quatro frentes da sessão estão na `main`.** A CI foi conferida verde em
 `58a0209` (Fase 66) e `2d416f4` (Fase 38 → 28); os merges seguintes entraram
@@ -62,6 +62,10 @@ mesclado — por isso cada PR traz só a frente dele.
   O pipeline agora é admitido pelo banco antes do stream, retoma o contrato
   original e não aceita segundo run após restart. A interface tem ação primária
   contextual, modo foco persistente e Nino Ativo/Silencioso/Desligado.
+- **Último trabalho anterior:** o **CSS ganhou teto de TAMANHO** (215 KB; 204 hoje), fechando a
+  última lacuna da Frente 11. A catraca do `cssInventory.mjs`, que já existia, trava a
+  CONTAGEM de regras mortas e não olha bytes — uma folha nova de 40 KB, toda em uso,
+  passava por ela. Agora para no `bundleBudget.mjs`, junto dos tetos de entrada e total.
 - **Último trabalho anterior:** a **série temporal da confiabilidade** (Fase 66) —
   PR [#198](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/198),
   **mesclado**. A foto
