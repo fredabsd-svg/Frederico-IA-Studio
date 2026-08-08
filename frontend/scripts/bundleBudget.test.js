@@ -30,3 +30,12 @@ test('o teto do total é mais folgado que o da entrada', () => {
   assert.ok(TETO_TOTAL_KB > TETO_ENTRADA_KB,
     'o total inclui os chunks sob demanda; um teto igual ao da entrada reprovaria toda separação nova');
 });
+
+// O CSS ganhou teto na Frente 11 (era lacuna registrada em ARCHITECTURE §18).
+test('o teto do CSS existe e é coerente com a medição da poda', async () => {
+  const { TETO_CSS_KB } = await import('./bundleBudget.mjs');
+  assert.ok(Number.isFinite(TETO_CSS_KB) && TETO_CSS_KB > 0, 'o CSS precisa de teto próprio');
+  // Folga pequena de propósito: catraca deve pinçar. Se a poda derrubar mais,
+  // baixe o teto junto — é o que faz a catraca andar.
+  assert.ok(TETO_CSS_KB < 260, 'teto folgado demais não pega folha nova importada no main.jsx');
+});

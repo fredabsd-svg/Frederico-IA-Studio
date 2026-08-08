@@ -77,7 +77,6 @@ button,select{border-radius:10px}
 .msg.user{border-radius:16px 16px 4px 16px;line-height:1.6}
 .msg.assistant{background:var(--bubble);border-radius:16px 16px 16px 4px;padding:18px 20px;line-height:1.65}
 .msgActions button{border-radius:7px}
-.toolstep{border-radius:8px}
 .memoryTrace{border-radius:9px;background:rgba(148,163,184,.06)}
 .filecard{border-radius:12px}
 .fcicon{border-radius:10px;background:rgba(34,197,94,.12);color:#22c55e}
@@ -167,9 +166,7 @@ button,select{border-radius:10px}
    aqui ancora no rodape sem tocar no layout. O dot reflete o estado
    real de `unprotected` (/api/health), nao um verde fixo. */
 .sideFoot{flex:none;display:flex;align-items:center;gap:7px;margin-top:4px;padding:11px 2px 2px;border-top:1px solid var(--line);font-size:10px;font-weight:600;color:var(--muted)}
-.sideFootDot{flex:none;width:6px;height:6px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 18%,transparent)}
 .sideFoot.warn{color:var(--warn)}
-.sideFoot.warn .sideFootDot{background:var(--warn);box-shadow:0 0 0 3px color-mix(in srgb,var(--warn) 18%,transparent)}
 
 /* ---- Seletor de cliente ---- */
 .clientPicker{position:relative;margin-bottom:10px}

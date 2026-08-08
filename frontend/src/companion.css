@@ -57,36 +57,7 @@
   box-shadow: 0 8px 18px rgba(0, 0, 0, 0.3);
 }
 .cmpMinBubble:hover { color: #fff; border-color: rgba(255, 255, 255, 0.25); }
-
-/* ---- Painel ---- */
-.companionPanel {
-  width: 320px;
-  max-width: calc(100vw - 32px);
-  max-height: min(70vh, 640px);
-  overflow-y: auto;
-  background: rgba(16, 21, 34, 0.98);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 16px;
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
-  padding: 14px;
-  color: #dbe3f4;
-  backdrop-filter: blur(8px);
-  animation: cmpPanelIn 0.16s ease;
-}
 @keyframes cmpPanelIn { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: none; } }
-
-.cmpPanelHead { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-.cmpWho { display: flex; flex-direction: column; line-height: 1.2; }
-.cmpWho strong { font-size: 15px; color: #fff; }
-.cmpCaption { font-size: 12px; color: #8b96af; }
-.cmpHeadActions { display: flex; gap: 2px; }
-.cmpHeadActions button {
-  background: none; border: none; color: #8b96af; cursor: pointer;
-  padding: 5px; border-radius: 7px; display: flex; align-items: center;
-}
-.cmpHeadActions button:hover { background: rgba(255, 255, 255, 0.08); color: #fff; }
-
-.cmpSession { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
 .cmpChip {
   display: inline-flex; align-items: center; gap: 4px;
   padding: 3px 8px; border-radius: 999px; font-size: 11.5px;
@@ -96,74 +67,7 @@
 .cmpChip.mode-proativo { color: #f0a340; border-color: rgba(240, 163, 64, 0.3); }
 .cmpChip.mode-silencioso { color: #8b96af; }
 .cmpChip.mode-foco { color: #38bdf8; border-color: rgba(56, 189, 248, 0.3); }
-
-.cmpLive {
-  display: flex; align-items: center; gap: 8px;
-  font-size: 12.5px; color: #cdd6ea;
-  background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.18);
-  border-radius: 10px; padding: 8px 10px; margin-bottom: 10px;
-}
-.cmpSpin {
-  width: 13px; height: 13px; border-radius: 50%;
-  border: 2px solid rgba(255, 255, 255, 0.2); border-top-color: #38bdf8;
-  animation: cmpSpin 0.8s linear infinite;
-}
 @keyframes cmpSpin { to { transform: rotate(360deg); } }
-
-/* Alertas */
-.cmpAlerts { margin-bottom: 10px; }
-.cmpAlertsHead { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; font-size: 12px; color: #8b96af; }
-.cmpAlertsHead span { display: inline-flex; align-items: center; gap: 5px; }
-.cmpLink { background: none; border: none; color: #6ea8ff; cursor: pointer; font-size: 12px; }
-.cmpLink:hover { text-decoration: underline; }
-.cmpAlerts ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-.cmpAlert {
-  border-radius: 10px; padding: 9px 10px;
-  background: rgba(255, 255, 255, 0.04); border-left: 3px solid #8b96af;
-}
-.cmpAlert.level-aviso { border-left-color: #f0a340; }
-.cmpAlert.level-critico { border-left-color: #ef4444; }
-.cmpAlertTitle { font-size: 13px; font-weight: 600; color: #eef2fb; }
-.cmpAlertDetail { font-size: 12px; color: #a7b1c6; margin-top: 2px; }
-.cmpAlertAction { font-size: 12px; color: #9fd0ff; margin-top: 5px; display: flex; align-items: center; gap: 2px; }
-.cmpAlertAuth { font-size: 11px; color: #7f8aa1; margin-top: 4px; display: inline-flex; align-items: center; gap: 4px; }
-.cmpAlertBtns { display: flex; gap: 6px; margin-top: 7px; }
-.cmpAlertBtns button {
-  font-size: 11.5px; padding: 4px 10px; border-radius: 7px; cursor: pointer;
-  background: rgba(255, 255, 255, 0.08); border: none; color: #cdd6ea;
-}
-.cmpAlertBtns button:hover { background: rgba(255, 255, 255, 0.16); }
-.cmpAlertBtns button.mut { color: #22c55e; }
-
-/* Ações rápidas / modos */
-.cmpQuickRow { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
-.cmpQuickRow button {
-  display: inline-flex; align-items: center; gap: 5px;
-  font-size: 12px; padding: 6px 10px; border-radius: 8px; cursor: pointer;
-  background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.08); color: #cdd6ea;
-}
-.cmpQuickRow button:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
-
-.cmpModes { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 10px; }
-.cmpMode {
-  font-size: 11.5px; padding: 5px 9px; border-radius: 999px; cursor: pointer;
-  background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.08); color: #9aa5bd;
-}
-.cmpMode.on { background: rgba(79, 140, 255, 0.18); border-color: rgba(79, 140, 255, 0.5); color: #cfe0ff; }
-
-.cmpQuick { display: flex; gap: 6px; }
-.cmpQuick input {
-  flex: 1; min-width: 0; padding: 9px 11px; border-radius: 10px;
-  background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.1);
-  color: #eef2fb; font-size: 13px; outline: none;
-}
-.cmpQuick input:focus { border-color: rgba(79, 140, 255, 0.6); }
-.cmpQuick button {
-  display: flex; align-items: center; justify-content: center;
-  width: 38px; border-radius: 10px; cursor: pointer;
-  background: #4f8cff; border: none; color: #fff;
-}
-.cmpQuick button:disabled { opacity: 0.4; cursor: default; }
 
 /* ---- Modal de configuração ---- */
 .cmpForm { display: flex; flex-direction: column; gap: 16px; }
@@ -205,25 +109,9 @@
 .cmpFormActions .ghost { background: rgba(255, 255, 255, 0.06); color: #cdd6ea; }
 .cmpFormActions .primary { background: #4f8cff; color: #fff; }
 
-/* ---- Tema claro ---- */
-.app.theme-light .companionPanel,
-body:not(.dark) .companionPanel {
-  background: rgba(255, 255, 255, 0.98);
-  color: #1e293b;
-  border-color: rgba(0, 0, 0, 0.08);
-}
-.app.theme-light .cmpWho strong { color: #0f172a; }
-.app.theme-light .cmpChip { background: rgba(0, 0, 0, 0.05); color: #475569; border-color: rgba(0, 0, 0, 0.06); }
-.app.theme-light .cmpQuick input,
-.app.theme-light .cmpMinBubble { background: rgba(0, 0, 0, 0.04); color: #1e293b; border-color: rgba(0, 0, 0, 0.1); }
-
 @media (max-width: 560px) {
   .companionRoot { right: 12px; bottom: calc(var(--composer-h, 0px) + 12px); }
-  .companionPanel { width: calc(100vw - 24px); }
 }
-
-.cmpChipBtn { cursor: pointer; }
-.cmpChipBtn:hover { background: rgba(255,255,255,0.12); color: #fff; }
 
 /* =====================================================================
    Copiloto — balão proativo de revisão de escrita (R2)
@@ -391,14 +279,11 @@ body:not(.dark) .companionPanel {
 .cmpFieldNote svg { color: #4f8cff; flex-shrink: 0; margin-top: 1px; }
 
 /* ---- Tema claro ---- */
-.app.theme-light .cmpBubble, body:not(.dark) .cmpBubble { background: #fff; color: #1e293b; border-color: rgba(79, 140, 255, 0.4); }
-.app.theme-light .cmpBubbleArrow, body:not(.dark) .cmpBubbleArrow { background: #fff; }
-.app.theme-light .cmpBubbleText, body:not(.dark) .cmpBubbleText { color: #1e293b; }
-.app.theme-light .cmpBubbleCard, body:not(.dark) .cmpBubbleCard { color: #1e293b; }
-.app.theme-light .cwBubble, body:not(.dark) .cwMsg.assistant .cwBubble { color: inherit; }
-.app.theme-light .cwMsg.assistant .cwBubble { background: rgba(0, 0, 0, 0.05); color: #1e293b; }
-.app.theme-light .cwEmpty b, .app.theme-light .cwDocInfo b, .app.theme-light .cwAlertTitle { color: #0f172a; }
-.app.theme-light .cwComposer textarea { background: rgba(0, 0, 0, 0.04); color: #1e293b; border-color: rgba(0, 0, 0, 0.12); }
+body:not(.dark) .cmpBubble { background: #fff; color: #1e293b; border-color: rgba(79, 140, 255, 0.4); }
+body:not(.dark) .cmpBubbleArrow { background: #fff; }
+body:not(.dark) .cmpBubbleText { color: #1e293b; }
+body:not(.dark) .cmpBubbleCard { color: #1e293b; }
+body:not(.dark) .cwMsg.assistant .cwBubble { color: inherit; }
 
 /* ============================================================================
    Nino — ajustes no companion.css existente.
@@ -500,14 +385,6 @@ body:not(.dark) .companionPanel {
 .cwMsgFace { width: 30px; height: 35px; flex: none; margin-bottom: 2px; }
 .cwMsg.assistant .cwBubble { border-radius: 16px 16px 16px 4px; }
 .cwMsg.user .cwBubble { border-radius: 16px 16px 4px 16px; }
-.cwRevised {
-  margin-top: 9px;
-  background: rgba(198, 113, 57, .12);
-  border: 1px solid rgba(198, 113, 57, .4);
-  border-radius: 12px;
-  padding: 10px 12px;
-  color: #f2e6d8;
-}
 .cwTyping span { background: #c67139; }
 
 /* Composer e ações do painel na cor do personagem. */
@@ -544,13 +421,6 @@ body:not(.dark) .companionPanel {
 .cmpFormActions .ghost { border-radius: 999px; }
 .cmpFormActions .primary:hover { background: #a85c2c; }
 .cmpFieldNote svg { color: #c67139; }
-
-/* ---- Tema claro ---- */
-.app.theme-light .cmpMinBubble { background: #fff; color: #201e1d; border-color: rgba(198, 113, 57, .45); }
-.app.theme-light .cmpMinFace { background: #f1e6d4; }
-.app.theme-light .cwCaption { color: #8a4a22; }
-.app.theme-light .cwRevised { color: #201e1d; }
-.app.theme-light .cwTabs button.on { color: #8a4a22; }
 
 /* ---- Celular ---- */
 @media (max-width: 560px) {
@@ -631,14 +501,6 @@ body:not(.dark) .companionPanel {
 }
 .cwNoteActions button:hover { background: rgba(255, 255, 255, .08); color: #eef2fb; }
 
-/* Tema claro */
-.app.theme-light .cwMemory select,
-.app.theme-light .cwNoteNew input { background: rgba(0, 0, 0, .04); color: #1e293b; border-color: rgba(0, 0, 0, .12); }
-.app.theme-light .cwMemory h4, .app.theme-light .cwNoteText { color: #0f172a; }
-.app.theme-light .cwNote { background: rgba(0, 0, 0, .03); border-color: rgba(0, 0, 0, .08); }
-.app.theme-light .cwMsgActions button:hover, .app.theme-light .cwNoteActions button:hover { background: rgba(0, 0, 0, .06); color: #0f172a; }
-.app.theme-light .cwUsed { background: rgba(0, 0, 0, .04); border-color: rgba(0, 0, 0, .08); }
-
 /* Contexto dispensado nesta mensagem — o contraponto neutro do .cwContextOn */
 .cwContextOff {
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
@@ -646,4 +508,3 @@ body:not(.dark) .companionPanel {
   background: rgba(255, 255, 255, .04); border: 1px solid rgba(255, 255, 255, .08); border-radius: 10px;
 }
 .cwContextOn .cwLink, .cwContextOff .cwLink { margin-left: auto; }
-.app.theme-light .cwContextOff { background: rgba(0, 0, 0, .03); border-color: rgba(0, 0, 0, .08); }

@@ -24,99 +24,11 @@ que ainda segura o verde é o **pipeline multimodelo retomável**: o F-15 entreg
 tabela e as primitivas, mas o `runMultiModel` ainda não as usa, então o reinício continua
 sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** o **portão de bundle passou a medir a coisa certa**. Ele somava
-  todo o JS contra um teto único de 1.000 KB — e a `main` estava exatamente em 1.000,
-  com 100% do orçamento consumido: qualquer PR de frontend reprovava. Pior, ele punia
-  code splitting (cada chunk novo soma invólucro), reprovando o PR da Frente 10 que
-  BAIXOU a primeira pintura de 909 para 896 KB. Agora são dois tetos — entrada
-  (920 KB) e total (1.100 KB) — e a regra roda no `npm run check`, não só no CI.
-- **Último trabalho:** a **Frente 5 — IPv6 + `git` na allowlist de egress do
-  sandbox** fechou duas lacunas do F-05b: endereços IPv6 literais (`[::1]`,
-  `[2001:db8::1]`) são bloqueados com mensagem clara quando a allowlist está
-  ativa (fail-closed), e comandos `git` (clone/push/pull/fetch/remote)
-  passaram a ser varridos pela extração de hosts. 10 testes novos; casos
-  existentes intactos.
-  Antes dela, a **Frente 4 — Vulnerabilidades de dependências** (#173) zerou
-  as 4 vulnerabilidades com overrides em `package.json`.
-- **Último trabalho:** a **Frente 6 — Extração de memória usa o modelo da
-  conversa** corrigiu o ruído nos E2E. O `indexAfterReply` agora recebe o
-  `modelRef` da conversa (via `loop.js`, `multiModel.js`, `orchestrator.js`)
-  e o repassa ao `getUserProvider`, eliminando o 404 de "modelo não pertence a
-  este provedor" em contas multi-chave. O log virou `console.warn` com mensagem
-  mais informativa. 9 testes unitários cobrem a precedência.
-- **Último trabalho:** a **Frente 7 — Reconciliação de sandbox ligada por
-  padrão** ajustou a política de `SANDBOX_RECONCILE_ON_BOOT`: fora de
-  `NODE_ENV=test` a reconciliação é LIGADA por padrão (remove containers
-  órfãos no boot); em teste, DESLIGADA (a suíte não tem Docker). O boot
-  agora sempre relata o resultado da reconciliação (mesmo sem órfãos).
-  5 testes de política pura cobrem todos os cenários.
-- **Último trabalho:** a **Frente 8 — Retomada real pós-kill-9** fecha o F-14
-  de verdade: teste de integração com `child_process` onde o processo A grava
-  checkpoint com tool calls e encerra (simulando SIGKILL), e o processo B
-  carrega e reconstrói via `buildResumeMessages` sem duplicar ferramentas.
-  Pula com a mensagem padrão sem PostgreSQL; com banco, exerce o caminho real.
-- **Último trabalho:** a **Frente 9 — Desmontar o App.jsx (etapa 1: shell)**
-  extraiu a sidebar (~70 linhas de JSX) para `Sidebar.jsx`, reduzindo o
-  `App.jsx` de 1550 para ~1480 linhas. Comportamento idêntico: 77 testes
-  passam, build OK. As próximas etapas (estado da conversa, estado da
-  execução, drawers/configurações) estão registradas abaixo.
-- **Último trabalho:** a **Frente 10 — MultiModelBoard fora do chunk principal**
-  moveu `MULTI_MODE_LABEL` para `constants.js`, eliminando o import estático do
-  `MultiModelBoard` no `Landing.jsx` e `MultiModelPicker.jsx`. O aviso
-  `INEFFECTIVE_DYNAMIC_IMPORT` sumiu do build; chunk principal caiu de 922 para
-  907 KB; `MultiModelBoard` ganhou chunk próprio (13.82 KB).
-  Antes dela, a **Frente 4 — Vulnerabilidades de dependências** zerou
-  as 4 vulnerabilidades do `npm audit`: no backend, o override `uuid: ^11.1.1`
-  corrigiu o dockerode (moderate) e o `npm audit fix` atualizou `ip-address`
-  (high); no frontend, o override `postcss: ^8.5.23` corrigiu a vulnerabilidade
-  de path traversal. Suítes verdes nos dois lados.
-  Antes dela, a **Frente 3 — Integração do coordenador durável no
-  `runMultiModel`** fechou o risco F-15: o pipeline multimodelo agora persiste
-  o `currentStage` e o `state_json` entre etapas na tabela `pipeline_runs`
-  (migration 027), retoma do estágio correto pelo `/resume`, completa runs como
-  `done`/`stopped`/`error` sem deixar órfãos, e tem sweeper ligado no boot.
-  Testes de integração (5 novos) provam a retomada
-  com pool novo e a ausência de órfãos em cancelamento/falha. **A retomada é
-  explícita:** só o `/resume` retoma um run pendente. Mensagem NOVA numa
-  conversa com run órfão (deixado em `running` por um crash) fecha o órfão
-  como `error` e parte do zero — o sweeper só varre runs terminais, então
-  herdar o órfão o faria sequestrar a resposta seguinte, costurando-a sobre
-  as etapas da tarefa antiga.
-  Antes dela, a **Frente 2 — Template de PR + ADR 0001** (#171) criou o
-  `.github/pull_request_template.md` e o `docs/decisions/0001-adocao-das-regras-do-projeto.md`.
-  Antes dela, as **regras do projeto entraram no repositório**: o
-  `REGRAS-DO-PROJETO.md` passou a ser a constituição de engenharia — vale para pessoas,
-  agentes de IA e automações — e o `CLAUDE.md` ficou explicitamente subordinado a ele
-  (onde divergirem, as regras prevalecem). Antes dele, a
-  **integração das 16 frentes abertas** numa branch só (F-05b,
-  F-11 a F-26, geração de imagem por capacidade e o acionamento real dos sub-agentes).
-  Entre elas, o **modelo de IA por projeto no Modo Design** (frente abaixo):
-  o seletor saiu de trás do painel e passou a morar na barra do editor, e a escolha
-  virou coluna do projeto em vez de estado do app; e a **geração de imagem escolhendo a
-  chave por capacidade** (frente abaixo) — o "Nenhuma chave de API configurada" aparecia
-  com o chat respondendo na mesma tela. Antes deles, a
-  **identidade "Tinta & Latão"** nos três kits (frente abaixo):
-  o redesenho visual entrou POR CIMA da grade do PR #149, com os blocos que faltavam —
-  sumário, citação, linha do tempo, gráficos, assinaturas, contracapa, `confidencial=` e
-  a aba-painel do Excel. Antes dele, o
-  **PR [#149](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/149)** —
-  a **arquitetura de formatação dos documentos** (frente abaixo): os kits Word/Excel/PDF
-  passaram a ter uma grade única, o `pdfpro` audita o arquivo que gera e o prompt proíbe
-  diagramar fora do kit. Antes dele, o **copiloto (Nino)** deixou de ser um chat cego —
-  passou a levar o contexto do chat principal **por padrão** (auditado, e dispensável por
-  mensagem), ganhou memória própria, preferências com efeito real, base de conhecimento do
-  Studio e ações dentro do app. Antes dele, o **Modo Design**, v1 e v2 — espaço próprio
-  onde o usuário descreve um site, uma apresentação ou um documento visual e recebe um
-  rascunho renderizado ao vivo, refinado **por conversa, por clique no elemento ou por
-  sliders que não chamam a IA**, versionado e exportável (.html/.pdf/.pptx). Antes dele, a
-  estabilização do **ambiente de execução do agente**:
-  um timeout deixou de derrubar o sandbox, toda execução devolve estado estruturado
-  (ambiente × projeto), o reinício é anunciado com o que sobreviveu e o que se perdeu,
-  comandos longos transmitem a saída ao vivo, e o agente ganhou a ferramenta `ambiente`.
-  Antes deles, os **PR [#147](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/147)**
-  (o Nino cobrindo o botão de enviar), **[#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)**
-  (Playwright + suíte ponta a ponta) e **[#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)**
-  (as sete falhas P0 dos sub-agentes).
+- **Último trabalho:** a **Frente 11 — inventário e poda do CSS**. 81 regras mortas
+  removidas, o `promptcoach.css` inteiro (componente que não existe mais) apagado e o
+  CSS ganhou catraca própria (192 KB, teto 210). O inventário por folha ficou em
+  `docs/ARCHITECTURE.md` §18, com a armadilha registrada: as 20 classes `hljs-*` não
+  aparecem no código porque quem as escreve é o `rehype-highlight`, em tempo de execução.
 - **Última validação:** 2026-08-05 — **1219 testes**, com o backend em **1008/1008 e
   NADA pulado**: o PostgreSQL 16 subiu **neste contêiner** (binários locais, sem Docker
   e sem a extensão `vector` — nenhuma migration usa o tipo). Mais **frontend 77/77**
@@ -132,6 +44,53 @@ sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md
   do matplotlib.
   **O LibreOffice deste contêiner não converte nada** (falha até com um `.txt` de uma
   linha), então a conferência do `.docx` foi estrutural — OOXML sobre o arquivo reaberto.
+
+---
+
+## Inventário e poda do CSS (2026-08-06 — Frente 11)
+
+O CSS era 204 KB num arquivo só, sem teto e sem inventário. Agora são 192 KB,
+com catraca própria e o mapa por folha em `docs/ARCHITECTURE.md` §18.
+
+**O que saiu:** 81 regras cujos seletores só mencionavam classes que o código
+não usa, mais o `promptcoach.css` inteiro — o componente do assistente de prompt
+não existe mais (o módulo `promptCoach.js` sobrevive e é usado pelo
+`CopilotWorkspace`, mas nenhuma das 18 classes da folha aparece em JSX nenhum).
+
+**Três armadilhas que a varredura ingênua cria** — todas viraram falso positivo
+antes de serem descartadas:
+
+1. **Classes montadas em tempo de execução.** `status-${d.status}` no
+   `DoclingPanel` produz `status-failed`, `status-partial`... nenhuma aparece
+   literalmente no código. O detector passou a reconhecer prefixos dinâmicos.
+2. **Classes escritas por biblioteca.** As 20 `hljs-*` vêm do `rehype-highlight`
+   ao renderizar markdown. Apagá-las mataria o realce de sintaxe em todo bloco
+   de código. Ficam, e o motivo está registrado na documentação.
+3. **Seletores compostos com metade viva.** `.app.theme-light .cmpBubble,
+   body:not(.dark) .cmpBubble` — a primeira metade nunca casa, a segunda sim.
+   A regra fica; só a metade morta sai.
+
+**Um achado que NÃO virou mudança:** `.app.theme-light` é de um esquema de tema
+ANTERIOR. Hoje o `body` recebe `light`/`dark` e as folhas usam `.light .foo`.
+Ou seja, o polimento de tema claro do Nino (25 regras), do Docling (2) e do
+prompt coach nunca chegou a valer. Reativá-las mudaria a aparência do modo
+claro — decisão de produto, não de limpeza, e esta frente não faz redesign.
+Onde a regra era só isso, saiu como morta; o que resta é a lacuna: **o modo
+claro do companheiro não tem polimento próprio.** Fica registrado nos próximos
+passos.
+
+**Um erro meu no caminho, que vale registrar.** A primeira versão do podador
+reescrevia cada regra como `seletor{corpo}` e o CSS construído caiu de 204 para
+144 KB — o que parecia um ganho enorme. Não era: o podador tratava `@keyframes`
+como regra comum e desmontava o bloco, perdendo conteúdo. A versão final apaga
+apenas os intervalos exatos das regras mortas e não toca em mais nada; a
+conferência de integridade (14 `@keyframes` e 39 `@media` antes e depois) é o
+que separa uma poda de uma corrupção.
+
+**O CSS ganhou teto** porque ele é uma folha só, carregada inteira na primeira
+pintura: as 11 folhas entram todas pelo `main.jsx`, inclusive as dos painéis que
+o JS já carrega sob demanda. Separá-las por chunk é a próxima economia óbvia —
+e é frente própria, porque muda ordem de cascata.
 
 ---
 

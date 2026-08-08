@@ -314,9 +314,6 @@
 .effortBadge{font-size:var(--fs-2xs);font-weight:600;color:var(--muted);background:var(--panel2);border:1px solid var(--line);border-radius:var(--r-full);padding:1px 8px}
 /* Menu único da caixa de mensagem (agrupa anexar, web, esforço, voz, fila) */
 
-
-
-
 .cmpMenuPanel{position:absolute;left:0;bottom:calc(100% + 10px);width:min(300px,86vw);background:var(--panel);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:0 14px 44px rgba(0,0,0,.4);z-index:60;padding:6px;display:flex;flex-direction:column;gap:1px}
 .cmpItem{display:flex;align-items:center;gap:11px;width:100%;text-align:left;border:none;background:transparent;border-radius:var(--r-md);padding:11px 12px;font-size:var(--fs-md);color:var(--text)}
 .cmpItem>span{flex:1;min-width:0}
@@ -325,7 +322,6 @@
 .cmpItem:disabled:hover{background:transparent}
 .cmpItem.on{color:var(--accent)}
 .cmpChk{flex:none;color:var(--accent)}
-
 
 .cmpDesc{font-size:var(--fs-xs);color:var(--muted);line-height:1.45;padding:4px 12px 10px;border-bottom:1px solid var(--line);margin-bottom:4px}
 .effortLabel{display:flex;align-items:center;gap:8px;font-weight:600;flex:1}
@@ -343,11 +339,9 @@
 
 .cmpMenuPanel .cmpItem{height:auto;width:100%}
 .cmpMenuPanel .cmpItem>span{flex:1;min-width:0}
-/* Alinha os botões da caixa com o campo de texto (mesma altura, 44px) */
-.composer .cmpMenuBtn,.composer .sendBtn{height:44px;width:44px}
+/* Alinha os botões da caixa com o campo de texto (mesma altura, 44px) .composer .sendBtn {height:44px;width:44px}
 /* Caixa de mensagem mais limpa: botão de opções sem borda, alinhado ao texto */
 .composer{align-items:center}
-
 
 .composer .sendBtn{height:40px;width:40px;border-radius:var(--r-md)}
 .composer textarea{align-self:center}
@@ -505,16 +499,10 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
   .mpViewTabs button{font-size:var(--fs-2xs);padding-inline:4px}
 }
 
-
-
 /* Modo desenvolvedor */
 .sideBottom .developerBtn{border-color:var(--accent);background:rgba(79,140,255,.1);color:var(--text);font-weight:700}
 .sideBottom .developerBtn:hover{background:rgba(79,140,255,.18);color:var(--accent)}
 .developerDrawer .modalBody{gap:18px}
-.devModeTabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:3px;padding:3px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--panel2)}
-.devModeTabs button{min-width:0;min-height:38px;display:flex;align-items:center;justify-content:center;gap:6px;border:0;border-radius:var(--r-sm);background:transparent;padding:8px 6px;font-size:var(--fs-xs);font-weight:700;color:var(--muted)}
-.devModeTabs button:hover{color:var(--text);background:rgba(127,127,127,.1)}
-.devModeTabs button.active{background:var(--panel);box-shadow:0 1px 3px rgba(0,0,0,.18);color:var(--accent)}
 .devField{display:flex;flex-direction:column;gap:7px}
 .devFieldHead{display:flex;align-items:center;justify-content:space-between;color:var(--muted);font-size:var(--fs-sm);font-weight:600}
 .devFolderButton{display:flex;align-items:center;justify-content:center;width:30px;height:30px;padding:0;border-radius:var(--r-sm);color:var(--muted)}
@@ -551,8 +539,6 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .devSessionBar .devGhBtn.primary:hover:not(:disabled){filter:brightness(1.08)}
 .devSessionBar .devGhBtn:disabled{opacity:.55;cursor:default}
 @media(max-width:440px){
-  .devModeTabs button{font-size:var(--fs-2xs);gap:4px}
-  .devModeTabs button svg{width:14px;height:14px}
   .devActionRow{align-items:stretch;flex-direction:column}
   .devActionRow .primary{min-height:42px}
 }
@@ -720,10 +706,6 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .devActCounts span{display:inline-flex;align-items:center;gap:4px;font-size:var(--fs-2xs);color:var(--muted);border:1px solid var(--line);border-radius:var(--r-full);padding:3px 8px}
 .devActCounts span svg{color:var(--accent)}.devActCounts span.err{color:var(--danger)}.devActCounts span.err svg{color:var(--danger)}
 .devActCounts b{color:var(--text)}
-/* Memória do projeto */
-.devMemoryToggle{display:flex;align-items:center;justify-content:space-between;width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--panel);color:var(--text);font-weight:700;font-size:var(--fs-sm)}
-.devMemoryToggle>span{display:flex;align-items:center;gap:7px}.devMemoryToggle svg:first-child{color:var(--accent)}
-.devMemoryToggle .open{transform:rotate(180deg)}.devMemoryToggle svg{transition:transform .15s}
 .devMemory{display:flex;flex-direction:column;gap:9px;margin-top:9px}
 .devMemoryField{display:flex;flex-direction:column;gap:4px;font-size:var(--fs-2xs);font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
 .devMemoryField textarea{font:inherit;font-size:var(--fs-xs);font-weight:400;text-transform:none;letter-spacing:0;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:var(--r-sm);padding:7px 9px;resize:vertical;min-height:44px}
@@ -903,9 +885,6 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 /* Checkbox/radio: o anel com offset desenhava uma segunda caixa em volta da
    caixa marcada. Colado na borda, o mesmo anel le como "focado". */
 input[type=checkbox]:focus-visible,input[type=radio]:focus-visible{outline-offset:0}
-
-.toolstep.error{border-color:rgba(239,68,68,.45);color:var(--danger)}
-.toolstep.error code,.toolstep.error .ic{color:var(--danger)}
 
 /* Anti-overflow do conteúdo das mensagens (bug em produção: caminhos longos,
    linhas "====" e tabelas grandes estouravam a tela no celular). Palavras/

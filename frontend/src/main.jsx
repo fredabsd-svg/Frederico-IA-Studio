@@ -12,7 +12,6 @@ import './camera.css';
 import './companion.css';
 import './nino.css';
 import './docling.css';
-import './promptcoach.css';
 import './copilot.css';
 import './design.css';
 

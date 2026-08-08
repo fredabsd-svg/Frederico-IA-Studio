@@ -454,7 +454,7 @@ reexecução no-op → 30 tabelas essenciais → escrita/leitura/cascade.
 | --- | --- | --- |
 | JS na primeira pintura | 909 KB em 2026-08-06 (entrada + `modulepreload`) | ≤ 920 KB (catraca) |
 | JS total emitido | 987 KB em 2026-08-06, 9 chunks | ≤ 1.100 KB (alarme de dependência) |
-| CSS | 183 KB (31 KB gzip) | sem teto ainda |
+| CSS | 192 KB em 2026-08-06, 1 arquivo | ≤ 210 KB (catraca) |
 | Suíte backend | ~5 s (495 casos) | ≤ 60 s |
 | Suíte frontend | ~0,3 s (34 casos) | ≤ 30 s |
 | Migrações em banco vazio | < 2 s | ≤ 30 s |
@@ -462,6 +462,29 @@ reexecução no-op → 30 tabelas essenciais → escrita/leitura/cascade.
 | Runs simultâneos por usuário | 5 (`MAX_ACTIVE_RUNS_PER_USER`) | — |
 | Uploads simultâneos por usuário | 2 (`UPLOAD_MAX_CONCURRENT_PER_USER`) | — |
 | RAM por requisição de upload | ~0 (streaming) — era até ~1 GB | — |
+
+**Inventário do CSS (2026-08-06, Frente 11).** São 11 folhas, **todas importadas
+de uma vez no `main.jsx`** — inclusive as dos painéis que o JS carrega sob
+demanda. Enquanto isso valer, o CSS inteiro é custo de primeira pintura, e é por
+isso que ele ganhou catraca própria.
+
+| Folha | KB | Classes |
+| --- | ---: | ---: |
+| `styles.css` | 116 | 589 |
+| `companion.css` | 25 | 105 |
+| `design.css` | 22 | 98 |
+| `v2.css` | 16 | 98 |
+| `landing.css` | 13 | 73 |
+| `dev-handoff.css` | 10 | 64 |
+| `copilot.css` | 8 | 49 |
+| `docling.css` | 7 | 39 |
+| `auth.css` | 6 | 25 |
+| `nino.css` | 6 | 25 |
+| `camera.css` | 2 | 12 |
+
+As 20 classes `hljs-*` de `styles.css` não aparecem no código-fonte e **não são
+mortas**: quem as escreve no HTML é o `rehype-highlight`, em tempo de execução.
+Qualquer varredura de CSS morto neste repositório precisa saber disso.
 
 **Por que dois tetos, desde 2026-08-06.** Até então o CI somava todo o JS contra
 um teto único. Isso funcionava com um chunk só, mas passou a reprovar exatamente

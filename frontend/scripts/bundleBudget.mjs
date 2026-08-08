@@ -22,9 +22,16 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-// Tetos em KB. Medidos em 2026-08-06: entrada 900 KB, total 1000 KB.
+// Tetos em KB. Medidos em 2026-08-06: entrada 909 KB, total 987 KB, CSS 204 KB.
+// Depois da poda da Frente 11: entrada 897, total 988, CSS 196.
 export const TETO_ENTRADA_KB = 920;
 export const TETO_TOTAL_KB = 1100;
+// O CSS ficou sem teto até 2026-08-06 (registrado como lacuna em
+// docs/ARCHITECTURE.md §18). Ele é UM arquivo só, carregado inteiro na
+// primeira pintura — os 12 fontes entram todos pelo main.jsx, inclusive os
+// dos painéis que o JS carrega sob demanda. Enquanto isso valer, o número
+// abaixo é custo de primeira pintura tanto quanto o chunk de entrada.
+export const TETO_CSS_KB = 210;
 
 // O HTML gerado é a fonte da verdade sobre o que entra na primeira pintura:
 // o `<script type="module" src=...>` é a entrada, e cada `modulepreload` é um
@@ -52,11 +59,17 @@ export function medir(distDir) {
   }, 0);
 
   const assetsDir = path.join(distDir, 'assets');
-  const totalBytes = fs.readdirSync(assetsDir)
-    .filter(f => f.endsWith('.js'))
+  const arquivos = fs.readdirSync(assetsDir);
+  const somaPorExtensao = (ext) => arquivos
+    .filter(f => f.endsWith(ext))
     .reduce((soma, f) => soma + fs.statSync(path.join(assetsDir, f)).size, 0);
 
-  return { entradaKB: kb(entradaBytes), totalKB: kb(totalBytes), iniciais };
+  return {
+    entradaKB: kb(entradaBytes),
+    totalKB: kb(somaPorExtensao('.js')),
+    cssKB: kb(somaPorExtensao('.css')),
+    iniciais
+  };
 }
 
 // Executado direto (`node scripts/bundleBudget.mjs`) faz o papel de portão.
@@ -71,15 +84,20 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     process.exit(1);
   }
 
-  const { entradaKB, totalKB, iniciais } = medida;
+  const { entradaKB, totalKB, cssKB, iniciais } = medida;
   console.log(`[bundle] entrada (primeira pintura): ${entradaKB} KB — teto ${TETO_ENTRADA_KB} KB`);
   console.log(`[bundle]   ${iniciais.length} arquivo(s): ${iniciais.join(', ')}`);
   console.log(`[bundle] total emitido: ${totalKB} KB — teto ${TETO_TOTAL_KB} KB`);
+  console.log(`[bundle] CSS: ${cssKB} KB — teto ${TETO_CSS_KB} KB`);
 
   const falhas = [];
   if (entradaKB > TETO_ENTRADA_KB) {
     falhas.push(`a primeira pintura passou do orçamento (${entradaKB} KB > ${TETO_ENTRADA_KB} KB). ` +
       'Mova um painel pesado para React.lazy ou reveja a dependência nova.');
+  }
+  if (cssKB > TETO_CSS_KB) {
+    falhas.push(`o CSS passou do orçamento (${cssKB} KB > ${TETO_CSS_KB} KB). ` +
+      'Ele é um arquivo só e entra inteiro na primeira pintura — pode ser regra morta ou folha nova importada no main.jsx.');
   }
   if (totalKB > TETO_TOTAL_KB) {
     falhas.push(`o total de JS passou do orçamento (${totalKB} KB > ${TETO_TOTAL_KB} KB). ` +
