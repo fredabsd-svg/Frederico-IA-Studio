@@ -93,6 +93,98 @@ export function summarizeRuns(rows = []) {
   };
 }
 
+// ── Série temporal: melhorou ou piorou? ─────────────────────────────────────
+//
+// A foto da janela responde "como está". Sem série, uma queda de 90% para 60%
+// aparece como "75%" e ninguém percebe que algo quebrou na semana passada.
+//
+// Duas travas de honestidade, porque tendência é onde é mais fácil mentir com
+// número verdadeiro:
+//
+//  1. **Só se pronuncia com amostra nas DUAS metades.** Comparar 20 execuções
+//     com 2 não é tendência, é acaso — e o resultado sai como `sem_amostra`,
+//     nunca como "estável".
+//  2. **Diferença abaixo do ruído é "estável".** Sem um piso, 78% → 81% viraria
+//     "melhorou", e o painel passaria a narrar oscilação como se fosse sinal.
+
+// Janela curta se lê por dia; longa, por semana. Cinco a sete pontos é o que
+// cabe num minigráfico sem virar borrão.
+export const BUCKET_DIARIO_ATE_DIAS = 14;
+// Piso em PONTOS PERCENTUAIS para chamar de melhora ou piora.
+export const TENDENCIA_DELTA_MIN = 10;
+
+const DIA_MS = 86_400_000;
+
+function contaDesfechos(rows) {
+  let sucesso = 0, falha = 0, interrompido = 0;
+  for (const row of rows) {
+    const grupo = OUTCOME_GROUPS[String(row?.state || '')];
+    if (grupo === 'sucesso') sucesso += 1;
+    else if (grupo === 'falha') falha += 1;
+    else if (grupo === 'interrompido') interrompido += 1;
+  }
+  const terminais = sucesso + falha + interrompido;
+  return { total: rows.length, terminais, sucesso, falha, taxa_sucesso: taxa(sucesso, terminais) };
+}
+
+// Divide a janela em baldes de tamanho fixo, do mais antigo ao mais recente.
+// Balde sem execução aparece com zero — sumir com ele mentiria sobre o eixo do
+// tempo, juntando duas semanas separadas como se fossem vizinhas.
+export function bucketRuns(rows = [], { janelaDias = 30, agora = Date.now() } = {}) {
+  const dias = Math.max(1, Math.min(365, Number(janelaDias) || 30));
+  const passoDias = dias <= BUCKET_DIARIO_ATE_DIAS ? 1 : 7;
+  const passoMs = passoDias * DIA_MS;
+  const fim = Number(agora);
+  const inicio = fim - dias * DIA_MS;
+  const quantos = Math.max(1, Math.ceil((fim - inicio) / passoMs));
+
+  const baldes = Array.from({ length: quantos }, (_, i) => {
+    const de = inicio + i * passoMs;
+    return { de: new Date(de).toISOString(), ate: new Date(Math.min(fim, de + passoMs)).toISOString(), rows: [] };
+  });
+  for (const row of rows) {
+    const quando = Date.parse(row?.started_at || '');
+    if (!Number.isFinite(quando) || quando < inicio || quando > fim) continue;
+    const idx = Math.min(baldes.length - 1, Math.floor((quando - inicio) / passoMs));
+    baldes[idx].rows.push(row);
+  }
+  return {
+    passo: passoDias === 1 ? 'dia' : 'semana',
+    pontos: baldes.map(balde => ({ de: balde.de, ate: balde.ate, ...contaDesfechos(balde.rows) }))
+  };
+}
+
+// Compara a metade ANTERIOR com a metade RECENTE da janela.
+export function trendFromRuns(rows = [], { janelaDias = 30, agora = Date.now(), minimo = MIN_RUNS_PARA_SINAL } = {}) {
+  const dias = Math.max(1, Math.min(365, Number(janelaDias) || 30));
+  const fim = Number(agora);
+  const inicio = fim - dias * DIA_MS;
+  const meio = inicio + (fim - inicio) / 2;
+
+  const anteriores = [], recentes = [];
+  for (const row of rows) {
+    const quando = Date.parse(row?.started_at || '');
+    if (!Number.isFinite(quando) || quando < inicio || quando > fim) continue;
+    (quando < meio ? anteriores : recentes).push(row);
+  }
+  const anterior = contaDesfechos(anteriores);
+  const recente = contaDesfechos(recentes);
+
+  if (anterior.terminais < minimo || recente.terminais < minimo) {
+    return {
+      tendencia: 'sem_amostra',
+      anterior,
+      recente,
+      delta: null,
+      // Dizer POR QUE não há veredito evita que a ausência seja lida como "tudo bem".
+      motivo: `São necessárias ao menos ${minimo} execuções com desfecho em cada metade da janela (há ${anterior.terminais} e ${recente.terminais}).`
+    };
+  }
+  const delta = Math.round((recente.taxa_sucesso - anterior.taxa_sucesso) * 10) / 10;
+  const tendencia = Math.abs(delta) < TENDENCIA_DELTA_MIN ? 'estavel' : (delta > 0 ? 'melhorou' : 'piorou');
+  return { tendencia, anterior, recente, delta, motivo: null };
+}
+
 // ── Ferramentas: o que falha, e quanto ──────────────────────────────────────
 //
 // Reusa `toolResultLooksFailed` do runLog — a MESMA função que decide se uma
@@ -153,8 +245,22 @@ export function summarizeToolEvents(events = [], { runFinalStates = new Map() } 
 export const MIN_RUNS_PARA_SINAL = 5;
 export const MIN_CHAMADAS_PARA_SINAL = 5;
 
-export function reliabilitySignals(runs, tools) {
+export function reliabilitySignals(runs, tools, trend = null) {
   const sinais = [];
+  // A PIORA vem primeiro: é a única coisa aqui que diz "algo mudou", e é o
+  // motivo de a série existir. Melhora também é dita — um painel que só
+  // reclama é um painel que ninguém abre duas vezes.
+  if (trend?.tendencia === 'piorou') {
+    sinais.push({
+      nivel: Math.abs(trend.delta) >= 25 ? 'alto' : 'medio',
+      texto: `A taxa de sucesso caiu ${Math.abs(trend.delta)} pontos na metade mais recente da janela (${trend.anterior.taxa_sucesso}% → ${trend.recente.taxa_sucesso}%).`
+    });
+  } else if (trend?.tendencia === 'melhorou') {
+    sinais.push({
+      nivel: 'baixo',
+      texto: `A taxa de sucesso subiu ${trend.delta} pontos na metade mais recente da janela (${trend.anterior.taxa_sucesso}% → ${trend.recente.taxa_sucesso}%).`
+    });
+  }
   if (runs.terminais >= MIN_RUNS_PARA_SINAL && runs.taxa_falha != null && runs.taxa_falha >= 20) {
     sinais.push({
       nivel: 'alto',
@@ -184,12 +290,20 @@ export function reliabilitySignals(runs, tools) {
   return sinais;
 }
 
-export function reliabilityReport({ runRows = [], eventRows = [], janelaDias = 30, truncado = false } = {}) {
+export function reliabilityReport({ runRows = [], eventRows = [], janelaDias = 30, truncado = false, agora = Date.now() } = {}) {
   const runs = summarizeRuns(runRows);
   const runFinalStates = new Map(runRows.map(row => [row.run_id, row.state]));
   const tools = summarizeToolEvents(eventRows, { runFinalStates });
+  const serie = bucketRuns(runRows, { janelaDias, agora });
+  const trend = trendFromRuns(runRows, { janelaDias, agora });
   return {
     janela_dias: janelaDias,
+    // A série responde "melhorou ou piorou"; a foto abaixo responde "como está".
+    // `truncada` importa: com amostra no teto, o balde MAIS ANTIGO fica parcial
+    // (só as execuções mais recentes daquele período entraram), então o volume
+    // dele não deve ser lido como o volume real.
+    serie: { ...serie, truncada: truncado },
+    tendencia: trend,
     amostra: {
       runs: runRows.length,
       eventos: eventRows.length,
@@ -200,7 +314,7 @@ export function reliabilityReport({ runRows = [], eventRows = [], janelaDias = 3
     },
     runs,
     ferramentas: tools,
-    sinais: reliabilitySignals(runs, tools)
+    sinais: reliabilitySignals(runs, tools, trend)
   };
 }
 

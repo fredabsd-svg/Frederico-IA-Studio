@@ -5,7 +5,8 @@ import test from 'node:test';
 
 import {
   OUTCOME_GROUPS, summarizeRuns, summarizeToolEvents, reliabilitySignals,
-  reliabilityReport, MIN_RUNS_PARA_SINAL, MAX_RUNS
+  reliabilityReport, MIN_RUNS_PARA_SINAL, MAX_RUNS,
+  bucketRuns, trendFromRuns, TENDENCIA_DELTA_MIN
 } from './reliability.js';
 
 const run = (state, ms = 1000, id = Math.random().toString(36).slice(2)) => ({
@@ -176,6 +177,137 @@ test('relatório vazio é honesto: zero amostra, nenhum sinal, nenhuma taxa', ()
   assert.deepEqual(r.sinais, []);
   assert.equal(r.runs.taxa_sucesso, null);
   assert.deepEqual(r.ferramentas.ferramentas, []);
+});
+
+// ── série temporal ──────────────────────────────────────────────────────────
+
+const AGORA = Date.UTC(2026, 7, 8, 12, 0, 0);
+const DIA = 86_400_000;
+// Run posicionado a N dias atrás.
+const runEm = (state, diasAtras, id = `${state}-${diasAtras}-${Math.random()}`) => ({
+  run_id: id,
+  state,
+  started_at: new Date(AGORA - diasAtras * DIA).toISOString(),
+  ended_at: new Date(AGORA - diasAtras * DIA + 1000).toISOString()
+});
+
+test('janela curta é lida por dia; janela longa, por semana', () => {
+  assert.equal(bucketRuns([], { janelaDias: 7, agora: AGORA }).passo, 'dia');
+  assert.equal(bucketRuns([], { janelaDias: 30, agora: AGORA }).passo, 'semana');
+  assert.equal(bucketRuns([], { janelaDias: 7, agora: AGORA }).pontos.length, 7);
+});
+
+// Sumir com o balde vazio juntaria duas semanas separadas como se fossem
+// vizinhas — o eixo do tempo deixaria de ser tempo.
+test('balde sem execução aparece com zero, não some', () => {
+  const { pontos } = bucketRuns([runEm('completed', 0)], { janelaDias: 7, agora: AGORA });
+  assert.equal(pontos.length, 7);
+  assert.equal(pontos.at(-1).total, 1);
+  assert.equal(pontos[0].total, 0);
+  assert.equal(pontos[0].taxa_sucesso, null, 'balde vazio não tem taxa');
+});
+
+test('cada balde calcula a própria taxa, e run fora da janela fica de fora', () => {
+  const rows = [
+    runEm('completed', 2), runEm('completed', 2), runEm('fatal_error', 2),
+    runEm('completed', 99)   // fora da janela de 7 dias
+  ];
+  const { pontos } = bucketRuns(rows, { janelaDias: 7, agora: AGORA });
+  const anteontem = pontos.at(-2);   // baldes de 1 dia: 2 dias atrás é o penúltimo
+  assert.equal(anteontem.total, 3);
+  assert.equal(anteontem.taxa_sucesso, 66.7);
+  assert.equal(pontos.reduce((acc, p) => acc + p.total, 0), 3, 'o run antigo não entra em balde nenhum');
+});
+
+test('a tendência NÃO se pronuncia sem amostra nas duas metades', () => {
+  // 20 execuções recentes contra 2 antigas não é tendência, é acaso.
+  const rows = [
+    ...Array.from({ length: 20 }, () => runEm('completed', 2)),
+    runEm('fatal_error', 25), runEm('fatal_error', 26)
+  ];
+  const t = trendFromRuns(rows, { janelaDias: 30, agora: AGORA });
+  assert.equal(t.tendencia, 'sem_amostra');
+  assert.equal(t.delta, null);
+  // E diz POR QUE, para a ausência não ser lida como "tudo bem".
+  assert.match(t.motivo, /ao menos 5 execuções/);
+});
+
+test('diferença abaixo do piso é ESTÁVEL, não "melhorou"', () => {
+  // Antiga: 8/10 = 80%. Recente: 17/20 = 85%. Delta 5 < 10 → estável.
+  const rows = [
+    ...Array.from({ length: 8 }, () => runEm('completed', 25)),
+    ...Array.from({ length: 2 }, () => runEm('fatal_error', 25)),
+    ...Array.from({ length: 17 }, () => runEm('completed', 5)),
+    ...Array.from({ length: 3 }, () => runEm('fatal_error', 5))
+  ];
+  const t = trendFromRuns(rows, { janelaDias: 30, agora: AGORA });
+  assert.equal(t.tendencia, 'estavel');
+  assert.ok(Math.abs(t.delta) < TENDENCIA_DELTA_MIN);
+});
+
+test('queda real é PIORA, com as duas taxas no resultado', () => {
+  const rows = [
+    ...Array.from({ length: 9 }, () => runEm('completed', 25)),
+    runEm('fatal_error', 25),                                    // antiga: 90%
+    ...Array.from({ length: 5 }, () => runEm('completed', 3)),
+    ...Array.from({ length: 5 }, () => runEm('fatal_error', 3))   // recente: 50%
+  ];
+  const t = trendFromRuns(rows, { janelaDias: 30, agora: AGORA });
+  assert.equal(t.tendencia, 'piorou');
+  assert.equal(t.anterior.taxa_sucesso, 90);
+  assert.equal(t.recente.taxa_sucesso, 50);
+  assert.equal(t.delta, -40);
+});
+
+test('subida real é MELHORA', () => {
+  const rows = [
+    ...Array.from({ length: 5 }, () => runEm('completed', 25)),
+    ...Array.from({ length: 5 }, () => runEm('fatal_error', 25)),  // 50%
+    ...Array.from({ length: 9 }, () => runEm('completed', 3)),
+    runEm('fatal_error', 3)                                        // 90%
+  ];
+  assert.equal(trendFromRuns(rows, { janelaDias: 30, agora: AGORA }).tendencia, 'melhorou');
+});
+
+test('piora vira sinal, e uma queda grande sobe de nível', () => {
+  const leve = reliabilitySignals(summarizeRuns([]), { ferramentas: [], total_sem_resultado: 0 },
+    { tendencia: 'piorou', delta: -12, anterior: { taxa_sucesso: 90 }, recente: { taxa_sucesso: 78 } });
+  assert.equal(leve[0].nivel, 'medio');
+  assert.match(leve[0].texto, /90% → 78%/);
+
+  const grave = reliabilitySignals(summarizeRuns([]), { ferramentas: [], total_sem_resultado: 0 },
+    { tendencia: 'piorou', delta: -40, anterior: { taxa_sucesso: 90 }, recente: { taxa_sucesso: 50 } });
+  assert.equal(grave[0].nivel, 'alto');
+});
+
+// Painel que só reclama é painel que ninguém abre duas vezes.
+test('melhora também é dita, em nível baixo', () => {
+  const sinais = reliabilitySignals(summarizeRuns([]), { ferramentas: [], total_sem_resultado: 0 },
+    { tendencia: 'melhorou', delta: 30, anterior: { taxa_sucesso: 55 }, recente: { taxa_sucesso: 85 } });
+  assert.equal(sinais[0].nivel, 'baixo');
+  assert.match(sinais[0].texto, /subiu 30 pontos/);
+});
+
+test('estável e sem_amostra não viram sinal nenhum', () => {
+  const vazio = { ferramentas: [], total_sem_resultado: 0 };
+  assert.deepEqual(reliabilitySignals(summarizeRuns([]), vazio, { tendencia: 'estavel', delta: 2 }), []);
+  assert.deepEqual(reliabilitySignals(summarizeRuns([]), vazio, { tendencia: 'sem_amostra', delta: null }), []);
+  assert.deepEqual(reliabilitySignals(summarizeRuns([]), vazio, null), []);
+});
+
+test('o relatório carrega série e tendência, e marca a série truncada', () => {
+  const r = reliabilityReport({
+    runRows: [runEm('completed', 1)],
+    janelaDias: 7,
+    truncado: true,
+    agora: AGORA
+  });
+  assert.equal(r.serie.passo, 'dia');
+  assert.equal(r.serie.pontos.length, 7);
+  // Com amostra no teto, o balde mais antigo fica parcial — o painel precisa
+  // saber disso para não ler o volume dele como volume real.
+  assert.equal(r.serie.truncada, true);
+  assert.equal(r.tendencia.tendencia, 'sem_amostra');
 });
 
 test('o relatório liga run e evento: sem resultado num run que falhou vira sinal', () => {

@@ -147,6 +147,32 @@ reload. Por isso a fase não tem migration: é leitura e agregação.
    verdadeiros. Vale também na tela: a lista de ferramentas mostra as 5
    piores e **conta** as demais.
 
+### Série temporal — "melhorou ou piorou"
+
+A foto da janela responde "como está". Sem série, uma queda de 90% para 60%
+aparece como **75%** e ninguém percebe que algo quebrou na semana passada.
+
+- `bucketRuns` divide a janela em baldes (**dia** até 14 dias, **semana**
+  acima), cada um com a própria taxa. **Balde vazio aparece com zero, não
+  some** — descartá-lo juntaria dois períodos separados como se fossem
+  vizinhos, e o eixo do tempo deixaria de ser tempo.
+- `trendFromRuns` compara a metade anterior com a metade recente da janela.
+
+Duas travas, porque tendência é onde é mais fácil mentir com número
+verdadeiro:
+
+1. **Só se pronuncia com amostra nas DUAS metades** (`MIN_RUNS_PARA_SINAL`).
+   Comparar 20 execuções com 2 é acaso, e o resultado sai como `sem_amostra`
+   **com o motivo** — nunca como "estável", que seria lido como "tudo igual".
+2. **Diferença abaixo de `TENDENCIA_DELTA_MIN` (10 pontos) é "estável".** Sem
+   piso, 78% → 81% viraria "melhorou" e o painel narraria oscilação como
+   sinal.
+
+Piora vira sinal (`alto` a partir de 25 pontos de queda) e **melhora também é
+dita**, em nível baixo — painel que só reclama é painel que ninguém abre duas
+vezes. Com a amostra no teto, `serie.truncada` avisa que o balde mais antigo
+está parcial: a taxa dele continua válida, o volume não.
+
 **Escopo é do usuário, não da instalação.** Um agregado global misturaria
 conversas de pessoas diferentes num número que ninguém pode acionar, e
 exporia padrão de uso alheio sem necessidade. Testes:

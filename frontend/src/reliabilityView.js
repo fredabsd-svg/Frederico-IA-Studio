@@ -42,6 +42,35 @@ export function reliabilityHeadline(report) {
   return `${partes.join(', ')} (${runs.terminais} de ${runs.total} na janela de ${report.janela_dias} dias).`;
 }
 
+// A frase da TENDÊNCIA. É deliberadamente a resposta em texto: o minigráfico
+// abaixo dela é apoio, não a informação. Quando não há amostra, a frase diz o
+// motivo — silêncio aqui seria lido como "está tudo igual".
+export function trendSentence(trend) {
+  if (!trend) return '';
+  if (trend.tendencia === 'sem_amostra') return `Sem base para comparar: ${trend.motivo || 'amostra insuficiente na janela.'}`;
+  const de = `${trend.anterior?.taxa_sucesso}%`;
+  const para = `${trend.recente?.taxa_sucesso}%`;
+  if (trend.tendencia === 'estavel') return `Estável na janela (${de} → ${para}).`;
+  const verbo = trend.tendencia === 'melhorou' ? 'subiu' : 'caiu';
+  return `A taxa de sucesso ${verbo} ${Math.abs(trend.delta)} pontos na metade mais recente (${de} → ${para}).`;
+}
+
+// Pontos do minigráfico, já com a altura em porcentagem. Balde sem execução
+// vira uma marca RASA em vez de sumir — o eixo do tempo precisa continuar
+// sendo tempo.
+export function sparklinePoints(serie) {
+  return (serie?.pontos || []).map(ponto => ({
+    de: ponto.de,
+    total: ponto.total || 0,
+    taxa: ponto.taxa_sucesso,
+    altura: ponto.taxa_sucesso == null ? 4 : Math.max(4, Math.round(ponto.taxa_sucesso)),
+    vazio: !ponto.total,
+    titulo: ponto.total
+      ? `${new Date(ponto.de).toLocaleDateString('pt-BR')}: ${ponto.total} execução(ões)${ponto.taxa_sucesso == null ? '' : `, ${ponto.taxa_sucesso}% de sucesso`}`
+      : `${new Date(ponto.de).toLocaleDateString('pt-BR')}: nenhuma execução`
+  }));
+}
+
 // Cor/estado do bloco, derivado do pior sinal — sem inventar um nível que
 // nenhum sinal declarou.
 export function reliabilityTone(report) {
