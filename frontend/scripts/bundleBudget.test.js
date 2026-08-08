@@ -30,3 +30,13 @@ test('o teto do total é mais folgado que o da entrada', () => {
   assert.ok(TETO_TOTAL_KB > TETO_ENTRADA_KB,
     'o total inclui os chunks sob demanda; um teto igual ao da entrada reprovaria toda separação nova');
 });
+
+// O CSS ganhou teto de TAMANHO na Frente 11. Ele não substitui a catraca do
+// `cssInventory.mjs`, que trava a CONTAGEM de regras mortas: folha nova de
+// 40 KB, toda em uso, passa lá e precisa parar aqui.
+test('o CSS tem teto próprio, separado dos tetos de JS', async () => {
+  const { TETO_CSS_KB, TETO_ENTRADA_KB, TETO_TOTAL_KB } = await import('./bundleBudget.mjs');
+  assert.ok(Number.isFinite(TETO_CSS_KB) && TETO_CSS_KB > 0, 'o CSS precisa de teto próprio');
+  assert.ok(TETO_CSS_KB < TETO_ENTRADA_KB && TETO_CSS_KB < TETO_TOTAL_KB,
+    'o teto do CSS é de outra grandeza — confundi-lo com os de JS esconde crescimento');
+});

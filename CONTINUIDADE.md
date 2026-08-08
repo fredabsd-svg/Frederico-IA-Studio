@@ -51,31 +51,10 @@ com a CI da branch verde. A branch de trabalho foi **recomeçada a partir da
 `main` atualizada** a cada merge, em vez de empilhar sobre histórico já
 mesclado — por isso cada PR traz só a frente dele.
 
-- **Último trabalho:** a **série temporal da confiabilidade** (Fase 66) —
-  PR [#198](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/198),
-  **mesclado**. A foto
-  da janela respondia "como está"; faltava "melhorou ou piorou". Sem série, uma
-  queda de 90% para 60% aparece como **75%** e ninguém percebe que algo quebrou
-  na semana passada.
-  `bucketRuns` divide a janela em baldes (dia até 14 dias, semana acima) e
-  `trendFromRuns` compara a metade anterior com a recente. **Duas travas,
-  porque tendência é onde é mais fácil mentir com número verdadeiro:**
-  (1) só se pronuncia com amostra nas DUAS metades — 20 execuções contra 2 é
-  acaso, e o resultado sai como `sem_amostra` **com o motivo**, nunca como
-  "estável", que seria lido como "tudo igual"; (2) diferença abaixo de 10
-  pontos é "estável" — sem piso, 78% → 81% viraria "melhorou".
-  Balde vazio aparece com zero em vez de sumir (descartá-lo juntaria dois
-  períodos separados como se fossem vizinhos). Piora vira sinal (alto a partir
-  de 25 pontos) e **melhora também é dita** — painel que só reclama é painel
-  que ninguém abre duas vezes. No painel, a **frase é a resposta**; o
-  minigráfico é apoio (`aria-hidden`, com `title` por barra).
-  **Limitação assumida:** os limiares (5 execuções por metade, 10 pontos para
-  sair de "estável", 25 para sinal alto) são fixos e **não foram calibrados
-  com uso real**. A escolha é deliberada pelo falso negativo: um piso de 10
-  pontos pode esconder degradação lenta, mas um painel que grita a cada
-  oscilação deixa de ser lido — e aí não detecta nada. **Sem prova visual**
-  (sem Chromium nesta sessão): por isso a frase carrega a informação e o
-  minigráfico é apoio.
+- **Último trabalho:** o **CSS ganhou teto de TAMANHO** (215 KB; 204 hoje), fechando a
+  última lacuna da Frente 11. A catraca do `cssInventory.mjs`, que já existia, trava a
+  CONTAGEM de regras mortas e não olha bytes — uma folha nova de 40 KB, toda em uso,
+  passava por ela. Agora para no `bundleBudget.mjs`, junto dos tetos de entrada e total.
 - **Último trabalho anterior:** o **veredito da `validar_pagina` alimenta o review gate**
   (Fase 38 → Fase 28) — PR
   [#197](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/197), **mesclado**.

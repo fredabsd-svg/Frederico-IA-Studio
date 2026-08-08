@@ -739,6 +739,10 @@ religa", o primeiro quadro do próprio gesto desligava a pausa que o usuário ac
 **Medições de 2026-07-25** (não corrigidas nesta auditoria):
 - `App.jsx`: 62 `useState`, 13 `useEffect`, 12 `useRef` num único componente.
 - Bundle: **932 KB** de JS num **único chunk** (287 KB gzip) + 183 KB de CSS.
+  (Medição de 2026-07-25. Em 2026-08-06: entrada 890 KB, total 1.064 KB, CSS 204 KB —
+  os três com catraca em `frontend/scripts/bundleBudget.mjs`. O teto de CSS é de
+  TAMANHO e não substitui a catraca do `cssInventory.mjs`, que trava a contagem de
+  regras mortas: folha nova de 40 KB, toda em uso, passa lá e para aqui.)
   Sem code splitting, sem `React.lazy`.
 - Sem virtualização de listas; Markdown reparseado durante o streaming.
 - **Catraca no CI:** teto de 1.000 KB — impede crescimento silencioso enquanto a
