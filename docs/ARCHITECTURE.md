@@ -189,10 +189,23 @@ POST /chat
   próprio agente declara (`esperar_seletor`, `esperar_texto`). A captura vai
   para `outputs/`, onde o usuário a vê. **Sem Chromium no ambiente a ferramenta
   devolve `disponivel: false` com o motivo — nunca um "validado" falso.**
-  **Limite honesto:** valida página servida do workspace, não o servidor de
-  desenvolvimento que o agente sobe no sandbox — o container nasce com
-  `NetworkDisabled` e sem publicação de portas, e abrir isso seria desfazer
-  uma fronteira de segurança por conveniência.
+  **Segundo modo — o dev server, sem mexer em fronteira nenhuma**
+  (`agent/pageCheckSandbox.js`): o container nasce com `NetworkDisabled` e sem
+  publicação de portas, então o backend não alcança o `npm run dev` da tarefa.
+  A saída não é abrir isso — é inverter o movimento: **o navegador vai até o
+  servidor**. A imagem do sandbox já traz `chromium` e `playwright`
+  (`sandbox/Dockerfile`), e um container sem rede continua tendo loopback, de
+  modo que um script Playwright rodando lá dentro alcança
+  `http://127.0.0.1:<porta>`. O backend escreve o script no workspace, executa
+  com `execInSandbox` (`NODE_PATH="$(npm root -g)"`, porque o pacote é global e
+  só o `require` honra a variável), lê UMA linha marcada por sentinela e monta
+  o veredito com o **mesmo** `buildVerdict` — as duas formas de validar
+  precisam reprovar pelos mesmos critérios. Antes de gastar um navegador num
+  timeout, `sandboxServices` confere o que está de fato escutando e, se a porta
+  estiver errada, o erro diz **qual é a certa**. O script temporário é apagado
+  em `finally`.
+  **Limite honesto:** a validação mede erro, ausência e presença — não faz
+  asserção de layout nem comparação visual entre versões.
 - **Handoff local ↔ worktree (Fase 24):** `agent/handoff.js` +
   `GET /conversations/:id/handoff`, `GET .../handoff/patch` e
   `POST .../handoff/apply`. O trabalho da tarefa mora no clone da conversa e até

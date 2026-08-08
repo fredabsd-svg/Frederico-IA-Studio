@@ -53,9 +53,23 @@ sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md
   elemento visual), senão uma página só de imagem seria reprovada; (3) sem
   Chromium no ambiente a ferramenta devolve `disponivel: false` com o motivo —
   **nunca um "validado" falso**.
-  **Limitação assumida:** valida página servida do workspace (build, artefato,
-  relatório HTML), não o dev server do sandbox. Abrir a rede do container para
-  isso seria desfazer uma fronteira de segurança por conveniência.
+  **O segundo modo fechou a limitação que eu tinha declarado.** A primeira
+  versão validava só arquivo do workspace, porque o backend não alcança o
+  `npm run dev` da tarefa (container com `NetworkDisabled`, sem publicação de
+  portas). A saída não foi abrir essa fronteira — foi **inverter o movimento:
+  o navegador vai até o servidor**. A imagem do sandbox já traz `chromium` e
+  `playwright`, e container sem rede continua tendo loopback: um script
+  Playwright rodando lá dentro alcança `http://127.0.0.1:<porta>`. O backend
+  escreve o script no workspace, roda com `execInSandbox`
+  (`NODE_PATH="$(npm root -g)"` — o pacote é global e só o `require` honra a
+  variável), lê uma linha marcada por sentinela e monta o veredito com o MESMO
+  `buildVerdict`. **Nenhuma fronteira mudou**: sem publicação de porta, sem
+  rede nova, F-04 intacto — e a página validada roda no isolamento em que o
+  código dela já rodava.
+  Antes de gastar um navegador num timeout, o `sandboxServices` confere o que
+  está escutando: porta errada devolve **qual é a certa**, não "não carregou".
+  **Limitação que continua:** a validação mede erro, ausência e presença — não
+  faz asserção de layout nem comparação visual entre versões.
 - **Último trabalho anterior:** a **Frente 24 — Handoff local ↔ worktree** (Fase 24).
   O trabalho da tarefa mora no clone da conversa, na branch derivada da
   Fase 23 — e até aqui só saía dali por `github_push` + Pull Request. Quem
@@ -457,13 +471,16 @@ sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md
   (o Nino cobrindo o botão de enviar), **[#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)**
   (Playwright + suíte ponta a ponta) e **[#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)**
   (as sete falhas P0 dos sub-agentes).
-- **Última validação:** 2026-08-07 (Frente 25) — **backend `npm run check`:
-  1316 testes, 0 falhas, 144 pulados**; frontend inalterado (a frente é só de
+- **Última validação:** 2026-08-08 (Frente 25) — **backend `npm run check`:
+  1331 testes, 0 falhas, 144 pulados**; frontend inalterado (a frente é só de
   backend). O servidor de pré-visualização é exercitado com HTTP de verdade
   (fetch contra a porta efêmera), inclusive a recusa de link simbólico que
-  aponta para fora da raiz; o veredito tem 12 testes. **O navegador em si não
-  roda aqui** (sem Chromium) — o teste que cobre esse contrato é o que prova
-  que a ferramenta devolve `disponivel: false` em vez de um "validado" falso.
+  aponta para fora da raiz; o veredito tem 12 testes; e o modo sandbox roda com
+  o `execInSandbox` INJETADO, o que exercita de verdade o parser de saída suja,
+  truncada e ausente — mais um `node --check` sobre o script gerado. **Nenhum
+  navegador roda aqui** (sem Chromium e sem Docker) — o teste que cobre esse
+  contrato, nos dois modos, é o que prova que a ferramenta devolve
+  `disponivel: false` em vez de um "validado" falso.
   Antes dela, Frente 24 — **backend 1293 testes, 0 falhas, 144 pulados** e
   **frontend: 155/155** (bundle
   890/920 KB de entrada, 1058/1100 KB total; o painel de handoff é chunk

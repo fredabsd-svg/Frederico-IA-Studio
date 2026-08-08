@@ -26,6 +26,7 @@ import { createCache } from './cache.js';
 import { captureThumbnail } from './agent/pageShot.js';
 import { findFiles, searchText } from './agent/codeIntel.js';
 import { checkPage } from './agent/pageCheck.js';
+import { checkSandboxPage } from './agent/pageCheckSandbox.js';
 import { guardCommand, guardPythonCode, PC_MOUNT_ROOT, networkAllowlistFromEnv } from './execGuard.js';
 import { audit } from './companion/audit.js';
 
@@ -49,7 +50,7 @@ export const toolDefinitions = [
   { type: 'function', function: { name: 'list_files', description: 'Lista arquivos enviados e gerados na sessão.', parameters: { type: 'object', properties: { folder: { type: 'string', enum: ['uploads','outputs','.'] } } } } },
   { type: 'function', function: { name: 'find_file', description: 'Localiza arquivos do workspace pelo nome: aceita glob ("src/**/*.js", "repo/**/package.json") ou um trecho do nome ("useChat"). Mais barato e preciso que find/ls pelo bash — devolve a lista de caminhos relativos, com aviso quando cortada no limite.', parameters: { type: 'object', properties: { pattern: { type: 'string', description: 'Glob (com * ? **) ou trecho do nome do arquivo' }, limit: { type: 'number', description: '(opcional) máximo de resultados; padrão 100' } }, required: ['pattern'] } } },
   { type: 'function', function: { name: 'search_text', description: 'Busca texto no CONTEÚDO dos arquivos do workspace (código, config, docs) e devolve arquivo + linha + trecho, já estruturado. Use em vez de grep pelo bash. Por padrão a busca é literal; regex=true ativa expressão regular; glob (ex.: "repo/**/*.py") restringe os arquivos. node_modules/.git/binários ficam de fora; resultados cortados vêm com aviso.', parameters: { type: 'object', properties: { pattern: { type: 'string', description: 'Texto literal (ou regex, com regex=true)' }, regex: { type: 'boolean', description: '(opcional) tratar pattern como expressão regular' }, glob: { type: 'string', description: '(opcional) restringir a arquivos que casem este glob' }, limit: { type: 'number', description: '(opcional) máximo de ocorrências; padrão 80' } }, required: ['pattern'] } } },
-  { type: 'function', function: { name: 'validar_pagina', description: 'ABRE uma página HTML do workspace num navegador de verdade (Chromium headless) e devolve o que ela FEZ: erros de JavaScript, erros de console, recursos que não carregaram, se a tela ficou em branco e uma captura. Use SEMPRE antes de dizer que uma interface, site ou relatório HTML está pronto — teste unitário e diff não pegam import quebrado, que é o defeito que abre a página em branco. A validação roda OFFLINE: só arquivos do próprio workspace carregam, e todo recurso externo (CDN, fonte, API) é bloqueado e relatado como aviso. Aponte para o arquivo servido/construído (ex.: "repo/site/dist/index.html"), não para o código-fonte.', parameters: { type: 'object', properties: { caminho: { type: 'string', description: 'Caminho da página HTML relativo ao workspace (ex.: "repo/site/dist/index.html").' }, esperar_seletor: { type: 'string', description: '(opcional) seletor CSS que PRECISA existir na página renderizada (ex.: "#app .lista").' }, esperar_texto: { type: 'string', description: '(opcional) texto que PRECISA aparecer na página renderizada.' }, largura: { type: 'number', description: '(opcional) largura da janela em pixels; padrão 1280. Use 390 para conferir o celular.' } }, required: ['caminho'] } } },
+  { type: 'function', function: { name: 'validar_pagina', description: 'ABRE a página num navegador de verdade (Chromium headless) e devolve o que ela FEZ: erros de JavaScript, erros de console, recursos que não carregaram, se a tela ficou em branco e uma captura. Use SEMPRE antes de dizer que uma interface, site ou relatório HTML está pronto — teste unitário e diff não pegam import quebrado, que é o defeito que abre a página em branco. DOIS MODOS: informe "porta" para validar o SERVIDOR que você subiu no sandbox (ex.: porta 5173 do npm run dev, com "rota" opcional) — o navegador roda dentro do próprio sandbox; ou informe "caminho" para validar um ARQUIVO HTML construído no workspace (ex.: "repo/site/dist/index.html"). Nos dois casos a validação é OFFLINE: só a própria aplicação carrega, e todo recurso externo (CDN, fonte, API de terceiro) é bloqueado e relatado como AVISO, não como falha.', parameters: { type: 'object', properties: { porta: { type: 'number', description: 'Porta do servidor que VOCÊ subiu no sandbox (ex.: 5173, 8000). Confira antes com ambiente/servicos.' }, rota: { type: 'string', description: '(opcional, com porta) caminho a abrir; padrão "/".' }, caminho: { type: 'string', description: 'Caminho de uma página HTML relativa ao workspace (ex.: "repo/site/dist/index.html"). Use quando não há servidor de pé.' }, esperar_seletor: { type: 'string', description: '(opcional) seletor CSS que PRECISA existir na página renderizada (ex.: "#app .lista").' }, esperar_texto: { type: 'string', description: '(opcional) texto que PRECISA aparecer na página renderizada.' }, largura: { type: 'number', description: '(opcional) largura da janela em pixels; padrão 1280. Use 390 para conferir o celular.' } } } } },
   { type: 'function', function: { name: 'zip_outputs', description: 'Compacta a pasta outputs em um arquivo ZIP.', parameters: { type: 'object', properties: { zip_name: { type: 'string' } } } } },
   { type: 'function', function: { name: 'ambiente', description: 'Estado e continuidade do ambiente de execução (o sandbox desta conversa). Use quando: (a) um comando falhar e você não souber se a causa é o ambiente ou o código; (b) souber que o sandbox reiniciou e precisar descobrir o que sobreviveu; (c) for começar uma alteração arriscada em vários arquivos e quiser um ponto de retorno; (d) precisar saber memória, CPU ou espaço em disco. (e) um comando for cortado por timeout e você precisar ver a saída COMPLETA (o resultado só traz o fim; o começo, onde o erro costuma estar, fica no log). Ações: "status" (limites, identificadores, o que é persistente e o que é temporário), "recursos" (CPU, memória, disco e maiores processos), "ultima_execucao" (log integral do último comando: começo, fim, duração e se ficou mudo), "dependencias" (pacotes instalados em runtime nesta conversa, que somem quando o sandbox reinicia), "servicos" (portas e servidores que você subiu neste sandbox, com o que está REALMENTE escutando agora), "checkpoint_criar" (fotografa o workspace), "checkpoint_listar", "checkpoint_restaurar" (volta o workspace a um checkpoint — o estado atual é salvo antes), "transacao_iniciar"/"transacao_confirmar"/"transacao_desfazer" (edição em vários arquivos com ponto de retorno: abra antes, confirme quando a validação passar, desfaça se quebrar), "limpar_temporarios".', parameters: { type: 'object', properties: { acao: { type: 'string', enum: ['status','recursos','ultima_execucao','dependencias','servicos','checkpoint_criar','checkpoint_listar','checkpoint_restaurar','transacao_iniciar','transacao_confirmar','transacao_desfazer','limpar_temporarios'] }, id: { type: 'string', description: 'Id do checkpoint (só para checkpoint_restaurar).' }, rotulo: { type: 'string', description: 'Rótulo curto do checkpoint (só para checkpoint_criar).' } }, required: ['acao'] } } },
   { type: 'function', function: { name: 'consultar_cnpj', description: 'Consulta os dados cadastrais OFICIAIS de um CNPJ nas bases públicas (BrasilAPI/ReceitaWS): razão social, nome fantasia, situação cadastral, natureza jurídica, porte, CNAE principal e secundários, endereço, telefone, e-mail, capital social, opção pelo Simples/MEI e quadro de sócios (QSA). Funciona SEM o botão de pesquisa. Use SEMPRE que o pedido envolver dados de uma empresa por CNPJ — NÃO use web_search para isso.', parameters: { type: 'object', properties: { cnpj: { type: 'string', description: 'CNPJ com ou sem pontuação (14 dígitos)' } }, required: ['cnpj'] } } }
@@ -813,6 +814,46 @@ export async function runTool(conversationId, name, args = {}, sandboxOptions = 
   if (name === 'validar_pagina') {
     const largura = Math.min(2000, Math.max(320, Number(args.largura) || 1280));
     const nome = `validacao-${nanoid(8)}.jpg`;
+    const viewport = { width: largura, height: Math.round(largura * 0.625) };
+    const esperarSeletor = typeof args.esperar_seletor === 'string' && args.esperar_seletor.trim() ? args.esperar_seletor.trim() : null;
+    const esperarTexto = typeof args.esperar_texto === 'string' && args.esperar_texto.trim() ? args.esperar_texto.trim() : null;
+
+    // Modo SERVIDOR: o navegador vai até o dev server, dentro do container.
+    if (args.porta != null) {
+      // Antes de gastar um navegador num timeout, conferimos o que está
+      // realmente escutando — e, quando a porta está errada, dizemos qual é a
+      // certa em vez de devolver "não carregou".
+      const servicos = await sandboxServices(sandboxOptions.userId, conversationId).catch(() => null);
+      if (servicos && servicos.sandbox_ativo === false) {
+        return JSON.stringify({ disponivel: true, erro: 'Não há sandbox ativo: nenhum servidor está de pé. Suba o servidor de novo antes de validar.', servicos });
+      }
+      const portas = [...(servicos?.servicos || []), ...(servicos?.portas_sem_registro || [])]
+        .map(s => Number(s.porta)).filter(Boolean);
+      if (portas.length && !portas.includes(Number(args.porta))) {
+        return JSON.stringify({
+          disponivel: true,
+          erro: `Nada está escutando na porta ${args.porta} dentro do sandbox. Portas de pé agora: ${[...new Set(portas)].join(', ')}.`,
+          servicos
+        });
+      }
+      return JSON.stringify(await checkSandboxPage(execInSandbox, {
+        workspaceBase: ws.base,
+        conversationId,
+        sandboxOptions,
+        porta: args.porta,
+        rota: typeof args.rota === 'string' ? args.rota : '/',
+        esperarSeletor,
+        esperarTexto,
+        screenshotName: nome,
+        viewport,
+        signal
+      }));
+    }
+
+    // Modo ARQUIVO: o backend serve a página do workspace e valida ali mesmo.
+    if (!args.caminho) {
+      return JSON.stringify({ disponivel: true, erro: 'Informe "porta" (para validar o servidor que você subiu no sandbox) ou "caminho" (para validar um arquivo HTML do workspace).' });
+    }
     const result = await checkPage(ws.base, args.caminho, {
       esperarSeletor: typeof args.esperar_seletor === 'string' && args.esperar_seletor.trim() ? args.esperar_seletor.trim() : null,
       esperarTexto: typeof args.esperar_texto === 'string' && args.esperar_texto.trim() ? args.esperar_texto.trim() : null,

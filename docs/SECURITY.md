@@ -393,6 +393,19 @@ Testes: `agent/pagePreviewServer.test.js` (contenção, incluindo o link
 simbólico e o encoding) e `agent/pageCheck.test.js` (política de origem única e
 veredito).
 
+No segundo modo (validar o dev server), o navegador roda **dentro do container
+da conversa**, não no backend. Isso é mais restritivo, não menos: a página
+executa no mesmo isolamento em que o código dela já rodava, e o container não
+tem rede — não há para onde vazar. A guarda de origem única é a mesma, aplicada
+pelo script gerado; requisição externa é abortada e vira aviso. **Nenhuma
+fronteira do sandbox muda**: nada de publicação de portas, nada de rede nova,
+nada de socket do Docker no backend (F-04 intacto). O script temporário é
+escrito no workspace, executado e apagado em `finally`; a saída é lida por
+sentinela — saída suja, truncada ou ausente vira erro explícito, nunca
+"validado". Testes: `agent/pageCheckSandbox.test.js`, inclusive um `node
+--check` sobre o script gerado (script que não faz parse produziria saída sem
+sentinela, escondendo a causa real).
+
 ### 8.1 Delegação a sub-agentes — a fronteira de autorização
 
 Um sub-agente (`agent/subagents.js`) roda um `runAgent` COMPLETO, com ferramentas de
