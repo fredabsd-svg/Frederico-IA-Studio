@@ -24,7 +24,23 @@ que ainda segura o verde é o **pipeline multimodelo retomável**: o F-15 entreg
 tabela e as primitivas, mas o `runMultiModel` ainda não as usa, então o reinício continua
 sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** a **série temporal da confiabilidade** (Fase 66). A foto
+**Frentes desta sessão e onde cada uma parou** (2026-08-08):
+
+| Frente | PR | Estado |
+| --- | --- | --- |
+| Frente 24 (handoff) + Frente 25 (`validar_pagina`) | [#195](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/195) | mesclado |
+| Frente 26 — telemetria local de confiabilidade (Fase 66) | [#196](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/196) | mesclado |
+| Veredito da `validar_pagina` → review gate (Fase 38 → 28) | [#197](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/197) | mesclado |
+| Série temporal da confiabilidade (Fase 66) | [#198](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/198) | **aberto**, CI verde |
+
+CI da `main` conferida **verde** nos dois merges desta sessão que já entraram —
+`58a0209` (Fase 66) e `2d416f4` (Fase 38 → 28). A branch de trabalho foi
+**recomeçada a partir da `main` atualizada** a cada merge, em vez de empilhar
+sobre histórico já mesclado — por isso o #198 traz só a série temporal.
+
+- **Último trabalho:** a **série temporal da confiabilidade** (Fase 66) —
+  **PR [#198](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/198), aberto,
+  CI verde**, aguardando revisão do usuário. A foto
   da janela respondia "como está"; faltava "melhorou ou piorou". Sem série, uma
   queda de 90% para 60% aparece como **75%** e ninguém percebe que algo quebrou
   na semana passada.
@@ -40,8 +56,17 @@ sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md
   de 25 pontos) e **melhora também é dita** — painel que só reclama é painel
   que ninguém abre duas vezes. No painel, a **frase é a resposta**; o
   minigráfico é apoio (`aria-hidden`, com `title` por barra).
+  **Limitação assumida:** os limiares (5 execuções por metade, 10 pontos para
+  sair de "estável", 25 para sinal alto) são fixos e **não foram calibrados
+  com uso real**. A escolha é deliberada pelo falso negativo: um piso de 10
+  pontos pode esconder degradação lenta, mas um painel que grita a cada
+  oscilação deixa de ser lido — e aí não detecta nada. **Sem prova visual**
+  (sem Chromium nesta sessão): por isso a frase carrega a informação e o
+  minigráfico é apoio.
 - **Último trabalho anterior:** o **veredito da `validar_pagina` alimenta o review gate**
-  (Fase 38 → Fase 28). Eram duas evidências que não se falavam: o gate media o
+  (Fase 38 → Fase 28) — PR
+  [#197](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/197), **mesclado**.
+  Eram duas evidências que não se falavam: o gate media o
   DIFF, a validação media a PÁGINA RENDERIZADA, e uma página podia reprovar no
   navegador — tela em branco, erro de console — com a entrega se apresentando
   limpa, porque o diff não tem como saber o que a página fez ao renderizar.
@@ -60,7 +85,9 @@ sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md
   repositório git da tarefa — artefato solto em `outputs/` não entra no
   ChangeSet e não é cobrado.
 - **Último trabalho anterior:** a **Frente 26 — Telemetria local de confiabilidade**
-  (Fase 66). O painel da Frente 14 mede CONSUMO. Uma execução podia consumir
+  (Fase 66) — PR
+  [#196](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/196), **mesclado**.
+  O painel da Frente 14 mede CONSUMO. Uma execução podia consumir
   tokens exemplarmente e terminar em `fatal_error` — no painel de consumo ela
   some no meio da média. Esta frente responde a outra pergunta: **o trabalho
   deu certo?**
@@ -87,7 +114,9 @@ sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md
   contra PostgreSQL nesta sessão — a agregação é pura justamente por isso, e
   carrega 16 testes; a apresentação, 6.
 - **Último trabalho anterior:** a **Frente 25 — Validação por navegador dentro do
-  produto** (Fase 38). O agente construía uma interface e declarava "pronto".
+  produto** (Fase 38) — entrou junto com a Frente 24 no PR
+  [#195](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/195), **mesclado**.
+  O agente construía uma interface e declarava "pronto".
   Nada media isso: o defeito clássico de frontend — um import errado — não
   aparece em teste unitário nem no diff, e a página abre **em branco** com um
   erro no console. O review gate (Fase 28) mede o DIFF; esta fase mede o
@@ -132,7 +161,9 @@ sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md
   está escutando: porta errada devolve **qual é a certa**, não "não carregou".
   **Limitação que continua:** a validação mede erro, ausência e presença — não
   faz asserção de layout nem comparação visual entre versões.
-- **Último trabalho anterior:** a **Frente 24 — Handoff local ↔ worktree** (Fase 24).
+- **Último trabalho anterior:** a **Frente 24 — Handoff local ↔ worktree** (Fase 24)
+  — PR [#195](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/195),
+  **mesclado**.
   O trabalho da tarefa mora no clone da conversa, na branch derivada da
   Fase 23 — e até aqui só saía dali por `github_push` + Pull Request. Quem
   quisesse **continuar no próprio computador** (rodar o app, abrir a IDE) ou
@@ -1801,6 +1832,22 @@ antes do aviso.
 ---
 
 ## Próximos passos (em ordem)
+
+**Aberto por esta sessão (2026-08-08), em ordem de valor:**
+
+- **Prova visual dos painéis novos.** Confiabilidade + série temporal (Fase 66)
+  e o painel de handoff (Frente 24) nunca foram vistos em tela: este contêiner
+  não tem Chromium. A lógica é pura e testada nos três casos, e a informação
+  vive no texto — mas o layout continua sem conferência. É o primeiro item
+  para uma sessão com navegador.
+- **O sinal de "faltou validar" não enxerga `outputs/`.** O review gate cobra
+  validação de HTML que está no repositório git da tarefa; artefato solto em
+  `outputs/` não entra no ChangeSet e passa sem cobrança. Fechar isso exige
+  decidir se `outputs/` vira evidência de primeira classe ou continua fora.
+- **Calibrar os limiares da tendência com uso real.** 5 execuções por metade,
+  10 pontos para sair de "estável", 25 para sinal alto — números escolhidos
+  por prudência, não medidos. Com histórico de `agent_runs` acumulado dá para
+  conferir se o piso esconde degradação lenta.
 
 0. **Frente 15 — Sonda controlada de tool calling (mergeada).**
    Branch `t6-frente-15-tool-call-probe`. Componentes novos em
