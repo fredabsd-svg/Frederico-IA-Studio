@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { formatDuration, topTools, reliabilityHeadline, reliabilityTone } from './reliabilityView.js';
+import { formatDuration, topTools, reliabilityHeadline, reliabilityTone, trendSentence, sparklinePoints } from './reliabilityView.js';
 
 test('formatDuration usa a unidade que cabe, com vírgula decimal', () => {
   assert.equal(formatDuration(820), '820 ms');
@@ -46,6 +46,45 @@ test('a frase cita taxa, mediana e o tamanho da amostra', () => {
   assert.match(texto, /80% das execuções/);
   assert.match(texto, /45,0 s/);
   assert.match(texto, /10 de 12/);
+});
+
+// A ausência de tendência precisa DIZER que é ausência: silêncio seria lido
+// como "está tudo igual".
+test('sem amostra, a frase da tendência explica o motivo em vez de calar', () => {
+  const texto = trendSentence({ tendencia: 'sem_amostra', motivo: 'São necessárias ao menos 5 execuções em cada metade.' });
+  assert.match(texto, /Sem base para comparar/);
+  assert.match(texto, /ao menos 5 execuções/);
+  assert.equal(trendSentence(null), '');
+});
+
+test('a frase distingue estável, melhora e piora, sempre com as duas taxas', () => {
+  const base = { anterior: { taxa_sucesso: 90 }, recente: { taxa_sucesso: 50 } };
+  assert.match(trendSentence({ ...base, tendencia: 'piorou', delta: -40 }), /caiu 40 pontos .*90% → 50%/);
+  assert.match(trendSentence({ tendencia: 'melhorou', delta: 30, anterior: { taxa_sucesso: 55 }, recente: { taxa_sucesso: 85 } }), /subiu 30 pontos/);
+  assert.match(trendSentence({ tendencia: 'estavel', delta: 2, anterior: { taxa_sucesso: 80 }, recente: { taxa_sucesso: 82 } }), /Estável.*80% → 82%/);
+});
+
+test('o minigráfico mantém o balde vazio como marca rasa, não o descarta', () => {
+  const pontos = sparklinePoints({
+    pontos: [
+      { de: '2026-08-01T00:00:00.000Z', total: 0, taxa_sucesso: null },
+      { de: '2026-08-02T00:00:00.000Z', total: 4, taxa_sucesso: 75 },
+      { de: '2026-08-03T00:00:00.000Z', total: 2, taxa_sucesso: 0 }
+    ]
+  });
+  assert.equal(pontos.length, 3, 'nenhum ponto some — o eixo é tempo');
+  assert.equal(pontos[0].vazio, true);
+  assert.equal(pontos[0].altura, 4, 'vazio vira marca rasa');
+  assert.match(pontos[0].titulo, /nenhuma execução/);
+  assert.equal(pontos[1].altura, 75);
+  // 0% de sucesso também precisa ser visível: altura zero sumiria da tela.
+  assert.equal(pontos[2].altura, 4);
+  assert.match(pontos[2].titulo, /0% de sucesso/);
+});
+
+test('série ausente não quebra o minigráfico', () => {
+  assert.deepEqual(sparklinePoints(null), []);
+  assert.deepEqual(sparklinePoints({}), []);
 });
 
 test('o tom vem do pior sinal, e não de um nível inventado', () => {

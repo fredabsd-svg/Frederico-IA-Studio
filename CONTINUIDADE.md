@@ -24,7 +24,23 @@ que ainda segura o verde é o **pipeline multimodelo retomável**: o F-15 entreg
 tabela e as primitivas, mas o `runMultiModel` ainda não as usa, então o reinício continua
 sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** o **veredito da `validar_pagina` alimenta o review gate**
+- **Último trabalho:** a **série temporal da confiabilidade** (Fase 66). A foto
+  da janela respondia "como está"; faltava "melhorou ou piorou". Sem série, uma
+  queda de 90% para 60% aparece como **75%** e ninguém percebe que algo quebrou
+  na semana passada.
+  `bucketRuns` divide a janela em baldes (dia até 14 dias, semana acima) e
+  `trendFromRuns` compara a metade anterior com a recente. **Duas travas,
+  porque tendência é onde é mais fácil mentir com número verdadeiro:**
+  (1) só se pronuncia com amostra nas DUAS metades — 20 execuções contra 2 é
+  acaso, e o resultado sai como `sem_amostra` **com o motivo**, nunca como
+  "estável", que seria lido como "tudo igual"; (2) diferença abaixo de 10
+  pontos é "estável" — sem piso, 78% → 81% viraria "melhorou".
+  Balde vazio aparece com zero em vez de sumir (descartá-lo juntaria dois
+  períodos separados como se fossem vizinhos). Piora vira sinal (alto a partir
+  de 25 pontos) e **melhora também é dita** — painel que só reclama é painel
+  que ninguém abre duas vezes. No painel, a **frase é a resposta**; o
+  minigráfico é apoio (`aria-hidden`, com `title` por barra).
+- **Último trabalho anterior:** o **veredito da `validar_pagina` alimenta o review gate**
   (Fase 38 → Fase 28). Eram duas evidências que não se falavam: o gate media o
   DIFF, a validação media a PÁGINA RENDERIZADA, e uma página podia reprovar no
   navegador — tela em branco, erro de console — com a entrega se apresentando
@@ -517,9 +533,11 @@ sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md
   (o Nino cobrindo o botão de enviar), **[#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)**
   (Playwright + suíte ponta a ponta) e **[#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)**
   (as sete falhas P0 dos sub-agentes).
-- **Última validação:** 2026-08-08 (veredito → review gate) — **backend
-  `npm run check`: 1355 testes, 0 falhas, 144 pulados**; frontend inalterado
-  (a mudança é só de backend). Antes dela, Frente 26 — **backend 1347 testes,
+- **Última validação:** 2026-08-08 (série temporal) — **backend `npm run
+  check`: 1366 testes, 0 falhas, 144 pulados** e **frontend: 166/166**
+  (entrada 890/920 KB, total 1064/1100 KB, catraca de CSS 3 ≤ 3).
+  Antes dela, veredito → review gate: **backend 1355 testes, 0 falhas, 144
+  pulados**; frontend inalterado. Antes dela, Frente 26 — **backend 1347 testes,
   0 falhas, 144 pulados** e **frontend: 162/162** (entrada
   890/920 KB, total 1063/1100 KB, catraca de CSS 3 ≤ 3). O portão de
   autenticação do CI passou a cobrir `/api/reliability`.
