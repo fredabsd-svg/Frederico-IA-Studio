@@ -31,16 +31,17 @@ sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md
 | Frente 24 (handoff) + Frente 25 (`validar_pagina`) | [#195](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/195) | mesclado |
 | Frente 26 — telemetria local de confiabilidade (Fase 66) | [#196](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/196) | mesclado |
 | Veredito da `validar_pagina` → review gate (Fase 38 → 28) | [#197](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/197) | mesclado |
-| Série temporal da confiabilidade (Fase 66) | [#198](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/198) | **aberto**, CI verde |
+| Série temporal da confiabilidade (Fase 66) + poda deste arquivo | [#198](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/198) | mesclado (`fb2198d`) |
 
-CI da `main` conferida **verde** nos dois merges desta sessão que já entraram —
-`58a0209` (Fase 66) e `2d416f4` (Fase 38 → 28). A branch de trabalho foi
-**recomeçada a partir da `main` atualizada** a cada merge, em vez de empilhar
-sobre histórico já mesclado — por isso o #198 traz só a série temporal.
+**As quatro frentes da sessão estão na `main`.** A CI foi conferida verde em
+`58a0209` (Fase 66) e `2d416f4` (Fase 38 → 28); os merges seguintes entraram
+com a CI da branch verde. A branch de trabalho foi **recomeçada a partir da
+`main` atualizada** a cada merge, em vez de empilhar sobre histórico já
+mesclado — por isso cada PR traz só a frente dele.
 
 - **Último trabalho:** a **série temporal da confiabilidade** (Fase 66) —
-  **PR [#198](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/198), aberto,
-  CI verde**, aguardando revisão do usuário. A foto
+  PR [#198](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/198),
+  **mesclado**. A foto
   da janela respondia "como está"; faltava "melhorou ou piorou". Sem série, uma
   queda de 90% para 60% aparece como **75%** e ninguém percebe que algo quebrou
   na semana passada.
