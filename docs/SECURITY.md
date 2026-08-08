@@ -352,6 +352,60 @@ simbólicos (nada fora da base entra na lista), pula binários e limita bytes e
 resultados — as duas superfícies são somente-leitura e não tocam sandbox nem
 rede.
 
+O **handoff** (`agent/handoff.js`) é a exceção que escreve, e por isso carrega
+controles próprios. Ao APLICAR um patch vindo do computador do usuário:
+
+- os caminhos de destino saem das linhas `---`/`+++` do patch e são conferidos
+  ANTES de o git ser chamado — caminho absoluto, `C:\...` ou segmento `..` é
+  **recusado nomeando o caminho**, nunca reinterpretado como relativo (mesma
+  régua do `diffView`; o `git apply` também recusa por conta própria fora da
+  árvore de trabalho, então a defesa é dupla);
+- o patch tem teto de tamanho (`MAX_PATCH_CHARS`) checado na rota e no módulo;
+- a rota recusa aplicar com a **tarefa em execução** (409), como a reversão;
+- a URL do remoto exposta na interface passa por `sanitizeRemoteUrl`, que
+  remove credencial embutida (`https://usuario:token@…`) — ela vai para a tela
+  e para a área de transferência do usuário;
+- exportar o patch **não** altera o clone: o `git add -A` roda contra um
+  `GIT_INDEX_FILE` temporário, removido em `finally`.
+
+### 8.0.1 O navegador da validação é offline (Fase 38)
+
+`validar_pagina` abre no Chromium do backend um HTML **escrito pelo modelo** —
+o mesmo tipo de conteúdo não confiável que o PDF do Modo Design já trata. Ele
+roda no contexto mais estreito do projeto:
+
+- a página é servida por um HTTP efêmero em `127.0.0.1`, porta aleatória, raiz
+  no workspace da conversa, **somente GET/HEAD**, derrubado ao fim da chamada;
+- a guarda de rota permite **apenas a origem fixada desse servidor**. Internet,
+  qualquer outra porta do loopback (inclusive a API do backend), `file:` e
+  `data:` são abortados. Sem canal de saída, uma página maliciosa não tem para
+  onde exfiltrar — o que ela tentou aparece no resultado como aviso;
+- `file://` foi descartado de propósito: o `page.route()` do Playwright não
+  intercepta sub-requisição `file://` de forma confiável, então a guarda não
+  valeria justamente onde precisaria valer;
+- o servidor resolve o caminho e o confere contra a raiz: `..`, caminho
+  absoluto, percent-encoding de travessia (`%2e%2e%2f`) e **link simbólico com
+  destino fora da raiz** dão 404, sem revelar o que existe fora;
+- extensão desconhecida é servida como `application/octet-stream`, nunca como
+  HTML, com `nosniff`, `X-Frame-Options: DENY` e `Referrer-Policy: no-referrer`.
+
+Testes: `agent/pagePreviewServer.test.js` (contenção, incluindo o link
+simbólico e o encoding) e `agent/pageCheck.test.js` (política de origem única e
+veredito).
+
+No segundo modo (validar o dev server), o navegador roda **dentro do container
+da conversa**, não no backend. Isso é mais restritivo, não menos: a página
+executa no mesmo isolamento em que o código dela já rodava, e o container não
+tem rede — não há para onde vazar. A guarda de origem única é a mesma, aplicada
+pelo script gerado; requisição externa é abortada e vira aviso. **Nenhuma
+fronteira do sandbox muda**: nada de publicação de portas, nada de rede nova,
+nada de socket do Docker no backend (F-04 intacto). O script temporário é
+escrito no workspace, executado e apagado em `finally`; a saída é lida por
+sentinela — saída suja, truncada ou ausente vira erro explícito, nunca
+"validado". Testes: `agent/pageCheckSandbox.test.js`, inclusive um `node
+--check` sobre o script gerado (script que não faz parse produziria saída sem
+sentinela, escondendo a causa real).
+
 ### 8.1 Delegação a sub-agentes — a fronteira de autorização
 
 Um sub-agente (`agent/subagents.js`) roda um `runAgent` COMPLETO, com ferramentas de

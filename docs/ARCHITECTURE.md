@@ -172,6 +172,57 @@ POST /chat
   descartado. Contenção: repositório e caminho confinados ao clone da conversa
   (caminho absoluto e `..` são RECUSADOS, não normalizados), e a rota recusa
   reversão com a tarefa em execução.
+- **Validação por navegador (Fase 38):** `agent/pageCheck.js` +
+  `agent/pagePreviewServer.js`, expostos ao agente como a ferramenta
+  `validar_pagina`. O review gate mede o DIFF; esta fase mede o RESULTADO
+  RENDERIZADO — o defeito clássico de frontend (import quebrado → página em
+  branco com erro no console) não aparece em teste unitário nem no diff.
+  A página é servida por um servidor HTTP efêmero em `127.0.0.1`, porta
+  aleatória, raiz no workspace da conversa, somente leitura e derrubado ao fim
+  da chamada; o Chromium é o mesmo do `pageShot.js`, com uma guarda **mais
+  estreita**: só a origem fixada do servidor passa, e todo o resto — internet,
+  outra porta do loopback (inclusive a API do backend), `file:` — é abortado e
+  **registrado como evidência**. Coleta: erro de JS não tratado, erro de
+  console, resposta 4xx/5xx de recurso local, requisição externa bloqueada,
+  detector de tela em branco (sem texto visível **e** sem elemento visual — as
+  duas condições, para não reprovar página só de imagem) e as asserções que o
+  próprio agente declara (`esperar_seletor`, `esperar_texto`). A captura vai
+  para `outputs/`, onde o usuário a vê. **Sem Chromium no ambiente a ferramenta
+  devolve `disponivel: false` com o motivo — nunca um "validado" falso.**
+  **Segundo modo — o dev server, sem mexer em fronteira nenhuma**
+  (`agent/pageCheckSandbox.js`): o container nasce com `NetworkDisabled` e sem
+  publicação de portas, então o backend não alcança o `npm run dev` da tarefa.
+  A saída não é abrir isso — é inverter o movimento: **o navegador vai até o
+  servidor**. A imagem do sandbox já traz `chromium` e `playwright`
+  (`sandbox/Dockerfile`), e um container sem rede continua tendo loopback, de
+  modo que um script Playwright rodando lá dentro alcança
+  `http://127.0.0.1:<porta>`. O backend escreve o script no workspace, executa
+  com `execInSandbox` (`NODE_PATH="$(npm root -g)"`, porque o pacote é global e
+  só o `require` honra a variável), lê UMA linha marcada por sentinela e monta
+  o veredito com o **mesmo** `buildVerdict` — as duas formas de validar
+  precisam reprovar pelos mesmos critérios. Antes de gastar um navegador num
+  timeout, `sandboxServices` confere o que está de fato escutando e, se a porta
+  estiver errada, o erro diz **qual é a certa**. O script temporário é apagado
+  em `finally`.
+  **Limite honesto:** a validação mede erro, ausência e presença — não faz
+  asserção de layout nem comparação visual entre versões.
+- **Handoff local ↔ worktree (Fase 24):** `agent/handoff.js` +
+  `GET /conversations/:id/handoff`, `GET .../handoff/patch` e
+  `POST .../handoff/apply`. O trabalho da tarefa mora no clone da conversa e até
+  aqui só saía dali por `github_push` + PR. Agora há ponte nos dois sentidos:
+  o painel monta os comandos que o USUÁRIO roda na máquina dele
+  (`git fetch` + `git worktree add --track -b <branch> ../<dir> origin/<branch>`,
+  que não toca o checkout dele), e oferece como patch o que a worktree não
+  traria. A base do patch é `origin/<branch>` quando há commit local não
+  publicado e `HEAD` caso contrário — com base fixa em `HEAD`, o commit do meio
+  sumiria dos dois caminhos. Arquivo não rastreado entra no patch por um ÍNDICE
+  TEMPORÁRIO (`GIT_INDEX_FILE`): o `git add -A` enxerga tudo sem tocar o índice
+  do clone. No sentido de volta, `git apply --check` antes de aplicar: o patch
+  entra inteiro ou não entra (sem `--3way`, que deixaria marcador de conflito
+  dentro dos arquivos da tarefa), e o clone é devolvido ao uid do sandbox
+  (`chownTree`) para o agente poder editar depois o que recebeu.
+  **Limite honesto:** sem branch publicada, os commits locais só saem pelo
+  GitHub — o patch cobre a partir de `HEAD`, não da base da branch.
 - **Review gate + painel de confiança (Fases 28 e 44):** `agent/reviewGate.js`
   — antes de a tarefa se apresentar como entregue, o backend passa um pente
   automático no que foi REALMENTE alterado (ChangeSet + `git diff HEAD -U0`),

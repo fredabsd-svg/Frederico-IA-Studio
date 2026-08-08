@@ -24,7 +24,91 @@ que ainda segura o verde é o **pipeline multimodelo retomável**: o F-15 entreg
 tabela e as primitivas, mas o `runMultiModel` ainda não as usa, então o reinício continua
 sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
 
-- **Último trabalho:** a **Frente 23 — Layout do Developer Workspace**
+- **Último trabalho:** a **Frente 25 — Validação por navegador dentro do
+  produto** (Fase 38). O agente construía uma interface e declarava "pronto".
+  Nada media isso: o defeito clássico de frontend — um import errado — não
+  aparece em teste unitário nem no diff, e a página abre **em branco** com um
+  erro no console. O review gate (Fase 28) mede o DIFF; esta fase mede o
+  RESULTADO RENDERIZADO.
+  A ferramenta `validar_pagina` abre uma página HTML do workspace num Chromium
+  de verdade e devolve o que ela FEZ: erro de JS não tratado, erro de console,
+  recurso local faltando (4xx/5xx), recurso externo bloqueado, tela em branco,
+  as asserções que o próprio agente declarou (`esperar_seletor`,
+  `esperar_texto`) e uma captura em `outputs/`.
+  **Como o navegador alcança a página, e por que não pelos caminhos óbvios:**
+  o servidor que o agente sobe DENTRO do sandbox não é alcançável de fora (o
+  container nasce com `NetworkDisabled` e sem publicação de portas), e `file://`
+  colocaria o disco do backend ao alcance de um HTML escrito pelo modelo — o
+  `page.route()` do Playwright não intercepta sub-requisição `file://` de forma
+  confiável. A saída é um terceiro caminho, mais estreito: um HTTP efêmero em
+  `127.0.0.1`, porta aleatória, raiz no workspace da conversa, só GET/HEAD,
+  derrubado ao fim da chamada. **A guarda só deixa passar a origem fixada** —
+  internet, outra porta do loopback (inclusive a API do backend) e `file:` são
+  abortados. Sem canal de saída não há exfiltração, e o que a página tentou
+  aparece no resultado.
+  **Três decisões:** (1) recurso EXTERNO bloqueado é **aviso**, não falha — a
+  página pode funcionar em produção com a CDN no ar, e chamar isso de falha
+  ensinaria o agente a ignorar o veredito; recurso LOCAL faltando é problema;
+  (2) "tela em branco" exige as DUAS condições (sem texto visível **e** sem
+  elemento visual), senão uma página só de imagem seria reprovada; (3) sem
+  Chromium no ambiente a ferramenta devolve `disponivel: false` com o motivo —
+  **nunca um "validado" falso**.
+  **O segundo modo fechou a limitação que eu tinha declarado.** A primeira
+  versão validava só arquivo do workspace, porque o backend não alcança o
+  `npm run dev` da tarefa (container com `NetworkDisabled`, sem publicação de
+  portas). A saída não foi abrir essa fronteira — foi **inverter o movimento:
+  o navegador vai até o servidor**. A imagem do sandbox já traz `chromium` e
+  `playwright`, e container sem rede continua tendo loopback: um script
+  Playwright rodando lá dentro alcança `http://127.0.0.1:<porta>`. O backend
+  escreve o script no workspace, roda com `execInSandbox`
+  (`NODE_PATH="$(npm root -g)"` — o pacote é global e só o `require` honra a
+  variável), lê uma linha marcada por sentinela e monta o veredito com o MESMO
+  `buildVerdict`. **Nenhuma fronteira mudou**: sem publicação de porta, sem
+  rede nova, F-04 intacto — e a página validada roda no isolamento em que o
+  código dela já rodava.
+  Antes de gastar um navegador num timeout, o `sandboxServices` confere o que
+  está escutando: porta errada devolve **qual é a certa**, não "não carregou".
+  **Limitação que continua:** a validação mede erro, ausência e presença — não
+  faz asserção de layout nem comparação visual entre versões.
+- **Último trabalho anterior:** a **Frente 24 — Handoff local ↔ worktree** (Fase 24).
+  O trabalho da tarefa mora no clone da conversa, na branch derivada da
+  Fase 23 — e até aqui só saía dali por `github_push` + Pull Request. Quem
+  quisesse **continuar no próprio computador** (rodar o app, abrir a IDE) ou
+  **devolver** uma correção feita localmente não tinha caminho: o trabalho não
+  commitado nunca chegava à máquina do usuário.
+  Agora há ponte nos dois sentidos, na mesma camada do ChangeSet (git local no
+  clone, sem token e sem sandbox): `agent/handoff.js` +
+  `GET /conversations/:id/handoff`, `GET .../handoff/patch` e
+  `POST .../handoff/apply`, com o painel na aba "Alterações".
+  **Três decisões que definem o comportamento:**
+  1. **A worktree é o caminho bom; o patch é o universal.** Com a branch
+     publicada, o painel entrega os comandos prontos
+     (`git worktree add --track -b <branch> ../<dir> origin/<branch>`) — o
+     checkout atual do usuário não é tocado. Sem branch publicada, o patch é a
+     única ponte honesta, e ele **leva os arquivos novos**: o `git add -A` roda
+     contra um `GIT_INDEX_FILE` temporário, então o índice do clone não é
+     tocado e o arquivo não rastreado (o que a IA mais produz) entra no diff.
+  2. **A base do patch não é sempre `HEAD`.** Com commit local ainda não
+     publicado, a base vira `origin/<branch>` — senão a worktree traria só o
+     publicado, o patch traria só o não commitado, e o commit do meio sumiria
+     dos dois caminhos. É o caso que o teste com remoto de verdade guarda.
+  3. **Aplicar patch não faz merge de três vias.** `git apply --check` antes: o
+     patch entra inteiro ou não entra. Um `--3way` deixaria marcador de
+     conflito dentro dos arquivos da tarefa — o oposto do que este projeto faz
+     em toda operação destrutiva. Caminho de destino é **recusado nomeando o
+     caminho** (absoluto, `C:\`, `..`), nunca normalizado; a rota recusa com a
+     tarefa em execução (409); e o clone é devolvido ao uid do sandbox
+     (`chownTree`), senão o agente não conseguiria editar o que acabou de
+     receber.
+  Duas mudanças mínimas no `runGit` sustentam isso: `env` (para o
+  `GIT_INDEX_FILE`) e `maxOutput` — o teto padrão de 8 KB truncaria o patch, e
+  **patch truncado é pior que nenhum**, porque parece válido.
+  **Limitações assumidas:** (a) sem branch publicada, os commits locais só saem
+  pelo GitHub — o patch cobre a partir de `HEAD`, não da base da branch;
+  (b) **sem prova visual** — o sandbox desta sessão não tem Chromium, então o
+  painel novo não foi conferido em tela (a lógica pura tem 6 testes e o backend
+  exercita git de verdade, inclusive com um remoto local).
+- **Último trabalho anterior:** a **Frente 23 — Layout do Developer Workspace**
   (Fases 51, 52 e 55). A grade de três colunas + terminal + compositor **já
   existia**; o que faltava era o que ela anuncia e quanto mostra por padrão.
   - **Contexto da sessão (Fase 55):** uma faixa abaixo da barra do workspace com
@@ -387,11 +471,23 @@ sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md
   (o Nino cobrindo o botão de enviar), **[#146](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/146)**
   (Playwright + suíte ponta a ponta) e **[#145](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/145)**
   (as sete falhas P0 dos sub-agentes).
-- **Última validação:** 2026-08-07 (Frente 23) — **backend `npm run check`:
-  1273 testes, 0 falhas, 144 pulados** e **frontend: 149/149** (bundle
-  890/920 KB, depois de mover as colunas do modo dev para chunks lazy).
-  **Sem prova visual nesta sessão** (sem Chromium/Postgres): os E2E de layout
-  rodam na CI. Antes dela, Frente 22 — backend 1273, frontend 140/140. Antes dela, Frente 21 — backend 1265, 0 falhas. Antes dela, Frente 20 — backend 1253 testes, 0 falhas. Antes dela, Frente 19 — **backend 1240 testes, 0 falhas, 144 pulados** (exigem PostgreSQL; esperado fora do
+- **Última validação:** 2026-08-08 (Frente 25) — **backend `npm run check`:
+  1331 testes, 0 falhas, 144 pulados**; frontend inalterado (a frente é só de
+  backend). O servidor de pré-visualização é exercitado com HTTP de verdade
+  (fetch contra a porta efêmera), inclusive a recusa de link simbólico que
+  aponta para fora da raiz; o veredito tem 12 testes; e o modo sandbox roda com
+  o `execInSandbox` INJETADO, o que exercita de verdade o parser de saída suja,
+  truncada e ausente — mais um `node --check` sobre o script gerado. **Nenhum
+  navegador roda aqui** (sem Chromium e sem Docker) — o teste que cobre esse
+  contrato, nos dois modos, é o que prova que a ferramenta devolve
+  `disponivel: false` em vez de um "validado" falso.
+  Antes dela, Frente 24 — **backend 1293 testes, 0 falhas, 144 pulados** e
+  **frontend: 155/155** (bundle
+  890/920 KB de entrada, 1058/1100 KB total; o painel de handoff é chunk
+  próprio). O ciclo do handoff foi exercitado contra git de verdade, com um
+  repositório bare local fazendo as vezes de remoto. **Sem prova visual nesta
+  sessão** (sem Chromium/Postgres). Antes dela, Frente 23 — backend 1273,
+  frontend 149/149. Antes dela, Frente 22 — backend 1273, frontend 140/140. Antes dela, Frente 21 — backend 1265, 0 falhas. Antes dela, Frente 20 — backend 1253 testes, 0 falhas. Antes dela, Frente 19 — **backend 1240 testes, 0 falhas, 144 pulados** (exigem PostgreSQL; esperado fora do
   Docker) e **frontend `npm run check`: 140/140** (lint + testes + build +
   budget + css:inventory verdes). Bundle: entrada 916/920 KB, total dentro do
   teto. Antes dela: Frente 18 (backend 1236/0, frontend 135/135) e Frente 17
