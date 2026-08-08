@@ -26,7 +26,8 @@ cd frontend
 npm test                 # TODOS os arquivos *.test.js de src/ (inclusive src/hooks/)
 npm run check            # lint + test + build
 
-# sandbox (Python) — os kits de documento (docpro/xlspro/pdfpro)
+# sandbox (Python) — os kits de documento (docpro/xlspro/pdfpro) e o VALIDADOR
+# dos artefatos entregues (validar_artefato).
 # As dependências são obrigatórias: cada arquivo de teste se AUTO-PULA quando a
 # sua biblioteca falta, então instalar só o openpyxl faz os testes do Word e do
 # PDF sumirem em silêncio. As três primeiras são o conjunto que o CI instala; o
@@ -156,6 +157,9 @@ teste — vários módulos leem essas variáveis no momento da importação.
 | `e2e/tests/design.spec.js` | **Navegador real**: o HTML gerado é de fato renderizado dentro do iframe isolado, o `sandbox` do iframe não tem `allow-same-origin`, refinar por conversa cria uma versão nova e dá para voltar atrás, e a apresentação vira deck — não JSON na tela. Da v2: **clicar num elemento da prévia leva o alvo para o compositor** (a travessia da origem opaca por `postMessage`, que nenhum teste de unidade cobre) e **o slider muda a cor dentro do iframe na hora, sem criar versão** — com o ajuste sobrevivendo a fechar e reabrir o projeto |
 | `sandbox/*_test.py` (identidade "Tinta & Latão") | Sobre os blocos que entraram DEPOIS da grade. **PDF**: o documento com linha do tempo, gráficos vetoriais e contracapa passa na **própria auditoria** do kit — é essa a prova de que os blocos novos respeitam a mesma aresta; a pizza lê a participação na legenda em pt-BR (rótulo colado na fatia cairia dentro da fatia escura e vazaria a caixa); a barra parte do zero (base automática do reportlab faz série de 4,1 a 5,8 virar barras idênticas); a marca de sigilo aparece na capa e no rodapé e some com `confidencial=False`, e nunca aparece no estilo sóbrio; a contracapa cabe na página em qualquer variação de contatos. **Word**: nenhuma tabela sem largura declarada (100% ou dxa ≤ 17 cm com a `tblGrid` coerente — é ela que resolve o layout fixo); a numeração "SEÇÃO NN" é do kit e não sai em dobro; sumário, citação, linha do tempo, assinaturas em pares e contracapa entram no arquivo; a figura do gráfico respeita a aresta do corpo; o `Sobrio` identifica o documento, assina em pares e continua 100% preto. **Excel**: o painel é a primeira aba com KPIs e carimbo, o gráfico mora no painel mas referencia a aba de dados (sem a linha de TOTAL) e as cores do tema chegam ao arquivo — o tema ficava num `try/except` mudo e a pizza saía com a paleta padrão do Excel |
 
+| `sandbox/validar_artefato_test.py` (F-23) | O **validador da entrega**, com arquivos reais. O que se prova não é "o arquivo saiu": é o veredito. Planilha que ABRE e traz `#REF!` reprova (cada um dos nove códigos do Excel tem caso); o teto de varredura sai **declarado** no relatório, e há um teste que fixa a consequência assumida — erro além do teto passa, e o relatório diz que a varredura foi limitada. Nos **gráficos**, os três defeitos que o Excel não denuncia porque o arquivo abre: aba inexistente, intervalo invertido (`C2:B2`) e série de valores vazia — cada um injetado reescrevendo o `chart1.xml` dentro do zip, como o defeito nasce. E a contraprova que evita o falso positivo que inutilizaria a checagem: categoria de TEXTO não é acusada de série vazia. No **Word**, documento vazio reprova, mas documento só com tabela **passa** (relatório que é uma tabela é entrega legítima). Sem `soffice` no runner, o recálculo se declara parcial em vez de falhar |
+| `backend/src/agent.outputs.validatorSeam.test.js` | A **costura** entre o backend e o validador em Python — o caminho resolvido, a assinatura que o driver chama, o `COPY` no `Dockerfile` e o acordo de extensões entre o filtro em JS e o roteador em Python. Existe porque o `validateOutputs` engole exceção e devolve `{}`: um rename faria a validação sumir em silêncio, e a entrega voltaria a dizer "verificado" sem ter verificado |
+
 Scripts de apoio: `backend/scripts/run-tests.mjs` e `frontend/scripts/run-tests.mjs`
 (descoberta de testes independente da versão do Node), `backend/scripts/check-migrations.mjs`,
 `backend/scripts/count-tests.mjs`, `backend/scripts/lint.mjs`, `frontend/scripts/lint.mjs`.
@@ -176,4 +180,4 @@ Reconhecidas, priorizadas e **não** cobertas até aqui — ver `docs/AUDITORIA_
 | F-18 | Corpus documental do Docling (escaneado, DRE, PGFN, células mescladas…) | Aberta |
 | F-19 | Git local para clone/commit/push do modo desenvolvedor | Aberta |
 | F-20 | E2E de navegador | **Fechada** — `e2e/`, Chromium real contra o build de produção, no CI |
-| F-23 | Validação de artefato: XLSX com `#REF!`, DOCX vazio, PDF com página em branco | Aberta |
+| F-23 | Validação de artefato: XLSX com `#REF!`, DOCX vazio, PDF com página em branco | **Fechada** — 38 casos em `sandbox/validar_artefato_test.py` com arquivos reais, mais a catraca da costura em `agent.outputs.validatorSeam.test.js` |
