@@ -30,9 +30,12 @@ npm run check            # lint + test + build
 # dos artefatos entregues (validar_artefato).
 # As dependências são obrigatórias: cada arquivo de teste se AUTO-PULA quando a
 # sua biblioteca falta, então instalar só o openpyxl faz os testes do Word e do
-# PDF sumirem em silêncio. As três primeiras são o conjunto que o CI instala; o
+# PDF sumirem em silêncio. As quatro primeiras são o conjunto que o CI instala; o
 # matplotlib cobre só os gráficos do Word (sem ele, esse teste pula).
-python -m pip install openpyxl==3.1.5 python-docx reportlab matplotlib
+# O pypdf é do validador (check_pdf) e NÃO tem auto-pulo: sem ele os testes de
+# PDF do validar_artefato falham em vez de sumir — é de propósito, porque a
+# imagem do sandbox traz a lib e um pulo silencioso esconderia a lacuna.
+python -m pip install openpyxl==3.1.5 python-docx reportlab pypdf matplotlib
 python -m unittest discover -s sandbox -p '*_test.py' -v
 
 # ponta a ponta (navegador real) — exige Postgres; ver e2e/README.md
