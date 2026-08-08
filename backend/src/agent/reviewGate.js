@@ -49,6 +49,9 @@ const TEST_NAME_RE = /\.(?:test|spec)\.[a-z]+$|_test\.[a-z]+$|^test_/i;
 // Arquivos cuja REMOÇÃO ou alteração merece um olhar humano.
 const SENSITIVE_PATH_RE = /(?:^|\/)(?:\.env|\.env\..+|docker-compose\.ya?ml|Dockerfile|\.github\/workflows\/|migrations?\/|package-lock\.json|yarn\.lock)/i;
 
+// Páginas que a validação por navegador (Fase 38) sabe abrir.
+const PAGE_FILE_RE = /\.x?html?$/i;
+
 const extOf = (filePath) => {
   const name = String(filePath || '');
   const dot = name.lastIndexOf('.');
@@ -94,10 +97,65 @@ function finding(severity, kind, message, { file = null, line = null } = {}) {
   return { severity, kind, message, ...(file ? { file } : {}), ...(line ? { line } : {}) };
 }
 
+// VALIDAÇÃO POR NAVEGADOR → REVIEW GATE (Fase 38 alimentando a Fase 28).
+//
+// O gate mede o diff; a `validar_pagina` mede a página renderizada. Eram duas
+// evidências que não se falavam: uma página podia reprovar no navegador — tela
+// em branco, erro de console — e a entrega se apresentar limpa, porque o diff
+// não tem como saber disso.
+//
+// Três sinais, e a diferença de peso entre eles é a decisão deste bloco:
+//
+//   * página REPROVADA no navegador é `high`: é defeito MEDIDO, no mesmo nível
+//     de "código alterado sem teste";
+//   * página HTML alterada e NUNCA validada é `medium`: é ausência de
+//     evidência, não evidência de defeito — o irmão do `missing_test`;
+//   * validação que não pôde rodar (sem Chromium no ambiente) é `low`, e
+//     existe para uma coisa só: impedir que a entrega diga "validado" quando
+//     nada foi validado.
+export function pageCheckFindings(pageChecks = [], files = []) {
+  const findings = [];
+  const checks = Array.isArray(pageChecks) ? pageChecks.filter(Boolean) : [];
+  // Só a checagem com veredito conta como validação: um erro de caminho ou
+  // uma página inexistente é tentativa, não prova.
+  const conclusivos = checks.filter(check => typeof check.ok === 'boolean');
+
+  for (const check of conclusivos) {
+    if (check.ok) continue;
+    const alvo = check.pagina || check.url || 'a página';
+    const problemas = Array.isArray(check.problemas) ? check.problemas : [];
+    const detalhe = problemas.slice(0, 3).join(' | ');
+    findings.push(finding(
+      'high',
+      'page_check',
+      `A página reprovou na validação por navegador (${problemas.length} problema${problemas.length === 1 ? '' : 's'} medido${problemas.length === 1 ? '' : 's'})${detalhe ? `: ${detalhe}` : '.'}`,
+      { file: typeof alvo === 'string' ? alvo : null }
+    ));
+  }
+
+  for (const check of checks) {
+    if (check.disponivel === false) {
+      findings.push(finding('low', 'page_check_unavailable',
+        `A validação por navegador NÃO rodou neste ambiente${check.observacao ? ` (${String(check.observacao).slice(0, 160)})` : ''}. Não apresente a página como validada.`));
+    }
+  }
+
+  // Página alterada sem nenhuma validação conclusiva. Arquivo apagado não
+  // conta (não há o que abrir) e arquivo de teste também não.
+  const paginasAlteradas = (files || [])
+    .filter(file => file.status !== 'D' && PAGE_FILE_RE.test(file.path || '') && !isTestFile(file.path));
+  if (paginasAlteradas.length && !conclusivos.length) {
+    findings.push(finding('medium', 'missing_page_check',
+      `${paginasAlteradas.length} página HTML alterada sem validação no navegador (ex.: ${paginasAlteradas.slice(0, 3).map(f => f.path).join(', ')}). Rode validar_pagina: import quebrado e tela em branco não aparecem no diff.`));
+  }
+
+  return findings;
+}
+
 // O pente fino. `changes` é o ChangeSet real (agent/changeSet.js), `diffText` o
 // `git diff HEAD` correspondente, `plan` o plano estruturado (update_plan) e
-// `validations` o que foi de fato executado (validateOutputs / testes).
-export function reviewFindings({ changes = null, diffText = '', plan = null } = {}) {
+// `pageChecks` os vereditos da `validar_pagina` desta execução (Fase 38).
+export function reviewFindings({ changes = null, diffText = '', plan = null, pageChecks = [] } = {}) {
   const findings = [];
   const files = (changes?.repos || []).flatMap(repo => repo.files || []);
   if (!files.length) return findings;
@@ -158,6 +216,9 @@ export function reviewFindings({ changes = null, diffText = '', plan = null } = 
       findings.push(finding('medium', 'scope', `${foraDoPlano.length} arquivos alterados não são mencionados por nenhum passo do plano (ex.: ${foraDoPlano.slice(0, 3).map(f => f.path).join(', ')}). Confirme se estão no escopo da missão.`));
     }
   }
+
+  // Evidência do NAVEGADOR (Fase 38), ao lado da evidência do diff.
+  findings.push(...pageCheckFindings(pageChecks, files));
 
   return findings.sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]);
 }

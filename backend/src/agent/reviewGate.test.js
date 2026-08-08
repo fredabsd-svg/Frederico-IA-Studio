@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { addedLinesByFile, isTestFile, reviewFindings, reviewNote, summarizeReview } from './reviewGate.js';
+import { addedLinesByFile, isTestFile, pageCheckFindings, reviewFindings, reviewNote, summarizeReview } from './reviewGate.js';
 
 const changesWith = (...paths) => ({
   repos: [{ name: 'repo', branch: 'x', files: paths.map(p => (typeof p === 'string' ? { path: p, status: 'M' } : p)), totals: {} }]
@@ -134,4 +134,82 @@ test('a nota ao modelo lista os achados e proíbe pedir publicação sem tratá-
 test('sem alterações não há revisão a fazer', () => {
   assert.deepEqual(reviewFindings({ changes: { repos: [] }, diffText: 'ruído' }), []);
   assert.deepEqual(reviewFindings({}), []);
+});
+
+// ── validação por navegador alimentando o gate (Fase 38 → Fase 28) ──────────
+
+const aprovada = { disponivel: true, pagina: 'dist/index.html', ok: true, problemas: [], avisos: [] };
+const reprovada = {
+  disponivel: true,
+  pagina: 'dist/index.html',
+  ok: false,
+  problemas: ['A página abriu EM BRANCO: nenhum texto visível e nenhum elemento visual.', 'Erro no console: Failed to resolve module'],
+  avisos: []
+};
+
+test('página reprovada no navegador vira achado HIGH, com os problemas medidos', () => {
+  const achados = pageCheckFindings([reprovada], [{ path: 'dist/index.html', status: 'M' }]);
+  const alvo = achados.find(a => a.kind === 'page_check');
+  assert.ok(alvo);
+  assert.equal(alvo.severity, 'high');
+  assert.equal(alvo.file, 'dist/index.html');
+  assert.match(alvo.message, /2 problemas medidos/);
+  assert.match(alvo.message, /EM BRANCO/);
+});
+
+test('página aprovada não gera achado nenhum — nem o de "faltou validar"', () => {
+  assert.deepEqual(pageCheckFindings([aprovada], [{ path: 'dist/index.html', status: 'M' }]), []);
+});
+
+// O irmão do missing_test: ausência de evidência, não evidência de defeito.
+test('HTML alterado sem nenhuma validação vira achado MEDIUM', () => {
+  const achados = pageCheckFindings([], [{ path: 'site/index.html', status: 'M' }, { path: 'src/app.js', status: 'M' }]);
+  const alvo = achados.find(a => a.kind === 'missing_page_check');
+  assert.ok(alvo);
+  assert.equal(alvo.severity, 'medium');
+  assert.match(alvo.message, /site\/index\.html/);
+});
+
+test('só JS alterado não cobra validação de página', () => {
+  assert.deepEqual(pageCheckFindings([], [{ path: 'src/app.js', status: 'M' }]), []);
+});
+
+test('HTML APAGADO ou de teste não cobra validação — não há o que abrir', () => {
+  assert.deepEqual(pageCheckFindings([], [{ path: 'site/velha.html', status: 'D' }]), []);
+  assert.deepEqual(pageCheckFindings([], [{ path: 'tests/fixture.html', status: 'M' }]), []);
+});
+
+// Tentativa não é prova: um caminho errado deixa o "faltou validar" de pé.
+test('checagem que só deu erro não conta como validação', () => {
+  const achados = pageCheckFindings(
+    [{ disponivel: true, erro: 'A página não existe no workspace: dist/index.html' }],
+    [{ path: 'dist/index.html', status: 'M' }]
+  );
+  assert.ok(achados.some(a => a.kind === 'missing_page_check'));
+});
+
+test('validação indisponível vira achado LOW que proíbe dizer "validado"', () => {
+  const achados = pageCheckFindings(
+    [{ disponivel: false, observacao: 'Chromium ausente neste ambiente.' }],
+    [{ path: 'dist/index.html', status: 'M' }]
+  );
+  const alvo = achados.find(a => a.kind === 'page_check_unavailable');
+  assert.equal(alvo.severity, 'low');
+  assert.match(alvo.message, /Não apresente a página como validada/);
+  // E, como nada foi validado, o "faltou validar" também continua de pé.
+  assert.ok(achados.some(a => a.kind === 'missing_page_check'));
+});
+
+test('o gate junta as duas evidências e ordena pela gravidade', () => {
+  const achados = reviewFindings({
+    changes: changesWith('dist/index.html', 'src/app.js', 'src/app.test.js'),
+    diffText: '',
+    pageChecks: [reprovada]
+  });
+  assert.equal(achados[0].severity, 'high', 'o mais grave vem primeiro');
+  assert.ok(achados.some(a => a.kind === 'page_check'));
+  const resumo = summarizeReview(achados);
+  assert.equal(resumo.clean, false, 'página reprovada não sai como entrega limpa');
+  // A nota ao modelo precisa carregar o achado do navegador, senão ele não o trata.
+  assert.match(reviewNote(resumo), /validação por navegador/);
 });

@@ -713,6 +713,8 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
   const mustInspectUploads = Boolean(uploadNoteForRun && !docContext?.note && (forceExecution || modelPlan.requirements.reasons.includes('a leitura dos arquivos anexados')));
   let forceNativeToolCall = mustInspectUploads;
   let executedToolCalls = 0;
+  // Vereditos da `validar_pagina` desta execução — insumo do review gate.
+  const pageChecks = [];
   let truncationContinuationAttempts = 0;
   let streamRecoveryAttempts = 0;
   let providerFailure = false;
@@ -1463,6 +1465,11 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
       // `content` é cortado em 2000 chars e o caminho poderia ficar de fora.
       let thumb = '';
       if (name === 'web_fetch') { try { thumb = JSON.parse(result).thumb || ''; } catch {} }
+      // Fase 38 → Fase 28: o veredito da validação por navegador é guardado
+      // para o review gate. Sem isto, uma página que reprovou no navegador
+      // (tela em branco, erro de console) não chegava ao painel de confiança —
+      // o diff não tem como saber o que a página FEZ ao renderizar.
+      if (name === 'validar_pagina') { try { pageChecks.push(JSON.parse(result)); } catch { /* resultado ilegível não vira veredito */ } }
       onEvent({ type: 'tool_result', id: call.id, name, content: result.slice(0, 2000), ...(thumb ? { thumb } : {}) });
       runState.to('processing_result', name, { step, tool: name });
       // O `result` CRU segue para a interface e para a classificação de falha —
@@ -1644,7 +1651,7 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
       const changes = await collectConversationChanges(userId, conversationId);
       if (changes.repos.some(repo => repo.files.length)) {
         const diffText = await collectConversationDiff(userId, conversationId);
-        review = summarizeReview(reviewFindings({ changes, diffText, plan: currentPlan }));
+        review = summarizeReview(reviewFindings({ changes, diffText, plan: currentPlan, pageChecks }));
         onEvent({ type: 'verification', review });
         // Achados que exigem decisão humana entram no TEXTO da resposta: o
         // usuário não pode depender de abrir um painel para saber que há um
