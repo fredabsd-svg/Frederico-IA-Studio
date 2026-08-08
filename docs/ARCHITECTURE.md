@@ -330,10 +330,11 @@ roda no sandbox, não toca arquivo nem rede — só encerra o turno.
 - Cancelamento individual: `POST /multimodel/cancel` com o slot.
 - **Persistido:** `multi_meta` na mensagem final; checkpoints por etapa via `runAgent`;
   e o **coordenador durável** em `pipeline_runs` (migração 027, F-15 fechado): o
-  `runMultiModel` persiste `current_stage`/`state_json` entre etapas e o
-  `POST /resume` retoma do estágio correto; run órfão de crash é fechado como
-  `error` por mensagem nova (nunca herdado em silêncio) e o sweeper varre os
-  terminais antigos no boot.
+  `POST /chat` reserva o run antes do SSE e da mensagem, e o `runMultiModel`
+  persiste `current_stage`/`state_json` entre etapas. `POST /resume` restaura
+  o contrato original e o mesmo `runId`; mensagem nova diante de run recuperável
+  recebe 409, e `POST /control` consegue encerrá-lo mesmo depois de restart.
+  Toda primitiva operacional é escopada por `user_id`.
 
 ---
 
@@ -542,6 +543,7 @@ ferramenta que vaze como texto (`sanitizeToolProtocolText`), na exibição **e**
 | Idempotência | Resultados de ferramentas já executadas continuam no array → o modelo parte para a próxima etapa, sem repetir. |
 | Cancelamento | `agent/control.js` + `POST /control` | Pausa/parada cooperativa; `AbortSignal` chega ao sandbox e ao provedor. |
 | Estado de execução | `agent/executionState.js` + migração 009 | Etapas visíveis na UI. |
+| Pipeline multimodelo | `agent/pipelineRuns.js` + migração 027 | Reserva fail-closed antes do stream; conflito 409; objetivo/opções/runId duráveis; retomada e stop escopados pelo dono. |
 
 - **Testes:** `agent/checkpoint.test.js`, `agent/executionState.test.js`,
   `agent/runStateMachine.test.js`, `agent/runLog.test.js`, `agent.control.test.js`
@@ -567,6 +569,7 @@ não executam ferramentas.
 | Paralelismo | `createSubagentLimiter` — semáforo com contador e fila FIFO. Lote **só** de delegações corre em paralelo; lote misto (`write_file` + delegação) volta a correr em série, na ordem pedida. |
 | Cancelamento | `control.activeTools` é um `Set`: o Parar aborta todas as ferramentas em voo, não só a última registrada. |
 | Custo | `usage` do filho soma na do pai; esforço limitado a `alto`; tetos `SUBAGENT_MAX_PER_RUN` (4, máx. 10) e `SUBAGENT_MAX_PARALLEL` (2, máx. 4). |
+| Budget próprio | `buildSubagentBudget` cria janela independente do pai (12 etapas por padrão, teto duro 18); o parâmetro aceito pelo loop é `subagentRunBudget`. |
 | O que volta ao pai | Só o JSON de `summarizeSubagentResult`: resultado, arquivos, especialista e modelo REAIS. O texto corrido do filho nunca entra na resposta do pai (`FORWARDED_EVENTS`). |
 
 - **Testes:** `agent/subagents.test.js`, `agent.control.test.js`.
@@ -658,6 +661,10 @@ Decisão registrada em
 
 ## 15. Copiloto (Nino) e Companion
 
+- O cabeçalho do Modo Desenvolvedor expõe os estados oficiais **Ativo**,
+  **Silencioso** e **Desligado**. Eles são projeções das preferências persistidas
+  existentes: silencioso remove animação, voz e proatividade; desligado desmonta
+  o personagem e interrompe polling/monitoramento.
 - `companion/monitor.js` observa o git da conversa por `execInActiveSandbox` — **observa sem
   materializar container** (a versão anterior criava um sandbox a cada ciclo de polling e
   podia derrubar o do modo dev).

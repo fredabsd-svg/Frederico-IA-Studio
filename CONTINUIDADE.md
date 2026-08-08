@@ -20,9 +20,10 @@ socket do Docker — ver `docs/SECURITY.md` §4.3). A cobertura deu um salto nes
 integração: a retomada após interrupção real do processo **passou a ter teste** (F-14,
 contra PostgreSQL de verdade), o tool calling nativo e o watchdog do provedor entraram
 nos testes de navegador (F-13) e o SSE ganhou o caso de reconexão com cursor (F-12). O
-que ainda segura o verde é o **pipeline multimodelo retomável**: o F-15 entregou a
-tabela e as primitivas, mas o `runMultiModel` ainda não as usa, então o reinício continua
-sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md` §6.
+O **pipeline multimodelo retomável (F-15) está fechado**: a reserva ocorre antes
+do SSE, duplicidade falha fechada, objetivo/opções/runId sobrevivem ao restart e
+retomada/stop são escopados pelo usuário. A prontidão continua amarela pelas
+demais lacunas listadas em `docs/TESTING.md`, não por este coordenador.
 
 **Frentes desta sessão e onde cada uma parou** (2026-08-08):
 
@@ -32,13 +33,21 @@ sem retomar a etapa pendente. Critérios e caminho em `docs/AUDITORIA_2026-07.md
 | Frente 26 — telemetria local de confiabilidade (Fase 66) | [#196](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/196) | mesclado |
 | Veredito da `validar_pagina` → review gate (Fase 38 → 28) | [#197](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/197) | mesclado |
 | Série temporal da confiabilidade (Fase 66) | [#198](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/198) | **aberto**, CI verde |
+| Motor durável e UX do Modo Desenvolvedor | a abrir nesta branch | implementação e checks locais concluídos |
 
 CI da `main` conferida **verde** nos dois merges desta sessão que já entraram —
 `58a0209` (Fase 66) e `2d416f4` (Fase 38 → 28). A branch de trabalho foi
 **recomeçada a partir da `main` atualizada** a cada merge, em vez de empilhar
 sobre histórico já mesclado — por isso o #198 traz só a série temporal.
 
-- **Último trabalho:** a **série temporal da confiabilidade** (Fase 66) —
+- **Último trabalho:** motor durável e hierarquia do **Modo Desenvolvedor**.
+  O pipeline agora é admitido pelo banco antes do stream, retoma o contrato
+  original e não aceita segundo run após restart. A interface tem ação primária
+  contextual, modo foco persistente e Nino Ativo/Silencioso/Desligado. Backend
+  ficou sem regressão além das duas falhas basais do Windows; frontend passou
+  169/169, build e budgets. Sem prova visual interativa porque nenhum navegador
+  estava conectado à sessão.
+- **Último trabalho anterior:** a **série temporal da confiabilidade** (Fase 66) —
   **PR [#198](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/198), aberto,
   CI verde**, aguardando revisão do usuário. A foto
   da janela respondia "como está"; faltava "melhorou ou piorou". Sem série, uma
