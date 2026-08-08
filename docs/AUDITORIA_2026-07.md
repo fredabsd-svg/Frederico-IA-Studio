@@ -4,6 +4,14 @@
 **Base:** `d56082f` (main) · **Método:** leitura do código, execução das suítes,
 PostgreSQL real local, boot do backend, requisições HTTP reais.
 
+> **Reconciliação em 2026-08-08 (base `fb2198d`).** O texto da auditoria é do
+> dia em que foi escrita e não muda. A **coluna Status da matriz §2 é viva** —
+> segue o código, como já fazia a linha do F-17. Nesta passagem, sete achados
+> foram reconferidos **contra o código**, não contra o relato: F-05b, F-12,
+> F-13, F-14 e F-15 estão fechados; F-18 e F-19 estão parciais. Cada linha
+> alterada cita o arquivo que a sustenta, para que a próxima leitura possa
+> refazer a conferência em vez de acreditar nesta.
+
 ---
 
 ## 1. Resumo executivo
@@ -60,18 +68,18 @@ auditoria: 452 no backend (2 pulados), 34 no frontend — dos quais o CI executa
 | F-09 | CI rodava 3 dos 7 arquivos de teste do frontend | 🟡 Média | ✅ Corrigido |
 | F-10 | Arquivo apresentado como aceito sem dizer que não foi verificado | 🟠 Alta | ✅ Corrigido |
 | F-11 | Sem quarentena/reprocesso do que passou em modo degradado | 🟡 Média | ⚠️ Aberto |
-| F-12 | Sem teste integrado de SSE / concorrência entre conversas | 🟠 Alta | ⚠️ Aberto |
-| F-13 | Sem provedor HTTP simulado completo | 🟡 Média | ⚠️ Aberto |
-| F-14 | Sem teste de retomada após interrupção real do processo | 🟠 Alta | ⚠️ Aberto |
-| F-15 | Pipeline multimodelo sem coordenador durável | 🟠 Alta | ⚠️ Aberto |
+| F-12 | Sem teste integrado de SSE / concorrência entre conversas | 🟠 Alta | ✅ Fechado — `e2e/tests/multiconversa.spec.js` (troca de conversa no meio do stream, recarga, indicador na barra) e `e2e/tests/reconexao.spec.js` (cursor `fromSeq`+`runId`); primitivas em `liveStream.test.js` |
+| F-13 | Sem provedor HTTP simulado completo | 🟡 Média | ✅ Fechado — `e2e/fixtures/provedorFalso.mjs`: 10 comportamentos por id de modelo (tool_calls, 401, stall do watchdog, `ask_user`), verificável offline por `verificar-provedor-falso.mjs` |
+| F-14 | Sem teste de retomada após interrupção real do processo | 🟠 Alta | ✅ Fechado — `checkpoint.kill9.real.test.js`: processo filho de verdade morre e outro retoma do checkpoint, contra PostgreSQL real |
+| F-15 | Pipeline multimodelo sem coordenador durável | 🟠 Alta | ✅ Fechado — migração `027_pipeline_runs.sql` + `runMultiModel` grava e retoma; **ressalva** na seção abaixo |
 | F-16 | Sem suíte de relevância de memória com casos negativos | 🟡 Média | ⚠️ Aberto |
 | F-17 | Sem bateria adversarial de injeção de prompt | 🟠 Alta | ✅ Fechado — 33 casos em `promptInjection.adversarial.test.js`; 2 falhas reais corrigidas (ver `docs/SECURITY.md` §8) |
-| F-18 | Docling não exercitado com corpus documental real | 🟡 Média | ⚠️ Aberto |
-| F-19 | Fluxo GitHub sem teste com git local | 🟡 Média | ⚠️ Aberto |
+| F-18 | Docling não exercitado com corpus documental real | 🟡 Média | ⚠️ Parcial — `docling.corpus.test.js` cobre o primeiro contato (magic bytes + roteamento por extensão); **o corpus real contra o serviço continua não exercitado** |
+| F-19 | Fluxo GitHub sem teste com git local | 🟡 Média | ⚠️ Parcial — `connectors.github.local.test.js` exercita `clone`/`push`/`checkout` reais contra um bare local; o `github_clone` do conector ainda não passa por ele |
 | F-20 | `App.jsx` com 62 `useState`; sem code splitting (932 KB, 1 chunk) | 🟡 Média | ⚠️ Aberto (catraca no CI) |
 | F-21 | CSS em camadas sobrepostas, sem inventário | 🟢 Baixa | ⚠️ Aberto |
 | F-22 | Desempenho de runtime não medido (carregamento, consultas, RAM) | 🟡 Média | ⚠️ Parcial |
-| F-23 | Validação de artefato sem bateria de arquivos reais | 🟡 Média | ⚠️ Aberto |
+| F-23 | Validação de artefato sem bateria de arquivos reais | 🟡 Média | ⚠️ Aberto — só o filtro puro (`pickValidatableFiles`) tem teste; os validadores `check_xlsx`/`check_docx` são Python embutido em `agent/outputs.js` e **não** são cobertos pelos `sandbox/*_test.py`, que testam os kits de geração |
 | F-24 | `CONTINUIDADE.md` misturava histórico e estado atual | 🟢 Baixa | ✅ Corrigido |
 
 ---
@@ -329,34 +337,56 @@ auditoria: 452 no backend (2 pulados), 34 no frontend — dos quais o CI executa
 
 ### F-05b — Egress do sandbox sem allowlist quando a rede é habilitada
 
-- **Severidade:** Média · **Status:** Aberto
-- Com `networkEnabled`, o container entra na rede padrão do Docker, sem restrição de
-  destino — alcança Postgres e docling-service da rede do compose. Mitigação: rede
-  dedicada sem rota interna, ou proxy de egress. `docs/SECURITY.md` §4.3.
+- **Severidade:** Média · **Status:** ✅ Fechado (conferido em 2026-08-08)
+- **Como era:** com `networkEnabled`, o container entrava na rede padrão do Docker sem
+  restrição de destino — alcançava Postgres e docling-service da rede do compose.
+- **O que existe hoje:** a rede continua opt-in por turno e, quando aberta, o destino
+  passa por `SANDBOX_NETWORK_ALLOWLIST`. `tools.js` compõe a allowlist só quando
+  `networkEnabled` e a entrega ao `guardCommand`, que chama `guardNetworkEgress`
+  (`execGuard.js`). **Lista vazia = fail-closed**: rede habilitada sem allowlist não
+  fala com ninguém, em vez de falar com todos. IPv6 literal é rejeitado pelo mesmo
+  princípio. 38 casos em `execGuard.networkAllowlist.test.js` cobrem o formato das
+  regras, o casamento por domínio/sufixo/IP/CIDR/porta, a extração de hosts de comandos
+  reais (inclusive `git clone`/`push`/`fetch`) e o bloqueio de fato.
+- **Continua valendo:** a allowlist filtra o **comando**, não o pacote. Um processo que
+  abra socket por conta própria dentro do container não passa por ela — para isso a
+  defesa é de rede (rede dedicada sem rota interna, ou proxy de egress).
+  `docs/SECURITY.md` §4.3.
 
 ### F-15 — Pipeline multimodelo sem coordenador durável
 
-- **Severidade:** Alta · **Status:** Aberto
-- **Evidência:** `agent/multiModel.js` mantém o estado das etapas em variáveis locais do
-  `runMultiModel`. O checkpoint persistido é o do `runAgent` de **uma** etapa
-  (`agent/checkpoint.js`, um por conversa).
-- **Impacto:** reiniciar o backend no meio de um pipeline não retoma a próxima etapa
-  pendente — só o run interno da etapa que estava em curso, se houver checkpoint.
-- **Correção proposta:** tabela `pipeline_runs` com `pipeline_run_id`, `current_stage`,
-  `completed_stages`, `pending_stages`, `artifact_versions`, `status`, `checkpoint`,
-  `updated_at`; retomada no boot; a rota `/resume` passa a consultá-la antes do checkpoint
-  do agente. O versionamento por etapa já existe (`snapshotArtifactVersion`) e serve de
-  base.
-- **Por que não foi feito:** é uma feature nova com migração e mudança de fluxo, não uma
-  correção — não cabia junto das correções críticas sem inflar o risco de regressão.
+- **Severidade:** Alta · **Status:** ✅ Fechado (conferido em 2026-08-08)
+- **Como era:** `agent/multiModel.js` mantinha o estado das etapas em variáveis locais do
+  `runMultiModel`. O checkpoint persistido era o do `runAgent` de **uma** etapa
+  (`agent/checkpoint.js`, um por conversa). Reiniciar o backend no meio de um pipeline
+  não retomava a próxima etapa pendente.
+- **O que existe hoje:** a migração `027_pipeline_runs.sql` e as primitivas de
+  `agent/pipelineRuns.js` (`createPipelineRun`, `updatePipelineRun`, `loadPipelineRun`,
+  `completePipelineRun`, `sweepStalePipelineRuns`). O `runMultiModel` **usa** todas:
+  abre o run, grava `currentStage` + `state` **entre as etapas** e fecha com status
+  terminal no `finally`. Na volta, `pipelineResume` faz o laço começar em
+  `resumeFromStage`, pulando as etapas já concluídas e reaproveitando os textos delas.
+  A rota `/resume` (`routes/conversations.js`) carrega o run ativo e o passa adiante.
+  Cobertura em `agent.pipelineRuns.test.js`, contra PostgreSQL real.
+- **Ressalva — não há retomada automática no boot.** A auditoria propunha "retomada no
+  boot"; o que se implementou é **retomada dirigida pelo cliente**, pelo `/resume`. A
+  diferença importa: depois de um `kill -9`, o run fica em `running` e **nada o retoma
+  sozinho** — o sweeper de propósito não varre `running` (apagar uma execução viva seria
+  pior). Se o cliente nunca chamar `/resume`, o run fica órfão até chegar mensagem nova
+  na conversa, quando o `runMultiModel` o fecha como `error` para não sequestrar o turno.
+  É uma escolha defensável — retomar sozinho gastaria tokens numa resposta que talvez
+  ninguém espere mais —, mas **não** é o que a auditoria pediu, e por isso está escrito
+  aqui em vez de subentendido no "fechado".
 
 ### Demais lacunas de teste e frontend
 
-F-11 (quarentena do modo degradado), F-12 (SSE integrado), F-13 (provedor simulado),
-F-14 (retomada após kill real), F-16 (relevância de memória com casos negativos),
-F-17 (bateria adversarial de injeção), F-18 (corpus documental do Docling),
-F-19 (git local), F-20/F-21 (decomposição do `App.jsx` e inventário de CSS),
-F-22 (desempenho de runtime), F-23 (validação de artefato com arquivos reais).
+Escritas em 2026-07-25 como F-11 a F-23. **Cinco saíram desta lista desde então** —
+F-12 (SSE integrado), F-13 (provedor simulado), F-14 (retomada após kill real) e
+F-17 (injeção adversarial) fecharam; F-18 (corpus do Docling) e F-19 (git local)
+ficaram parciais. Continuam abertas: F-11 (quarentena do modo degradado),
+F-16 (relevância de memória com casos negativos), F-20/F-21 (decomposição do
+`App.jsx` e inventário de CSS), F-22 (desempenho de runtime) e F-23 (validação de
+artefato com arquivos reais). A matriz §2 é a fonte — esta lista é resumo.
 
 Todas estão descritas em `docs/TESTING.md` §6 e `docs/ARCHITECTURE.md`. **Nenhuma foi
 reproduzida como defeito** — são ausências de cobertura e de trabalho, não bugs
@@ -416,11 +446,22 @@ teste que reproduz o problema; migrações, boot e portão de autenticação pas
 verificados em CI com PostgreSQL real; a recuperação de desastre deixou de ser uma perda
 silenciosa de segredos.
 
-**Por que ainda não verde:** com o F-04 corrigido, **não há mais risco crítico aberto**.
-O que impede o verde agora é só a segunda condição do enunciado: testes essenciais
-listados no próprio escopo — SSE integrado, retomada após interrupção real do processo,
-pipeline multimodelo retomável, injeção adversarial — **não foram executados**. Não se
-classifica como pronto enquanto isso for verdade.
+**Por que ainda não verde** (revisto em 2026-08-08): com o F-04 corrigido, **não há mais
+risco crítico aberto**. Os quatro testes essenciais que esta seção cobrava — SSE
+integrado, retomada após interrupção real do processo, pipeline multimodelo retomável e
+injeção adversarial — **passaram a existir e a rodar** (F-12, F-14, F-15 e F-17). A
+condição original de bloqueio, portanto, **caiu**.
+
+O que sobra é de outra natureza, e é menor: duas coberturas parciais (F-18, o corpus real
+do Docling; F-19, o `github_clone` contra git local), a validação de artefato com
+arquivos reais (F-23) e as lacunas de média/baixa severidade F-11, F-16 e F-20 a F-22.
+Nenhuma delas é risco de segurança nem defeito reproduzido.
+
+**A cor não foi mudada aqui, de propósito.** Reclassificar prontidão de produção é
+julgamento de quem opera o sistema, não consequência automática de uma tabela de status —
+e quem escreve não é quem responde pelo incidente. O que este documento pode afirmar é o
+fato: **o motivo declarado para o amarelo não vale mais**. A decisão de ir a verde, e sob
+quais das condições abaixo, fica com o responsável pela operação.
 
 **Condições para operar em amarelo:**
 
@@ -438,15 +479,21 @@ classifica como pronto enquanto isso for verdade.
 
 **Para chegar ao verde**, em ordem de prioridade:
 
-| # | Item | Achado |
-| --- | --- | --- |
-| 1 | Teste integrado de SSE: duas conversas, troca rápida, reconexão | F-12 |
-| 2 | Provedor HTTP simulado completo | F-13 |
-| 3 | Retomada após interrupção real do processo | F-14 |
-| 4 | Coordenador durável do pipeline multimodelo | F-15 |
-| 5 | Bateria adversarial de injeção de prompt | F-17 |
-| 6 | Suíte de relevância de memória com casos negativos | F-16 |
-| 7 | Egress controlado quando a rede do sandbox é habilitada | F-05b |
-| 8 | Docker rootless/Podman (camada extra sobre o guarda) | F-04 |
-| 9 | Validação de artefato com arquivos reais | F-23 |
-| 10 | Decomposição do `App.jsx` + code splitting | F-20 |
+| # | Item | Achado | Estado |
+| --- | --- | --- | --- |
+| 1 | Teste integrado de SSE: duas conversas, troca rápida, reconexão | F-12 | ✅ feito |
+| 2 | Provedor HTTP simulado completo | F-13 | ✅ feito |
+| 3 | Retomada após interrupção real do processo | F-14 | ✅ feito |
+| 4 | Coordenador durável do pipeline multimodelo | F-15 | ✅ feito (sem retomada no boot — ver §4) |
+| 5 | Bateria adversarial de injeção de prompt | F-17 | ✅ feito |
+| 6 | Egress controlado quando a rede do sandbox é habilitada | F-05b | ✅ feito |
+| 7 | Validação de artefato com arquivos reais | F-23 | ⬜ pendente — é o próximo da fila |
+| 8 | Corpus documental real do Docling | F-18 | ⬜ parcial |
+| 9 | `github_clone` exercitado contra o bare local | F-19 | ⬜ parcial |
+| 10 | Suíte de relevância de memória com casos negativos | F-16 | ⬜ pendente |
+| 11 | Docker rootless/Podman (camada extra sobre o guarda) | F-04 | ⬜ pendente |
+| 12 | Decomposição do `App.jsx` + code splitting | F-20 | ⬜ pendente |
+
+Os itens feitos ficam na tabela em vez de sumir: uma lista "para chegar ao verde" que só
+mostra o que falta esconde o quanto já andou, e quem chega depois não sabe se o item foi
+resolvido ou esquecido.
