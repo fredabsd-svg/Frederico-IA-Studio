@@ -8,7 +8,7 @@ import { isDoclingEnabled } from '../docling/config.js';
 import { resolvedOptions, writeOverrides, readOverrides, adminEditable } from '../docling/adminConfig.js';
 import { doclingHealth } from '../docling/runner.js';
 import { getProcessingById, listProcessingsForConversation, readArtifacts, kickProcessing, mimeForName, abortProcessing } from '../docling/service.js';
-import { summarizeTables, tableToCsv } from '../docling/tables.js';
+import { summarizeTables, tableToCsv, findTables } from '../docling/tables.js';
 import { purgeProcessing } from '../docling/retention.js';
 import { workspaceFor } from '../sandbox.js';
 import path from 'node:path';
@@ -74,8 +74,11 @@ router.get('/docling/documents/:id/tables/:index/csv', async (req, res) => {
   if (!row) return res.status(404).json({ error: 'Não encontrado' });
   const arts = readArtifacts(req.userId, row.hash, row.configVersion);
   const idx = Number(req.params.index);
-  const tables = (arts.chunks || []).filter(c => c.type === 'table');
-  const table = tables.find((c, i) => (c.tableIndex ?? i + 1) === idx);
+  // MESMA função da listagem, de propósito. Antes cada rota filtrava por conta
+  // própria e as duas podiam discordar sobre qual tabela é a de número N —
+  // e ambas ignoravam tabela embutida em chunk `mixed`, que então aparecia
+  // para o usuário sem poder ser baixada (ou nem aparecia).
+  const table = findTables(arts.chunks || []).find(t => t.index === idx);
   if (!table) return res.status(404).json({ error: 'Tabela não encontrada' });
   const csv = tableToCsv(table.content);
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');

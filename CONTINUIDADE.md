@@ -31,12 +31,14 @@ automática no boot**: quem retoma é o cliente, pelo `/resume`. Junto com o F-1
 reconferidos F-05b, F-12, F-13 e F-14 (fechados) e F-18 e F-19 (parciais).
 
 **A cor segue amarela porque ninguém decidiu mudá-la** — reclassificar prontidão é
-chamada de quem opera, não efeito colateral de uma tabela de status. O que falta é de
-outra natureza: F-23 (validação de artefato com arquivos reais) é o próximo da fila,
-com F-11, F-16, F-18, F-19 e F-20 a F-22 atrás. Matriz e critérios em
-`docs/AUDITORIA_2026-07.md` §2 e §6.
+chamada de quem opera, não efeito colateral de uma tabela de status. O **F-23 fechou**
+nesta sessão (validador extraído para `sandbox/validar_artefato.py`, 38 casos com
+arquivos reais) e o **F-18 avançou** (corpus fiscal atravessando o pipeline, 19 casos —
+segue **parcial**, porque a extração por ML do Docling exige o serviço). O que falta:
+F-19, F-11, F-16 e F-20 a F-22. Matriz e critérios em `docs/AUDITORIA_2026-07.md`
+§2 e §6.
 
-**O caminho de admissão do pipeline foi endurecido** (esta frente): a reserva no
+**O caminho de admissão do pipeline foi endurecido** (PR #200): a reserva no
 PostgreSQL acontece ANTES de abrir o SSE e de gravar a mensagem, colisão vira
 conflito recuperável em vez de execução degradada só em memória, e leitura,
 atualização, conclusão e cancelamento passaram a ser escopados por usuário. A
@@ -50,15 +52,60 @@ ressalva acima continua valendo — quem retoma é o cliente, pelo `/resume`.
 | Frente 26 — telemetria local de confiabilidade (Fase 66) | [#196](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/196) | mesclado |
 | Veredito da `validar_pagina` → review gate (Fase 38 → 28) | [#197](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/197) | mesclado |
 | Série temporal da confiabilidade (Fase 66) + poda deste arquivo | [#198](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/198) | mesclado (`fb2198d`) |
-| Motor durável e UX do Modo Desenvolvedor | [#200](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/200) | mesclado |
+| Reconciliação da matriz da auditoria (F-05b, F-12 a F-15, F-18, F-19) | [#199](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/199) | mesclado (`dbbaabe`) |
+| Motor durável e UX do Modo Desenvolvedor | [#200](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/200) | mesclado (`cecc9c2`) |
+| Teto de tamanho para o CSS (Frente 11) | [#202](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/202) | mesclado (`9309ccd`) |
+| **F-23** (validador de artefato) + **F-18** (corpus fiscal no pipeline) | [#203](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/203) | **aberto** |
 
-**As quatro frentes da sessão estão na `main`.** A CI foi conferida verde em
-`58a0209` (Fase 66) e `2d416f4` (Fase 38 → 28); os merges seguintes entraram
-com a CI da branch verde. A branch de trabalho foi **recomeçada a partir da
-`main` atualizada** a cada merge, em vez de empilhar sobre histórico já
-mesclado — por isso cada PR traz só a frente dele.
+**Tudo, menos o F-23, está na `main`.** A CI foi conferida verde em `58a0209`
+(Fase 66) e `2d416f4` (Fase 38 → 28); os merges seguintes entraram com a CI da
+branch verde. A branch de trabalho é **recomeçada a partir da `main` atualizada**
+a cada merge, em vez de empilhar sobre histórico já mesclado — por isso cada PR
+traz só a frente dele. O F-23 nasceu na branch enquanto o #199 era mesclado, e
+por isso foi **rebaseado** sobre a `main` nova e saiu em PR próprio.
 
-- **Último trabalho:** motor durável e hierarquia do **Modo Desenvolvedor**.
+- **Último trabalho:** o **F-18 avançou** (segue parcial) — mesmo PR
+  [#203](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/203).
+  19 casos levam DRE, certidão PGFN, NF escaneada e razão analítico pelo pipeline
+  real. As asserções foram escritas **depois** de sondar o comportamento — o
+  contrário fixa o defeito achando que testou.
+  **O corpus achou um defeito, corrigido junto:** tabela colada a uma frase cai
+  em chunk `mixed`, e o `summarizeTables` só olhava chunks `table`. DRE com
+  colunas inconsistentes saía como `count: 0, withWarnings: 0` — lê-se "nenhuma
+  tabela com problema" quando o certo era "não procurei". E não era só métrica:
+  a tabela não aparecia na listagem nem podia ser baixada em CSV. O `findTables`
+  varre todos os chunks, e listagem e CSV usam a MESMA função (cada uma
+  filtrava por conta própria, e duas listas derivadas em lugares diferentes
+  acabam discordando).
+  **Parcial, não fechado:** a extração por ML exige o serviço, que não roda aqui
+  nem na CI. **Dado antigo:** o botão "Tabelas" depende do `tableCount` gravado
+  no processamento — documento anterior à correção só mostra a tabela nova
+  depois de reprocessar.
+- **Último trabalho anterior:** o **F-23 fechou** — PR
+  [#203](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/203).
+  O código que decide se um `.xlsx`/`.docx`/`.pdf` entregue "está bom" eram **233
+  linhas de Python dentro de uma template string** do `outputs.js`, onde nenhum
+  teste alcançava. Validador sem teste é pior que validador nenhum: sem ele a
+  entrega diz "não verifiquei"; com ele quebrado, diz "verificado".
+  Virou `sandbox/validar_artefato.py`; o backend o **lê** e anexa uma linha de
+  driver antes de mandar para o `run_python` — quem executa continua sendo o
+  sandbox. A extração foi feita **por script**, porque os 10 escapes de regex do
+  template literal (`\\w` → `\w`) eram onde a transcrição manual erraria.
+  **38 casos com arquivos reais.** Os que importam são os dos gráficos, defeitos
+  que o Excel não denuncia porque o arquivo ABRE e só o gráfico fica em branco:
+  aba inexistente, intervalo invertido (`C2:B2`) e série de valores vazia, cada
+  um injetado reescrevendo o `chart1.xml` dentro do zip. Vai junto a contraprova
+  que evita o falso positivo que inutilizaria a checagem — categoria de TEXTO
+  não pode ser acusada de série vazia, senão todo gráfico normal reprovaria.
+  **A pegadinha:** o `Dockerfile` copia só `backend/`, então ler da raiz
+  quebraria em produção **em silêncio** (o `validateOutputs` engole exceção e
+  devolve `{}`). Daí o `COPY` e a catraca de 9 casos — conferida quebrando de
+  propósito: renomear o módulo reprova 6 dos 9.
+  **Limitação assumida:** o recálculo de fórmulas depende do `soffice` e segue
+  fora do CI. O teste prova o caminho **sem** LibreOffice — a validação se
+  declara parcial em vez de falhar —, que é o da maioria das instalações.
+- **Último trabalho anterior:** motor durável e hierarquia do **Modo Desenvolvedor**
+  (PR [#200](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/200), mesclado).
   O pipeline agora é admitido pelo banco antes do stream, retoma o contrato
   original e não aceita segundo run após restart. A interface tem ação primária
   contextual, modo foco persistente e Nino Ativo/Silencioso/Desligado.

@@ -1,13 +1,11 @@
-// F-23 (parcial): cobre a função pura `pickValidatableFiles`, que decide
-// quais outputs vão para a validação no sandbox — filtro de extensão,
-// case-insensitive e limites.
+// Cobre a função pura `pickValidatableFiles`, que decide quais outputs vão
+// para a validação no sandbox — filtro de extensão, case-insensitive e limites.
 //
-// O QUE ESTE ARQUIVO **NÃO** COBRE, apesar do que dizia aqui antes: os
-// validadores `check_xlsx`/`check_docx`. Eles são Python embutido em
-// `agent/outputs.js` e rodam no sandbox; os `sandbox/*_test.py` testam os
-// kits de GERAÇÃO (docpro/xlspro/pdfpro), que são outros módulos. Ninguém
-// os exercita com arquivo real — é o que mantém o F-23 aberto
-// (`docs/AUDITORIA_2026-07.md` §2).
+// Os validadores em si (`check_xlsx`/`check_docx`/`check_pdf`) NÃO estão aqui:
+// são Python e vivem em `sandbox/validar_artefato.py`, exercitados com
+// .xlsx/.docx/.pdf reais por `sandbox/validar_artefato_test.py` — foi o que
+// fechou o F-23. A costura entre os dois lados tem catraca própria em
+// `agent.outputs.validatorSeam.test.js`.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { pickValidatableFiles } from './agent/outputs.js';

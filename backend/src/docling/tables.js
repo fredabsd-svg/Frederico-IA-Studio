@@ -76,17 +76,63 @@ export function tableToCsv(table) {
   return lines.join('\r\n');
 }
 
+const TABLE_ROW = /^\s*\|.*\|\s*$/;
+
+// Extrai os BLOCOS de tabela de um texto qualquer: sequências contíguas de
+// linhas que começam e terminam com pipe. Um chunk do tipo `table` devolve um
+// bloco só; um chunk `mixed` (prosa + tabela na mesma seção) devolve a tabela
+// que estava escondida ali dentro.
+export function extractTableBlocks(content) {
+  const blocos = [];
+  let atual = [];
+  for (const linha of String(content || '').split('\n')) {
+    if (TABLE_ROW.test(linha)) {
+      atual.push(linha);
+    } else if (atual.length) {
+      blocos.push(atual.join('\n'));
+      atual = [];
+    }
+  }
+  if (atual.length) blocos.push(atual.join('\n'));
+  // Uma linha isolada de pipes não é tabela — é ruído de OCR ou uma régua.
+  return blocos.filter(b => b.split('\n').length >= 2);
+}
+
+// Localiza TODAS as tabelas de um conjunto de chunks, na ordem do documento.
+//
+// Percorre todos os chunks, não só os de `type === 'table'`. O motivo é um
+// defeito real: quando a seção tem uma frase antes da tabela — a forma mais
+// comum num documento contábil ("Valores expressos em reais." e então a DRE) —
+// o chunker classifica o bloco como `mixed`, e a tabela ficava INVISÍVEL. Uma
+// DRE com colunas inconsistentes saía como `count: 0, withWarnings: 0`, que se
+// lê como "nenhuma tabela com problema" e na verdade era "não procurei". Além
+// da métrica mentir, a tabela não aparecia na listagem nem podia ser baixada
+// em CSV.
+export function findTables(chunks) {
+  const achadas = [];
+  for (const c of (Array.isArray(chunks) ? chunks : [])) {
+    for (const bloco of extractTableBlocks(c.content)) {
+      achadas.push({ chunk: c, content: bloco, embedded: c.type !== 'table' });
+    }
+  }
+  // Numeração sequencial na ordem do documento. O identificador ESTÁVEL é o
+  // `source_reference`; o índice existe para a rota de CSV, que é servida
+  // junto da listagem — por isso as duas usam esta mesma função e não podem
+  // divergir, como divergiam quando cada uma filtrava por conta própria.
+  return achadas.map((t, i) => ({ ...t, index: i + 1 }));
+}
+
 // Resumo de todas as tabelas de um conjunto de chunks (para métricas/alertas).
 export function summarizeTables(chunks) {
-  const tables = (Array.isArray(chunks) ? chunks : []).filter(c => c.type === 'table');
-  const details = tables.map((c, idx) => {
-    const parsed = parseMarkdownTable(c.content);
-    const v = validateTable(parsed);
+  const tables = findTables(chunks);
+  const details = tables.map((t) => {
+    const v = validateTable(parseMarkdownTable(t.content));
     return {
-      index: c.tableIndex ?? idx + 1,
-      page: c.page,
-      section: c.section || null,
-      source_reference: c.source_reference,
+      index: t.index,
+      page: t.chunk.page,
+      section: t.chunk.section || null,
+      source_reference: t.chunk.source_reference,
+      embedded: t.embedded,
       rows: v.rowCount, cols: v.colCount,
       ok: v.ok, issues: v.issues,
     };

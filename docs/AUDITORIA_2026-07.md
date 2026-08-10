@@ -74,12 +74,12 @@ auditoria: 452 no backend (2 pulados), 34 no frontend — dos quais o CI executa
 | F-15 | Pipeline multimodelo sem coordenador durável | 🟠 Alta | ✅ Fechado — migração `027_pipeline_runs.sql` + `runMultiModel` grava e retoma; **ressalva** na seção abaixo |
 | F-16 | Sem suíte de relevância de memória com casos negativos | 🟡 Média | ⚠️ Aberto |
 | F-17 | Sem bateria adversarial de injeção de prompt | 🟠 Alta | ✅ Fechado — 33 casos em `promptInjection.adversarial.test.js`; 2 falhas reais corrigidas (ver `docs/SECURITY.md` §8) |
-| F-18 | Docling não exercitado com corpus documental real | 🟡 Média | ⚠️ Parcial — `docling.corpus.test.js` cobre o primeiro contato (magic bytes + roteamento por extensão); **o corpus real contra o serviço continua não exercitado** |
+| F-18 | Docling não exercitado com corpus documental real | 🟡 Média | ⚠️ Parcial — avançou em 2026-08-08: `docling.corpusFiscal.test.js` leva DRE, certidão PGFN, NF escaneada e razão analítico pelo pipeline real (19 casos) e **achou um defeito** (ver seção abaixo); o primeiro contato segue em `docling.corpus.test.js`. **A extração por ML continua não exercitada** — depende do serviço |
 | F-19 | Fluxo GitHub sem teste com git local | 🟡 Média | ⚠️ Parcial — `connectors.github.local.test.js` exercita `clone`/`push`/`checkout` reais contra um bare local; o `github_clone` do conector ainda não passa por ele |
 | F-20 | `App.jsx` com 62 `useState`; sem code splitting (932 KB, 1 chunk) | 🟡 Média | ⚠️ Aberto (catraca no CI) |
 | F-21 | CSS em camadas sobrepostas, sem inventário | 🟢 Baixa | ⚠️ Aberto |
 | F-22 | Desempenho de runtime não medido (carregamento, consultas, RAM) | 🟡 Média | ⚠️ Parcial |
-| F-23 | Validação de artefato sem bateria de arquivos reais | 🟡 Média | ⚠️ Aberto — só o filtro puro (`pickValidatableFiles`) tem teste; os validadores `check_xlsx`/`check_docx` são Python embutido em `agent/outputs.js` e **não** são cobertos pelos `sandbox/*_test.py`, que testam os kits de geração |
+| F-23 | Validação de artefato sem bateria de arquivos reais | 🟡 Média | ✅ Fechado — validador extraído para `sandbox/validar_artefato.py`; 38 casos em `validar_artefato_test.py` com .xlsx/.docx/.pdf reais, mais a catraca da costura em `agent.outputs.validatorSeam.test.js` |
 | F-24 | `CONTINUIDADE.md` misturava histórico e estado atual | 🟢 Baixa | ✅ Corrigido |
 
 ---
@@ -378,15 +378,74 @@ auditoria: 452 no backend (2 pulados), 34 no frontend — dos quais o CI executa
   ninguém espere mais —, mas **não** é o que a auditoria pediu, e por isso está escrito
   aqui em vez de subentendido no "fechado".
 
+### F-23 — Validação de artefato sem bateria de arquivos reais
+
+- **Severidade:** Média · **Status:** ✅ Fechado (2026-08-08)
+- **Como era:** o validador que decide se um `.xlsx`/`.docx`/`.pdf` gerado "está bom"
+  eram 233 linhas de Python **dentro de uma template string** de
+  `agent/outputs.js`. Naquele formato ele era inalcançável por teste: só o filtro que
+  escolhe os arquivos (`pickValidatableFiles`) tinha cobertura. Um validador sem teste é
+  pior que validador nenhum — sem ele a entrega diz "não verifiquei"; com ele quebrado, a
+  entrega diz "verificado", que é o defeito do F-10 por outra porta.
+- **O que existe hoje:** o Python virou `sandbox/validar_artefato.py`, um módulo de
+  verdade. O backend o **lê** e anexa uma linha de driver antes de mandar para o
+  `run_python` — quem executa continua sendo o sandbox, então o contrato de execução não
+  mudou. As constantes que vinham do ambiente no import viraram `Config` por chamada, e o
+  orçamento de recálculo deixou de ser global mutável (uma execução gastava o da
+  seguinte).
+- **Cobertura:** 38 casos em `sandbox/validar_artefato_test.py`, com arquivos **reais**
+  gerados por openpyxl, python-docx e reportlab: célula com cada um dos nove códigos de
+  erro do Excel, teto de varredura declarado, gráfico com aba inexistente / intervalo
+  invertido / série de valores vazia (e a contraprova de que categoria de texto **não** é
+  acusada), `.docx` vazio contra `.docx` só com tabela, arquivo corrompido, extensão
+  desconhecida e o roteamento por extensão.
+- **A costura ganhou catraca.** Depender de um arquivo fora de `backend/` é fácil de
+  quebrar em silêncio, e o `validateOutputs` engole exceção e devolve `{}` — a validação
+  sumiria sem avisar. `agent.outputs.validatorSeam.test.js` cobra o caminho resolvido, a
+  assinatura que o driver chama, o `COPY` no `Dockerfile` e o acordo de extensões entre o
+  filtro em JS e o roteador em Python.
+- **Continua fora:** o **recálculo** de fórmulas depende do `soffice` e não é exercitado
+  no CI — o teste prova o que acontece **sem** LibreOffice (a validação se declara
+  parcial, em vez de falhar), que é o caminho que corre na maioria das instalações.
+
+### F-18 — Docling não exercitado com corpus documental real
+
+- **Severidade:** Média · **Status:** ⚠️ Parcial (avançou em 2026-08-08)
+- **O que passou a existir:** `backend/src/docling.corpusFiscal.test.js` — 19 casos com
+  documentos na FORMA dos que este produto recebe: DRE com célula mesclada e número em
+  pt-BR, certidão da PGFN com cabeçalho em toda página, nota fiscal escaneada com ruído
+  de OCR, razão analítico cuja tabela atravessa a quebra de página. Cada um atravessa a
+  cadeia real (`optimizeMarkdown` → `chunkMarkdown` → tabelas → seleção por relevância).
+- **O que o corpus ACHOU — e foi corrigido junto:** uma tabela colada a uma frase (a
+  forma mais comum num documento contábil: "Valores expressos em reais." e então a DRE)
+  cai num chunk `mixed`, e o `summarizeTables` só olhava chunks `table`. Uma DRE com
+  colunas inconsistentes saía como `count: 0, withWarnings: 0` — que se lê como "nenhuma
+  tabela com problema" quando o correto era "não procurei". Pior que a métrica: a tabela
+  **não aparecia na listagem** da rota nem podia ser baixada em CSV. O `findTables` passou
+  a varrer todos os chunks, e a rota de CSV usa a MESMA função da listagem — antes cada
+  uma filtrava por conta própria e podiam discordar sobre qual é a tabela de número N.
+- **Limitação da correção em dados antigos:** o botão "Tabelas" no painel é liberado pelo
+  `tableCount` **gravado no processamento**. Documento processado ANTES desta correção
+  mantém a contagem antiga; a tabela recém-descoberta só aparece depois de **reprocessar**
+  (botão já existente). Não forçamos invalidação de cache por isso: subir o
+  `configVersion` reprocessaria todo o acervo — caro e desproporcional para um caso que o
+  usuário resolve num clique quando encontra.
+- **Continua aberto:** a **qualidade da extração** do Docling. Rodar o `docling` de
+  verdade exige o serviço e os modelos de ML; não há job de CI para isso e não houve
+  ambiente nesta sessão. O corpus acima é a SAÍDA do serviço, no formato em que ele
+  entrega — prova o que o produto faz com ela, não que ela esteja certa. Continua sem
+  cobertura: PDF escaneado de verdade (OCR real, não simulado), DRE e PGFN reais,
+  células mescladas como o extrator as vê.
+
 ### Demais lacunas de teste e frontend
 
-Escritas em 2026-07-25 como F-11 a F-23. **Cinco saíram desta lista desde então** —
-F-12 (SSE integrado), F-13 (provedor simulado), F-14 (retomada após kill real) e
-F-17 (injeção adversarial) fecharam; F-18 (corpus do Docling) e F-19 (git local)
-ficaram parciais. Continuam abertas: F-11 (quarentena do modo degradado),
-F-16 (relevância de memória com casos negativos), F-20/F-21 (decomposição do
-`App.jsx` e inventário de CSS), F-22 (desempenho de runtime) e F-23 (validação de
-artefato com arquivos reais). A matriz §2 é a fonte — esta lista é resumo.
+Escritas em 2026-07-25 como F-11 a F-23. **Seis saíram desta lista desde então** —
+F-12 (SSE integrado), F-13 (provedor simulado), F-14 (retomada após kill real),
+F-17 (injeção adversarial) e F-23 (validação de artefato) fecharam; F-18 (corpus do
+Docling) e F-19 (git local) ficaram parciais. Continuam abertas: F-11 (quarentena do
+modo degradado), F-16 (relevância de memória com casos negativos), F-20/F-21
+(decomposição do `App.jsx` e inventário de CSS) e F-22 (desempenho de runtime).
+A matriz §2 é a fonte — esta lista é resumo.
 
 Todas estão descritas em `docs/TESTING.md` §6 e `docs/ARCHITECTURE.md`. **Nenhuma foi
 reproduzida como defeito** — são ausências de cobertura e de trabalho, não bugs
@@ -453,9 +512,9 @@ injeção adversarial — **passaram a existir e a rodar** (F-12, F-14, F-15 e F
 condição original de bloqueio, portanto, **caiu**.
 
 O que sobra é de outra natureza, e é menor: duas coberturas parciais (F-18, o corpus real
-do Docling; F-19, o `github_clone` contra git local), a validação de artefato com
-arquivos reais (F-23) e as lacunas de média/baixa severidade F-11, F-16 e F-20 a F-22.
-Nenhuma delas é risco de segurança nem defeito reproduzido.
+do Docling; F-19, o `github_clone` contra git local) e as lacunas de média/baixa
+severidade F-11, F-16 e F-20 a F-22. Nenhuma delas é risco de segurança nem defeito
+reproduzido. O F-23 saiu desta lista em 2026-08-08.
 
 **A cor não foi mudada aqui, de propósito.** Reclassificar prontidão de produção é
 julgamento de quem opera o sistema, não consequência automática de uma tabela de status —
@@ -487,8 +546,8 @@ quais das condições abaixo, fica com o responsável pela operação.
 | 4 | Coordenador durável do pipeline multimodelo | F-15 | ✅ feito (sem retomada no boot — ver §4) |
 | 5 | Bateria adversarial de injeção de prompt | F-17 | ✅ feito |
 | 6 | Egress controlado quando a rede do sandbox é habilitada | F-05b | ✅ feito |
-| 7 | Validação de artefato com arquivos reais | F-23 | ⬜ pendente — é o próximo da fila |
-| 8 | Corpus documental real do Docling | F-18 | ⬜ parcial |
+| 7 | Validação de artefato com arquivos reais | F-23 | ✅ feito |
+| 8 | Corpus documental real do Docling | F-18 | ⬜ parcial — é o próximo da fila |
 | 9 | `github_clone` exercitado contra o bare local | F-19 | ⬜ parcial |
 | 10 | Suíte de relevância de memória com casos negativos | F-16 | ⬜ pendente |
 | 11 | Docker rootless/Podman (camada extra sobre o guarda) | F-04 | ⬜ pendente |

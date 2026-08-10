@@ -42,7 +42,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python -m pip install openpyxl==3.1.5 python-docx reportlab
+      # O pypdf entrou com o validador de artefatos (F-23): o `check_pdf` o usa e
+      # a imagem do sandbox já o traz (sandbox/Dockerfile). Sem ele AQUI, os
+      # testes de PDF do validador quebram no CI enquanto passam na máquina de
+      # quem tem a lib — que foi exatamente o que aconteceu. Instalar é o
+      # conserto certo; fazer o teste se auto-pular deixaria a validação de PDF
+      # sem cobertura em silêncio, que é o defeito que o F-23 fechou.
+      - run: python -m pip install openpyxl==3.1.5 python-docx reportlab pypdf
       - run: python -m unittest discover -s sandbox -p '*_test.py' -v
 
   docker-guard:
@@ -310,7 +316,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python -m pip install openpyxl==3.1.5
+      # A MESMA lista do job de artefatos, de propósito. Este job CONTA os testes
+      # e publica o número que a documentação cita; com menos bibliotecas ele
+      # contaria menos, porque os testes de Word, PDF e do validador se auto-pulam
+      # sem elas. Um número publicado como "todos os testes" que na verdade omite
+      # dezenas é pior que não publicar nada.
+      - run: python -m pip install openpyxl==3.1.5 python-docx reportlab pypdf
       - run: cd backend && npm ci --ignore-scripts
       - run: cd frontend && npm ci --ignore-scripts
       # A contagem vai para o resumo da execução: a documentação cita ESTE

@@ -30,6 +30,13 @@ ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 COPY backend/package*.json ./backend/
 RUN cd backend && npm install --omit=dev
 COPY backend ./backend
+# O validador de artefatos é Python que o BACKEND lê e manda para o sandbox
+# executar (src/agent/outputs.js). Ele mora em sandbox/ junto com o resto do
+# Python do projeto, mas precisa existir DENTRO desta imagem — sem esta linha, a
+# validação dos .xlsx/.docx/.pdf gerados para de rodar. O caminho relativo
+# (/app/backend/src/agent → /app/sandbox) é o mesmo do repositório, e
+# `outputs.validatorSeam.test.js` cobra que ele continue resolvendo.
+COPY sandbox/validar_artefato.py ./sandbox/
 WORKDIR /app/backend
 EXPOSE 3001
 CMD ["npm", "start"]
