@@ -41,9 +41,11 @@ const RECEPTOR = {
   fmt: '_Fmt'           // formatação pt-BR de kits.py
 };
 
+// A seção de kits saiu do perfil do assistente de documentos e virou parte da
+// BASE (v4.2): é ela que este arquivo trava contra o código.
 async function prompt() {
-  const { DOCPRO_PROMPT } = await import('./seed.js');
-  return DOCPRO_PROMPT;
+  const { DOCUMENTOS_PROFISSIONAIS } = await import('./agent/systemPromptV4.js');
+  return DOCUMENTOS_PROFISSIONAIS;
 }
 
 test('todo método citado no prompt existe de fato nos kits', async () => {
@@ -141,4 +143,14 @@ test('o prompt cabe no orçamento de contexto', async () => {
   // sistema e cresce a cada bloco novo.
   assert.ok(texto.length < 14000,
     `a seção de documentos está com ${texto.length} caracteres`);
+});
+
+// A seção só compensa para quem pode EXECUTAR: são ~11 mil caracteres de API de
+// kit, e um assistente sem run_python não gera arquivo nenhum. O reverso também
+// importa — antes ela só existia no assistente "Documentos profissionais", então
+// um assistente personalizado com execução diagramava .docx na mão.
+test('a seção de documentos entra com run_python e só com ele', async () => {
+  const { promptFor } = await import('./agent/prompts.js');
+  assert.match(promptFor(null), /DOCUMENTOS PROFISSIONAIS/);
+  assert.doesNotMatch(promptFor({ tools: ['consultar_cnpj'] }), /DOCUMENTOS PROFISSIONAIS/);
 });

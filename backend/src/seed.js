@@ -12,12 +12,17 @@ import { fileURLToPath } from 'url';
 import { nanoid } from 'nanoid';
 import { db, now } from './db.js';
 import { AGENTS } from './agent.js';
+import { PERSONA_DOCUMENTOS } from './agent/systemPromptV4.js';
 import { ASSISTANT_TOOL_NAMES } from './agent/assistantPolicy.js';
 import { resolveDefaultModelRef } from './defaults.js';
 import { resolveBareModelToRef } from './userProvider.js';
 
 const promptsDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'prompts', 'docpro');
-export const DOCPRO_PROMPT = fs.readFileSync(path.join(promptsDir, 'atual.txt'), 'utf8');
+// Só a PERSONA vira o perfil do assistente. A API dos kits, que vivia aqui, virou
+// a seção DOCUMENTOS PROFISSIONAIS da BASE (`systemPromptV4.js`) e agora chega a
+// TODO assistente com run_python — antes, um assistente personalizado com
+// execução gerava .docx sem saber que o kit existia, e diagramava na mão.
+export const DOCPRO_PROMPT = PERSONA_DOCUMENTOS;
 // Versões antigas do prompt padrão (para a migração em seedDocProAssistant).
 const OLD_DOCPRO_PROMPTS = fs.readdirSync(promptsDir)
   .filter((f) => f.endsWith('.txt') && f !== 'atual.txt')

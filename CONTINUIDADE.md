@@ -64,26 +64,7 @@ a cada merge, em vez de empilhar sobre histórico já mesclado — por isso cada
 traz só a frente dele. O F-23 nasceu na branch enquanto o #199 era mesclado, e
 por isso foi **rebaseado** sobre a `main` nova e saiu em PR próprio.
 
-- **Último trabalho: o modo `--live` da sonda de tool calling nunca funcionou.**
-  A rota `POST /admin/tool-probe` e o `scripts/run-tool-probe.mjs` importavam
-  `src/provider.js` e chamavam `generateOpenAICompatible` — o módulo mora em
-  `src/agent/provider.js` e essa função não existe em lugar nenhum. Na rota,
-  `live: true` devolvia 503 sempre; no CLI, o `catch` caía em dry-run e imprimia
-  veredito assim mesmo — e dry-run responde `no_tool` em TODOS os cenários. A
-  sonda dizia "este modelo não faz tool calling" sem ter chamado modelo nenhum,
-  e o veredito dela é entrada de decisão de produto.
-  Agora há uma fonte só (`src/tools/probe/provider.js`) para os dois pontos de
-  entrada: a rota usa o provedor do próprio administrador (`getUserProvider`,
-  o mesmo do chat) e o CLI usa o ambiente. Sem chave ou modelo, o `--live`
-  **para** com código 2 em vez de rodar seco, e o agregado passou a carregar
-  `dryRun` — sem essa marca, um relatório de dry-run guardado se lê meses depois
-  como medição real. O exemplo do `docs/TOOL_CALLING_PROBE.md` está marcado como
-  ilustrativo: **não existe medição real registrada** ainda, porque o caminho
-  nunca rodou.
-  **Como o defeito escapou:** o import era dinâmico e dentro de `try/catch`, e
-  nenhum teste tocava o caminho live. Ele agora é estático, então o teste do
-  router quebra se o caminho voltar a mentir.
-- **Último trabalho anterior:** o **F-18 avançou** (segue parcial) — mesmo PR
+- **Último trabalho:** o **F-18 avançou** (segue parcial) — mesmo PR
   [#203](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/203).
   19 casos levam DRE, certidão PGFN, NF escaneada e razão analítico pelo pipeline
   real. As asserções foram escritas **depois** de sondar o comportamento — o
@@ -349,7 +330,51 @@ por isso foi **rebaseado** sobre a `main` nova e saiu em PR próprio.
   Falha do gate nunca derruba a entrega. O resultado viaja no evento
   `verification`, no `execution_meta` e no event log durável, então sobrevive ao
   reload como o plano.
-- **Kits de documento v2 (última frente).** A revisão de design de ago/2026
+- **Sonda de tool calling: o modo `--live` nunca chamou provedor (última frente).**
+  A rota `POST /admin/tool-probe` e o `scripts/run-tool-probe.mjs` importavam
+  `src/provider.js` e chamavam `generateOpenAICompatible` — o módulo mora em
+  `src/agent/provider.js` e essa função não existe em lugar nenhum. Na rota,
+  `live: true` devolvia 503 sempre; no CLI, o `catch` caía em dry-run e imprimia
+  veredito assim mesmo — e dry-run responde `no_tool` em TODOS os cenários. A
+  sonda dizia "este modelo não faz tool calling" sem ter chamado modelo nenhum,
+  e o veredito dela é entrada de decisão de produto.
+  Agora há uma fonte só (`src/tools/probe/provider.js`) para os dois pontos de
+  entrada: a rota usa o provedor do próprio administrador (`getUserProvider`,
+  o mesmo do chat) e o CLI usa o ambiente. Sem chave ou modelo, o `--live`
+  **para** com código 2 em vez de rodar seco, e o agregado passou a carregar
+  `dryRun` — sem essa marca, um relatório de dry-run guardado se lê meses depois
+  como medição real. O exemplo do `docs/TOOL_CALLING_PROBE.md` está marcado como
+  ilustrativo: **não existe medição real registrada** ainda, porque o caminho
+  nunca rodou.
+  **Como o defeito escapou:** o import era dinâmico e dentro de `try/catch`, e
+  nenhum teste tocava o caminho live. Ele agora é estático, então o teste do
+  router quebra se o caminho voltar a mentir. PR
+  [#206](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/206).
+- **Prompt v4.2 unificado (frente anterior).** O `messages[0]` deixou de ser uma
+  colagem de cinco constantes escritas em épocas diferentes e virou UM texto
+  (`backend/src/agent/systemPromptV4.js`), com uma seção por assunto e a
+  hierarquia de conflito declarada no fim. A seção de kits saiu do perfil do
+  assistente de documentos e virou da BASE — entra só quando `run_python` está na
+  chamada, então TODO assistente com execução passa a conhecer a API dos kits (e
+  quem não executa economiza ~10,8 mil caracteres por turno). O bloco final leva a
+  data de hoje, o modelo e o estado da rede; a hora fica fora de propósito, porque
+  invalidaria o cache de prompt a cada turno. Ver `docs/ARCHITECTURE.md` §12.1.
+  As duas versões anteriores do prompt de documentos foram arquivadas como
+  `vN.txt` (o arquivamento tinha sido esquecido duas vezes), então instalações
+  já semeadas migram sozinhas em vez de carregar a seção duas vezes.
+  **Risco aberto: falta RODAR a validação de comportamento.** Texto não tem
+  teste unitário que prove que o modelo responde melhor. A bateria agora existe
+  — `cd backend && npm run validar:prompt -- --live --md /tmp/prompt.md`, sete
+  casos que montam o `messages[0]`/`messages[1]` reais e medem a decisão
+  observável (chamou a ferramenta? parou na pergunta? usou a data de hoje?
+  acompanhou o idioma?) —, mas ela precisa de `VALIDACAO_API_KEY` e
+  `VALIDACAO_MODELO`, que não existem neste contêiner. **Rode em dois modelos,
+  um forte e um gratuito, antes de mesclar**; o veredito é triagem, então leia o
+  `--md` (ele traz a resposta inteira de cada caso). Sem `--live` a bateria roda
+  seca e não julga nada. O A/B contra a v4.1 continua fora do automático: as
+  constantes antigas foram removidas, e comparar exige rodar a bateria também no
+  commit anterior.
+- **Kits de documento v2 (duas frentes atrás).** A revisão de design de ago/2026
   gerou quatro documentos com os kits v1, olhou página a página e reprovou:
   sumário do Word apontando a página errada, tabela quebrada com o TOTAL órfão,
   assinatura sozinha numa página, KPI partido em duas linhas, planilha vazando
@@ -361,10 +386,11 @@ por isso foi **rebaseado** sobre a `main` nova e saiu em PR próprio.
   pronto** e levanta `KitError` no achado grave. Detalhes em
   `docs/ARCHITECTURE.md` §19; a API que o assistente ensina está travada contra
   o código por `backend/src/promptKits.test.js`.
-- **Última validação:** 2026-09-03 (kits v2) — **backend `npm run check`: 1402
-  testes, 0 falhas, 147 pulados** (os pulados exigem PostgreSQL; esperado fora
-  do Docker), **frontend: 170/170** (CSS 206/215 KB, catraca 3 ≤ 3) e
-  **sandbox: 160 testes, 0 falhas** com LibreOffice, matplotlib e as fontes
+- **Última validação:** 2026-09-03, depois de mesclar a sonda de tool calling
+  na `main` já com o prompt v4.2 — **backend `npm run check`: 1438 testes, 0
+  falhas, 147 pulados** (os pulados exigem PostgreSQL; esperado fora do
+  Docker), **frontend: 170/170** (CSS 206/215 KB, catraca 3 ≤ 3) e **sandbox:
+  160 testes, 0 falhas** com LibreOffice, matplotlib e as fontes
   Carlito/Caladea instalados. Os quatro documentos da revisão foram regerados
   (`python sandbox/exemplos/gerar_exemplos.py`) e **conferidos em tela**. O
   rastro de validações anteriores está em `docs/CHANGELOG_HISTORY.md`.
