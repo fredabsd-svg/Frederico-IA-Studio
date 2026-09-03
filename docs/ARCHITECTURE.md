@@ -511,13 +511,13 @@ contextBuilder.js  → monta o contexto final + metadados para a UI (MemoryTrace
 
 ---
 
-## 12. Hierarquia de prompts (`agent/prompts.js`, `promptRegistry.js`, `promptPolicy.js`)
+## 12. Hierarquia de prompts (`agent/systemPromptV4.js`, `prompts.js`, `promptRegistry.js`, `promptPolicy.js`)
 
 Ordem real de montagem, do mais forte ao mais fraco:
 
-1. núcleo global imutável (`global-core@3.1.0`);
-2. contrato de ferramentas (`tool-contract@3.1.0`) — só as ferramentas **autorizadas**;
-3. perfil do assistente (`protectedProfilePrompt` — prompt do usuário **não** amplia permissão);
+1. núcleo global imutável (`global-core@4.2.0`);
+2. contrato de ferramentas (`tool-contract@3.3.0`) — só as ferramentas **autorizadas**;
+3. perfil do assistente (`assistantProfileBlock` — prompt do usuário **não** amplia permissão);
 4. modo de trabalho (desenvolvedor / multimodelo / artefato);
 5. memória → `untrustedContext()`;
 6. repositório e arquivos → `untrustedContext()`;
@@ -525,11 +525,84 @@ Ordem real de montagem, do mais forte ao mais fraco:
 8. pedido atual do usuário;
 9. resultados de ferramentas (role `tool`).
 
+### 12.1 `messages[0]` — o prompt v4.2
+
+Até a v4.1 o preâmbulo era uma **colagem** de cinco constantes escritas em
+épocas diferentes (`IMMUTABLE_CORE_PROMPT`, o perfil, `QUALITY_BAR`,
+`EXECUTION_UX_RULES`, `SANDBOX_RULES`, `COMPLETION_PROTOCOL`), mais o bloco de
+kits que só o assistente "Documentos profissionais" recebia. A colagem repetia a
+mesma regra em vozes diferentes — "não diga que concluiu quando o status é
+timeout" vivia em três redações — e a ordem entre os pedaços era acidental.
+
+A v4.2 é **um texto**, montado por `promptFor(assistant, opts)` nesta ordem:
+
+| # | Bloco | Onde mora | Por que aí |
+| --- | --- | --- | --- |
+| 1 | NÚCLEO DE CONFIANÇA | `promptPolicy.js` | é o que nenhum perfil pode substituir |
+| 2 | `<assistant-profile>` + estilo | `promptPolicy.js` + `personalitySuffix` | envelope ESCAPA o delimitador: um perfil não consegue fechá-lo e fingir que virou sistema |
+| 3 | PADRÃO DE RESPOSTA | `systemPromptV4.js` | absorveu a `QUALITY_BAR` |
+| 4 | CICLO DE EXECUÇÃO | `systemPromptV4.js` | absorveu `EXECUTION_UX_RULES` + `COMPLETION_PROTOCOL` |
+| 5 | DOCUMENTOS PROFISSIONAIS | `prompts/docpro/atual.txt` | **só com `run_python` na chamada** (ver abaixo) |
+| 6 | SANDBOX — fatos do ambiente | `systemPromptV4.js` | absorveu `SANDBOX_RULES` |
+| 7 | EXEMPLOS DE RESPOSTA FINAL | `systemPromptV4.js` | forma da resposta, não conteúdo |
+| 8 | EM CASO DE CONFLITO | `systemPromptV4.js` | **penúltimo**: só se lê como hierarquia depois de tudo que ordena |
+| 9 | CONTEXTO DESTA CHAMADA | `systemPromptV4.js` | **último**: data de hoje, modelo e estado da rede |
+
+O que continua sendo montado por código e anexado **depois** dele não mudou:
+`toolAvailabilityNote`, `uploadsNote`, `pcFoldersNote`, a nota do Modo
+Desenvolvedor e a de pesquisa web.
+
+**A seção de documentos é condicional.** São ~10,8 mil caracteres de API de kit
+e ela entra só quando `run_python` está entre as ferramentas do assistente: sem
+execução não há arquivo para gerar. O prompt sai com ~20,4 mil caracteres para
+quem executa e ~9,6 mil para quem não executa — antes eram ~21,8 mil para o
+assistente de documentos e ~9,8 mil para todos os outros, que **não recebiam a
+API dos kits nenhuma**. Um assistente personalizado com execução gerava `.docx`
+sem saber que o kit existia, e diagramava na mão.
+
+**A data entra no prompt, a hora não.** `callContextVars()` preenche
+`{{data_extenso}}`, `{{data_ddmmaaaa}}`, `{{fuso}}`, `{{ano}}`, `{{modelo}}` e
+`{{rede}}`. Sem a data escrita ali o modelo usa a do próprio treinamento e assina
+um relatório com o ano errado. A **hora** fica de fora de propósito:
+`messages[0]` é o prefixo estável da conversa e o primeiro breakpoint do cache de
+prompt — uma hora ali invalidaria o cache a cada turno. Quem precisa do relógio
+roda `date` no bash. Variável sem valor vira string vazia, nunca `{{...}}` cru:
+um placeholder no texto é lido pelo modelo como conteúdo e reaparece na resposta.
+
+**Quem NÃO recebe o v4.2:** os especialistas do Modo Equipe e o coordenador do
+multimodelo. Eles não executam ferramentas — opinam sobre a mensagem e devolvem
+texto —, então continuam com `protectedProfilePrompt()`: núcleo + perfil +
+`QUALITY_BAR` + `COMPLETION_PROTOCOL`, abaixo de 6 mil caracteres. Arrastar o
+ciclo de execução e o sandbox para cada parecer seria pagar 20 mil caracteres
+por especialista, por rodada, sem uso.
+
 `promptPolicy.js` decide o que entra por turno; `toolProtocol.js` limpa protocolo de
 ferramenta que vaze como texto (`sanitizeToolProtocolText`), na exibição **e** na exportação.
-- **Testes:** `agent/promptPolicy.test.js`, `agent/promptRegistry.test.js`, `agent/prompts.dev.test.js`, `toolProtocol.test.js`, `agent/assistantPolicy.test.js`.
+- **Testes:** `agent/prompts.context.test.js` (data, fuso, placeholder, ordem dos
+  blocos e as catracas de tamanho), `agent/promptPolicy.test.js` (ordem das
+  seções, fronteira do perfil, envelope enxuto dos especialistas),
+  `promptKits.test.js` (a seção de documentos travada contra a API real dos kits),
+  `agent/promptRegistry.test.js`, `agent/prompts.dev.test.js`, `toolProtocol.test.js`,
+  `agent/assistantPolicy.test.js`.
 - **Lacuna:** não há bateria adversarial de injeção (README malicioso, delimitador fechado
   à força, resposta maliciosa de outro modelo). Ver F-17.
+- **Validação de comportamento:** texto não tem teste unitário que prove que o
+  modelo responde melhor, então o nível de cima é uma bateria de mensagens reais
+  — `backend/scripts/validar-prompt.mjs` (`npm run validar:prompt`), com os
+  casos em `agent/promptValidation/`. Ela monta o `messages[0]`/`messages[1]`
+  **reais** (`promptFor` + `toolAvailabilityNote`, com as ferramentas do
+  assistente do caso) e mede a decisão observável de cada promessa desta seção:
+  pedido de arquivo vira chamada de `run_python` e não código colado no chat;
+  pergunta de decisão encerra o turno; a data usada é a do bloco CONTEXTO DESTA
+  CHAMADA e não a do treinamento; a regra 7 acompanha o idioma de quem escreveu;
+  sem `run_python`, o modelo culpa a configuração em vez de dizer que gerou o
+  arquivo. Sem `--live` não toca a rede — por isso fica fora do CI. O veredito é
+  **triagem**, não aprovação: o `--md` traz a resposta inteira para leitura
+  humana. O harness é testado em `promptValidation.test.js`.
+- **Lacuna:** a bateria mede o v4.2 contra o comportamento esperado, mas **não**
+  faz o A/B automático com o v4.1 — as constantes antigas foram removidas, e o
+  comparativo exige rodar a bateria também no commit anterior. Ver a nota em
+  `CONTINUIDADE.md`.
 
 ---
 
@@ -832,10 +905,11 @@ uma conversa longa, consultas lentas do Postgres, RAM do backend sob carga. Ver 
 Os kits são copiados para dentro da imagem do sandbox (`sandbox/Dockerfile`) e
 importados pelo modelo em `run_python`: `from docpro import Relatorio, Sobrio`
 (Word), `from xlspro import Planilha` (Excel), `from pdfpro import RelatorioPDF`
-(PDF) e `from kits import fmt` (formatação pt-BR). O prompt do assistente
-"Documentos profissionais" (`backend/prompts/docpro/atual.txt`, versionado em
-`agent/promptRegistry.js`) **proíbe** diagramar por fora deles, e
-`backend/src/promptKits.test.js` trava esse prompt contra a API real — todo
+(PDF) e `from kits import fmt` (formatação pt-BR). A seção DOCUMENTOS
+PROFISSIONAIS do prompt base (`backend/prompts/docpro/atual.txt`, versionada em
+`agent/promptRegistry.js` e carregada por `agent/systemPromptV4.js` quando
+`run_python` está na chamada — ver §12.1) **proíbe** diagramar por fora deles, e
+`backend/src/promptKits.test.js` trava essa seção contra a API real — todo
 `objeto.metodo(` citado tem de existir em `sandbox/*.py`.
 
 ### 19.1 `kits.py` — a base comum

@@ -51,6 +51,13 @@ python -m unittest discover -s sandbox -p '*_test.py' -v
 # um. Sai com código 1 se algum reprovar.
 python sandbox/exemplos/gerar_exemplos.py /tmp/exemplos
 
+# validação de COMPORTAMENTO do prompt (o que teste unitário não prova).
+# Sem --live não toca a rede e não julga nada: é só o pipeline.
+cd backend
+npm run validar:prompt                              # seco
+VALIDACAO_API_KEY=... VALIDACAO_MODELO=<id> \
+  npm run validar:prompt -- --live --md /tmp/prompt.md
+
 # ponta a ponta (navegador real) — exige Postgres; ver e2e/README.md
 cd e2e
 npm install
@@ -121,6 +128,23 @@ teste — vários módulos leem essas variáveis no momento da importação.
 **Nomes de teste descrevem o comportamento, não a função.** Preferimos
 *"o mesmo id de conversa em usuários diferentes NÃO compartilha diretório"* a
 *"testa workspaceFor"*: quando quebra, a mensagem já diz o que se perdeu.
+
+**O prompt tem dois níveis de teste, e eles provam coisas diferentes.**
+`prompts.context.test.js` e `promptKits.test.js` provam que o texto está
+*montado* como se pretendeu (ordem dos blocos, data preenchida, hora de fora,
+API dos kits existente, catracas de tamanho). Nada disso prova que o modelo
+*responde* melhor. Quem cobra isso é `backend/scripts/validar-prompt.mjs`: sete
+casos que montam o `messages[0]`/`messages[1]` **reais** (`promptFor` +
+`toolAvailabilityNote`) e medem a decisão observável — chamou a ferramenta ou
+colou código no chat; parou na pergunta ou respondeu a si mesmo; usou a data de
+hoje ou a do treinamento; acompanhou o idioma de quem escreveu. Só o `--live`
+chama provedor, então a bateria fica **fora do CI** (custa token e depende de
+chave); rode-a em dois modelos, um forte e um gratuito, antes de mexer no
+prompt e depois. O veredito é **triagem**: reprova o que é objetivamente errado
+e deixa a qualidade para a leitura humana, por isso o `--md` traz a resposta
+inteira de cada caso. O harness em si (`promptValidation.test.js`) é testado no
+CI, com cada verificação exercitada nos dois sentidos — uma verificação que
+sempre devolve `ok` carimbaria aprovação em cima de um modelo quebrado.
 
 ---
 

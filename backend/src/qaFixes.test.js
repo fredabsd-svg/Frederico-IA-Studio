@@ -86,10 +86,11 @@ test('withoutSystemNotices remove o aviso de arquivo ausente', () => {
 // design (Word/Excel/PDF), não só o docpro. Sem isso o modelo importa o
 // xlspro mas escreve a tabela com openpyxl cru (sem cabeçalho colorido/zebra).
 test('DOCPRO_PROMPT ensina docpro, xlspro e pdfpro', async () => {
-  // O prompt agora vive em backend/prompts/docpro/atual.txt e é exposto pelo
-  // seed.js — o teste valida o VALOR carregado, não mais o fonte do server.js.
-  const { DOCPRO_PROMPT: prompt } = await import('./seed.js');
-  assert.ok(prompt, 'DOCPRO_PROMPT deveria existir');
+  // v4.2: a API dos kits saiu do perfil do assistente e virou a seção
+  // DOCUMENTOS PROFISSIONAIS da BASE — agora ela chega a todo assistente com
+  // run_python, não só ao "Documentos profissionais".
+  const { DOCUMENTOS_PROFISSIONAIS: prompt } = await import('./agent/systemPromptV4.js');
+  assert.ok(prompt, 'a seção de documentos deveria existir');
   assert.match(prompt, /from docpro import Relatorio/, 'deve ensinar o kit Word');
   assert.match(prompt, /from xlspro import Planilha/, 'deve ensinar o kit Excel');
   assert.match(prompt, /from pdfpro import RelatorioPDF/, 'deve ensinar o kit PDF');
@@ -103,12 +104,40 @@ test('DOCPRO_PROMPT ensina docpro, xlspro e pdfpro', async () => {
   assert.match(prompt, /from docpro import [^\n]*\bSobrio\b/, 'documento sóbrio deve usar o helper Sobrio (justificado de fábrica)');
 });
 
+// Toda vez que `prompts/docpro/atual.txt` muda, a versão ANTERIOR tem de ser
+// arquivada como `vN.txt` — é dela que `seedDocProAssistant` reconhece uma
+// instalação antiga para migrar. O arquivamento foi ESQUECIDO duas vezes
+// seguidas (a versão pré-kits-v2 e a dos kits v2), e o efeito é silencioso: o
+// assistente semeado com aquele texto fica com ele para sempre, porque nenhum
+// arquivo versionado bate. Depois do v4.2, isso significaria receber a seção de
+// documentos DUAS vezes — no perfil e na base.
+test('as versões anteriores do prompt de documentos estão arquivadas', async () => {
+  const { readdirSync, readFileSync } = await import('node:fs');
+  const { default: path } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'prompts', 'docpro');
+  const arquivos = readdirSync(dir).filter((f) => f.endsWith('.txt') && f !== 'atual.txt');
+  const antigos = arquivos.map((f) => readFileSync(path.join(dir, f), 'utf8'));
+
+  assert.equal(new Set(antigos).size, antigos.length, 'há versões arquivadas duplicadas');
+  const atual = readFileSync(path.join(dir, 'atual.txt'), 'utf8');
+  assert.ok(!antigos.includes(atual), 'o atual.txt não deveria estar arquivado também');
+
+  // As duas versões que de fato circularam antes do v4.2, reconhecidas pelo que
+  // cada uma ensinava: a v1 dos kits informava a página do sumário à mão; a v2
+  // trouxe os presets.
+  assert.ok(antigos.some((t) => /sumario\(\[/.test(t)),
+    'a versão anterior aos kits v2 (sumario com páginas à mão) não está arquivada');
+  assert.ok(antigos.some((t) => /preset="gerencial"/.test(t) && /D1\. REGRA ZERO/.test(t)),
+    'a versão dos kits v2 (presets, antes do v4.2) não está arquivada');
+});
+
 // DOC-KIT-2: o PDF entregue em 2026-07-26 saiu com seis arestas de texto na
 // mesma página, 320 marcadores sem glifo e paginação que "andava" — porque o
 // modelo montou reportlab na mão em vez de usar o pdfpro. O prompt tem de
 // FECHAR essa porta, não só sugerir o kit.
 test('DOCPRO_PROMPT proíbe diagramar fora do kit e exige a verificação do PDF', async () => {
-  const { DOCPRO_PROMPT: prompt } = await import('./seed.js');
+  const { DOCUMENTOS_PROFISSIONAIS: prompt } = await import('./agent/systemPromptV4.js');
   assert.match(prompt, /REGRA ZERO/, 'a regra do kit obrigatório deve vir antes de tudo');
   assert.match(prompt, /reportlab\.pdfgen\.canvas|SimpleDocTemplate/,
     'deve nomear o que está proibido importar para diagramar');
@@ -139,7 +168,7 @@ test('DOCPRO_PROMPT cabe no limite do campo de instruções', async () => {
 // documento se o prompt os ensinar — kit redesenhado com prompt antigo entrega
 // menos do que o kit sabe fazer.
 test('DOCPRO_PROMPT ensina os blocos da identidade "Tinta & Latão"', async () => {
-  const { DOCPRO_PROMPT: prompt } = await import('./seed.js');
+  const { DOCUMENTOS_PROFISSIONAIS: prompt } = await import('./agent/systemPromptV4.js');
   assert.match(prompt, /Tinta & Latão/, 'deve nomear a identidade dos três kits');
   // v2: o sumário deixou de ser um bloco que o modelo chama com as páginas na
   // mão (era daí que saía o índice apontando a página errada) — ele vem do

@@ -330,7 +330,31 @@ por isso foi **rebaseado** sobre a `main` nova e saiu em PR próprio.
   Falha do gate nunca derruba a entrega. O resultado viaja no evento
   `verification`, no `execution_meta` e no event log durável, então sobrevive ao
   reload como o plano.
-- **Kits de documento v2 (última frente).** A revisão de design de ago/2026
+- **Prompt v4.2 unificado (última frente).** O `messages[0]` deixou de ser uma
+  colagem de cinco constantes escritas em épocas diferentes e virou UM texto
+  (`backend/src/agent/systemPromptV4.js`), com uma seção por assunto e a
+  hierarquia de conflito declarada no fim. A seção de kits saiu do perfil do
+  assistente de documentos e virou da BASE — entra só quando `run_python` está na
+  chamada, então TODO assistente com execução passa a conhecer a API dos kits (e
+  quem não executa economiza ~10,8 mil caracteres por turno). O bloco final leva a
+  data de hoje, o modelo e o estado da rede; a hora fica fora de propósito, porque
+  invalidaria o cache de prompt a cada turno. Ver `docs/ARCHITECTURE.md` §12.1.
+  As duas versões anteriores do prompt de documentos foram arquivadas como
+  `vN.txt` (o arquivamento tinha sido esquecido duas vezes), então instalações
+  já semeadas migram sozinhas em vez de carregar a seção duas vezes.
+  **Risco aberto: falta RODAR a validação de comportamento.** Texto não tem
+  teste unitário que prove que o modelo responde melhor. A bateria agora existe
+  — `cd backend && npm run validar:prompt -- --live --md /tmp/prompt.md`, sete
+  casos que montam o `messages[0]`/`messages[1]` reais e medem a decisão
+  observável (chamou a ferramenta? parou na pergunta? usou a data de hoje?
+  acompanhou o idioma?) —, mas ela precisa de `VALIDACAO_API_KEY` e
+  `VALIDACAO_MODELO`, que não existem neste contêiner. **Rode em dois modelos,
+  um forte e um gratuito, antes de mesclar**; o veredito é triagem, então leia o
+  `--md` (ele traz a resposta inteira de cada caso). Sem `--live` a bateria roda
+  seca e não julga nada. O A/B contra a v4.1 continua fora do automático: as
+  constantes antigas foram removidas, e comparar exige rodar a bateria também no
+  commit anterior.
+- **Kits de documento v2 (frente anterior).** A revisão de design de ago/2026
   gerou quatro documentos com os kits v1, olhou página a página e reprovou:
   sumário do Word apontando a página errada, tabela quebrada com o TOTAL órfão,
   assinatura sozinha numa página, KPI partido em duas linhas, planilha vazando
@@ -342,7 +366,7 @@ por isso foi **rebaseado** sobre a `main` nova e saiu em PR próprio.
   pronto** e levanta `KitError` no achado grave. Detalhes em
   `docs/ARCHITECTURE.md` §19; a API que o assistente ensina está travada contra
   o código por `backend/src/promptKits.test.js`.
-- **Última validação:** 2026-09-03 (kits v2) — **backend `npm run check`: 1402
+- **Última validação:** 2026-09-03 (prompt v4.2) — **backend `npm run check`: 1414
   testes, 0 falhas, 147 pulados** (os pulados exigem PostgreSQL; esperado fora
   do Docker), **frontend: 170/170** (CSS 206/215 KB, catraca 3 ≤ 3) e
   **sandbox: 160 testes, 0 falhas** com LibreOffice, matplotlib e as fontes
