@@ -342,10 +342,18 @@ por isso foi **rebaseado** sobre a `main` nova e saiu em PR próprio.
   As duas versões anteriores do prompt de documentos foram arquivadas como
   `vN.txt` (o arquivamento tinha sido esquecido duas vezes), então instalações
   já semeadas migram sozinhas em vez de carregar a seção duas vezes.
-  **Risco aberto: falta a validação de COMPORTAMENTO** — texto não tem teste
-  unitário que prove que o modelo responde melhor, e a bateria de mensagens reais
-  contra um modelo forte e um gratuito exige chave de provedor e a aplicação de
-  pé. Enquanto ela não roda, a v4.2 está provada só estruturalmente.
+  **Risco aberto: falta RODAR a validação de comportamento.** Texto não tem
+  teste unitário que prove que o modelo responde melhor. A bateria agora existe
+  — `cd backend && npm run validar:prompt -- --live --md /tmp/prompt.md`, sete
+  casos que montam o `messages[0]`/`messages[1]` reais e medem a decisão
+  observável (chamou a ferramenta? parou na pergunta? usou a data de hoje?
+  acompanhou o idioma?) —, mas ela precisa de `VALIDACAO_API_KEY` e
+  `VALIDACAO_MODELO`, que não existem neste contêiner. **Rode em dois modelos,
+  um forte e um gratuito, antes de mesclar**; o veredito é triagem, então leia o
+  `--md` (ele traz a resposta inteira de cada caso). Sem `--live` a bateria roda
+  seca e não julga nada. O A/B contra a v4.1 continua fora do automático: as
+  constantes antigas foram removidas, e comparar exige rodar a bateria também no
+  commit anterior.
 - **Kits de documento v2 (frente anterior).** A revisão de design de ago/2026
   gerou quatro documentos com os kits v1, olhou página a página e reprovou:
   sumário do Word apontando a página errada, tabela quebrada com o TOTAL órfão,

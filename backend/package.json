@@ -13,7 +13,8 @@
     "test:all": "npm run lint && npm run test:integration",
     "test:count": "node scripts/count-tests.mjs",
     "check": "npm run lint && npm test",
-    "audit:models": "node scripts/audit-model-catalog.mjs"
+    "audit:models": "node scripts/audit-model-catalog.mjs",
+    "validar:prompt": "node scripts/validar-prompt.mjs"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",

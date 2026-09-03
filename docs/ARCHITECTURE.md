@@ -586,10 +586,23 @@ ferramenta que vaze como texto (`sanitizeToolProtocolText`), na exibição **e**
   `agent/assistantPolicy.test.js`.
 - **Lacuna:** não há bateria adversarial de injeção (README malicioso, delimitador fechado
   à força, resposta maliciosa de outro modelo). Ver F-17.
-- **Lacuna:** a mudança é de TEXTO, e texto não tem teste unitário que prove que o
-  modelo se comporta melhor. A validação de comportamento (uma bateria de
-  mensagens reais contra um modelo forte e um gratuito, comparando v4.1 e v4.2)
-  ainda não foi feita — ver a nota em `CONTINUIDADE.md`.
+- **Validação de comportamento:** texto não tem teste unitário que prove que o
+  modelo responde melhor, então o nível de cima é uma bateria de mensagens reais
+  — `backend/scripts/validar-prompt.mjs` (`npm run validar:prompt`), com os
+  casos em `agent/promptValidation/`. Ela monta o `messages[0]`/`messages[1]`
+  **reais** (`promptFor` + `toolAvailabilityNote`, com as ferramentas do
+  assistente do caso) e mede a decisão observável de cada promessa desta seção:
+  pedido de arquivo vira chamada de `run_python` e não código colado no chat;
+  pergunta de decisão encerra o turno; a data usada é a do bloco CONTEXTO DESTA
+  CHAMADA e não a do treinamento; a regra 7 acompanha o idioma de quem escreveu;
+  sem `run_python`, o modelo culpa a configuração em vez de dizer que gerou o
+  arquivo. Sem `--live` não toca a rede — por isso fica fora do CI. O veredito é
+  **triagem**, não aprovação: o `--md` traz a resposta inteira para leitura
+  humana. O harness é testado em `promptValidation.test.js`.
+- **Lacuna:** a bateria mede o v4.2 contra o comportamento esperado, mas **não**
+  faz o A/B automático com o v4.1 — as constantes antigas foram removidas, e o
+  comparativo exige rodar a bateria também no commit anterior. Ver a nota em
+  `CONTINUIDADE.md`.
 
 ---
 

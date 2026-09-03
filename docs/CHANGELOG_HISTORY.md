@@ -84,11 +84,36 @@ coladas e de que o envelope dos especialistas segue enxuto.
 `promptKits.test.js` e os testes de kit do `qaFixes` passaram a ler a seção da
 BASE, não mais o perfil do assistente. Backend: 1414 testes, 0 falhas.
 
-**O que NÃO foi feito, e é o gate que falta:** a validação de COMPORTAMENTO. A
-mudança é de texto, e texto não tem teste unitário que prove que o modelo
-responde melhor. O plano da revisão pede uma bateria de mensagens reais contra
-um modelo forte e um gratuito, comparando v4.1 e v4.2 — ela exige chave de
-provedor e a aplicação de pé, e não pôde ser executada aqui.
+**A bateria de comportamento (o gate que faltava).** A mudança é de texto, e
+texto não tem teste unitário que prove que o modelo responde melhor — as
+catracas provam que o prompt está *montado* como se pretendeu, não que ele
+*funciona*. Então o gate virou código: `backend/scripts/validar-prompt.mjs`
+(`npm run validar:prompt`), com os casos em `agent/promptValidation/`. Sete
+casos, um por promessa desta frente, e cada um monta o `messages[0]`/
+`messages[1]` **reais** — `promptFor` + `toolAvailabilityNote`, com as
+ferramentas do assistente do caso — porque um harness que escrevesse o próprio
+prompt validaria um texto que ninguém usa. O que se mede é a decisão
+observável, não "qualidade": pedido de arquivo vira chamada de `run_python` e
+não código colado no chat; pedido de uma linha recebe resposta de uma linha;
+pergunta de decisão **encerra** o turno em vez de o modelo responder a si
+mesmo; anexo é lido com ferramenta em vez de a pessoa ser mandada colar o
+conteúdo; a data é a do bloco CONTEXTO DESTA CHAMADA e não a do treinamento; a
+regra 7 acompanha quem escreve em inglês; e, sem `run_python`, o modelo culpa a
+configuração em vez de dizer que gerou o arquivo. Sem `--live` a bateria roda
+seca — não toca a rede, não gasta token e **não finge veredito** —, e por isso
+fica fora do CI. Falha de provedor vira `erro`, nunca `reprovou`: uma chave
+vencida não é regressão de comportamento. O veredito é **triagem**; o `--md`
+traz a resposta inteira de cada caso, porque a leitura humana continua sendo
+parte do gate. O harness tem 13 testes próprios, com cada verificação
+exercitada nos dois sentidos — uma verificação que sempre devolve `ok`
+carimbaria aprovação em cima de um modelo quebrado. A bateria foi conferida de
+ponta a ponta contra um modelo simulado ideal (7/7 passou) e um patológico
+(0/7), para provar que ela discrimina. Backend: 1428 testes, 0 falhas.
+
+**O que continua faltando:** *rodar* a bateria com chave de provedor, em dois
+modelos (um forte, um gratuito), e ler o relatório. E o A/B contra a v4.1, que
+não é automático: as constantes antigas foram removidas, então comparar exige
+rodar a bateria também no commit anterior.
 
 ---
 
