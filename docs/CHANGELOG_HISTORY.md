@@ -65,6 +65,16 @@ fontes para a mesma regra é como elas divergiram.
   pt-BR; a redação antiga deixava o modelo escolher pelo idioma do próprio
   raciocínio.
 
+**Arquivamento das versões anteriores do prompt.** `seedDocProAssistant` migra
+um assistente já semeado só quando o texto no banco bate com uma versão
+arquivada em `prompts/docpro/vN.txt`. O arquivamento tinha sido **esquecido duas
+vezes seguidas** — a versão pré-kits-v2 e a dos próprios kits v2 nunca viraram
+`vN.txt` —, então essas instalações ficariam com o prompt longo para sempre e
+receberiam a seção de documentos DUAS vezes (no perfil e na base). As duas
+foram arquivadas como `v12.txt` e `v13.txt`, e um teste passou a cobrar a
+convenção: o defeito era silencioso, e é o tipo de coisa que só aparece meses
+depois, num banco de produção.
+
 **Testes.** `agent/prompts.context.test.js` (novo): data e fuso corretos,
 nenhum `{{...}}` cru sobrevivendo, a hora NÃO entrando (dois horários do mesmo
 dia produzem prompts idênticos), a ordem dos blocos finais e as catracas de

@@ -339,6 +339,9 @@ por isso foi **rebaseado** sobre a `main` nova e saiu em PR próprio.
   quem não executa economiza ~10,8 mil caracteres por turno). O bloco final leva a
   data de hoje, o modelo e o estado da rede; a hora fica fora de propósito, porque
   invalidaria o cache de prompt a cada turno. Ver `docs/ARCHITECTURE.md` §12.1.
+  As duas versões anteriores do prompt de documentos foram arquivadas como
+  `vN.txt` (o arquivamento tinha sido esquecido duas vezes), então instalações
+  já semeadas migram sozinhas em vez de carregar a seção duas vezes.
   **Risco aberto: falta a validação de COMPORTAMENTO** — texto não tem teste
   unitário que prove que o modelo responde melhor, e a bateria de mensagens reais
   contra um modelo forte e um gratuito exige chave de provedor e a aplicação de
