@@ -48,7 +48,15 @@ jobs:
       # quem tem a lib — que foi exatamente o que aconteceu. Instalar é o
       # conserto certo; fazer o teste se auto-pular deixaria a validação de PDF
       # sem cobertura em silêncio, que é o defeito que o F-23 fechou.
-      - run: python -m pip install openpyxl==3.1.5 python-docx reportlab pypdf
+      # matplotlib: os gráficos do docpro saem dele (a v2 os centralizou em
+      # sandbox/kits.py). Sem ele aqui, os testes de gráfico se auto-pulam e a
+      # cobertura some em silêncio — o mesmo defeito que o F-23 fechou.
+      - run: python -m pip install openpyxl==3.1.5 python-docx reportlab pypdf matplotlib
+      # LibreOffice + as fontes metricamente compatíveis com Calibri/Cambria:
+      # é o PDF gêmeo que prova o sumário com as páginas REAIS, a página em
+      # branco e a assinatura órfã. Sem ele esses testes se pulam, e é
+      # justamente o defeito que a v2 dos kits foi corrigir.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libreoffice-writer libreoffice-calc fonts-crosextra-carlito fonts-crosextra-caladea
       - run: python -m unittest discover -s sandbox -p '*_test.py' -v
 
   docker-guard:

@@ -23,6 +23,91 @@
 
 ---
 
+## Kits de documento v2 — revisão de design aplicada (2026-09-03)
+
+**O que motivou.** A revisão gerou quatro documentos reais com os kits v1
+(relatório gerencial em Word, ata em Word sóbrio, planilha com painel em Excel e
+proposta em PDF), converteu tudo para PDF, rasterizou as páginas e **olhou o
+resultado**. Os achados tinham página e causa no código, e quatro eram críticos:
+
+1. **A fonte que o cliente vê não era a que foi conferida.** O `.docx` pedia
+   "Source Serif 4"/"Source Sans 3" pelo nome; elas não existem no Windows nem
+   no Mac, o Word substituía e a conferência — feita no PDF gêmeo do sandbox —
+   passava a valer para outro documento.
+2. **Sumário do Word com a página informada pelo modelo** — e errado no próprio
+   teste: "Sumário executivo … 3" com a seção na página 2.
+3. **Tabela quebrada com a linha TOTAL sozinha** no topo da página seguinte.
+4. **Assinatura sozinha numa página** na proposta em PDF.
+
+**O que mudou.**
+
+- Nasceu `sandbox/kits.py`, a base COMUM dos três kits: paleta, escala
+  tipográfica fechada, formatação pt-BR (`fmt`), tipagem de coluna, cálculo do
+  TOTAL, regras de leitura (corpo do KPI, eixo em milhar) e a auditoria
+  compartilhada. Antes isso vivia triplicado e divergia.
+- **Tipografia com fidelidade no cliente:** Cambria sobre Calibri (existem em
+  todo Office desde 2007). No Linux o LibreOffice as substitui por
+  Caladea/Carlito, metricamente idênticas — o PDF gêmeo quebra a linha no mesmo
+  lugar que o Word do cliente. Source virou `tipografia="editorial"`, só para
+  PDF, onde a fonte vai embutida.
+- **Presets** (`gerencial | parecer | proposta | carta | sobrio`): o modelo
+  escolhe o registro do documento e o kit decide capa, sumário, numeração de
+  seção, alinhamento do corpo e fechamento.
+- **Números pertencem ao kit.** O modelo passa `int`/`float`/`date`; a coluna
+  (`moeda=`, `pct=`, `milhar=`, `data=`) formata, alinha e escreve o negativo
+  entre parênteses em vermelho. `total="soma"` CALCULA a linha.
+- **Sumário com as páginas REAIS:** `salvar()` grava, converte para PDF,
+  descobre em que página cada título caiu (ignorando as linhas do próprio
+  sumário, senão o índice aponta para si mesmo) e converte de novo.
+- **Paginação virou código:** tabela de até 15 linhas indivisível, TOTAL nunca
+  órfão, "Fonte:" colada, fecho + assinaturas + testemunhas num bloco
+  indivisível que **cola no conteúdo anterior**, sumário sem página própria
+  abaixo de 10 entradas, fechamento em faixa no pé da última página.
+- **`salvar()` dos TRÊS kits audita o arquivo pronto** e levanta `KitError` no
+  achado grave: placeholder de rascunho, linha fora do cabeçalho, sumário
+  divergente, página em branco, assinatura órfã, coluna numérica com texto,
+  fórmula com erro, gráfico sem série. Antes só o `pdfpro` auditava.
+- **Excel:** filtro no cabeçalho, `total="formula"` para a planilha viva, aba
+  de Notas por último e impressão ajustada à largura — com os **gráficos**
+  dentro da área de impressão (eles flutuam sobre a grade e não entram em
+  `max_row`, então o painel imprimia sem eles).
+- **Sóbrio:** hífen não separável em CNPJ/CPF/NIRE/CEP e helpers de redação
+  jurídica (`clausula`, `paragrafo_unico`, `paragrafo_numerado`, `inciso`,
+  `item`, `testemunhas`, `rubrica`).
+- **PDF:** marcadores (outline) a partir dos títulos, registrados na reemissão
+  de páginas do `_CanvasNumerado` — durante o build todos apontariam para a
+  página 1.
+
+**Prompt.** `backend/prompts/docpro/atual.txt` foi reescrito para a API v2
+(`docpro` 12.0.0 → 13.0.0) e `backend/src/promptKits.test.js` passou a travá-lo
+contra o código: todo `objeto.metodo(` citado tem de existir em `sandbox/*.py`,
+os parâmetros nomeados têm de estar na assinatura, os quatro kits têm de usar os
+mesmos nomes (`cargos=`, `fonte=`, `moeda=`, `total=`) e a API aposentada não
+pode voltar. Era daí que vinha a rodada perdida: o prompt ensinava
+`assinaturas(cargos=)` num kit e `subtitulos=` no outro.
+
+**Compatibilidade.** Os nomes de método antigos continuam funcionando;
+`subtitulos=`, `autor=`, `estilo="sobrio"` e `sumario(entradas)` viraram alias
+(o último com aviso). O que MUDOU de comportamento e pode surpreender um script
+antigo: linha fora do cabeçalho e placeholder agora **reprovam** em vez de
+passar em silêncio, e a contracapa padrão é a faixa, não a página inteira.
+
+**Validação.** 160 testes de sandbox (eram 97), backend 1402/0, frontend
+170/170. O job "Artefatos" do CI passou a instalar matplotlib, LibreOffice e as
+fontes Carlito/Caladea — sem eles os testes de gráfico e de PDF gêmeo se
+auto-pulavam e a cobertura sumia em silêncio. Os quatro documentos da revisão
+foram regerados por `sandbox/exemplos/gerar_exemplos.py` e conferidos em tela.
+
+**Ficou de fora, de propósito:** o prompt v4.1/v4.2 **unificado** (a fusão de
+`IMMUTABLE_CORE_PROMPT` + `QUALITY_BAR` + `EXECUTION_UX_RULES` + `SANDBOX_RULES`
++ `COMPLETION_PROTOCOL` numa constante única) — é uma reorganização da
+arquitetura de prompts, com testes próprios, e o próprio plano de entrega da
+revisão a coloca num PR separado, depois de os kits serem conferidos em tela.
+Aqui entrou só a seção DOCUMENTOS PROFISSIONAIS, que ficaria **errada** se não
+acompanhasse a mudança de API.
+
+---
+
 ## Developer Workspace 3.0 — Frentes 10 a 20 e antecedentes (2026-08-05 → 2026-08-07)
 
 Entradas que saíram do `CONTINUIDADE.md` na poda de 2026-08-08, quando o

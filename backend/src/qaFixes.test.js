@@ -99,7 +99,8 @@ test('DOCPRO_PROMPT ensina docpro, xlspro e pdfpro', async () => {
   assert.match(prompt, /PREENCHA TODAS AS COLUNAS/, 'deve exigir linhas completas / coluna Total preenchida');
   assert.match(prompt, /GRÁFICO DE PIZZA\/participação/, 'deve orientar pizza por categoria (formato longo)');
   assert.match(prompt, /Cidade\/Estado|preenchimento GEOGRÁFICO/, 'deve proibir placeholder geográfico genérico');
-  assert.match(prompt, /from docpro import Sobrio/, 'documento sóbrio deve usar o helper Sobrio (justificado de fábrica)');
+  // v2: os dois vêm no MESMO import (`from docpro import Relatorio, Sobrio`).
+  assert.match(prompt, /from docpro import [^\n]*\bSobrio\b/, 'documento sóbrio deve usar o helper Sobrio (justificado de fábrica)');
 });
 
 // DOC-KIT-2: o PDF entregue em 2026-07-26 saiu com seis arestas de texto na
@@ -116,7 +117,9 @@ test('DOCPRO_PROMPT proíbe diagramar fora do kit e exige a verificação do PDF
   assert.match(prompt, /r\.lista\(/, 'deve ensinar o bloco de lista (em vez de hífen no parágrafo)');
   assert.match(prompt, /r\.chave_valor\(|chave_valor/, 'deve ensinar a ficha Campo|Valor do PDF');
   assert.match(prompt, /nivel=2/, 'deve ensinar a hierarquia de títulos do kit');
-  assert.match(prompt, /estilo="sobrio"/, 'deve oferecer o PDF sóbrio/registrável');
+  // v2: o registrável em PDF virou `preset="sobrio"` (o `estilo=` antigo continua
+  // aceito no kit por compatibilidade, mas não é mais o que se ensina).
+  assert.match(prompt, /preset="sobrio"/, 'deve oferecer o PDF sóbrio/registrável');
 });
 
 // DOC-KIT-0: o prompt semeado tem de CABER no campo que o próprio app valida.
@@ -138,7 +141,10 @@ test('DOCPRO_PROMPT cabe no limite do campo de instruções', async () => {
 test('DOCPRO_PROMPT ensina os blocos da identidade "Tinta & Latão"', async () => {
   const { DOCPRO_PROMPT: prompt } = await import('./seed.js');
   assert.match(prompt, /Tinta & Latão/, 'deve nomear a identidade dos três kits');
-  assert.match(prompt, /r\.sumario\(/, 'deve ensinar o sumário');
+  // v2: o sumário deixou de ser um bloco que o modelo chama com as páginas na
+  // mão (era daí que saía o índice apontando a página errada) — ele vem do
+  // preset e o kit descobre a página real no PDF gêmeo.
+  assert.match(prompt, /sumário/i, 'deve ensinar como o sumário é decidido');
   assert.match(prompt, /r\.kpis\(/, 'deve ensinar os cartões de KPI');
   assert.match(prompt, /r\.citacao\(/, 'deve ensinar a citação');
   assert.match(prompt, /r\.etapas\(/, 'deve ensinar a linha do tempo');
@@ -146,7 +152,8 @@ test('DOCPRO_PROMPT ensina os blocos da identidade "Tinta & Latão"', async () =
   assert.match(prompt, /grafico_barras/, 'deve ensinar os gráficos');
   assert.match(prompt, /confidencial=/, 'deve ensinar a marca de sigilo');
   assert.match(prompt, /p\.painel\(/, 'deve ensinar a aba-painel do Excel');
-  assert.match(prompt, /a\.identificacao\(/, 'sóbrio deve usar o bloco de identificação registrável');
+  // v2: a identificação registrável entra na CRIAÇÃO do Sobrio.
+  assert.match(prompt, /Sobrio\([^\n]*identificacao=/, 'sóbrio deve usar o bloco de identificação registrável');
   // A numeração passou a ser do KIT: se o prompt não avisar, o modelo escreve
   // "1." no texto e o documento sai com "SEÇÃO 01  1. Escopo".
   assert.match(prompt, /NÃO escreva "1\." no texto|numera "SEÇÃO 01" sozinho/,

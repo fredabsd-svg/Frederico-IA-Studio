@@ -36,6 +36,12 @@ def _por_pagina(caminho):
     return [pdfpro.posicoes_de_texto(c) for c in pdfpro._conteudos(bruto)]
 
 
+def _texto_das_paginas(caminho):
+    """Texto de cada página do PDF PRONTO (o que o leitor vê de fato)."""
+    from pypdf import PdfReader
+    return [(p.extract_text() or "") for p in PdfReader(caminho).pages]
+
+
 def _textos(flowables):
     """Texto de todo Paragraph da story, entrando nas tabelas (o título e os
     blocos de caixa são Tables com Paragraphs dentro).
@@ -69,7 +75,15 @@ class PdfProTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def _novo(self, **kw):
+        """Documento SEM capa, sumário e fechamento automáticos.
+
+        Os presets da v2 acrescentam esses blocos sozinhos; num teste que mede
+        UM bloco (a aresta do texto, a numeração da página) eles entrariam como
+        páginas a mais e ruído na medição."""
         kw.setdefault("titulo", "Documento de Teste")
+        kw.setdefault("capa", False)
+        kw.setdefault("sumario", False)
+        kw.setdefault("contracapa", False)
         return pdfpro.RelatorioPDF(self.path, **kw)
 
     def _assert_pdf(self, minimo=1200):
@@ -146,7 +160,9 @@ class PdfProTests(unittest.TestCase):
         r = self._novo(titulo="Relatório", cliente="ACME", emissor="Escritório",
                        subtitulo="assunto", tipo="RELATÓRIO")
         r.capa()
-        r.paragrafo("corpo")
+        r.titulo("Escopo")
+        r.paragrafo("Um parágrafo de corpo com texto suficiente para a página "
+                    "não cair na regra de página em branco da auditoria.")
         r.salvar()
         paginas = _por_pagina(self.path)
         self.assertGreaterEqual(len(paginas), 2)
@@ -304,11 +320,27 @@ class PdfProTests(unittest.TestCase):
         r.salvar()
         self._assert_pdf()
 
-    def test_linha_com_numero_de_colunas_diferente_nao_derruba(self):
+    def test_linha_com_numero_de_colunas_diferente_reprova_na_auditoria(self):
+        """A v1 completava/cortava a linha em SILÊNCIO. A v2 continua não
+        derrubando a geração — o PDF sai — mas a auditoria REPROVA e diz qual
+        linha está fora do cabeçalho."""
         r = self._novo()
         r.tabela(["A", "B", "C"], [["só um"], ["um", "dois"], ["um", "dois", "três", "extra"]])
-        r.salvar()
+        with self.assertRaises(pdfpro.KitError) as erro:
+            r.salvar()
+        self.assertIn("linha-fora-do-cabecalho", str(erro.exception))
         self._assert_pdf(minimo=800)
+
+    def test_placeholder_de_rascunho_reprova_na_auditoria(self):
+        """"DD/MM/AAAA" numa entrega é o defeito mais barato de evitar e o mais
+        constrangedor de deixar passar."""
+        r = self._novo()
+        r.titulo("Prazo")
+        r.paragrafo("O contrato vence em DD/MM/AAAA e será renovado por igual "
+                    "período, salvo manifestação em contrário.")
+        with self.assertRaises(pdfpro.KitError) as erro:
+            r.salvar()
+        self.assertIn("placeholder", str(erro.exception))
 
     def test_tabela_longa_nao_estoura_a_margem(self):
         r = self._novo()
@@ -416,6 +448,117 @@ class PdfProTests(unittest.TestCase):
         r.salvar()   # levanta se a auditoria achar algo grave
         self.assertEqual(self._graves(), [])
 
+
+    # ---------- v2: presets, tipografia, números e marcadores ----------
+    def test_tipografia_padrao_e_metricamente_igual_a_do_word(self):
+        """Carlito e Caladea têm as métricas do Calibri e do Cambria que o
+        docpro pede: é o que faz este PDF quebrar a linha no MESMO lugar que o
+        Word do cliente. Sem isso, conferir o PDF gêmeo é conferir outro
+        documento."""
+        self.assertIn("office", pdfpro.TIPOGRAFIAS)
+        self.assertIn("editorial", pdfpro.TIPOGRAFIAS)
+        r = self._novo()
+        self.assertEqual(r.fonte, pdfpro.TIPOGRAFIAS["office"][0])
+        editorial = self._novo(tipografia="editorial")
+        self.assertEqual(editorial.fonte, pdfpro.TIPOGRAFIAS["editorial"][0])
+        with self.assertRaises(pdfpro.KitError):
+            self._novo(tipografia="inventada")
+
+    def test_preset_decide_capa_sumario_e_numeracao(self):
+        r = pdfpro.RelatorioPDF(self.path, titulo="Proposta", emissor="Escritório",
+                                preset="proposta")
+        r.titulo("Escopo")
+        r.paragrafo("Conteúdo do escopo com tamanho suficiente para a página. " * 6)
+        r.salvar()
+        paginas = [t for t in _texto_das_paginas(self.path)]
+        self.assertGreaterEqual(len(paginas), 2)
+        # Proposta: capa sim, sumário nunca, sem numeração de seção.
+        self.assertNotIn("Sumário", "\n".join(paginas))
+        self.assertNotIn("SEÇÃO 01", "\n".join(paginas))
+
+    def test_parecer_numera_em_decimal_e_o_gerencial_em_secao(self):
+        r = pdfpro.RelatorioPDF(self.path, titulo="Parecer", emissor="Escritório",
+                                preset="parecer", capa=False, contracapa=False)
+        r.titulo("Fundamentação")
+        r.titulo("Legislação", nivel=2)
+        r.paragrafo("Conteúdo do parecer com tamanho suficiente. " * 8)
+        r.salvar()
+        texto = "\n".join(_texto_das_paginas(self.path))
+        self.assertIn("1. Fundamentação", texto)
+        self.assertIn("1.1 Legislação", texto)
+
+    def test_preset_desconhecido_falha_cedo(self):
+        with self.assertRaises(pdfpro.KitError):
+            pdfpro.RelatorioPDF(self.path, preset="inventado")
+
+    def test_tabela_recebe_numeros_e_o_kit_formata(self):
+        r = self._novo()
+        r.tabela(["Serviço", "Valor mensal"],
+                 [["Contabilidade", 2200], ["Departamento pessoal", 800]],
+                 moeda=["Valor mensal"], total="soma")
+        r.salvar()
+        texto = "\n".join(_texto_das_paginas(self.path))
+        self.assertIn("R$ 2.200,00", texto)
+        self.assertIn("R$ 3.000,00", texto)   # total CALCULADO pelo kit
+        self.assertIn("TOTAL", texto)
+
+    def test_kpi_adapta_o_corpo_e_seis_viram_duas_fileiras(self):
+        r = self._novo()
+        r.kpis([(1887900, "Receita", "moeda"), (0.325, "Margem", "pct")])
+        r.salvar()
+        texto = "\n".join(_texto_das_paginas(self.path))
+        self.assertIn("R$ 1.887.900,00", texto)
+        self.assertIn("32,5%", texto)
+        with self.assertRaises(pdfpro.KitError):
+            self._novo().kpis([(i, "R%d" % i) for i in range(7)])
+
+    def test_titulos_viram_marcadores_do_pdf_na_pagina_certa(self):
+        """Sem outline, um relatório de vinte páginas se lê rolando."""
+        r = self._novo(emissor="Escritório")
+        r.titulo("Primeira")
+        r.paragrafo("Conteúdo. " * 40)
+        r.quebra()
+        r.titulo("Segunda")
+        r.paragrafo("Conteúdo. " * 40)
+        r.salvar()
+        with open(self.path, "rb") as f:
+            bruto = f.read()
+        self.assertIn(b"/Outlines", bruto)
+
+    def test_titulo_de_segundo_nivel_sozinho_nao_derruba_o_outline(self):
+        """O reportlab RECUSA pular do nível -1 para o 1: um documento que
+        começa por um subtítulo derrubava a geração inteira."""
+        r = self._novo()
+        r.titulo("Só um subtítulo", nivel=2)
+        r.paragrafo("Conteúdo com tamanho suficiente para a página. " * 6)
+        r.salvar()
+        self.assertEqual(self._graves(), [])
+
+    def test_citacao_aceita_fonte_e_o_alias_antigo(self):
+        r = self._novo()
+        r.citacao("Frase.", fonte="Sumário executivo")
+        r.citacao("Outra.", autor="Autor antigo")
+        r.paragrafo("Conteúdo com tamanho suficiente para a página. " * 6)
+        r.salvar()
+        texto = "\n".join(_texto_das_paginas(self.path))
+        self.assertIn("SUMÁRIO EXECUTIVO", texto)
+        self.assertIn("AUTOR ANTIGO", texto)
+
+    def test_assinaturas_aceita_cargos_e_o_alias_antigo(self):
+        for chave in ("cargos", "subtitulos"):
+            r = self._novo(emissor="Escritório")
+            r.titulo("Escopo")
+            r.paragrafo("Conteúdo com tamanho suficiente para a página. " * 6)
+            r.fecho("Palmas/TO, 02 de setembro de 2026.")
+            r.assinaturas(["Nome Um"], **{chave: ["Contador"]})
+            r.salvar()
+            self.assertIn("Contador", "\n".join(_texto_das_paginas(self.path)))
+            self.assertEqual(self._graves(), [])
+
+    def test_callout_com_tipo_invalido_falha_cedo(self):
+        with self.assertRaises(pdfpro.KitError):
+            self._novo().callout("R", "texto", tipo="inventado")
+
     def test_titulo_numera_a_secao_sozinho(self):
         r = self._novo()
         r.titulo("Escopo")
@@ -456,8 +599,11 @@ class PdfProTests(unittest.TestCase):
             r = self._novo(emissor="Escritório", confidencial=confidencial)
             r.capa()
             r.titulo("Escopo")
-            r.paragrafo("texto")
-            na_capa = "CONFIDENCIAL" in _textos(r.story)
+            r.paragrafo("Um parágrafo de corpo com texto suficiente para a "
+                        "página não cair na regra de página em branco.")
+            # A capa da v2 é montada em `_capa` (para o preset poder gerá-la
+            # sozinho no fim) e só entra na story em `salvar()`.
+            na_capa = "CONFIDENCIAL" in _textos(r._capa)
             self.assertEqual(na_capa, confidencial)
             r.salvar()
             self.assertEqual(self._graves(), [])
@@ -483,11 +629,25 @@ class PdfProTests(unittest.TestCase):
                    {"contatos": ["a@b.c", "x", "y", "z"], "nota": "nota curta"}):
             r = self._novo(emissor="Escritório", confidencial=False)
             r.titulo("Escopo")
-            r.paragrafo("texto")
-            r.contracapa(**kw)
+            r.paragrafo("Um parágrafo de corpo com texto suficiente para a "
+                        "página não cair na regra de página em branco.")
+            r.contracapa(estilo="pagina", **kw)
             r.salvar()
             self.assertEqual(len(_por_pagina(self.path)), 2, kw)
             self.assertEqual(self._graves(), [])
+
+    def test_fechamento_em_faixa_nao_cria_pagina_nova(self):
+        """O padrão da v2 é a FAIXA no fim da última página. A contracapa de
+        página inteira num documento de duas páginas é uma terceira folha verde
+        e vazia — o documento fecha gritando o que a capa abriu discreto."""
+        r = self._novo(emissor="Escritório", confidencial=False)
+        r.titulo("Escopo")
+        r.paragrafo("Um parágrafo de corpo com texto suficiente para a página "
+                    "não cair na regra de página em branco da auditoria.")
+        r.contracapa(contatos=["contato@empresa.com.br"])
+        r.salvar()
+        self.assertEqual(len(_por_pagina(self.path)), 1)
+        self.assertEqual(self._graves(), [])
 
 
 if __name__ == "__main__":

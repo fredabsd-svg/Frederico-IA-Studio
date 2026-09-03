@@ -26,17 +26,30 @@ cd frontend
 npm test                 # TODOS os arquivos *.test.js de src/ (inclusive src/hooks/)
 npm run check            # lint + test + build
 
-# sandbox (Python) — os kits de documento (docpro/xlspro/pdfpro) e o VALIDADOR
-# dos artefatos entregues (validar_artefato).
+# sandbox (Python) — a base comum dos kits (kits), os kits de documento
+# (docpro/xlspro/pdfpro) e o VALIDADOR dos artefatos entregues (validar_artefato).
 # As dependências são obrigatórias: cada arquivo de teste se AUTO-PULA quando a
 # sua biblioteca falta, então instalar só o openpyxl faz os testes do Word e do
-# PDF sumirem em silêncio. As quatro primeiras são o conjunto que o CI instala; o
-# matplotlib cobre só os gráficos do Word (sem ele, esse teste pula).
-# O pypdf é do validador (check_pdf) e NÃO tem auto-pulo: sem ele os testes de
-# PDF do validar_artefato falham em vez de sumir — é de propósito, porque a
-# imagem do sandbox traz a lib e um pulo silencioso esconderia a lacuna.
+# PDF sumirem em silêncio. O `kits_test.py` é a exceção — não depende de
+# nenhuma delas, de propósito.
+# O pypdf é do validador (check_pdf) e do PDF gêmeo do Word, e NÃO tem
+# auto-pulo no validador: sem ele os testes de PDF do validar_artefato falham
+# em vez de sumir — é de propósito, porque a imagem do sandbox traz a lib.
 python -m pip install openpyxl==3.1.5 python-docx reportlab pypdf matplotlib
+
+# O LibreOffice e as fontes metricamente compatíveis com Calibri/Cambria são o
+# que permite conferir o PDF GÊMEO do Word: sumário com as páginas reais, página
+# em branco e assinatura órfã. Sem eles esses testes se pulam — e é justamente o
+# defeito que a v2 dos kits foi corrigir. O CI os instala no job "artifacts".
+sudo apt-get install -y --no-install-recommends \
+  libreoffice-writer libreoffice-calc fonts-crosextra-carlito fonts-crosextra-caladea
+
 python -m unittest discover -s sandbox -p '*_test.py' -v
+
+# conferência VISUAL dos kits: regenera os quatro documentos da revisão de
+# design (relatório, proposta, ata e planilha) e imprime a CONFERÊNCIA de cada
+# um. Sai com código 1 se algum reprovar.
+python sandbox/exemplos/gerar_exemplos.py /tmp/exemplos
 
 # ponta a ponta (navegador real) — exige Postgres; ver e2e/README.md
 cd e2e
