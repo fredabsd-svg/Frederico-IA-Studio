@@ -2,13 +2,69 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { MAX_ASSISTANT_PROFILE_CHARS } from './assistantPolicy.js';
 import { IMMUTABLE_CORE_PROMPT, assistantProfileBlock, profileMeta } from './promptPolicy.js';
-import { promptFor, toolAvailabilityNote, toolsFor } from './prompts.js';
+import { promptFor, protectedProfilePrompt, toolAvailabilityNote, toolsFor } from './prompts.js';
 
 test('núcleo imutável precede o perfil personalizado', () => {
   const prompt = promptFor({ system_prompt: 'Fale como especialista em jardinagem.' });
   assert.ok(prompt.startsWith(IMMUTABLE_CORE_PROMPT));
   assert.ok(prompt.indexOf('NÚCLEO DE CONFIANÇA') < prompt.indexOf('especialista em jardinagem'));
   assert.match(prompt, /perfil.*nunca concede ferramentas, rede, credenciais ou permissões/i);
+});
+
+// v4.2: o prompt é UM texto, com uma seção por assunto e a hierarquia declarada
+// no fim. A ordem é contrato — o núcleo primeiro (nenhum perfil o substitui), o
+// perfil depois, as regras operacionais em seguida.
+test('as seções do prompt vêm na ordem que a hierarquia declara', () => {
+  const prompt = promptFor({ system_prompt: 'Fale como especialista em jardinagem.' });
+  // Ancorado no INÍCIO DA LINHA: a seção de documentos cita "CONTEXTO DESTA
+  // CHAMADA" no meio de uma frase ("a data de hoje em CONTEXTO DESTA CHAMADA"),
+  // e um indexOf solto acharia a citação em vez do bloco.
+  const posicao = (trecho) => {
+    const i = prompt.search(new RegExp('^' + trecho.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'm'));
+    assert.ok(i >= 0, `o prompt deveria conter a seção ${trecho}`);
+    return i;
+  };
+  const ordem = [
+    'NÚCLEO DE CONFIANÇA',
+    '<assistant-profile',
+    'PADRÃO DE RESPOSTA',
+    'CICLO DE EXECUÇÃO',
+    'SANDBOX — fatos do ambiente',
+    'EXEMPLOS DE RESPOSTA FINAL',
+    'EM CASO DE CONFLITO',
+    'CONTEXTO DESTA CHAMADA'
+  ].map(posicao);
+  assert.deepEqual(ordem, [...ordem].sort((a, b) => a - b),
+    'as seções do prompt saíram fora de ordem');
+});
+
+// A colagem antiga anexava `QUALITY_BAR` e `COMPLETION_PROTOCOL` POR CIMA do
+// núcleo e das regras de sandbox — três textos escritos em épocas diferentes
+// repetindo "não diga que concluiu quando o status é timeout" em três redações.
+// O v4.2 absorveu os dois nas seções PADRÃO DE RESPOSTA e CICLO DE EXECUÇÃO;
+// este teste impede que voltem a ser colados.
+test('as constantes que o v4.2 absorveu não voltam coladas ao prompt', () => {
+  const prompt = promptFor(null);
+  assert.doesNotMatch(prompt, /COMO ENTREGAR UMA BOA RESPOSTA/,
+    'a QUALITY_BAR virou a seção PADRÃO DE RESPOSTA');
+  assert.doesNotMatch(prompt, /PROTOCOLO DE CONCLUSÃO/,
+    'o COMPLETION_PROTOCOL virou o item 6 do CICLO DE EXECUÇÃO');
+  // As regras em si continuam lá — o que saiu foi a duplicação.
+  assert.match(prompt, /timeout, cancelado ou limite_de_saida = NÃO terminou/);
+  assert.match(prompt, /aguardando usuário, pausado, falha recuperável ou falha definitiva/);
+});
+
+// Os especialistas do Modo Equipe e o coordenador do multimodelo NÃO executam
+// ferramentas: para eles a versão enxuta continua sendo a certa. Se o envelope
+// deles passasse a arrastar o ciclo de execução e o sandbox, cada parecer de
+// especialista carregaria 20 mil caracteres que ele não usa.
+test('o envelope dos especialistas segue enxuto, sem as seções de execução', () => {
+  const especialista = protectedProfilePrompt('Você é o especialista em tributos.');
+  assert.ok(especialista.startsWith(IMMUTABLE_CORE_PROMPT));
+  assert.match(especialista, /especialista em tributos/);
+  assert.doesNotMatch(especialista, /CICLO DE EXECUÇÃO/);
+  assert.doesNotMatch(especialista, /DOCUMENTOS PROFISSIONAIS/);
+  assert.ok(especialista.length < 6000, `envelope com ${especialista.length} caracteres`);
 });
 
 test('perfil não consegue fechar o próprio delimitador', () => {

@@ -86,10 +86,11 @@ test('withoutSystemNotices remove o aviso de arquivo ausente', () => {
 // design (Word/Excel/PDF), não só o docpro. Sem isso o modelo importa o
 // xlspro mas escreve a tabela com openpyxl cru (sem cabeçalho colorido/zebra).
 test('DOCPRO_PROMPT ensina docpro, xlspro e pdfpro', async () => {
-  // O prompt agora vive em backend/prompts/docpro/atual.txt e é exposto pelo
-  // seed.js — o teste valida o VALOR carregado, não mais o fonte do server.js.
-  const { DOCPRO_PROMPT: prompt } = await import('./seed.js');
-  assert.ok(prompt, 'DOCPRO_PROMPT deveria existir');
+  // v4.2: a API dos kits saiu do perfil do assistente e virou a seção
+  // DOCUMENTOS PROFISSIONAIS da BASE — agora ela chega a todo assistente com
+  // run_python, não só ao "Documentos profissionais".
+  const { DOCUMENTOS_PROFISSIONAIS: prompt } = await import('./agent/systemPromptV4.js');
+  assert.ok(prompt, 'a seção de documentos deveria existir');
   assert.match(prompt, /from docpro import Relatorio/, 'deve ensinar o kit Word');
   assert.match(prompt, /from xlspro import Planilha/, 'deve ensinar o kit Excel');
   assert.match(prompt, /from pdfpro import RelatorioPDF/, 'deve ensinar o kit PDF');
@@ -108,7 +109,7 @@ test('DOCPRO_PROMPT ensina docpro, xlspro e pdfpro', async () => {
 // modelo montou reportlab na mão em vez de usar o pdfpro. O prompt tem de
 // FECHAR essa porta, não só sugerir o kit.
 test('DOCPRO_PROMPT proíbe diagramar fora do kit e exige a verificação do PDF', async () => {
-  const { DOCPRO_PROMPT: prompt } = await import('./seed.js');
+  const { DOCUMENTOS_PROFISSIONAIS: prompt } = await import('./agent/systemPromptV4.js');
   assert.match(prompt, /REGRA ZERO/, 'a regra do kit obrigatório deve vir antes de tudo');
   assert.match(prompt, /reportlab\.pdfgen\.canvas|SimpleDocTemplate/,
     'deve nomear o que está proibido importar para diagramar');
@@ -139,7 +140,7 @@ test('DOCPRO_PROMPT cabe no limite do campo de instruções', async () => {
 // documento se o prompt os ensinar — kit redesenhado com prompt antigo entrega
 // menos do que o kit sabe fazer.
 test('DOCPRO_PROMPT ensina os blocos da identidade "Tinta & Latão"', async () => {
-  const { DOCPRO_PROMPT: prompt } = await import('./seed.js');
+  const { DOCUMENTOS_PROFISSIONAIS: prompt } = await import('./agent/systemPromptV4.js');
   assert.match(prompt, /Tinta & Latão/, 'deve nomear a identidade dos três kits');
   // v2: o sumário deixou de ser um bloco que o modelo chama com as páginas na
   // mão (era daí que saía o índice apontando a página errada) — ele vem do

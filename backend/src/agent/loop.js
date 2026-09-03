@@ -17,7 +17,7 @@ import { hasGithubConnection } from '../connectors/github.js';
 import { githubPreflight, githubPreflightNote, githubToolsForContext, normalizeGithubWriteAuthorization } from './githubAccess.js';
 import { ASK_USER_TOOL_NAME, askUserToolDefinition, normalizeInputRequest, shouldOfferAskUser, textInputRequest } from './userInputRequest.js';
 import { UPDATE_PLAN_TOOL_NAME, updatePlanToolDefinition, normalizePlanUpdate, shouldOfferUpdatePlan, PLAN_TOOL_NOTE } from './planTool.js';
-import { effortCfg, promptFor, promptManifestFor, toolsFor, temperatureFor, developerContextFor, toolAvailabilityNote, ENVIRONMENT_QUERY_RE, verifiedEnvironmentNote, pcFoldersNote, uploadsNote, clipForBriefing, BRIEFING_CHAR_LIMIT, QUALITY_BAR, PLAN_DELEGATION_TOPIC } from './prompts.js';
+import { effortCfg, promptFor, promptManifestFor, toolsFor, temperatureFor, developerContextFor, toolAvailabilityNote, ENVIRONMENT_QUERY_RE, verifiedEnvironmentNote, pcFoldersNote, uploadsNote, clipForBriefing, BRIEFING_CHAR_LIMIT, PLAN_DELEGATION_TOPIC } from './prompts.js';
 import { listOutputs, mentionsOutputPath, recoverAlternateOutputs, referencedOutputFiles, fileSignature, validateOutputs } from './outputs.js';
 import { OUTPUT_DELIVERY_REPAIR_NOTE, MISSING_OUTPUT_NOTICE, EXECUTION_COMPLETION_REPAIR_NOTE, EXECUTION_INCOMPLETE_NOTICE, TOOL_PROTOCOL_REPAIR_NOTE, TOOL_PROTOCOL_FAILURE_NOTICE, RESPONSE_TRUNCATED_REPAIR_NOTE, RESPONSE_TRUNCATED_NOTICE, EXECUTION_CONTRACT_NOTE, MACRO_REQUEST_RE, MACRO_LIMITATION_NOTE, DEGEN_CHECK_STEP, looksDegenerate, shouldRepairOutputDelivery, shouldRepairExecution, shouldContinueAfterTruncation, materializeTextOutput, endsAwaitingUserReply } from './repair.js';
 import { normalizeWebFetchUrl, classifyToolOutcome, webResearchStopReason, planToolCallBatch, WEB_TOOL_NAMES, webResearchFinalizationNote, WEB_RESEARCH_FETCH_LIMIT, TOOL_CALLS_PER_STEP_LIMIT } from './webResearch.js';
@@ -140,7 +140,6 @@ export async function runAgent({ userId, conversationId, userText, model, assist
     for (const m of fallbackChain) if (m && !triedModels.has(m)) { triedModels.add(m); return m; }
     return null;
   };
-  const chosenPrompt = promptFor(assistant);
   const eff = effortCfg(effort);
   // Conexão do GitHub consultada UMA vez: alimenta tanto a nota do modo
   // desenvolvedor (para não instruir o clone quando não há conexão) quanto o
@@ -232,7 +231,17 @@ export async function runAgent({ userId, conversationId, userText, model, assist
     : (!lowSignalTurn && (resume
       ? Boolean(resume?.meta?.sandboxNetworkEnabled)
       : resolveSandboxNetwork(getSettings().sandbox_network_policy, userText)));
-  const promptManifest = promptManifestFor(assistant, developerContext ? ['developer'] : []);
+  // O prompt v4.2 é montado AQUI, e não no topo do turno, porque ele cita o
+  // estado desta chamada: o modelo escolhido, se a rede do sandbox está aberta e
+  // — o que mais pesa — se `run_python` está na mesa, que decide entrar ou não
+  // com os 11 mil caracteres da seção de documentos.
+  // As ferramentas saem de `toolsFor(assistant)` (o padrão de `promptFor`) e não
+  // do `requestedTools` montado adiante: o que decide a seção de documentos é o
+  // assistente TER run_python, e os filtros posteriores (projeto somente-leitura,
+  // pesquisa web, GitHub) nunca tiram nem põem essa ferramenta.
+  const promptOpts = { model: chosenModel, sandboxNetworkEnabled };
+  const chosenPrompt = promptFor(assistant, promptOpts);
+  const promptManifest = promptManifestFor(assistant, developerContext ? ['developer'] : [], promptOpts);
   // ESCRITA nas Pastas do PC (arquivos REAIS e insubstituíveis do usuário).
   // No Modo Desenvolvedor, escolher um projeto gravável + um modo de escrita JÁ
   // é a autorização, e ela é escopada àquela pasta. No chat comum, a decisão é
@@ -443,14 +452,17 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   // OpenRouter e vários tratam mal uma pilha de mensagens "system" (alguns só
   // honram a primeira). O preâmbulo usa então POUCAS mensagens, alinhadas aos
   // breakpoints do prompt caching:
-  //   [0] prompt-base + QUALITY_BAR — estável na conversa inteira (breakpoint 1);
+  //   [0] prompt v4.2 completo — estável na conversa inteira (breakpoint 1);
   //   [1] nota de ferramentas — índice RESERVADO, reescrito adiante quando as
   //       ferramentas mudam (fallback sem tools, fim da pesquisa web);
   //   depois, os dados não confiáveis (role user, com untrustedContext) e UMA
   //   mensagem com as notas de sistema desta chamada, fechando o prefixo
   //   estático (breakpoint 2 cai sobre ela por ser a última e ser system).
   const messages = [
-    { role: 'system', content: `${chosenPrompt}\n\n${QUALITY_BAR}` },
+    // A `QUALITY_BAR` saiu daqui: o v4.2 já traz a seção PADRÃO DE RESPOSTA, com
+    // as mesmas regras numa voz só. Anexar as duas repetia "não invente
+    // resultado de ferramenta" três vezes na mesma mensagem.
+    { role: 'system', content: chosenPrompt },
     { role: 'system', content: toolAvailabilityNote(tools, { includeInventory: includeEnvironmentInventory, sandboxNetworkEnabled, githubNote }) }
   ];
   if (executionBriefing) messages.push({ role: 'user', content: untrustedContext('team-briefing', clipForBriefing(String(executionBriefing), BRIEFING_CHAR_LIMIT)) });

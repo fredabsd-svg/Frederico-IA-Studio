@@ -23,6 +23,65 @@
 
 ---
 
+## Prompt v4.2 unificado — um texto no lugar da colagem (2026-09-03)
+
+**O que estava errado.** O `messages[0]` era a soma de cinco constantes escritas
+em épocas diferentes: `IMMUTABLE_CORE_PROMPT`, o perfil do assistente,
+`QUALITY_BAR`, `EXECUTION_UX_RULES`, `SANDBOX_RULES` e `COMPLETION_PROTOCOL` —
+mais o bloco de kits, que só o assistente "Documentos profissionais" recebia.
+Três consequências concretas:
+
+1. **A mesma regra em três vozes.** "Não diga que concluiu quando o status é
+   timeout" existia no `EXECUTION_UX_RULES`, no `SANDBOX_RULES` e no
+   `COMPLETION_PROTOCOL`, em três redações. Regra repetida em redações
+   diferentes é como elas divergem — e o modelo passa a seguir a mais fraca.
+2. **A ordem era acidental.** Nada dizia ao modelo qual bloco vence qual.
+3. **A API dos kits não chegava a quem podia usá-la.** Um assistente
+   personalizado com `run_python` gerava `.docx` sem saber que o kit existia, e
+   diagramava na mão — o defeito que a REGRA ZERO tentava fechar.
+
+**O que mudou.** `backend/src/agent/systemPromptV4.js` passou a montar um texto
+único, com uma seção por assunto e a hierarquia de conflito declarada no fim:
+núcleo → perfil → PADRÃO DE RESPOSTA → CICLO DE EXECUÇÃO → (DOCUMENTOS
+PROFISSIONAIS) → SANDBOX → EXEMPLOS → EM CASO DE CONFLITO → CONTEXTO DESTA
+CHAMADA. As três constantes absorvidas foram REMOVIDAS, não reescritas: duas
+fontes para a mesma regra é como elas divergiram.
+
+- **A seção de documentos virou da BASE** e entra só quando `run_python` está na
+  chamada. O prompt sai com ~20,4 mil caracteres para quem executa e ~9,6 mil
+  para quem não executa — antes, ~21,8 mil só para o assistente de documentos e
+  ~9,8 mil (sem kit nenhum) para todos os outros.
+- **CONTEXTO DESTA CHAMADA** leva a data de hoje no fuso do aplicativo, o modelo
+  e o estado da rede. A **hora** ficou de fora de propósito: `messages[0]` é o
+  primeiro breakpoint do cache de prompt, e uma hora ali o invalidaria a cada
+  turno.
+- **Quem não recebe o v4.2:** os especialistas do Modo Equipe e o coordenador do
+  multimodelo continuam com `protectedProfilePrompt()` (núcleo + perfil +
+  `QUALITY_BAR` + `COMPLETION_PROTOCOL`, < 6 mil caracteres). Eles não executam
+  ferramentas; arrastar o ciclo de execução para cada parecer custaria 20 mil
+  caracteres por especialista, por rodada, sem uso.
+- **Núcleo, regra 7:** "Responda no idioma do usuário" virou "Responda em
+  português do Brasil, salvo se o usuário escrever em outro idioma". O produto é
+  pt-BR; a redação antiga deixava o modelo escolher pelo idioma do próprio
+  raciocínio.
+
+**Testes.** `agent/prompts.context.test.js` (novo): data e fuso corretos,
+nenhum `{{...}}` cru sobrevivendo, a hora NÃO entrando (dois horários do mesmo
+dia produzem prompts idênticos), a ordem dos blocos finais e as catracas de
+tamanho (< 23 mil com documentos, < 11 mil sem). `agent/promptPolicy.test.js`
+ganhou a ordem das seções, a prova de que as constantes absorvidas não voltam
+coladas e de que o envelope dos especialistas segue enxuto.
+`promptKits.test.js` e os testes de kit do `qaFixes` passaram a ler a seção da
+BASE, não mais o perfil do assistente. Backend: 1414 testes, 0 falhas.
+
+**O que NÃO foi feito, e é o gate que falta:** a validação de COMPORTAMENTO. A
+mudança é de texto, e texto não tem teste unitário que prove que o modelo
+responde melhor. O plano da revisão pede uma bateria de mensagens reais contra
+um modelo forte e um gratuito, comparando v4.1 e v4.2 — ela exige chave de
+provedor e a aplicação de pé, e não pôde ser executada aqui.
+
+---
+
 ## Kits de documento v2 — revisão de design aplicada (2026-09-03)
 
 **O que motivou.** A revisão gerou quatro documentos reais com os kits v1

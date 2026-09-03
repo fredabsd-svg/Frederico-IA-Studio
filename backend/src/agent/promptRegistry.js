@@ -9,7 +9,12 @@ export const PROMPT_RELEASE = Object.freeze({
 });
 
 export const PROMPT_MODULES = Object.freeze({
-  global:       { id: 'global-core',       version: '3.2.0' },
+  // 4.2.0: o preâmbulo virou UM texto (`systemPromptV4.js`) no lugar da colagem
+  // de cinco constantes. A seção DOCUMENTOS PROFISSIONAIS saiu do perfil do
+  // assistente de documentos e passou para a base, entrando só quando
+  // `run_python` está na chamada; o bloco CONTEXTO DESTA CHAMADA leva a data
+  // de hoje, o modelo e o estado da rede.
+  global:       { id: 'global-core',       version: '4.2.0' },
   profile:      { id: 'assistant-profile', version: '1.0.0' },
   // 3.3.0: o RESULTADO da ferramenta passou a chegar ao modelo embrulhado como
   // dado não confiável (antes ia cru). Muda o que o modelo lê a cada passo.

@@ -330,7 +330,20 @@ por isso foi **rebaseado** sobre a `main` nova e saiu em PR próprio.
   Falha do gate nunca derruba a entrega. O resultado viaja no evento
   `verification`, no `execution_meta` e no event log durável, então sobrevive ao
   reload como o plano.
-- **Kits de documento v2 (última frente).** A revisão de design de ago/2026
+- **Prompt v4.2 unificado (última frente).** O `messages[0]` deixou de ser uma
+  colagem de cinco constantes escritas em épocas diferentes e virou UM texto
+  (`backend/src/agent/systemPromptV4.js`), com uma seção por assunto e a
+  hierarquia de conflito declarada no fim. A seção de kits saiu do perfil do
+  assistente de documentos e virou da BASE — entra só quando `run_python` está na
+  chamada, então TODO assistente com execução passa a conhecer a API dos kits (e
+  quem não executa economiza ~10,8 mil caracteres por turno). O bloco final leva a
+  data de hoje, o modelo e o estado da rede; a hora fica fora de propósito, porque
+  invalidaria o cache de prompt a cada turno. Ver `docs/ARCHITECTURE.md` §12.1.
+  **Risco aberto: falta a validação de COMPORTAMENTO** — texto não tem teste
+  unitário que prove que o modelo responde melhor, e a bateria de mensagens reais
+  contra um modelo forte e um gratuito exige chave de provedor e a aplicação de
+  pé. Enquanto ela não roda, a v4.2 está provada só estruturalmente.
+- **Kits de documento v2 (frente anterior).** A revisão de design de ago/2026
   gerou quatro documentos com os kits v1, olhou página a página e reprovou:
   sumário do Word apontando a página errada, tabela quebrada com o TOTAL órfão,
   assinatura sozinha numa página, KPI partido em duas linhas, planilha vazando
@@ -342,7 +355,7 @@ por isso foi **rebaseado** sobre a `main` nova e saiu em PR próprio.
   pronto** e levanta `KitError` no achado grave. Detalhes em
   `docs/ARCHITECTURE.md` §19; a API que o assistente ensina está travada contra
   o código por `backend/src/promptKits.test.js`.
-- **Última validação:** 2026-09-03 (kits v2) — **backend `npm run check`: 1402
+- **Última validação:** 2026-09-03 (prompt v4.2) — **backend `npm run check`: 1414
   testes, 0 falhas, 147 pulados** (os pulados exigem PostgreSQL; esperado fora
   do Docker), **frontend: 170/170** (CSS 206/215 KB, catraca 3 ≤ 3) e
   **sandbox: 160 testes, 0 falhas** com LibreOffice, matplotlib e as fontes
