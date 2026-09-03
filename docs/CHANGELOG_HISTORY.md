@@ -23,6 +23,62 @@
 
 ---
 
+## Sonda de tool calling: o modo `--live` nunca chamou provedor (2026-09-03)
+
+**O defeito.** Os dois pontos de entrada do modo live — a rota
+`POST /admin/tool-probe` e o `backend/scripts/run-tool-probe.mjs` — faziam
+`await import('../provider.js')` e chamavam `generateOpenAICompatible`. O módulo
+de provedor mora em `src/agent/provider.js`, e essa função não existe em lugar
+nenhum do código. Consequência na rota: `live: true` respondia 503
+`provider_indisponivel` sempre. Consequência no CLI, que é a pior: o `catch`
+caía em dry-run e **imprimia o veredito assim mesmo** — e o dry-run responde
+`no_tool` em todos os cenários. Ou seja, a sonda dizia "este modelo não emite
+tool calls mesmo quando instruído" sem ter chamado modelo nenhum. O
+`docs/TOOL_CALLING_PROBE.md` até documentava o módulo fantasma e trazia um
+relatório de exemplo com `native_supported` — um resultado que este caminho de
+código não teria como produzir.
+
+Uma sonda que erra é ruim; uma sonda que **mente em silêncio** é pior, porque o
+veredito dela é entrada de decisão de produto ("este provedor não serve").
+
+**A correção.** Uma fonte só, `src/tools/probe/provider.js`, usada pelos dois
+pontos de entrada — foi a duplicação que os deixou divergir do resto do código
+ao mesmo tempo. Quem resolve o provedor é quem já resolve em produção: a rota
+usa o provedor do **próprio administrador** (`getUserProvider`, o mesmo do chat,
+com `modelRef` opcional para sondar um modelo específico da conta) e o CLI usa o
+ambiente (`SONDA_API_KEY`/`SONDA_BASE_URL`/`SONDA_MODELO`, com os nomes
+alternativos documentados).
+
+Três decisões de honestidade foram junto:
+
+- **`--live` sem configuração PARA** (código de saída 2) em vez de cair em seco.
+  A queda silenciosa era o defeito, não a proteção.
+- **O agregado passou a declarar `dryRun`**, e o modo seco prefixa o motivo com
+  "execução SECA, nenhum provedor chamado". O veredito do dry-run tem a mesma
+  forma do de verdade; sem a marca, um JSON guardado se lê meses depois como
+  medição. O CLI também imprime a linha antes do veredito.
+- **`runProbeCli` deixou de fingir que decide.** Ela testava
+  `dryRun ? dryProviderCall : null`, mas o `null` caía no mesmo
+  `dryProviderCall` lá dentro — pedir live por ali rodava seco. Agora é
+  explicitamente o helper do modo seco, e ganhou o `--only` que já aceitava na
+  linha de comando e ignorava.
+
+**Como escapou, e o que fecha.** O import era **dinâmico e dentro de
+`try/catch`** — a forma que transforma "módulo não existe" em "ambiente sem
+provedor" —, e nenhum teste tocava o caminho live: o do router verificava só que
+o export é uma função. Agora a dependência é um import **estático**, de modo que
+um caminho errado derruba o teste do router, e há 10 casos novos
+(`provider.test.js` mais o do router) cobrindo o achatamento da resposta, o
+envio das ferramentas, a ausência de `tools` no modo de controle, o placeholder
+`probe-model` não virando nome de modelo no pedido, a recusa por falta de chave
+ou modelo e a sonda inteira contra um cliente falso.
+
+O relatório de exemplo do documento está marcado como **ilustrativo**: não
+existe medição real registrada, porque o caminho nunca rodou. Backend: 1412
+testes, 0 falhas.
+
+---
+
 ## Kits de documento v2 — revisão de design aplicada (2026-09-03)
 
 **O que motivou.** A revisão gerou quatro documentos reais com os kits v1

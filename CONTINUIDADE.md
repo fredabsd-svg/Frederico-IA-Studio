@@ -64,7 +64,26 @@ a cada merge, em vez de empilhar sobre histórico já mesclado — por isso cada
 traz só a frente dele. O F-23 nasceu na branch enquanto o #199 era mesclado, e
 por isso foi **rebaseado** sobre a `main` nova e saiu em PR próprio.
 
-- **Último trabalho:** o **F-18 avançou** (segue parcial) — mesmo PR
+- **Último trabalho: o modo `--live` da sonda de tool calling nunca funcionou.**
+  A rota `POST /admin/tool-probe` e o `scripts/run-tool-probe.mjs` importavam
+  `src/provider.js` e chamavam `generateOpenAICompatible` — o módulo mora em
+  `src/agent/provider.js` e essa função não existe em lugar nenhum. Na rota,
+  `live: true` devolvia 503 sempre; no CLI, o `catch` caía em dry-run e imprimia
+  veredito assim mesmo — e dry-run responde `no_tool` em TODOS os cenários. A
+  sonda dizia "este modelo não faz tool calling" sem ter chamado modelo nenhum,
+  e o veredito dela é entrada de decisão de produto.
+  Agora há uma fonte só (`src/tools/probe/provider.js`) para os dois pontos de
+  entrada: a rota usa o provedor do próprio administrador (`getUserProvider`,
+  o mesmo do chat) e o CLI usa o ambiente. Sem chave ou modelo, o `--live`
+  **para** com código 2 em vez de rodar seco, e o agregado passou a carregar
+  `dryRun` — sem essa marca, um relatório de dry-run guardado se lê meses depois
+  como medição real. O exemplo do `docs/TOOL_CALLING_PROBE.md` está marcado como
+  ilustrativo: **não existe medição real registrada** ainda, porque o caminho
+  nunca rodou.
+  **Como o defeito escapou:** o import era dinâmico e dentro de `try/catch`, e
+  nenhum teste tocava o caminho live. Ele agora é estático, então o teste do
+  router quebra se o caminho voltar a mentir.
+- **Último trabalho anterior:** o **F-18 avançou** (segue parcial) — mesmo PR
   [#203](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/203).
   19 casos levam DRE, certidão PGFN, NF escaneada e razão analítico pelo pipeline
   real. As asserções foram escritas **depois** de sondar o comportamento — o
