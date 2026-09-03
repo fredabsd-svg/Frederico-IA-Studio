@@ -22,12 +22,19 @@ export const PROMPT_MODULES = Object.freeze({
   // 11.0.0: os kits ganharam uma grade única (uma só aresta de texto) e o
   // pdfpro passou a auditar o arquivo gerado. O prompt agora PROÍBE diagramar
   // fora do kit — era por aí que saía PDF com margem torta e glifo trocado.
-  // 12.0.0: a identidade "Tinta & Latão" (verde-tinta + latão, Source Serif 4
-  // sobre Source Sans 3) entrou POR CIMA dessa grade, com os blocos que
-  // faltavam — sumário, citação, linha do tempo, gráficos, assinaturas,
+  // 12.0.0: a identidade "Tinta & Latão" (verde-tinta + latão, na época com
+  // Source Serif 4 sobre Source Sans 3) entrou POR CIMA dessa grade, com os
+  // blocos que faltavam — sumário, citação, linha do tempo, gráficos, assinaturas,
   // contracapa, `confidencial=` e a aba-painel do Excel. Os títulos passaram a
   // numerar sozinhos: o modelo não escreve mais "1." no texto.
-  docpro:       { id: 'docpro',            version: '12.0.0' }
+  // 13.0.0: kits v2. O modelo passou a escolher o PRESET (gerencial | parecer |
+  // proposta | carta | sobrio) em vez de montar capa/sumário/fechamento bloco a
+  // bloco, e a passar NÚMEROS em vez de strings formatadas — quem formata em
+  // pt-BR é a coluna. O `salvar()` dos três kits audita o arquivo PRONTO e
+  // levanta `KitError` no achado grave; o Word ganhou o sumário com as páginas
+  // REAIS (segundo passo pelo PDF gêmeo). A API mudou: `sumario([(t, pág)])`,
+  // `subtitulos=` e `estilo="sobrio"` saíram do que se ensina.
+  docpro:       { id: 'docpro',            version: '13.0.0' }
 });
 
 export function moduleRef(name) {

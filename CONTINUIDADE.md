@@ -330,20 +330,31 @@ por isso foi **rebaseado** sobre a `main` nova e saiu em PR próprio.
   Falha do gate nunca derruba a entrega. O resultado viaja no evento
   `verification`, no `execution_meta` e no event log durável, então sobrevive ao
   reload como o plano.
-- **Última validação:** 2026-08-08 (série temporal) — **backend `npm run
-  check`: 1366 testes, 0 falhas, 144 pulados** (os pulados exigem PostgreSQL;
-  esperado fora do Docker) e **frontend: 166/166** (entrada 890/920 KB, total
-  1064/1100 KB, catraca de CSS 3 ≤ 3). CI da `main` verde nos merges desta
-  sessão. O rastro de validações anteriores está em
-  `docs/CHANGELOG_HISTORY.md`.
-  **Dois limites do ambiente que valem para toda sessão aqui:** o job
-  **"Artefatos (Excel real)"** do CI roda os testes dos kits num runner **sem
-  as mesmas fontes** do sandbox — então o caminho de degradação do `pdfpro`
-  (sem TrueType, caindo para as Type1 base-14) é exercitado a cada push, e lá
-  só o teste de gráfico do Word pula, por falta do matplotlib. E **o
-  LibreOffice deste contêiner não converte nada** (falha até com um `.txt` de
-  uma linha), então conferência de `.docx` aqui é estrutural — OOXML sobre o
-  arquivo reaberto.
+- **Kits de documento v2 (última frente).** A revisão de design de ago/2026
+  gerou quatro documentos com os kits v1, olhou página a página e reprovou:
+  sumário do Word apontando a página errada, tabela quebrada com o TOTAL órfão,
+  assinatura sozinha numa página, KPI partido em duas linhas, planilha vazando
+  para uma segunda folha impressa e — o pior — o `.docx` pedindo uma fonte que
+  o cliente não tem, de modo que o PDF conferido não era o documento aberto.
+  A v2 nasceu de `sandbox/kits.py`, a base comum dos três kits (paleta, escala,
+  formatação pt-BR e auditoria), e mudou o contrato: o modelo escolhe o
+  **preset** e passa **números**; o `salvar()` dos três **audita o arquivo
+  pronto** e levanta `KitError` no achado grave. Detalhes em
+  `docs/ARCHITECTURE.md` §19; a API que o assistente ensina está travada contra
+  o código por `backend/src/promptKits.test.js`.
+- **Última validação:** 2026-09-03 (kits v2) — **backend `npm run check`: 1402
+  testes, 0 falhas, 147 pulados** (os pulados exigem PostgreSQL; esperado fora
+  do Docker), **frontend: 170/170** (CSS 206/215 KB, catraca 3 ≤ 3) e
+  **sandbox: 160 testes, 0 falhas** com LibreOffice, matplotlib e as fontes
+  Carlito/Caladea instalados. Os quatro documentos da revisão foram regerados
+  (`python sandbox/exemplos/gerar_exemplos.py`) e **conferidos em tela**. O
+  rastro de validações anteriores está em `docs/CHANGELOG_HISTORY.md`.
+  **Um limite do ambiente que vale para toda sessão aqui:** o contêiner de
+  desenvolvimento vem com `libreoffice-core` mas **sem o Writer/Calc**, e sem
+  eles o `soffice` recusa qualquer arquivo ("source file could not be loaded").
+  Instale `libreoffice-writer libreoffice-calc fonts-crosextra-carlito
+  fonts-crosextra-caladea` antes de mexer nos kits — senão o PDF gêmeo não sai,
+  a auditoria devolve `sem-pdf-gemeo` e os testes de sumário se pulam.
 - **Frentes anteriores** (Frentes 10 a 20 do Developer Workspace 3.0, o
   redesenho do Nino, o Modo Design, os kits de documento e o restante do
   caminho até aqui): `docs/CHANGELOG_HISTORY.md`. Este arquivo guarda só o
@@ -441,11 +452,17 @@ cd frontend && npm run check   # lint + testes + build
 cd e2e && npm install && npm run navegador   # só na primeira vez
 cd e2e && E2E_DATABASE_URL=$DATABASE_URL npm test
 
-# 6) Mexeu nos kits de documento (sandbox/docpro|xlspro|pdfpro)? Instale as
-#    dependências ANTES — sem elas os 59 testes se pulam sozinhos e passam vazios
+# 6) Mexeu nos kits de documento (sandbox/kits|docpro|xlspro|pdfpro)? Instale as
+#    dependências ANTES — sem elas os testes se pulam sozinhos e passam vazios.
+#    O LibreOffice + as fontes Carlito/Caladea são o que gera o PDF gêmeo: sem
+#    eles o sumário com páginas reais e a auditoria de paginação não são testados.
 python3 -m venv .venv-kits && . .venv-kits/bin/activate
-pip install python-docx openpyxl reportlab matplotlib
+pip install python-docx openpyxl reportlab pypdf matplotlib
+sudo apt-get install -y --no-install-recommends \
+  libreoffice-writer libreoffice-calc fonts-crosextra-carlito fonts-crosextra-caladea
 python -m unittest discover -s sandbox -p '*_test.py' -v
+#    E confira com os próprios olhos os quatro documentos da revisão de design:
+python sandbox/exemplos/gerar_exemplos.py /tmp/exemplos
 ```
 
 **Convenções que valem a pena manter:**

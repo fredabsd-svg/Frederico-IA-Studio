@@ -1,0 +1,6 @@
+# Os exemplos são REGERADOS por `gerar_exemplos.py`, não versionados: binário no
+# repositório envelhece em silêncio e passa a "documentar" uma versão do kit que
+# não existe mais.
+*.docx
+*.xlsx
+*.pdf

@@ -827,16 +827,61 @@ uma conversa longa, consultas lentas do Postgres, RAM do backend sob carga. Ver 
 
 ---
 
-## 19. Kits de documento (`sandbox/docpro.py`, `xlspro.py`, `pdfpro.py`)
+## 19. Kits de documento (`sandbox/kits.py`, `docpro.py`, `xlspro.py`, `pdfpro.py`)
 
-Os três kits são copiados para dentro da imagem do sandbox
-(`sandbox/Dockerfile`) e importados pelo modelo em `run_python`:
-`from docpro import Relatorio` (Word), `from xlspro import Planilha` (Excel) e
-`from pdfpro import RelatorioPDF` (PDF). O prompt do assistente "Documentos
-profissionais" (`backend/prompts/docpro/atual.txt`, versionado em
-`agent/promptRegistry.js`) **proíbe** diagramar por fora deles.
+Os kits são copiados para dentro da imagem do sandbox (`sandbox/Dockerfile`) e
+importados pelo modelo em `run_python`: `from docpro import Relatorio, Sobrio`
+(Word), `from xlspro import Planilha` (Excel), `from pdfpro import RelatorioPDF`
+(PDF) e `from kits import fmt` (formatação pt-BR). O prompt do assistente
+"Documentos profissionais" (`backend/prompts/docpro/atual.txt`, versionado em
+`agent/promptRegistry.js`) **proíbe** diagramar por fora deles, e
+`backend/src/promptKits.test.js` trava esse prompt contra a API real — todo
+`objeto.metodo(` citado tem de existir em `sandbox/*.py`.
 
-### 19.1 O contrato de grade
+### 19.1 `kits.py` — a base comum
+
+Antes da v2, a paleta, a escala tipográfica, a limpeza de texto, a detecção de
+placeholder e a formatação de número viviam **triplicadas** e divergiam: um
+"R$ 1,89 mi" saía do Word ao lado de um "R$ 1.887.900,00" do Excel no mesmo
+pacote de entrega. `kits.py` é a fonte única de:
+
+| O quê | Para quê |
+| --- | --- |
+| `PALETA` / `ESCALA` | identidade "Tinta & Latão" e a escala tipográfica fechada, únicas para os três formatos |
+| `paleta_para(cor_marca)` | `cor_marca="RRGGBB"` substitui `tinta` e **recalcula** `apoio`, para o acento não ficar verde ao lado da cor do cliente |
+| `fmt` | moeda, percentual, milhar, data, valor por extenso, CNPJ, CPF — em pt-BR, com arredondamento meio-para-cima (`round()` do Python usa banker's rounding e devolveria centavo a menos) |
+| `tipos_de_coluna` / `linha_de_total` | tipagem das colunas por NOME e o TOTAL calculado pelo kit |
+| `normaliza_linhas` | linha fora do cabeçalho é completada **e acusada** |
+| `escala_kpi` / `linhas_de_kpi` / `eixo_milhar` | regras de leitura: corpo do KPI pelo comprimento do valor, 5–6 KPIs em duas fileiras, eixo em milhar acima de 100 mil |
+| `PLACEHOLDER`, `achados_de_placeholder`, `achados_de_paginacao` | auditoria compartilhada |
+| `grafico_*_png` | gráficos matplotlib com a paleta e as regras acima |
+
+Ele não importa python-docx, openpyxl nem reportlab — é o que permite testá-lo
+sozinho (`sandbox/kits_test.py`).
+
+**Números pertencem ao kit.** O modelo passa `int`/`float`/`Decimal`/`date`; a
+coluna (`moeda=`, `pct=`, `milhar=`, `data=`) decide o formato, o alinhamento e
+o parêntese vermelho do negativo. String com "R$" vira texto no Excel — nenhuma
+soma, gráfico ou tabela dinâmica funciona em cima dela, e a auditoria reprova.
+
+### 19.2 Presets: o modelo escolhe o registro, não os blocos
+
+`PRESETS` (mesmo dicionário no `docpro` e no `pdfpro`) traduz o tipo de
+documento em decisões de diagramação:
+
+| preset | capa | sumário | numeração | corpo | fechamento |
+| --- | --- | --- | --- | --- | --- |
+| `gerencial` | faixa de tinta | automático com 4+ seções | SEÇÃO 01 | esquerda | faixa (ou `estilo="pagina"`) |
+| `parecer` | simples | automático com 4+ seções | 1., 1.1 | justificado | faixa |
+| `proposta` | faixa de tinta | nunca | sem | esquerda | faixa |
+| `carta` | nenhuma | nunca | sem | justificado | assinatura |
+| `sobrio` (PDF; no Word é a classe `Sobrio`) | nenhuma | nunca | rígida no texto | justificado | assinaturas + testemunhas |
+
+Capa e sumário são montados no `salvar()`, quando já se sabe quantas seções o
+documento tem, e movidos para a frente do corpo. `capa=False`, `sumario=False` e
+`contracapa="faixa"|"pagina"|False` sobrescrevem o preset caso a caso.
+
+### 19.3 O contrato de grade
 
 O defeito que motivou a reescrita de 2026-07-26 não era de conteúdo: era o
 texto começar em coordenadas diferentes conforme o bloco. No PDF entregue
@@ -854,58 +899,124 @@ da tabela, não um `LINEBEFORE`: assim ela fica inteira dentro da caixa e não
 empurra o texto nem invade a margem. Nenhum bloco aceita recuo próprio ou
 largura literal em centímetros.
 
-### 19.2 Tipografia e compatibilidade (PDF)
+### 19.4 Tipografia: a fonte que o cliente vê é a que foi conferida
 
-- **Fonte embutida.** O `pdfpro` registra a primeira família TrueType que
-  encontrar (Carlito → DejaVu Sans → Liberation Sans) e cai para as Type1
-  base-14 só se não houver nenhuma. Embutir resolve de uma vez cobertura de
-  acentos, `/ToUnicode` (texto copiável e pesquisável) e renderização igual em
-  qualquer leitor.
+A v1 pedia "Source Serif 4"/"Source Sans 3" **pelo nome** no `.docx`. Essas
+fontes não existem no Windows nem no Mac do cliente: o Word substituía, as
+linhas quebravam em outro lugar e a conferência — feita no PDF gêmeo gerado no
+sandbox — passava a valer para um documento diferente do que ele abria.
+
+O padrão da v2 é **Cambria** (títulos e números de destaque) sobre **Calibri**
+(corpo e tabelas): existem em todo Office desde 2007 e, no Linux do sandbox, o
+LibreOffice as substitui por **Caladea/Carlito**, que são metricamente
+idênticas. O PDF gêmeo passa a quebrar a linha no mesmo lugar que o Word do
+cliente. O `pdfpro` embute Caladea/Carlito (`tipografia="office"`, padrão) e
+mantém Source como `tipografia="editorial"`, que só faz sentido em PDF — lá a
+fonte vai embutida no arquivo. As duas famílias são registradas no import
+(`pdfpro.TIPOGRAFIAS`); DejaVu e Liberation fecham a lista de fallback, e a
+base-14 é o último recurso.
+
+Demais garantias do PDF (mantidas da v1):
+
 - **Saneamento de glifo.** `texto_seguro()` remove caracteres de controle e
   troca por equivalentes o que a fonte não desenha. A checagem pergunta ao
   próprio reportlab (`unicode2T1`), porque a resposta intuitiva está errada:
   `"•".encode("cp1252")` funciona, mas o reportlab codifica o bullet em
   Helvetica como `\x7f` (DEL) — que o leitor mostra como quadrado ou nada. Era
-  a origem dos **320 marcadores quebrados** do relatório entregue. Símbolo que
-  ele não acha na fonte do texto ele redesenha com Symbol/ZapfDingbats, o que
-  também conta como não coberto.
+  a origem dos **320 marcadores quebrados** do relatório entregue.
 - **Marcação.** Todo texto é escapado preservando as tags que o `Paragraph`
   entende (`<b>`, `<i>`, `<br/>`…). Sem isso um "Silva & Cia" ou um "a < b"
   vindo de dado do usuário derruba a geração.
 - **Rodapé.** "Página X de Y" sai por `drawRightString`. Com `drawString` a
-  borda direita anda ao passar de 9 para 10 páginas — foi o que aconteceu no
-  arquivo entregue (507,89 pt até a página 9; 503,45 daí em diante).
+  borda direita anda ao passar de 9 para 10 páginas.
 
-### 19.3 Auditoria do arquivo gerado
+### 19.5 Regras de paginação (código, não instrução ao modelo)
 
-`RelatorioPDF.salvar()` chama `auditar_pdf()` no arquivo **pronto** e levanta
-erro se sobrar achado grave. O modelo também pode rodar
-`from pdfpro import verificar_pdf` a qualquer momento. O auditor descomprime
-os streams de conteúdo **das páginas** (não das fontes embutidas), refaz a
-pilha de matrizes `q`/`Q`/`cm` e acompanha `Tm`/`Td` para saber onde cada
-trecho de texto realmente começa.
-
-| Código | Gravidade | O que pega |
+| Regra | Como | Onde |
 | --- | --- | --- |
-| `texto-fora-da-grade` | grave | texto começando fora da caixa útil |
-| `glifo-invalido` | grave | `\x7f` ou fonte Symbol de último recurso no meio do texto |
-| `sem-tounicode` | grave | fonte embutida sem mapa Unicode (texto não copiável) |
-| `pagina-irregular` | grave | páginas de tamanhos diferentes |
-| `fonte-nao-embutida` | aviso | nenhuma TTF disponível no ambiente |
-| `metadado-vazio` | aviso | sem `/Title` ou `/Author` |
+| Tabela de até 15 linhas é indivisível | `cantSplit` em toda linha + `keepNext` em todas menos a última | `docpro._paginacao_tabela`, `pdfpro.tabela` (`KeepTogether`) |
+| Acima de 15 linhas, o TOTAL nunca abre a página sozinho | `keepNext` na penúltima linha, cabeçalho repetido (`tblHeader`/`repeatRows`) | idem |
+| "Fonte:" cola na tabela | `keepNext` na última linha | idem |
+| Fecho + assinaturas + testemunhas são indivisíveis **e colam no conteúdo anterior** | tabela externa de uma coluna com `cantSplit` (Word); `KeepTogether` que puxa o último bloco, limitado a 35% da altura útil (PDF) | `assinaturas()` |
+| Sumário só ganha página própria acima de 10 entradas | decidido em `_finalizar_estrutura` | ambos |
+| Lista curta, callout, citação e cronograma curto são indivisíveis | `keepNext`/`cantSplit` | ambos |
+| Fechamento em faixa fica no PÉ da última página | tabela flutuante `vertAnchor="margin" tblpYSpec="bottom"` (Word); `KeepTogether` no fim da story (PDF) | `contracapa()` |
 
-Aplicado ao PDF que motivou a reescrita, o auditor devolve: 203 trechos fora da
-grade, 342 glifos trocados e nenhuma fonte embutida.
+### 19.6 Sumário com as páginas REAIS (segundo passo pelo PDF)
 
-### 19.4 Robustez comum aos três kits
+Na v1 o modelo informava a página (`sumario([("Sumário executivo", 3)])`) — e o
+sumário saiu errado no próprio documento da revisão. Na v2, `docpro.salvar()`:
+
+1. grava o `.docx` e converte para PDF com o LibreOffice;
+2. lê o texto de cada página com o `pypdf`, **ignorando as linhas do próprio
+   sumário** (senão cada título é achado na página do índice, que lista todos, e
+   o sumário passa a apontar para si mesmo);
+3. reescreve o número de cada entrada e converte de novo.
+
+`sumario(entradas)` continua aceito, com `warnings.warn` — quem forçar o número
+sabe que ele não é conferido. No PDF o mesmo papel é do `multiBuild` do
+reportlab, e os títulos também viram **marcadores (outline)** do arquivo: eles
+são anotados durante o build e registrados na reemissão de páginas do
+`_CanvasNumerado`, porque um `bookmarkPage` feito durante o build apontaria
+todos para a página 1.
+
+### 19.7 Auditoria: `salvar()` confere o arquivo pronto
+
+Os **três** kits devolvem `{"ok", "paginas"/"abas", "achados"}` e levantam
+`KitError` (subclasse de `ValueError`) quando há achado grave. O modelo lê o
+retorno e corrige o script — em vez de "lembrar de conferir".
+
+| Código | Gravidade | Kit | O que pega |
+| --- | --- | --- | --- |
+| `placeholder` | grave | os três | "DD/MM/AAAA", "Seu Nome", "[cliente]", "Cidade/Estado"… no arquivo PRONTO, inclusive nas tabelas aninhadas do bloco de assinatura |
+| `linha-fora-do-cabecalho` | grave | os três | linha com número de valores diferente do cabeçalho |
+| `sumario-divergente` | grave | docpro | o índice aponta uma página e a seção está em outra |
+| `pagina-vazia` | grave | docpro, pdfpro | página com menos de 40 caracteres (a capa e a contracapa de página inteira são isentas) |
+| `assinatura-orfa` | grave | docpro, pdfpro | página em que, tirado o material de fechamento, não sobra nada |
+| `coluna-numerica-com-texto` | grave | xlspro | coluna declarada `moeda=`/`pct=` que recebeu string — a soma dá zero em silêncio |
+| `formula-com-erro` | grave | xlspro | `#REF!`, `#DIV/0!`… depois do recálculo com LibreOffice |
+| `grafico-invalido` | grave | xlspro | aba inexistente, intervalo invertido, série vazia (reaproveita `validar_artefato.check_charts`) |
+| `texto-fora-da-grade`, `glifo-invalido`, `sem-tounicode`, `pagina-irregular` | grave | pdfpro | os da v1, sobre o binário do PDF |
+| `kpi-quebrado` | aviso | docpro, pdfpro | o valor do cartão não aparece inteiro em nenhuma linha do PDF |
+| `celula-de-valor-vazia` | aviso | docpro | coluna de valor sem conteúdo numa linha de dados |
+| `impressao-sem-ajuste`, `notas-fora-do-lugar` | aviso | xlspro | aba fora do "ajustar à largura"; aba de notas que não é a última |
+| `sem-pdf-gemeo`, `pdf-ilegivel`, `formula-nao-recalculada` | aviso | conforme | o ambiente não tinha LibreOffice/pypdf: a conferência foi PARCIAL e diz isso |
+
+O auditor do PDF descomprime os streams de conteúdo **das páginas** (não das
+fontes embutidas), refaz a pilha de matrizes `q`/`Q`/`cm` e acompanha `Tm`/`Td`
+para saber onde cada trecho de texto realmente começa. Aplicado ao PDF que
+motivou a reescrita, devolve 203 trechos fora da grade, 342 glifos trocados e
+nenhuma fonte embutida.
+
+### 19.8 Excel: a planilha entregue é a planilha impressa
+
+O `xlspro` v2 fechou o que faltava para a planilha sair pronta e não só bonita:
+`filtro=True` no cabeçalho, `total="formula"` para quem quer a planilha viva,
+aba **Notas** (fonte, premissas, responsável e data) por último, e
+`imprimir()` aplicado a todas as abas no `salvar()` — `fitToWidth=1` com
+`fitToPage` no `sheetPr` (sem ele o Excel ignora o ajuste), paisagem acima de 6
+colunas, cabeçalho repetido e "Página &P de &N" no rodapé. A área de impressão
+do painel inclui os **gráficos**: eles flutuam sobre a grade e não entram em
+`max_row`, então uma área calculada só pelas células imprimia o painel sem eles.
+
+### 19.9 Robustez comum e testes
 
 Caractere de controle é ilegal em XML 1.0: no `.docx` produz arquivo que o Word
 recusa ("conteúdo ilegível") e no `.xlsx` o openpyxl levanta
-`IllegalCharacterError`. Os três kits limpam o texto antes de escrever. Linha
-com número de colunas diferente do cabeçalho é normalizada em vez de derrubar a
-geração, e o nome de aba do Excel é saneado (`: \ / ? * [ ]`, 31 caracteres).
+`IllegalCharacterError`. Os kits limpam o texto antes de escrever, e o nome de
+aba do Excel é saneado (`: \ / ? * [ ]`, 31 caracteres). Identificadores
+(CNPJ, CPF, NIRE, CEP) recebem **hífen não separável**, para o Word não partir
+um NIRE ao fim da linha numa folha que vai à Junta Comercial.
 
-Testes: `sandbox/*_test.py` (rodam na CI com `python -m unittest discover -s
-sandbox`). Os do `pdfpro` cobrem o contrato de grade bloco a bloco, a aresta
-direita da numeração, o saneamento de glifo nos dois caminhos de fonte e a
-própria auditoria (que precisa **reprovar** um PDF ruim).
+Testes: `sandbox/*_test.py`, rodados na CI (`python -m unittest discover -s
+sandbox`) com matplotlib, LibreOffice e as fontes Carlito/Caladea instalados —
+sem eles os testes de gráfico e de PDF gêmeo se auto-pulariam e a cobertura
+sumiria em silêncio. `sandbox/exemplos/gerar_exemplos.py` regenera os quatro
+documentos da revisão de design (relatório, proposta, ata e planilha) para
+conferência em tela; os binários **não** são versionados, porque envelheceriam
+documentando uma versão do kit que não existe mais.
+
+**Deixado de fora da v2, de propósito:** a contracapa de página inteira não é
+escolhida sozinha pelo número de páginas (o padrão é a faixa; `estilo="pagina"`
+é explícito) — decidir isso exigiria um terceiro passo de conversão só para uma
+escolha estética.

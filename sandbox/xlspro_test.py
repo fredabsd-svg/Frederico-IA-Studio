@@ -6,6 +6,7 @@ import zipfile
 try:
     from openpyxl import load_workbook
 
+    from kits import KitError
     from xlspro import CORES_GRAF, MOEDA_FMT, Planilha
 
     TEM_OPENPYXL = True
@@ -72,13 +73,131 @@ class XlsProArtifactTests(unittest.TestCase):
             for previous in range(1, stage + 1):
                 self.assertIn(f"Revisão {previous}", reopened.sheetnames)
 
-    def test_linha_maior_que_cabecalho_nao_corrompe_a_geracao(self):
+    def test_linha_maior_que_cabecalho_reprova_na_auditoria(self):
+        """A v1 escrevia a célula extra FORA da tabela, sem formato e sem
+        cabeçalho, e ninguém via. A v2 corta a linha na largura do cabeçalho
+        (nada vaza) e a auditoria REPROVA, dizendo qual linha está errada."""
         planilha = Planilha()
         ws = planilha.aba("Dados")
         planilha.tabela(ws, ["A", "B"], [[1, 2, 3], [4, 5, 6]])
-        planilha.salvar(self.path)
+        with self.assertRaises(KitError) as erro:
+            planilha.salvar(self.path)
+        self.assertIn("linha-fora-do-cabecalho", str(erro.exception))
         workbook = load_workbook(self.path)
-        self.assertEqual(workbook["Dados"]["C2"].value, 3)
+        self.assertIsNone(workbook["Dados"]["C2"].value)
+
+
+    # ---------- v2: números, filtro, notas, impressão e conferência ----------
+    def test_tabela_recebe_numeros_e_calcula_o_total(self):
+        """String "R$ 412.300,00" vira TEXTO no Excel: nenhuma soma, gráfico ou
+        tabela dinâmica funciona em cima dela. O kit recebe o número e aplica o
+        formato pt-BR na célula."""
+        p = Planilha(emissor="Escritório", titulo="DRE")
+        ws = p.aba("DRE")
+        p.tabela(ws, ["Trimestre", "Receita", "Margem"],
+                 [["1T25", 412300, 0.277], ["2T25", 455900, 0.319]],
+                 moeda=["Receita"], pct=["Margem"], total="soma")
+        p.salvar(self.path)
+        wb = load_workbook(self.path)
+        aba = wb["DRE"]
+        self.assertEqual(aba["B2"].value, 412300)          # NÚMERO, não texto
+        self.assertEqual(aba["B2"].number_format, MOEDA_FMT)
+        self.assertEqual(aba["C2"].number_format, "0.0%")
+        # O TOTAL é calculado pelo kit; percentual não se soma.
+        self.assertEqual(aba["A4"].value, "TOTAL")
+        self.assertEqual(aba["B4"].value, 868200)
+        self.assertIn(aba["C4"].value, (None, ""))
+
+    def test_total_em_formula_deixa_a_planilha_viva(self):
+        p = Planilha(emissor="Escritório")
+        ws = p.aba("Dados")
+        p.tabela(ws, ["Item", "Valor"], [["a", 10], ["b", 20]],
+                 moeda=["Valor"], total="formula")
+        p.salvar(self.path)
+        aba = load_workbook(self.path)["Dados"]
+        self.assertEqual(aba["B4"].value, "=SUM(B2:B3)")
+
+    def test_filtro_no_cabecalho_e_cabecalho_repetido_na_impressao(self):
+        p = Planilha()
+        ws = p.aba("Dados")
+        p.tabela(ws, ["Item", "Valor"], [["a", 10], ["b", 20]], moeda=["Valor"])
+        p.salvar(self.path)
+        aba = load_workbook(self.path)["Dados"]
+        self.assertEqual(aba.auto_filter.ref, "A1:B3")
+        self.assertEqual(aba.print_title_rows, "$1:$1")
+
+    def test_impressao_ajusta_a_largura_da_folha(self):
+        """12 colunas sem "ajustar à largura" imprimem metade numa folha e o
+        resto noutra, com o cabeçalho só na primeira."""
+        p = Planilha(emissor="Escritório")
+        ws = p.aba("Larga")
+        p.tabela(ws, ["C%d" % i for i in range(12)],
+                 [[i for i in range(12)]], milhar=["C%d" % i for i in range(1, 12)])
+        p.salvar(self.path)
+        aba = load_workbook(self.path)["Larga"]
+        self.assertEqual(aba.page_setup.fitToWidth, 1)
+        self.assertEqual(aba.page_setup.fitToHeight, 0)
+        # Sem `fitToPage` no sheetPr o Excel IGNORA o fitToWidth acima.
+        self.assertTrue(aba.sheet_properties.pageSetUpPr.fitToPage)
+        self.assertEqual(aba.page_setup.orientation, "landscape")
+
+    def test_notas_ficam_na_ultima_aba(self):
+        p = Planilha(emissor="Escritório")
+        p.notas(["Fonte: balancetes", "Valores em R$"])
+        p.aba("Depois")
+        p.salvar(self.path)
+        wb = load_workbook(self.path)
+        self.assertEqual(wb.sheetnames[-1], "Notas")
+
+    def test_painel_e_a_primeira_aba_e_a_area_de_impressao_cobre_os_graficos(self):
+        """Os gráficos flutuam sobre a grade e não entram em `max_row`: uma área
+        de impressão calculada só pelas células imprimia o painel SEM eles."""
+        p = Planilha(emissor="Escritório", titulo="DRE")
+        ws = p.aba("Dados")
+        info = p.tabela(ws, ["Item", "Valor"], [["a", 10], ["b", 20]], moeda=["Valor"])
+        p.painel(kpis=[(30, "Total", "moeda")],
+                 graficos=[("barras", info, "Item", "Valor", "Valor por item")])
+        p.salvar(self.path)
+        wb = load_workbook(self.path)
+        self.assertEqual(wb.sheetnames[0], "Resumo")
+        import re as _re
+        area = wb["Resumo"].print_area
+        area = area[0] if isinstance(area, list) else area
+        linha_final = int(_re.findall(r"\d+", str(area))[-1])
+        self.assertGreaterEqual(linha_final, 20)
+
+    def test_kpi_numerico_entra_como_numero_no_painel(self):
+        p = Planilha(emissor="Escritório")
+        p.aba("Dados")
+        p.painel(kpis=[(1887900, "Receita", "moeda"), ("12 meses", "Vigência")])
+        p.salvar(self.path)
+        painel = load_workbook(self.path)["Resumo"]
+        self.assertEqual(painel["B5"].value, 1887900)
+        self.assertEqual(painel["B5"].number_format, MOEDA_FMT)
+
+    def test_coluna_declarada_numerica_com_texto_reprova(self):
+        """Um texto numa coluna de moeda faz a soma dar zero e o gráfico sair
+        vazio, sem nenhum erro visível na tela."""
+        p = Planilha()
+        ws = p.aba("Dados")
+        p.tabela(ws, ["Item", "Valor"], [["a", "R$ 10,00"]], moeda=["Valor"])
+        with self.assertRaises(KitError) as erro:
+            p.salvar(self.path)
+        self.assertIn("coluna-numerica-com-texto", str(erro.exception))
+
+    def test_placeholder_de_rascunho_reprova(self):
+        p = Planilha()
+        ws = p.aba("Dados")
+        p.tabela(ws, ["Campo", "Valor"], [["Vencimento", "DD/MM/AAAA"]])
+        with self.assertRaises(KitError) as erro:
+            p.salvar(self.path)
+        self.assertIn("placeholder", str(erro.exception))
+
+    def test_coluna_inexistente_no_formato_falha_cedo(self):
+        p = Planilha()
+        ws = p.aba("Dados")
+        with self.assertRaises(KitError):
+            p.tabela(ws, ["Serviço", "Valor mensal"], [["a", 1]], moeda=["Valor"])
 
     def test_grafico_rejeita_contrato_invalido_com_erro_claro(self):
         planilha = Planilha()

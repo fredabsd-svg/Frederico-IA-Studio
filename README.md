@@ -365,12 +365,17 @@ Mexeu em interface, streaming ou login? Rode também os testes de navegador
 Eles sobem o **build de produção** e conversam com um provedor de IA simulado,
 então não precisam de chave nem de internet.
 
-Mexeu nos kits de documento (`sandbox/docpro.py`, `xlspro.py`, `pdfpro.py`)?
-Instale `python-docx`, `openpyxl`, `reportlab` e `matplotlib` **antes** de rodar
-`python -m unittest discover -s sandbox -p '*_test.py'` — sem eles a suíte se
-pula sozinha e passa vazia. Ela fixa o contrato de layout: se um bloco novo
-puser texto fora da grade da página, o teste acusa antes de o arquivo chegar ao
-cliente (ver [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §19).
+Mexeu nos kits de documento (`sandbox/kits.py`, `docpro.py`, `xlspro.py`,
+`pdfpro.py`)? Instale `python-docx`, `openpyxl`, `reportlab`, `pypdf` e
+`matplotlib` — e também `libreoffice-writer`/`libreoffice-calc` com as fontes
+`fonts-crosextra-carlito`/`-caladea` — **antes** de rodar
+`python -m unittest discover -s sandbox -p '*_test.py'`. Sem eles a suíte se
+pula sozinha e passa vazia. Ela fixa o contrato de layout e a conferência: se um
+bloco novo puser texto fora da grade, deixar a linha TOTAL órfã ou o sumário
+apontar a página errada, o teste acusa antes de o arquivo chegar ao cliente
+(ver [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §19). Para conferir com os
+próprios olhos, `python sandbox/exemplos/gerar_exemplos.py /tmp/exemplos`
+regenera os quatro documentos da revisão de design.
 
 <div align="center">
 

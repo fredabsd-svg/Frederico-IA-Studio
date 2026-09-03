@@ -130,14 +130,18 @@ RUN mkdir -p "$DOTNET_ROOT" && \
 # atualização, o que pesa demais numa VPS pequena.
 RUN pip install --no-cache-dir "strawberry-graphql[fastapi,cli]"
 
-# Fontes da identidade "Tinta & Latão": Source Serif 4 (títulos) sobre Source
-# Sans 3 (corpo), TTFs estáticos, licença OFL. O pdfpro as procura em
+# Fontes da voz EDITORIAL da identidade "Tinta & Latão": Source Serif 4
+# (títulos) sobre Source Sans 3 (corpo), TTFs estáticos, licença OFL. Desde os
+# kits v2 elas são OPCIONAIS: o padrão dos três kits é Cambria/Calibri, porque
+# essas o cliente TEM — e no Linux o LibreOffice as substitui por
+# Caladea/Carlito (instaladas via apt, metricamente idênticas), o que faz o PDF
+# gêmeo quebrar a linha no mesmo lugar que o Word do cliente. As Source entram
+# só com `tipografia="editorial"` no pdfpro, que as procura em
 # /usr/share/fonts/truetype/tinta-latao e as EMBUTE no PDF (com /ToUnicode, o
-# que a auditoria exige); docx/xlsx pedem a fonte pelo nome e o Word/Excel
-# resolve. Sem elas nada quebra — os kits caem em Carlito/Liberation/DejaVu —,
-# então o bloco é tolerante a falha de rede, como o das fontes da Microsoft
-# acima. Fica junto do COPY dos kits pelo motivo já explicado: camada no fim do
-# arquivo não rebaixa dotnet, Kotlin, Chromium e Playwright.
+# que a auditoria exige). Sem elas nada quebra — daí o bloco continuar tolerante
+# a falha de rede, como o das fontes da Microsoft acima. Fica junto do COPY dos
+# kits pelo motivo já explicado: camada no fim do arquivo não rebaixa dotnet,
+# Kotlin, Chromium e Playwright.
 RUN mkdir -p /usr/share/fonts/truetype/tinta-latao /tmp/f && cd /tmp/f && \
     (curl -fsSL -o serif.zip https://github.com/adobe-fonts/source-serif/releases/download/4.005R/source-serif-4.005_Desktop.zip && \
      curl -fsSL -o sans.zip  https://github.com/adobe-fonts/source-sans/releases/download/3.052R/TTF-source-sans-3.052R.zip && \
@@ -151,14 +155,19 @@ RUN mkdir -p /usr/share/fonts/truetype/tinta-latao /tmp/f && cd /tmp/f && \
      fc-cache -f >/dev/null 2>&1) || true; \
     rm -rf /tmp/f
 
-# Kits de DESIGN profissional prontos (identidade "Tinta & Latão"): Word
-# (docpro), Excel (xlspro) e PDF (pdfpro). Importáveis como `from docpro import Relatorio`,
-# `from xlspro import Planilha`, `from pdfpro import RelatorioPDF`. Dão capa,
-# sumário, títulos numerados, tabelas com TOTAL, listas, callouts, KPIs,
-# citação, linha do tempo, gráficos, assinaturas, contracapa e rodapé paginado;
-# no Excel, a aba-painel. O pdfpro ainda AUDITA o arquivo pronto ao salvar —
-# sem o modelo precisar reinventar o estilo nem conferir na mão.
-COPY docpro.py xlspro.py pdfpro.py /usr/local/lib/python3.12/site-packages/
+# Kits de DESIGN profissional prontos (identidade "Tinta & Latão"): a base
+# comum (kits) mais Word (docpro), Excel (xlspro) e PDF (pdfpro). Importáveis
+# como `from docpro import Relatorio`, `from xlspro import Planilha`,
+# `from pdfpro import RelatorioPDF` e `from kits import fmt`. O modelo escolhe o
+# PRESET (gerencial | parecer | proposta | carta | sobrio) e o kit decide capa,
+# sumário, numeração de seção, corpo e fechamento; passa NÚMEROS e quem formata
+# em pt-BR é a coluna. O `salvar()` dos TRÊS audita o arquivo pronto e levanta
+# `KitError` no achado grave — placeholder de rascunho, linha fora do cabeçalho,
+# sumário divergente, página em branco, assinatura órfã, fórmula com erro.
+#
+# `validar_artefato` entra junto porque o xlspro reaproveita dele a validação de
+# gráfico e o recálculo de fórmula, em vez de reescrevê-los.
+COPY kits.py docpro.py xlspro.py pdfpro.py validar_artefato.py /usr/local/lib/python3.12/site-packages/
 
 # Compatibilidade com modelos que tentam salvar arquivos no caminho usado por
 # outros sandboxes. Aqui ele aponta para o workspace real da conversa.
