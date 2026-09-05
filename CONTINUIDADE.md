@@ -64,6 +64,23 @@ a cada merge, em vez de empilhar sobre histórico já mesclado — por isso cada
 traz só a frente dele. O F-23 nasceu na branch enquanto o #199 era mesclado, e
 por isso foi **rebaseado** sobre a `main` nova e saiu em PR próprio.
 
+**Frente desta sessão (2026-09-05) — fora do domínio do produto:**
+
+Adicionado `zatch-bell.html` na raiz do repositório: uma enciclopédia visual de fã,
+estática e autocontida (HTML/CSS/JS inline num único arquivo, sem build), sobre o
+anime/mangá Zatch Bell! (Konjiki no Gash Bell!!) — 43 personagens, os 7 arcos da
+história, sistema de batalha, listas de capítulos/episódios, galeria e comparativo
+mangá × anime. Pedido explícito do usuário, sem relação com o produto Frederico IA
+Studio: não altera backend, frontend, banco, segurança, sandbox ou qualquer área
+coberta pelas regras do projeto. `npm run check` não se aplica — não há código de
+aplicação envolvido, só um arquivo estático novo. Pesquisa de conteúdo feita via
+workflow com agentes paralelos; itens sem confirmação segura ficam marcados como tal
+no próprio HTML (selo de confiança por personagem/arco).
+
+| Frente | PR | Estado |
+| --- | --- | --- |
+| Enciclopédia Zatch Bell! (`zatch-bell.html`, conteúdo estático de fã) | [#PENDENTE — atualizar após abrir](https://github.com/fredabsd-svg/Frederico-IA-Studio/pulls) | aberto |
+
 - **Último trabalho:** o **F-18 avançou** (segue parcial) — mesmo PR
   [#203](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/203).
   19 casos levam DRE, certidão PGFN, NF escaneada e razão analítico pelo pipeline
