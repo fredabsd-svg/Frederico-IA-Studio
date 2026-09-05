@@ -19,6 +19,22 @@ test('toolProbe router: default export é função (express.Router)', async () =
   assert.equal(typeof mod.default, 'function');
 });
 
+// Este teste é mais do que parece. O modo live antes resolvia o provedor com
+// `await import('../provider.js')` DENTRO de um try/catch — um módulo que não
+// existe (o provedor mora em `src/agent/provider.js`). Import dinâmico dentro de
+// catch falha em silêncio: a rota respondia 503 "provider_indisponivel" para
+// sempre, e nenhum teste percebia. Agora a dependência é um import ESTÁTICO, e
+// um caminho errado derruba este import — ou seja, o `import` abaixo é a
+// regressão.
+test('toolProbe router: as dependências do modo live resolvem de fato', async () => {
+  const mod = await import('./toolProbe.js');
+  assert.equal(typeof mod.default, 'function');
+  const probeProvider = await import('../tools/probe/provider.js');
+  assert.equal(typeof probeProvider.providerDeCliente, 'function');
+  const userProvider = await import('../userProvider.js');
+  assert.equal(typeof userProvider.getUserProvider, 'function');
+});
+
 test('toolProbe router: tem rota POST /admin/tool-probe', async () => {
   const mod = await import('./toolProbe.js');
   const router = mod.default;

@@ -1,10 +1,12 @@
 // Rota admin para a sonda controlada de tool calling.
 //
 // POST /admin/tool-probe
-//   Body: { scenarioIds?: string[], turns?: number, timeoutMs?: number, live?: boolean }
+//   Body: { scenarioIds?: string[], turns?: number, timeoutMs?: number,
+//           live?: boolean, modelRef?: string }
 //   Resposta: { verdict, reason, totals, perMode, perScenario }
 //
-//   - live=true: chama o provider real (mais caro, mais útil).
+//   - live=true: chama o provedor do próprio administrador (mais caro, mais
+//     útil); `modelRef` escolhe um modelo específico da conta dele.
 //   - live=false (default): roda em dry-run; retorna 'text_only' com 0 runs
 //     de tool_call (sanity check do pipeline).
 //
@@ -13,6 +15,8 @@
 // de produto, não de auditoria.
 
 import { runProbe } from '../tools/probe/probeRunner.js';
+import { providerDeCliente, SondaSemProvedor } from '../tools/probe/provider.js';
+import { getUserProvider } from '../userProvider.js';
 import { makeRouter, requireAdmin, recordAdminAction } from './helpers.js';
 
 const router = makeRouter();
@@ -26,28 +30,30 @@ router.post('/admin/tool-probe', async (req, res) => {
   const timeoutMs = Number.isFinite(body.timeoutMs) ? Number(body.timeoutMs) : undefined;
   const live = body.live === true;
 
-  // Modo live injeta o provider real. Sem rede/sem env vars válidas, o provider
-  // vai jogar e o runner vai capturar como providerError (sem derrubar a rota).
+  // Modo live usa o provedor do PRÓPRIO administrador — o mesmo `getUserProvider`
+  // que serve o chat —, então a sonda mede o provedor que ele de fato usa. O
+  // `modelRef` opcional permite sondar um modelo específico da conta.
+  //
+  // Antes, este trecho importava `../provider.js` e chamava
+  // `generateOpenAICompatible`: nenhum dos dois existe, então `live: true`
+  // devolvia 503 sempre. Se o caller não quiser live, basta omitir `live: true`.
   let providerFn = null;
   if (live) {
     try {
-      const mod = await import('../provider.js');
-      // A função exportada chama OpenAI-compat. Se o caller não quiser live,
-      // basta omitir `live: true`.
-      providerFn = async (messages, options) => {
-        return await mod.generateOpenAICompatible({
-          messages,
-          model: options.model ?? process.env.DEFAULT_LLM ?? 'default',
-          temperature: options.temperature ?? 0,
-          maxTokens: options.maxTokens ?? 300,
-          tools: options.tools,
+      const provider = await getUserProvider(req.userId, String(body.modelRef || ''));
+      if (!provider?.hasKey) {
+        res.status(503).json({
+          error: 'provider_indisponivel',
+          detail: 'nenhum provedor de IA configurado para este administrador — cadastre a chave em Configurações.',
         });
-      };
+        return;
+      }
+      providerFn = providerDeCliente({ client: provider.client, model: provider.model });
     } catch (err) {
-      // Provider indisponível neste ambiente: devolve erro claro em vez de 500.
-      res.status(503).json({
-        error: 'provider_indisponivel',
-        detail: `não foi possível carregar provider.js: ${err?.message ?? String(err)}`,
+      const semProvedor = err instanceof SondaSemProvedor;
+      res.status(semProvedor ? 503 : 500).json({
+        error: semProvedor ? 'provider_indisponivel' : 'probe_falhou',
+        detail: err?.message ?? String(err),
       });
       return;
     }

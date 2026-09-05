@@ -152,19 +152,35 @@ export async function runProbe(options = {}) {
     runOne(job.scenario, job.mode, job.turn, providerFn, timeoutMs)
   );
 
-  return aggregateRuns(runs);
+  // O agregado precisa DIZER que foi seco. Sem essa marca, o dry-run devolve
+  // `text_only` com o motivo "modelo não emite tool calls mesmo quando
+  // instruído" — uma frase sobre um modelo que nunca foi chamado. Quem lê o
+  // JSON (a rota admin, um relatório salvo) não tem como saber a diferença.
+  const seco = providerFn === dryProviderCall;
+  const agregado = aggregateRuns(runs);
+  return seco
+    ? { ...agregado, dryRun: true, reason: `execução SECA, nenhum provedor chamado — ${agregado.reason}` }
+    : { ...agregado, dryRun: false };
 }
 
-// CLI-friendly: imprime resumo no stdout e devolve o agregado.
+// CLI-friendly do modo SECO: imprime resumo no stdout e devolve o agregado.
+//
+// Esta função nunca chama provedor — e isso é o contrato, não uma limitação.
+// Ela antes fingia decidir (`dryRun ? dryProviderCall : null`), mas o `null`
+// caía no mesmo `dryProviderCall` lá dentro: pedir live aqui rodava seco e
+// imprimia veredito assim mesmo. Quem chama o provedor de verdade é
+// `scripts/run-tool-probe.mjs --live`, com `providerDoAmbiente()`.
 export async function runProbeCli(argv = process.argv.slice(2)) {
-  const dryRun = argv.includes('--dry-run') || !process.env.PROBE_LIVE;
   const outIndex = argv.indexOf('--out');
   const outPath = outIndex >= 0 ? argv[outIndex + 1] : null;
   const mdIndex = argv.indexOf('--md');
   const mdPath = mdIndex >= 0 ? argv[mdIndex + 1] : null;
+  const onlyIndex = argv.indexOf('--only');
+  const onlyId = onlyIndex >= 0 ? argv[onlyIndex + 1] : null;
 
   const result = await runProbe({
-    providerFn: dryRun ? dryProviderCall : null, // null -> cai no dryRun default
+    providerFn: dryProviderCall,
+    ...(onlyId ? { scenarioIds: [onlyId] } : {})
   });
 
   if (outPath) {
@@ -176,7 +192,9 @@ export async function runProbeCli(argv = process.argv.slice(2)) {
     await fs.writeFile(mdPath, toMarkdown(result), 'utf8');
   }
 
-  // Stdout sempre tem resumo curto.
+  // Stdout sempre tem resumo curto. A primeira linha diz que foi SECO: sem ela,
+  // um `no_capability` daqui se lê como "o modelo não faz tool calling".
+  console.log('# modo SECO: nenhum provedor foi chamado (use --live para valer).');
   console.log(`# probe veredito: ${result.verdict}`);
   console.log(`# motivo: ${result.reason}`);
   console.log(

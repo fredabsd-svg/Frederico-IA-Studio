@@ -3,72 +3,57 @@
 //
 // Uso:
 //   node scripts/run-tool-probe.mjs                     # dry-run, sem rede
-//   node scripts/run-tool-probe.mjs --live              # chama provider real
+//   node scripts/run-tool-probe.mjs --live              # chama o provedor real
 //   node scripts/run-tool-probe.mjs --out result.json   # grava JSON
 //   node scripts/run-tool-probe.mjs --md  report.md     # grava Markdown
 //   node scripts/run-tool-probe.mjs --only math.simple_addition
 //
+// Configuração do --live (nunca commite chave; use o .env ou o ambiente):
+//   SONDA_API_KEY   (ou VALIDACAO_API_KEY, FREE_TIER_API_KEY)
+//   SONDA_BASE_URL  (ou VALIDACAO_BASE_URL, FREE_TIER_BASE_URL, DEEPSEEK_BASE_URL)
+//   SONDA_MODELO    (ou PROBE_MODEL, VALIDACAO_MODELO, DEFAULT_LLM)
+//
 // Sem --live, é seguro rodar em CI (custo zero, sem rede).
-// Com --live, o provider real é chamado; pode custar tokens e demorar.
+// Com --live, o provedor real é chamado; pode custar tokens e demorar.
+//
+// O `--live` NÃO cai em dry-run quando falta configuração: ele sai com código 2
+// dizendo o que falta. Era o defeito antigo — o dry-run responde `no_tool` em
+// todos os cenários, então a queda silenciosa imprimia "este modelo não faz
+// tool calling" sem ter chamado modelo nenhum.
 
-import { runProbeCli } from '../src/tools/probe/probeRunner.js';
+import { runProbe, runProbeCli } from '../src/tools/probe/probeRunner.js';
+import { toJSON, toMarkdown } from '../src/tools/probe/results.js';
+import { providerDoAmbiente, SondaSemProvedor } from '../src/tools/probe/provider.js';
 
 const argv = process.argv.slice(2);
-const live = argv.includes('--live');
+const valor = (flag) => {
+  const i = argv.indexOf(flag);
+  return i >= 0 ? argv[i + 1] : null;
+};
 
-// Injeta provider real se --live foi passado e o módulo carrega.
-// Em ambiente sem provider.js configurado, o catch interno do runner
-// captura como providerError; o veredito vira 'no_capability'.
-if (live) {
-  try {
-    const mod = await import('../src/provider.js');
-    // Substitui o argv para o CLI não tentar dryProviderCall.
-    const filtered = argv.filter((a) => a !== '--live');
-    const fakeProcess = { ...process, argv: ['node', 'cli', ...filtered] };
-    process.env.PROBE_LIVE = '1';
-    await runProbeCliWithProvider(mod, filtered);
-  } catch (err) {
-    console.error(`# provider não carregou: ${err?.message ?? err}`);
-    console.error('# caindo em dry-run');
-    await runProbeCli();
-  }
+if (!argv.includes('--live')) {
+  await runProbeCli(argv);
 } else {
-  await runProbeCli();
-}
-
-async function runProbeCliWithProvider(providerMod, argvSubset) {
-  const outIndex = argvSubset.indexOf('--out');
-  const outPath = outIndex >= 0 ? argvSubset[outIndex + 1] : null;
-  const mdIndex = argvSubset.indexOf('--md');
-  const mdPath = mdIndex >= 0 ? argvSubset[mdIndex + 1] : null;
-  const onlyIndex = argvSubset.indexOf('--only');
-  const onlyId = onlyIndex >= 0 ? argvSubset[onlyIndex + 1] : null;
-
-  const providerFn = async (messages, options) => {
-    return await providerMod.generateOpenAICompatible({
-      messages,
-      model: options.model ?? process.env.DEFAULT_LLM ?? 'default',
-      temperature: options.temperature ?? 0,
-      maxTokens: options.maxTokens ?? 300,
-      tools: options.tools,
-    });
-  };
-
-  const { runProbe } = await import('../src/tools/probe/probeRunner.js');
-  const { toJSON, toMarkdown } = await import('../src/tools/probe/results.js');
-
-  const result = await runProbe({
-    providerFn,
-    ...(onlyId ? { scenarioIds: [onlyId] } : {}),
-  });
-
-  if (outPath) {
-    const fs = await import('node:fs/promises');
-    await fs.writeFile(outPath, JSON.stringify(toJSON(result), null, 2), 'utf8');
+  let providerFn;
+  try {
+    providerFn = providerDoAmbiente();
+  } catch (err) {
+    if (!(err instanceof SondaSemProvedor)) throw err;
+    console.error(`# --live pedido, mas ${err.message}.`);
+    console.error('# Nada foi chamado. Configure e rode de novo (ou omita --live para o dry-run).');
+    process.exit(2);
   }
-  if (mdPath) {
+
+  const outPath = valor('--out');
+  const mdPath = valor('--md');
+  const onlyId = valor('--only');
+
+  const result = await runProbe({ providerFn, ...(onlyId ? { scenarioIds: [onlyId] } : {}) });
+
+  if (outPath || mdPath) {
     const fs = await import('node:fs/promises');
-    await fs.writeFile(mdPath, toMarkdown(result), 'utf8');
+    if (outPath) await fs.writeFile(outPath, JSON.stringify(toJSON(result), null, 2), 'utf8');
+    if (mdPath) await fs.writeFile(mdPath, toMarkdown(result), 'utf8');
   }
 
   console.log(`# probe veredito: ${result.verdict}`);

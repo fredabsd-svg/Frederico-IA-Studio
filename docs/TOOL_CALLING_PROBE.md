@@ -64,11 +64,27 @@ Saída:
 ### Live (com provider real)
 
 ```bash
-PROBE_MODEL="anthropic/claude-3.5-sonnet" \
-  node scripts/run-tool-probe.mjs --live --out tools/probe-results/probe-claude-2026-01-15.json
+SONDA_API_KEY=... SONDA_BASE_URL=https://openrouter.ai/api/v1 \
+SONDA_MODELO="anthropic/claude-3.5-sonnet" \
+  node scripts/run-tool-probe.mjs --live --out tools/probe-results/probe-2026-01-15.json
 ```
 
-O `--live` carrega `src/provider.js` e chama `generateOpenAICompatible`. **Cuidado**: cada execução = ~30 chamadas reais. Para iteração rápida, restrinja cenários:
+O `--live` monta o cliente com `providerDoAmbiente()`
+(`src/tools/probe/provider.js`). As variáveis aceitas, em ordem de preferência:
+
+| Papel | Variáveis |
+| --- | --- |
+| chave | `SONDA_API_KEY`, `VALIDACAO_API_KEY`, `FREE_TIER_API_KEY` |
+| base URL | `SONDA_BASE_URL`, `VALIDACAO_BASE_URL`, `FREE_TIER_BASE_URL`, `DEEPSEEK_BASE_URL` |
+| modelo | `SONDA_MODELO`, `PROBE_MODEL`, `VALIDACAO_MODELO`, `DEFAULT_LLM` |
+
+**Faltando chave ou modelo, o `--live` PARA** (código de saída 2) em vez de
+rodar seco. Era o defeito antigo: a queda silenciosa para dry-run imprimia
+`text_only` — "o modelo não emite tool calls mesmo quando instruído" — sem
+nenhum modelo ter sido chamado.
+
+**Cuidado**: cada execução = ~30 chamadas reais. Para iteração rápida, restrinja
+cenários (o `--only` vale nos dois modos):
 
 ```bash
 node scripts/run-tool-probe.mjs --live --only math.simple_addition
@@ -83,9 +99,24 @@ curl -X POST http://localhost:3000/api/admin/tool-probe \
   -d '{"live": true, "turns": 3}'
 ```
 
-Resposta: `{ verdict, reason, totals, perMode, perScenario }`.
+Resposta: `{ verdict, reason, totals, perMode, perScenario, dryRun }`.
+
+No modo live a rota usa o **provedor do próprio administrador** (o mesmo
+`getUserProvider` do chat), então a sonda mede o provedor que ele de fato usa;
+`modelRef` no corpo escolhe um modelo específico da conta. Sem chave cadastrada,
+a resposta é 503 `provider_indisponivel`.
+
+O campo `dryRun` diz se houve chamada real. Ele existe porque o veredito do modo
+seco tem a mesma forma do veredito de verdade — sem essa marca, um relatório
+salvo de dry-run se lê, meses depois, como um resultado sobre o modelo.
 
 ## Relatório de exemplo
+
+> **Ilustrativo — não é medição.** Estes números mostram a FORMA do relatório;
+> nenhum provedor foi sondado para produzi-los. O modo live só passou a
+> funcionar depois da correção descrita acima, então não existe medição real
+> registrada aqui ainda. Ao rodar a primeira, guarde o JSON em
+> `tools/probe-results/` e substitua este bloco por ela, com data e modelo.
 
 ```
 # Tool calling probe — veredito
@@ -140,7 +171,11 @@ Esses pontos são extensões naturais para a **Frente 16** ou seguintes, conform
 - `backend/src/tools/probe/results.js` — agregador + veredito + Markdown.
 - `backend/src/tools/probe/probeRunner.js` — orquestrador (sequencial com concorrência 2).
 - `backend/src/tools/probe/parseFallback.js` — JSON.parse que nunca joga.
+- `backend/src/tools/probe/provider.js` — o provedor REAL do modo live, fonte única
+  da rota e do CLI (era duplicado nos dois, e nos dois apontando para um módulo
+  inexistente).
 - `backend/src/tools/probe/probe.test.js` — testes unitários (classificador, agregador, scenarios).
+- `backend/src/tools/probe/provider.test.js` — testes do modo live.
 - `backend/src/routes/toolProbe.js` — endpoint admin `POST /admin/tool-probe`.
 - `backend/src/routes/toolProbe.test.js` — testes do router.
 - `backend/scripts/run-tool-probe.mjs` — CLI.
