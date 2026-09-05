@@ -79,7 +79,7 @@ no próprio HTML (selo de confiança por personagem/arco).
 
 | Frente | PR | Estado |
 | --- | --- | --- |
-| Enciclopédia Zatch Bell! (`zatch-bell.html`, conteúdo estático de fã) | [#PENDENTE — atualizar após abrir](https://github.com/fredabsd-svg/Frederico-IA-Studio/pulls) | aberto |
+| Enciclopédia Zatch Bell! (`zatch-bell.html`, conteúdo estático de fã) | [#207](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/207) | aberto |
 
 - **Último trabalho:** o **F-18 avançou** (segue parcial) — mesmo PR
   [#203](https://github.com/fredabsd-svg/Frederico-IA-Studio/pull/203).
