@@ -2,6 +2,8 @@
 // backend), então o cookie de sessão vai automaticamente em todas as chamadas.
 import { createAuthClient } from 'better-auth/react';
 
+// WHY: mesma origem → cookie HttpOnly da Better Auth em todo /api; não há
+// token em localStorage nem fallback para APP_PASSWORD /api/login.
 export const authClient = createAuthClient({
   baseURL: typeof window !== 'undefined' ? window.location.origin : undefined,
 });

@@ -33,6 +33,7 @@ export default function AuthGate() {
     );
   }
 
+  // WHY: sem sessão Better Auth → Landing/LoginScreen; App nunca usa /api/login.
   if (!session) return <Landing />;
 
   return <App user={session.user} />;
