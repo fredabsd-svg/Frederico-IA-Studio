@@ -3,6 +3,7 @@
  * Aplica o wiring do Modo Dev DIRETO no App.jsx fonte (mesmo efeito do plugin).
  * Uso (git local): node frontend/scripts/apply-dev-wiring.mjs && git add frontend/src/App.jsx
  * Depois: remover o plugin de vite.config.js e deletar appDevNinoPatchPlugin.js.
+ * O workflow bake-dev-wiring.yml aplica isto no CI e faz commit do App.jsx.
  */
 import fs from 'fs';
 import path from 'path';
@@ -121,4 +122,4 @@ apply(
 
 fs.writeFileSync(appPath, code);
 console.log('apply-dev-wiring: ok →', steps.join(', '));
-console.log('Próximo: remover appDevNinoPatchPlugin de vite.config.js e deletar o plugin.');
+console.log('Próximo: remover appDevNinoPatchPlugin de vite.config.js e deletar o plugin.\n');
