@@ -253,6 +253,10 @@ test('operações sobre recurso específico pedem checagem de posse', () => {
 test('exec privilegiado ou como root é recusado', () => {
   assert.equal(evaluateRequest({ method: 'POST', path: '/containers/abc/exec', body: { Privileged: true } }, limits).allow, false);
   assert.equal(evaluateRequest({ method: 'POST', path: '/containers/abc/exec', body: { User: 'root' } }, limits).allow, false);
+  // WHY: UID 0 numérico (e root:grupo) também é root — não só a string "root".
+  assert.equal(evaluateRequest({ method: 'POST', path: '/containers/abc/exec', body: { User: '0' } }, limits).allow, false);
+  assert.equal(evaluateRequest({ method: 'POST', path: '/containers/abc/exec', body: { User: '0:0' } }, limits).allow, false);
+  assert.equal(evaluateRequest({ method: 'POST', path: '/containers/abc/exec', body: { User: 'root:root' } }, limits).allow, false);
   assert.equal(evaluateRequest({ method: 'POST', path: '/containers/abc/exec', body: { User: 'sandbox' } }, limits).allow, true);
 });
 
@@ -343,7 +347,7 @@ test('Windows: com Pastas do PC ligadas, os diretórios de sistema seguem barrad
 test('VPS: workspace sob /root é aceito — a blocklist não pode vencer a raiz', () => {
   // `git clone` logado como root (é o que o VPS-DEPLOY.md manda) põe o projeto
   // em /root/Frederico-IA-Studio, e GUARD_WORKSPACE_ROOT vira .../workspaces.
-  // A regra /^\/root/ recusava todo container do app.
+  // A regra /^\\/root/ recusava todo container do app.
   const vps = { ...limits, workspaceRoot: '/root/Frederico-IA-Studio/workspaces' };
   const corpo = corpoLegitimo({}, {
     Binds: ['/root/Frederico-IA-Studio/workspaces/users/usuario-a/conversa-1:/workspace']
@@ -363,5 +367,5 @@ test('o socket do Docker é barrado mesmo se a raiz o contiver', () => {
   // Cinto e suspensório: nem uma raiz mal configurada libera o socket.
   const raizAbsurda = { ...limits, workspaceRoot: '/var/run' };
   const corpo = corpoLegitimo({}, { Binds: ['/var/run/docker.sock:/workspace'] });
-  assert.equal(validateCreate(corpo, raizAbsurda).allow, false);
+  assert.equal(validateCreate(corpo, raizAbsurda), { allow: false });
 });

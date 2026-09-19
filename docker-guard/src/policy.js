@@ -236,9 +236,17 @@ export function validateCreate(body, limits) {
 }
 
 // Exec: o container já é do app (posse conferida). Só barramos escalada.
+// WHY: User "0"/"0:0" é root numérico — só a string "root" deixava o buraco F-04.
+export function isRootExecUser(user) {
+  const raw = String(user || '').trim().toLowerCase();
+  if (!raw) return false;
+  if (raw === 'root' || raw.startsWith('root:')) return true;
+  return raw.split(':')[0] === '0';
+}
+
 export function validateExec(body) {
   if (body && body.Privileged) return deny('exec Privileged não é permitido');
-  if (body && String(body.User || '') === 'root') return deny('exec como root não é permitido');
+  if (body && isRootExecUser(body.User)) return deny('exec como root não é permitido');
   return { allow: true };
 }
 
