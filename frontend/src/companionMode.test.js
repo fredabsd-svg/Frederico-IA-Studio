@@ -30,3 +30,9 @@ test('reativar restaura comportamento útil sem ligar a voz', () => {
     proactiveWriting: true,
   });
 });
+
+test('modo OFF desliga o copiloto sem apagar o resto do estado atual', () => {
+  assert.deepEqual(settingsForCompanionMode(COMPANION_CONTROL_MODES.OFF, {
+    enabled: true, mode: 'proativo', animationLevel: 'completo',
+  }), { enabled: false });
+});
