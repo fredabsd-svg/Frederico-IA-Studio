@@ -2,6 +2,7 @@ import { projectContextText, permissionsPayloadFor } from './hooks/useDevProject
 
 /**
  * Monta sessão Dev a partir do projeto ativo para inventário/vínculo viajarem no chat.
+ * Sem isso o workspace abre "bonito" e o POST segue como chat genérico.
  * Devolve a sessão criada/existente, ou null se não houver projeto.
  */
 export function seedDeveloperSessionFromActive({
@@ -28,7 +29,9 @@ export function seedDeveloperSessionFromActive({
   return session;
 }
 
-/** Abre o painel Dev e revela o workspace (colunas do IDE), não só o modal. */
+/**
+ * Abre o painel Dev e troca o workspace — senão o modal fecha e a UI volta ao Estúdio.
+ */
 export function openDeveloperWorkspace({
   mode,
   activeMode,
