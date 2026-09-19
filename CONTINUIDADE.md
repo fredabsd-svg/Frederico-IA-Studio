@@ -8,18 +8,17 @@
 
 ## Estado atual
 
-**Última frente (esta entrega):** review profundo SSE/chat + auth legado + docker-guard.
-Corrigidos: cancelamento SSE com `AbortController` no `useChat`, `_seq`/fromSeq com
-zero válido, parser SSE (flush), exec root numérico no docker-guard, e script para
-apagar rastro `APP_PASSWORD`/`/api/login` do `App.jsx`.
+**Última frente (esta entrega — PR #209):** review Dev/Design/Nino + README honesto +
+passos em SSE/auth/docker-guard.
 
 | Frente | Estado |
 | --- | --- |
-| Nino ocultar/mostrar | No código-fonte (`CompanionHideButton` + botão **Mostrar Nino**). |
-| Modo Dev (sessão) | Wiring via plugin Vite (= bootstrap); fonte App.jsx pendente de apply local. |
-| Prévia Design | `DesignPreviewFrame` recarrega por query `_v=`/`_r=` + `key` (não `#hash`). |
-| SSE / cancel / isolamento | `useChat`: abort no Parar; época; developer só na conversa ativa. |
-| Auth | Better Auth (AuthGate/LoginScreen); limpeza legado App via script apply. |
+| Nino ocultar/mostrar | No fonte (`CompanionHideButton` + **Mostrar Nino**). Código do companion permanece. |
+| Modo Dev (sessão) | **No `App.jsx` fonte** (`seedDeveloperSessionFromActive` / `openDeveloperWorkspace` via `devWorkspaceBootstrap.js`). Plugin Vite de transform **removido**. |
+| Prévia Design | `DesignPreviewFrame` recarrega por query `_v=`/`_r=` + `key` (não só `#hash`). |
+| README / homepage GitHub | Hero com badge **amarelo · apto com restrições**; limites conhecidos explícitos. |
+| SSE / cancel / isolamento | Ajustes em `useChat` (abort no Parar; época; developer só na conversa ativa) — ver commits do PR. |
+| Auth | Better Auth (AuthGate/LoginScreen); limpeza de rastro `APP_PASSWORD`/`/api/login` via script apply. |
 | docker-guard | `User: "0"` / `"0:0"` barrados em exec (além de `"root"`). |
 
 Aplicação multiusuário com agentes de IA, memória semântica, multimodelo, execução de
@@ -40,15 +39,16 @@ cliente (`/resume`), não automática no boot. Detalhes e frentes fechadas:
 | --- | --- | --- |
 | F-21 | `App.jsx` ainda concentra dezenas de `useState`; folga do bundle de entrada ~7 KB. | 🟡 Média |
 | — | Pré-voo do GitHub não verifica escopos reais do PAT (só na hora do push). | 🟢 Baixa |
-| — | Plugin Vite Dev: se o texto-âncora do `App.jsx` mudar, o plugin avisa no build. Mitigação: `apply-dev-wiring.mjs` + remover plugin. | 🟡 Média |
+| — | Sandbox com rede liberada ainda sem allowlist completa de destinos. | 🟡 Média |
+| — | Cadastro aberto se o serviço estiver público — confirme/aprove contas em produção. | 🟡 Média |
 | — | `App.jsx` pode ainda ter âncoras mortas de APP_PASSWORD até rodar `apply-auth-legacy-cleanup.mjs`. | 🟢 Baixa |
 
 ---
 
 ## Próximos passos (resumo)
 
-1. Com git local: `node frontend/scripts/apply-dev-wiring.mjs` e `node frontend/scripts/apply-auth-legacy-cleanup.mjs`, commitar `App.jsx`, remover plugin.
-2. Prova visual (Ocultar/Mostrar Nino, workspace Dev com sessão, prévia Design, Parar mid-stream).
+1. Prova visual no PR #209 (Ocultar/Mostrar Nino, workspace Dev com sessão, prévia Design, Parar mid-stream).
+2. CI verde no PR; merge só após review humana.
 3. Frente 16 — popular `model_tool_capability_cache` com a sonda `--live`.
 4. Frente 13 (Design) — compartilhamento público da prévia por token.
 5. Frente 9 — desmontar o `App.jsx` (etapas 2–4).
