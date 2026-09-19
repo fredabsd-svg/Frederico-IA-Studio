@@ -94,6 +94,7 @@ import { useFileUploads } from './hooks/useFileUploads.js';
 import { useChat } from './hooks/useChat.js';
 import { useTasks } from './hooks/useTasks.js';
 import { useDevProjects, projectContextText, developerSessionForConversation, permissionsPayloadFor } from './hooks/useDevProjects.js';
+import { seedDeveloperSessionFromActive, openDeveloperWorkspace } from './devWorkspaceBootstrap.js';
 import { LAYOUT_KEY, normalizeLayoutLevel, resolveLayout, sessionContextItems } from './devWorkspaceLayout.js';
 import { COMPANION_CONTROL_MODES, companionControlMode, settingsForCompanionMode } from './companionMode.js';
 import { useComposerHeight } from './hooks/useComposerHeight.js';
@@ -697,13 +698,35 @@ export default function App({ user } = {}) {
       setSideHidden(false);
       localStorage.setItem('fred_side_hidden', '0');
     }
+    // Entrar no workspace Desenvolvedor sem sessão deixava as colunas montadas
+    // mas o envio ia sem mode/github/permissions — chat genérico com casca de IDE.
+    if (next === 'developer') {
+      const seeded = seedDeveloperSessionFromActive({
+        developerSession,
+        project: devProjects.active,
+        current,
+        setDeveloperSession,
+      });
+      if (!seeded) {
+        setDeveloperStartMode(devProjects.active?.mode || 'plan');
+        setDeveloperOpen(true);
+      }
+    }
   }
 
   function openDeveloper(mode) {
     // Sem modo explícito (ex.: botão da barra lateral), herda o modo salvo do
     // projeto ativo para não sobrescrever a preferência do usuário.
-    setDeveloperStartMode(mode || devProjects.active?.mode || 'plan');
-    setDeveloperOpen(true);
+    // Sem setWorkspace('developer'), o painel abria em cima do Estúdio e as
+    // colunas só apareciam depois de "Iniciar tarefa" — fechar o modal voltava
+    // ao chat genérico.
+    openDeveloperWorkspace({
+      mode,
+      activeMode: devProjects.active?.mode,
+      setDeveloperStartMode,
+      setDeveloperOpen,
+      setWorkspace,
+    });
   }
 
   function handleWelcomeAction(action) {
@@ -1459,7 +1482,11 @@ export default function App({ user } = {}) {
               {devGitBusy === 'push' ? <span className="spin sm"/> : <Upload size={13}/>} Enviar para o GitHub
             </button>
           </div>}
-          <button onClick={() => setDeveloperSession(null)} title="Sair do modo desenvolvedor" aria-label="Sair do modo desenvolvedor"><X size={14}/></button>
+          <button onClick={() => {
+            setDeveloperSession(null);
+            setDeveloperStartMode(devProjects.active?.mode || 'plan');
+            setDeveloperOpen(true);
+          }} title="Sair do modo desenvolvedor" aria-label="Sair do modo desenvolvedor"><X size={14}/></button>
         </div>}
         {uploads.length > 0 && <div className="attachChips">
           {uploads.map(f => <span className={`attachChip ${f.available === false ? 'missing' : ''}`} key={f.id} title={f.available === false ? 'Este arquivo não está mais disponível no servidor. Remova-o e anexe novamente.' : f.name}>
@@ -1522,7 +1549,11 @@ export default function App({ user } = {}) {
           <button className="attachBtn" onClick={() => fileInputRef.current?.click()} title="Anexar arquivo" aria-label="Anexar arquivo"><Paperclip size={19}/></button>
           <input ref={fileInputRef} type="file" multiple onChange={uploadFiles} style={{ display: 'none' }}/>
           <button className="attachBtn" onClick={() => setCameraOpen(true)} title="Tirar foto com a câmera" aria-label="Tirar foto com a câmera"><Camera size={19}/></button>
-          <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)} onInput={e => { e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 160) + 'px'; }} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (!uploadingFiles) sendMessage(); } }} placeholder={listening ? 'Ouvindo... fale agora' : (webSearch ? 'Pesquisa na internet ativada — pergunte algo atual...' : 'Peça para analisar arquivos, gerar Word, Excel, PDF...')} />
+          <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)} onInput={e => { e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 160) + 'px'; }} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (!uploadingFiles) sendMessage(); } }} placeholder={listening ? 'Ouvindo... fale agora' : (workspace === 'developer'
+              ? (developerSession
+                ? 'Descreva a mudança, o bug ou a pergunta sobre o projeto…'
+                : 'Prepare uma tarefa (Planejar/Implementar) para ativar ferramentas de código…')
+              : (webSearch ? 'Pesquisa na internet ativada — pergunte algo atual...' : 'Peça para analisar arquivos, gerar Word, Excel, PDF...'))} />
           <button className="sendBtn" onClick={sendMessage} disabled={busy || uploadingFiles} aria-label={uploadingFiles ? 'Aguardando anexos' : 'Enviar'}><ArrowUp size={18}/></button>
         </div>
         <div className="composerHints">
