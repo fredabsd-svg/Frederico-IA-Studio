@@ -9,8 +9,8 @@
 ## Estado atual
 
 **Última frente (esta entrega — PR #209):** review Dev/Design/Nino + README + auth/SSE docs.
-Passos grandes em `useChat`/`docker-guard` ficam como **scripts apply** (MCP não
-republica esses arquivos ~15–43 KB com segurança nesta sessão).
+`docker-guard` uid0 já está no fonte no branch; `useChat` SSE ainda aguarda publicação do fonte
+(o patch aplicado permanece em script/local).
 
 | Frente | Estado |
 | --- | --- |
@@ -20,8 +20,8 @@ republica esses arquivos ~15–43 KB com segurança nesta sessão).
 | README | Badge **amarelo · apto com restrições**. |
 | SSE parser (`sse.js`) | WHY + flush no branch. |
 | Auth (AuthGate / authClient / LoginScreen) | Better Auth only; consent antes do busy; script `apply-auth-legacy-cleanup.mjs` para limpar `App.jsx`. |
-| useChat (cancel / `_seq` / isolation) | **Pendente apply local:** `node frontend/scripts/apply-usechat-sse-fixes.mjs` |
-| docker-guard uid0 | **Pendente apply local:** `node docker-guard/scripts/apply-docker-guard-uid0.mjs` |
+| useChat (cancel / `_seq` / isolation) | **Patch aplicado localmente, fonte ainda pendente:** `node frontend/scripts/apply-usechat-sse-fixes.mjs` |
+| docker-guard uid0 | **No fonte neste branch:** `docker-guard/src/policy.js` + `policy.test.js` |
 
 Aplicação multiusuário com agentes de IA, memória semântica, multimodelo, execução de
 ferramentas em sandbox Docker, geração de documentos, Docling, conector GitHub, copiloto
@@ -41,15 +41,15 @@ cliente (`/resume`), não automática no boot. Detalhes e frentes fechadas:
 | --- | --- | --- |
 | F-21 | `App.jsx` ainda concentra dezenas de `useState`; folga do bundle de entrada ~7 KB. | 🟡 Média |
 | — | Pré-voo do GitHub não verifica escopos reais do PAT (só na hora do push). | 🟢 Baixa |
-| — | Parar mid-stream ainda sem `AbortController` no fonte até rodar `apply-usechat-sse-fixes.mjs`. | 🟡 Média |
-| — | docker-guard ainda aceita `User: "0"` até rodar `apply-docker-guard-uid0.mjs`. | 🟡 Média |
+| — | Parar mid-stream ainda sem `AbortController` no fonte até publicar o patch de `useChat`. | 🟡 Média |
+| — | `docker-guard` uid0 | Resolvido no fonte deste branch. |
 | — | `App.jsx` pode ter âncoras mortas APP_PASSWORD até `apply-auth-legacy-cleanup.mjs`. | 🟢 Baixa |
 
 ---
 
 ## Próximos passos (resumo)
 
-1. Com git local no branch: `node frontend/scripts/apply-usechat-sse-fixes.mjs` · `node docker-guard/scripts/apply-docker-guard-uid0.mjs` · `node frontend/scripts/apply-auth-legacy-cleanup.mjs` → commit.
+1. Com git local no branch: `node frontend/scripts/apply-usechat-sse-fixes.mjs` · `node frontend/scripts/apply-auth-legacy-cleanup.mjs` → commit.
 2. Prova visual (Nino, Dev, Design, Parar mid-stream) + CI verde; **sem merge automático**.
 3. Frente 16 — sonda `--live`; Frente 13 Design token; Frente 9 desmontar `App.jsx`.
 4. Review uploads/ClamAV.
