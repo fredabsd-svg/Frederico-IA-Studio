@@ -10,6 +10,7 @@ import './landing.css';
 import './camera.css';
 import './companion.css';
 import './nino.css';
+import './nino-visibility.css';
 import './docling.css';
 import './copilot.css';
 import './design.css';

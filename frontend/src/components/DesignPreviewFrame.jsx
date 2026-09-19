@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Monitor, Tablet, Smartphone, ExternalLink, RefreshCw, MousePointerClick } from 'lucide-react';
 import { PREVIEW_MESSAGES, isPreviewMessage } from '../design/designCore.js';
 
@@ -29,6 +29,7 @@ export function DesignPreviewFrame({
 }) {
   const [width, setWidth] = useState('full');
   const [loaded, setLoaded] = useState(false);
+  const [reloadNonce, setReloadNonce] = useState(0);
   const frameRef = useRef(null);
   // A ponte só existe depois que o documento carrega e avisa. Mandar antes é
   // perder a mensagem em silêncio — por isso o modo e o CSS ao vivo são
@@ -45,13 +46,20 @@ export function DesignPreviewFrame({
   }, []);
 
   // Trocar de versão (ou reverter) mantém a MESMA URL de preview — ela serve
-  // sempre "a versão atual". Sem recarregar de propósito, o iframe continuaria
-  // exibindo o HTML anterior e pareceria que a geração não fez nada.
+  // sempre "a versão atual". A âncora (#hash) NÃO recarrega o iframe: o
+  // navegador trata como navegação no mesmo documento, o onLoad não dispara e
+  // a prévia ficava eternamente com opacity:0 (classe .ready nunca voltava).
+  // Por isso a versão vai na QUERY e o key remonta o iframe.
+  const frameSrc = useMemo(() => {
+    if (!src) return undefined;
+    const joiner = src.includes('?') ? '&' : '?';
+    return `${src}${joiner}_v=${encodeURIComponent(versionId || 'v0')}&_r=${reloadNonce}`;
+  }, [src, versionId, reloadNonce]);
+
   useEffect(() => {
     setLoaded(false);
     setBridgeReady(false);
-    if (frameRef.current && src) frameRef.current.src = `${src}#${versionId || 'v0'}`;
-  }, [src, versionId]);
+  }, [frameSrc]);
 
   useEffect(() => {
     function onMessage(event) {
@@ -112,8 +120,9 @@ export function DesignPreviewFrame({
           )}
           <button
             type="button"
-            onClick={() => { if (frameRef.current) frameRef.current.src = `${src}#r${Date.now()}`; }}
+            onClick={() => { setLoaded(false); setBridgeReady(false); setReloadNonce(n => n + 1); }}
             title="Recarregar a prévia"
+            disabled={!src}
           >
             <RefreshCw size={14} /><span>Recarregar</span>
           </button>
@@ -125,14 +134,19 @@ export function DesignPreviewFrame({
 
       <div className="dsPreviewStage">
         <div className="dsPreviewFrame" style={{ width: current.width }}>
-          {!loaded && <div className="dsPreviewLoading"><span className="spin" /> Carregando a prévia…</div>}
-          <iframe
-            ref={frameRef}
-            title="Prévia do design"
-            sandbox={SANDBOX}
-            onLoad={() => setLoaded(true)}
-            className={loaded ? 'ready' : ''}
-          />
+          {!src && <div className="dsPreviewLoading">Sem URL de prévia neste projeto.</div>}
+          {src && !loaded && <div className="dsPreviewLoading"><span className="spin" /> Carregando a prévia…</div>}
+          {src && (
+            <iframe
+              key={frameSrc}
+              ref={frameRef}
+              title="Prévia do design"
+              src={frameSrc}
+              sandbox={SANDBOX}
+              onLoad={() => setLoaded(true)}
+              className={loaded ? 'ready' : ''}
+            />
+          )}
         </div>
         {selecting && (
           <div className="dsPreviewTip" role="status">

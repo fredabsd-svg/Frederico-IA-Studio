@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { appDevNinoPatchPlugin } from './plugins/appDevNinoPatchPlugin.js';
 // host:true + allowedHosts:true => o app pode ser aberto de outros aparelhos
 // (celular/tablet na rede, ou via Tailscale), não só do próprio PC.
 // proxy /api => tudo fica na MESMA origem (uma porta só): o Vite repassa as
@@ -18,7 +19,7 @@ const proxyApi = {
 };
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), appDevNinoPatchPlugin()],
   server: {
     host: true,
     port: 5173,

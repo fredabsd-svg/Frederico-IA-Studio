@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Moon, Check, X } from 'lucide-react';
-import { API } from './constants.js';
+import { Moon, Bot } from 'lucide-react';
+import { CompanionHideButton } from './CompanionHideButton.jsx';
+import { COMPANION_CONTROL_MODES, settingsForCompanionMode } from './companionMode.js';
+import { WritingBubble, ProactiveEventBubble } from './CompanionBubbles.jsx';
 import { useCopilotChat } from './hooks/useCopilotChat.js';
 import { CopilotWorkspace } from './components/CopilotWorkspace.jsx';
 import { NinoAvatar, NINO_CAPTION } from './components/NinoAvatar.jsx';
@@ -11,7 +13,6 @@ import {
   protectedBottomInset,
 } from './companionPosition.js';
 import { BOTTOM_BAND_EVENT } from './hooks/useComposerHeight.js';
-import { actionForCompanionEvent } from './companionEventActions.js';
 
 // Frederico Companion — a representação visual e interativa do Studio. É a
 // CAMADA de experiência: a inteligência vem do núcleo do Studio. O avatar abre
@@ -27,141 +28,11 @@ import { actionForCompanionEvent } from './companionEventActions.js';
 // revisão — foi preservada.
 
 const STATE_CAPTION = NINO_CAPTION;
-
-// Parâmetros do balão proativo de revisão de escrita. Ajustáveis num só lugar.
-// A sensibilidade escolhida pelo usuário controla quão cedo aparece.
-const PAUSA_MS = 3000;                 // pausa na digitação antes de se oferecer
-const MIN_CHARS = { baixa: 140, media: 80, alta: 40 };
-const SNOOZE_MS = 20000;               // silêncio após "Agora não" (por rascunho)
-const TUCK_MS = 8000;                  // ociosidade no celular antes de encostar
-const BUBBLE_PHRASES = [
-  'Quer que eu dê uma olhada na escrita?',
-  'Posso revisar esse texto rapidinho?',
-  'Deixa eu ajustar ortografia e clareza?',
-  'Quer uma revisão antes de enviar?',
-  'Posso deixar isso mais claro pra você?',
-];
+const TUCK_MS = 8000; // ociosidade no celular antes de encostar
 
 // Balão proativo de revisão de escrita. Observa o rascunho do chat principal e,
 // após uma pausa, oferece revisar. Nunca altera nada sozinho — o usuário aceita.
 // `onPhase` avisa o Companion para o personagem reagir junto (dúvida/analisando).
-function WritingBubble({ settings, draft, onApply, name, onPhase }) {
-  const [phase, setPhase] = useState('idle');   // idle | ask | loading | result | error
-  const [phrase, setPhrase] = useState(BUBBLE_PHRASES[0]);
-  const [revised, setRevised] = useState('');
-  const [errMsg, setErrMsg] = useState('');
-  const handledRef = useRef('');                 // rascunho já tratado (não repetir)
-  const snoozeUntil = useRef(0);
-  const lastPhrase = useRef(-1);
-  const timer = useRef(null);
-  const rootRef = useRef(null);
-
-  const enabled = settings.enabled && settings.proactiveWriting && ['auxiliar', 'proativo'].includes(settings.mode);
-  const minChars = MIN_CHARS[settings.writingSensitivity] || MIN_CHARS.media;
-  const text = (draft || '').trim();
-
-  useEffect(() => { onPhase?.(phase); }, [phase]); // eslint-disable-line
-
-  // Decide quando se oferecer: pausa + tamanho mínimo + rascunho ainda não tratado.
-  useEffect(() => {
-    clearTimeout(timer.current);
-    if (!enabled) { setPhase('idle'); return; }
-    // Enquanto exibindo um resultado/erro para ESTE rascunho, não reavaliar.
-    if ((phase === 'result' || phase === 'error' || phase === 'loading') && handledRef.current === text) return;
-    if (text.length < minChars || text === handledRef.current || Date.now() < snoozeUntil.current) {
-      if (phase === 'ask') setPhase('idle');
-      return;
-    }
-    timer.current = setTimeout(() => {
-      const idx = (lastPhrase.current + 1 + Math.floor((text.length % BUBBLE_PHRASES.length))) % BUBBLE_PHRASES.length;
-      const pick = idx === lastPhrase.current ? (idx + 1) % BUBBLE_PHRASES.length : idx;
-      lastPhrase.current = pick;
-      setPhrase(BUBBLE_PHRASES[pick]);
-      setPhase('ask');
-    }, PAUSA_MS);
-    return () => clearTimeout(timer.current);
-  }, [text, enabled, minChars, phase]);
-
-  // Esc / clique fora fecham (equivalente a "Agora não").
-  useEffect(() => {
-    if (phase === 'idle') return;
-    function onKey(e) { if (e.key === 'Escape') decline(); }
-    function onDoc(e) { if (rootRef.current && !rootRef.current.contains(e.target)) decline(); }
-    document.addEventListener('keydown', onKey);
-    document.addEventListener('mousedown', onDoc);
-    return () => { document.removeEventListener('keydown', onKey); document.removeEventListener('mousedown', onDoc); };
-  }); // eslint-disable-line
-
-  function decline() {
-    handledRef.current = text;
-    snoozeUntil.current = Date.now() + SNOOZE_MS;
-    setPhase('idle');
-  }
-  async function accept() {
-    setPhase('loading');
-    setErrMsg('');
-    try {
-      const r = await fetch(`${API}/api/copilot/revise`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
-      });
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok) { setErrMsg(d.error || 'Não consegui revisar agora.'); setPhase('error'); return; }
-      setRevised(d.revised || '');
-      setPhase('result');
-    } catch {
-      setErrMsg('Falha de conexão. Tente de novo.');
-      setPhase('error');
-    }
-  }
-  function applyResult() {
-    handledRef.current = revised.trim();  // evita re-oferecer sobre o texto já aplicado
-    onApply?.(revised);
-    setPhase('idle');
-  }
-
-  if (phase === 'idle') return null;
-  const reduced = settings.animationLevel === 'nenhum';
-
-  return (
-    <div ref={rootRef} className={`cmpBubble ${reduced ? 'noanim' : ''} phase-${phase}`} role="dialog" aria-label={`${name} — revisão de escrita`}>
-      <span className="cmpBubbleArrow" aria-hidden="true" />
-      {phase === 'ask' && (
-        <div className="cmpBubbleBody">
-          <div className="cmpBubbleText">{phrase}</div>
-          <div className="cmpBubbleBtns">
-            <button className="cmpBubbleYes" onClick={accept}><Check size={13} /> Pode olhar</button>
-            <button className="cmpBubbleNo" onClick={decline}>Agora não</button>
-          </div>
-        </div>
-      )}
-      {phase === 'loading' && (
-        <div className="cmpBubbleBody">
-          <div className="cmpBubbleText"><span className="cmpBubbleSpin" /> Revisando seu texto…</div>
-        </div>
-      )}
-      {phase === 'result' && (
-        <div className="cmpBubbleBody">
-          <div className="cmpBubbleLabel">Toque para usar esta versão:</div>
-          <button className="cmpBubbleCard" onClick={applyResult} title="Substituir o texto pelo revisado">
-            {revised}
-          </button>
-          <button className="cmpBubbleDismiss" onClick={decline} aria-label="Descartar"><X size={12} /> Manter o meu</button>
-        </div>
-      )}
-      {phase === 'error' && (
-        <div className="cmpBubbleBody">
-          <div className="cmpBubbleText cmpBubbleErr">{errMsg}</div>
-          <div className="cmpBubbleBtns">
-            <button className="cmpBubbleYes" onClick={accept}>Tentar de novo</button>
-            <button className="cmpBubbleNo" onClick={decline}>Fechar</button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 // Recuos da área útil do personagem. A leitura do DOM fica aqui, e não no módulo
 // puro: `protectedBottomInset` decide quanto reservar, este trecho só mede.
 function companionInsets(rightInset) {
@@ -174,41 +45,6 @@ function companionInsets(rightInset) {
     right: window.innerWidth > 1180 ? rightInset : 8,
     bottom: protectedBottomInset(window.innerHeight, rects),
   };
-}
-
-// Alertas do Nino precisam aparecer no momento em que surgem, não apenas depois
-// que o usuário abre o painel. Quando há uma ação conhecida, o botão executa a
-// confirmação; avisos informativos continuam oferecendo acesso aos detalhes.
-function ProactiveEventBubble({ event, name, onAccept, onDismiss, onOpen }) {
-  const [working, setWorking] = useState(false);
-  const action = actionForCompanionEvent(event);
-
-  async function accept() {
-    if (!action || working) return;
-    setWorking(true);
-    const accepted = await onAccept?.(event, action);
-    if (accepted === false) setWorking(false);
-  }
-
-  return (
-    <div className="cmpBubble cmpEventBubble" role="dialog" aria-label={`${name} — sugestão proativa`}>
-      <span className="cmpBubbleArrow" aria-hidden="true" />
-      <div className="cmpBubbleBody">
-        <div className="cmpEventTitle">{event.title || 'Posso ajudar no próximo passo'}</div>
-        {event.detail && <div className="cmpEventDetail">{event.detail}</div>}
-        <div className="cmpBubbleBtns">
-          {action ? (
-            <button className="cmpBubbleYes" onClick={accept} disabled={working}>
-              {working ? <><span className="cmpBubbleSpin" /> {action.pendingLabel}</> : <><Check size={13} /> {action.label}</>}
-            </button>
-          ) : (
-            <button className="cmpBubbleYes" onClick={onOpen}>Ver detalhes</button>
-          )}
-          <button className="cmpBubbleNo" onClick={() => onDismiss?.(event.id)} disabled={working}>Agora não</button>
-        </div>
-      </div>
-    </div>
-  );
 }
 
 export function Companion({
@@ -360,9 +196,23 @@ export function Companion({
     document.addEventListener('pointerup', up);
   }
 
-  if (!settings.enabled) return null;
-
   const characterName = settings.characterName || 'Nino';
+
+  // Quando desligado, o Companion some — mas deixa um controle persistente
+  // para o usuário reaparecer sem abrir Configurações.
+  if (!settings.enabled) {
+    return (
+      <button
+        type="button"
+        className="ninoShowBtn"
+        onClick={() => void companion.saveSettings(settingsForCompanionMode(COMPANION_CONTROL_MODES.ACTIVE, settings))}
+        title="Mostrar o Nino de novo"
+        aria-label="Mostrar Nino"
+      >
+        <Bot size={14}/> Mostrar Nino
+      </button>
+    );
+  }
 
   function toggleMin() {
     setMinimized(m => { const nv = !m; localStorage.setItem('fred_companion_min', nv ? '1' : '0'); if (nv) setOpen(false); return nv; });
@@ -418,6 +268,7 @@ export function Companion({
           >
             {(hasCritical || hasWarning) && !busy && <span className={`cmpBadge ${hasCritical ? 'crit' : 'warn'}`}>{unread.length}</span>}
             <NinoAvatar state={quiet && !busy ? 'aguardando' : state} name={characterName} quiet={settings.animationLevel === 'nenhum'} />
+            <CompanionHideButton companion={companion} settings={settings} characterName={characterName} />
           </div>
         )}
       </div>
