@@ -2,23 +2,22 @@
 
 # 🎨 Frederico IA Studio
 
-### Seu estúdio de IA, em português.
+### Seu estúdio de IA, em português — com arquivo de verdade no final.
 
-**Converse, peça e receba o arquivo pronto.** Planilhas com fórmulas, documentos
-Word diagramados, PDFs, gráficos e código — gerados de verdade num sandbox
-isolado, não descritos em texto.
+Peça no chat e receba **planilha, Word, PDF, gráfico ou código** gerados num
+sandbox Docker isolado. Não é “texto que descreve o arquivo”: é o arquivo.
 
 ![React](https://img.shields.io/badge/React-Vite-61DAFB?logo=react&logoColor=white&labelColor=20232a)
 ![Node.js](https://img.shields.io/badge/Node.js-Express-339933?logo=nodedotjs&logoColor=white&labelColor=20232a)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-pgvector-4169E1?logo=postgresql&logoColor=white&labelColor=20232a)
 ![Docker](https://img.shields.io/badge/Docker-Sandbox-2496ED?logo=docker&logoColor=white&labelColor=20232a)
-![Status](https://img.shields.io/badge/SaaS%20multiusu%C3%A1rio-em%20produ%C3%A7%C3%A3o-2ea043)
-![LGPD](https://img.shields.io/badge/LGPD-conformidade%20embutida-8957e5)
+![Status](https://img.shields.io/badge/Produ%C3%A7%C3%A3o-amarelo%20%C2%B7%20apto%20com%20restri%C3%A7%C3%B5es-e3b341)
+![LGPD](https://img.shields.io/badge/LGPD-exportar%20%C2%B7%20apagar%20%C2%B7%20consentimento-8957e5)
 
 <img src="docs/tela-chat.png" alt="Tela principal do chat do Frederico IA Studio" width="900">
 
-**[Começar](#-começar-em-2-minutos)** · **[Recursos](#-o-que-tem-dentro)** ·
-**[Segurança](#-segurança-e-privacidade)** · **[Documentação](#-documentação)**
+**[Começar](#-começar-em-2-minutos)** · **[Recursos](#-recursos)** ·
+**[Limites conhecidos](#-limites-conhecidos)** · **[Documentação](#-documentação)**
 
 </div>
 
@@ -28,300 +27,87 @@ isolado, não descritos em texto.
 
 | Você escreve | Você recebe |
 |---|---|
-| *"Monte uma planilha de fluxo de caixa com estes lançamentos"* | `.xlsx` com fórmulas **recalculadas e conferidas** |
-| *"Faça um relatório em Word a partir deste PDF"* | `.docx` com capa, tabelas estilizadas e rodapé paginado |
-| *"Transforme isto numa proposta em PDF para o cliente"* | `.pdf` com capa, sumário, fonte embutida e **auditoria de formatação** antes da entrega |
-| *"Fotografei esta nota fiscal — extraia os dados"* | Leitura por **visão ou OCR**, sem você digitar nada |
-| *"Consulte o CNPJ 00.000.000/0001-91"* | Razão social, situação, CNAE, endereço e sócios (dados oficiais) |
-| *"Pesquise as mudanças da reforma tributária e resuma"* | Busca na web com **miniatura real** das páginas abertas |
-| *"Clone meu repositório, corrija este bug e abra um PR"* | Commit e Pull Request no GitHub, direto pelo chat |
+| “Monte uma planilha de fluxo de caixa” | `.xlsx` com fórmulas recalculadas e conferidas |
+| “Faça um relatório em Word a partir deste PDF” | `.docx` diagramado com tabelas e paginação |
+| “Transforme isto numa proposta para o cliente” | `.pdf` com capa, sumário e auditoria de formatação |
+| “Fotografei esta nota fiscal — extraia os dados” | Leitura por visão ou OCR |
+| “Clone meu repositório, corrija este bug e abra um PR” | Fluxo de desenvolvimento com GitHub |
 
-Compatível com **OpenRouter**, **DeepSeek** e qualquer endpoint no padrão da API
-OpenAI. O modelo que você escolhe é enviado direto ao provedor, **sem
-substituição silenciosa**.
+Compatível com **OpenRouter**, **DeepSeek** e endpoints no padrão da API OpenAI.
+O modelo escolhido é enviado diretamente ao provedor, sem substituição silenciosa.
 
 ---
 
 ## 🚀 Começar em 2 minutos
 
-**Pré-requisitos:** Docker Desktop em execução.
+**Pré-requisito:** Docker Desktop em execução.
 
 ```bash
-# 1. Configure o ambiente
 cp .env.example .env        # Windows: Copy-Item .env.example .env
-
-# 2. Suba o aplicativo
 docker compose up --build
 ```
 
-No `.env`, preencha apenas estes dois valores:
+No `.env`, configure pelo menos:
 
 ```env
 BETTER_AUTH_URL=http://localhost:5173
 BETTER_AUTH_SECRET=gere_com_openssl_rand_hex_32
 ```
 
-Abra **[http://localhost:5173](http://localhost:5173)**, crie sua conta e pronto.
-No Windows, o `iniciar.bat` faz tudo com um clique.
-
-> 🆓 **Sem chave de API?** Se o administrador ligou o **modo gratuito**, você
-> conversa na hora. Senão, um assistente passo a passo guia a criação da sua chave
-> em OpenRouter, DeepSeek, Groq, Gemini ou Mistral.
-
-<details>
-<summary><b>🔐 Chaves e criptografia (opcional)</b></summary>
-
-<br>
-
-A `ENCRYPTION_KEY` — que cifra suas chaves de IA e o token do GitHub no banco —
-é **gerada automaticamente** na primeira subida e salva em `data/encryption.key`.
-Você só precisa defini-la manualmente se quiser controlar a chave você mesmo
-(SaaS / gerenciador de segredos). **Nunca a troque depois de conectar contas.**
-
-GitHub e Google são opcionais — deixe as credenciais OAuth vazias para usar só
-e-mail/senha.
-
-</details>
-
-📱 **Acesso pelo celular, VPS com HTTPS e todas as variáveis:**
-veja **[docs/CONFIGURACAO.md](docs/CONFIGURACAO.md)**.
+Abra [http://localhost:5173](http://localhost:5173), crie sua conta e pronto.
+Consulte [docs/CONFIGURACAO.md](docs/CONFIGURACAO.md) para VPS, HTTPS e demais variáveis.
 
 ---
 
-## ✨ O que tem dentro
+## ✨ Recursos
 
-### 💬 Conversa que produz resultado
-
-- **Arquivos reais no chat** — Excel, Word, PDF, CSV, ZIP, imagens, gráficos e OCR.
-- **Documentos com design de agência** — kits prontos e testados na identidade
-  **"Tinta & Latão"** (capa, sumário paginado, tabelas estilizadas com total,
-  listas, indicadores, citação, linha do tempo, gráficos, callouts, assinaturas,
-  contracapa e rodapé "Página X de Y"), com modo **sóbrio/registrável** para ata
-  e contrato. Word, Excel e PDF seguem **a mesma grade**: uma única aresta de
-  texto na página inteira, do título ao rodapé.
-- **PDF que abre igual em qualquer leitor** — fonte embutida, texto copiável e
-  pesquisável. Antes de ser entregue, o arquivo passa por uma **auditoria
-  automática** (margem, glifos, fonte, metadados): um PDF com defeito grave falha
-  na geração em vez de chegar torto até o cliente.
-- **Câmera e imagens** — fotografe um documento pelo celular ou pela webcam; a IA
-  lê sozinha (visão nos modelos com visão, OCR nos demais).
-- **Consulta de CNPJ** — dados cadastrais oficiais (BrasilAPI/ReceitaWS).
-- **Voz** — ditado por voz para escrever sem digitar.
-- **Multiconversa** — várias conversas processando **ao mesmo tempo**; trocar de
-  conversa não interrompe nem mistura nada.
-- **Retomada real** — tarefa interrompida salva o estado no banco; **Continuar de
-  onde parei** retoma do ponto exato, mesmo após reiniciar o servidor.
-
-### 🎨 Modo Design
-
-Um espaço próprio para quando o resultado precisa **parecer bom**: descreva um
-site, uma apresentação ou um documento visual e veja o rascunho renderizado ao
-vivo.
-
-- **Três saídas**: página/protótipo HTML responsivo, apresentação 16:9 e
-  documento paginado em A4.
-- **Refinamento por conversa** — "deixe o cabeçalho mais escuro", "adicione uma
-  seção de perguntas frequentes". Cada pedido vira uma **versão**, e dá para
-  voltar para qualquer uma sem perder as seguintes.
-- **Edição inline** — clique num elemento da prévia e peça a mudança só dele:
-  o resto do documento sai idêntico.
-- **Ajustes na hora** — sliders de cor, tipografia, espaçamento e arredondamento
-  que mudam a prévia **sem gastar uma geração**. Os controles são derivados do
-  próprio design: aparecem os que ele expõe.
-- **Modelo por projeto** — escolha o modelo de IA na própria tela do Design; ele
-  fica gravado no projeto, então voltar nele meses depois usa o mesmo modelo.
-- **Prévia isolada** — o HTML gerado roda num iframe de origem opaca, sem
-  acesso à sua sessão nem ao resto da interface.
-- **Exportação**: `.html` para site, `.pdf` e `.pptx` para apresentação, `.pdf`
-  para documento.
-- **Sua marca** — cores e fontes definidas uma vez, aplicadas em todo projeto
-  que a escolher.
-
-### 🌱 Nino, o copiloto
-
-O personagem que acompanha o Studio — e explica o que está acontecendo.
-
-- **Estados ao vivo**: pensando, analisando, digitando, sugestão, dúvida — lidos
-  da atividade real do app, nunca inventados.
-- **Painel próprio** com conversa, memória e documentos, separado do chat principal.
-- **Contexto do chat principal por padrão**: ele acompanha a conversa aberta sem
-  você precisar copiar e colar — e um clique no compositor dispensa a leitura
-  numa pergunta pontual. Prefere outro arranjo? *perguntar* (só quando você
-  marcar) ou *nunca*. Cada leitura fica no log de auditoria.
-- **Memória própria**: preferências, temas e lembretes que você escreve ficam
-  entre conversas; as fixadas entram sempre. Ele não anota nada sozinho.
-- **Ações no Studio**: levar uma resposta para o compositor do chat principal,
-  salvá-la como modelo de pedido, guardá-la na caixa de documentos ou resumir a
-  conversa num documento — sempre com um clique seu.
-- **Documentação de bolso**: dúvidas sobre o próprio aplicativo são respondidas
-  com trechos da documentação, buscados localmente (sem gastar tokens à toa).
-- **Proatividade transparente**: cada alerta registra origem, horário, dados
-  enviados e a autorização necessária. Você define o modo (silencioso, auxiliar,
-  proativo, foco, apresentação) e o nível de permissão.
-- **Diagnósticos, saúde e permissões** em painel dedicado, com base de incidentes
-  e log de auditoria.
-
-### 🧠 Memória e contexto
-
-- **Memória de longo prazo** com recuperação semântica (pgvector) e painel de
-  revisão — o assistente lembra do que importa, com isolamento por cliente.
-- **Continuidade por projeto** — a recuperação é **em camadas, por prioridade**:
-  primeiro o projeto ativo e as suas últimas conversas, depois as decisões e
-  correções já registradas, depois o que se liga ao assunto e, por último, o
-  perfil geral. Um **chat novo dentro de um projeto continua de onde parou** em
-  vez de começar do zero: `dev_projects` guarda o projeto no servidor e
-  `project_id` carimba conversas, trechos e memórias, então o vínculo é real e
-  não um palpite por semelhança de texto. O rastro abaixo de cada resposta
-  mostra o projeto reconhecido e o motivo de cada item recuperado.
-- **Assistentes personalizados** — instruções, modelos, ferramentas e
-  personalidade próprios.
-- **Compreensão documental (Docling)** — PDFs processados **uma vez** (layout,
-  tabelas, OCR) e reaproveitados por todos os modelos, com referência de página.
-
-### 🧩 Vários modelos, uma resposta
-
-- **Sistema Multimodelo** — 2+ IAs na mesma mensagem: comparação lado a lado,
-  conselho de IAs, debate em rodadas e especialistas em sequência.
-- **Custo sob controle** — função por modelo, estimativa de custo, orçamento
-  máximo, interrupção por modelo e equipes salvas (presets).
-- **Catálogo com logos oficiais** (servidos localmente, sem CDN), filtro por
-  fornecedor e selo de **classificação de referência** (S+ a B).
-- **Modo Equipe** — combina perspectivas de vários assistentes.
-
-### 💻 Desenvolvimento e automação
-
-- **Sandbox Docker** — um container por conversa para Python, Bash e geração de
-  arquivos, com a caixa de ferramentas já montada: planilhas e dados (pandas,
-  polars, duckdb), documentos e PDF (python-docx, reportlab, PyMuPDF, OCR),
-  compiladores (C/C++, Go, Rust, Java, C#, Kotlin), Node e Chromium headless com
-  Playwright, e APIs **REST e GraphQL** (Flask, FastAPI e strawberry-graphql).
-- **Terminal de execução no rodapé do chat** — terminal, código, arquivos,
-  pesquisa e navegador agrupados em **uma sessão ao vivo**, num painel recolhível
-  e redimensionável entre a conversa e o campo de mensagem (o trabalho não cresce
-  mais dentro do balão, empurrando a resposta para fora da tela). Passo a passo,
-  miniatura real das páginas abertas, **saída em tempo real** e aviso quando o
-  comando fica em silêncio ("sem saída há 25s"). A rolagem do terminal é
-  independente da do chat, e a sessão concluída pode ser reaberta pelo histórico.
-- **Ambiente que não perde o seu trabalho** — o sandbox pode ser reciclado no meio
-  de uma tarefa longa. Quando isso acontece, o assistente é avisado **do que
-  sobreviveu e do que se perdeu**, em vez de continuar achando que está tudo lá.
-  Um comando que estoura o tempo encerra só a árvore de processos dele — os
-  pacotes que ele já instalou continuam valendo. E o assistente **não diz que
-  terminou** quando a execução foi cortada: cada resultado carrega o estado real,
-  além de um diagnóstico que separa **falha do ambiente** (dependência ausente,
-  rede desligada, memória) de **erro do seu código**. Antes de mexer em vários
-  arquivos ele guarda um ponto de retorno, e sabe listar as portas e os servidores
-  que subiu. Detalhes em [`docs/AMBIENTE_EXECUCAO.md`](docs/AMBIENTE_EXECUCAO.md).
-- **Modo Desenvolvedor** — projetos com memória permanente, explorador de
-  arquivos e seis modos de trabalho (Perguntar, Planejar, Implementar, Corrigir
-  erro, Revisar e Agente autônomo).
-- **A IA pergunta quando precisa decidir com você** — escopo, opção A ou B,
-  autorização. A pergunta vira um cartão na conversa com a forma certa de
-  responder (texto, sim/não ou lista de opções), **não** um erro com botão de
-  "Reenviar". Ela sobrevive a fechar o modal e a recarregar a página.
-- **Conector GitHub** — clone, alteração e **push ou Pull Request em 1 clique**;
-  o token fica cifrado e nunca entra no sandbox. A publicação exige uma
-  autorização sua, **escopada ao repositório e à branch**, e o painel mostra
-  separadamente o que está conectado, vinculado, autorizado e disponível — com a
-  causa exata quando algo bloqueia.
-- **Sub-agentes** — o próprio agente delega uma subtarefa a um `runAgent` completo,
-  com ferramentas e uma janela de contexto **própria e descartável** (sem histórico
-  nem memória da conversa); os arquivos gerados aparecem normalmente em `outputs/`.
-  Delegar **não amplia acesso**: o sub-agente nunca recebe mais ferramentas, rede ou
-  escrita do que o agente que o chamou. Você escolhe o especialista entre os
-  assistentes que já cadastrou — e vê no cartão quem executou e com qual modelo.
-- **Rotinas** — tarefas que rodam sozinhas em horários marcados.
-- **Tarefas em segundo plano**, caixa de entrada por cliente e templates de pedido.
-
-### ⚙️ Administração
-
-- **Central de Configurações** — tudo em um só lugar: aparência, copiloto,
-  provedores, assistentes, desenvolvimento, sandbox e rede, privacidade e avançado.
-- **Análises de uso** — tokens, custos e consumo por modelo.
-- **Painel do modo gratuito** — usuários, limites, modelos e bloqueio por abuso,
-  sem reiniciar.
-- **Backup completo** (banco + workspaces) e **Pastas do PC** liberadas sob demanda.
-
-<div align="center">
-<table>
-<tr>
-<td><img src="docs/painel-memoria.png" alt="Painel de memória" width="440"></td>
-<td><img src="docs/tela-login.png" alt="Tela de login com Better Auth" width="330"></td>
-</tr>
-<tr>
-<td align="center"><em>Memória de longo prazo com busca semântica</em></td>
-<td align="center"><em>Login com Better Auth: e-mail, GitHub e Google</em></td>
-</tr>
-</table>
-</div>
+- **Arquivos reais no chat:** Excel, Word, PDF, CSV, ZIP, imagens, gráficos e OCR.
+- **Documentos com design:** kits para documentos com capa, sumário, tabelas,
+  indicadores, assinaturas e rodapé paginado.
+- **Modo Design:** protótipos HTML, apresentações 16:9 e documentos A4, com
+  versões, prévia isolada e exportação.
+- **Nino, o copiloto:** estados ligados à atividade real, memória própria,
+  ações explícitas e botão para ocultar/mostrar.
+- **Memória e continuidade:** recuperação semântica com pgvector e contexto por projeto.
+- **Vários modelos:** comparação, debate, especialistas em sequência e controle de custo.
+- **Modo Desenvolvedor:** projetos com memória, modos de trabalho, sessão semeada
+  no chat, explorador, sandbox e permissões de GitHub por branch.
+- **Execução isolada:** sandbox Docker para Python, Bash, documentos, PDF, OCR e Node.
+- **Multiusuário e LGPD:** Better Auth, isolamento por conta, consentimento,
+  exportação e exclusão de dados.
 
 ---
 
 ## 🔒 Segurança e privacidade
 
-**Multiusuário de verdade:** cada pessoa cria a própria conta (Better Auth) e só
-enxerga os próprios dados — posse verificada em cada consulta. Suporte **BYOK**:
-cada usuário usa a **própria chave** de IA (ideal para um site público), ou uma
-chave única do servidor para uso pessoal/de equipe.
+O Studio separa conta, projeto, conversa e arquivos por usuário. Chaves de IA e
+tokens do GitHub ficam cifrados no banco. O backend não entrega o socket do Docker
+ao usuário: requisições passam pelo serviço `docker-guard` e por validações de
+posse e allowlist.
 
-| | |
-|---|---|
-| 🔐 **Segredos cifrados** | Chaves de IA e token do GitHub em AES-256-GCM; senhas com hash (scrypt) |
-| 🐳 **Backend sem o socket do Docker** | Quem o detém é o serviço `docker-guard`, que valida cada requisição ao daemon (allowlist de rotas, inspeção do corpo de `/containers/create`, posse por label) |
-| 🛡️ **Antivírus honesto nos uploads** | Todo arquivo é escaneado (ClamAV) antes de ser salvo, e a resposta diz se foi `verificado`, `degradado` ou `sem-antivirus` — **nada é apresentado como verificado sem ter sido analisado** |
-| 🧱 **Camada HTTP endurecida** | `helmet`, CORS restrito à própria origem, rate limiting por IP e validação `zod` |
-| 🛰️ **Anti-SSRF no `web_fetch`** | Bloqueia IPs internos e **resolve o DNS validando cada IP** antes de conectar, revalidando a cada redirect. O navegador headless que gera a miniatura da página segue a mesma regra: **cada salto de redirecionamento é validado antes de ser seguido**, inclusive nos recursos que a página carrega |
-| 🖥️ **Guarda de execução** | `bash` e `run_python` passam pela mesma validação; alterar arquivos reais do PC exige pedido explícito e fica registrado em auditoria |
-| 📄 **Conteúdo externo é dado, não ordem** | Página lida, README de repositório, documento, memória, saída de ferramenta e resposta de outro modelo entram marcados como **dado não confiável** — e a marcação estrutural é neutralizada, para que texto de terceiro não consiga se passar por instrução do aplicativo nem virar chamada de ferramenta. Coberto por uma **bateria adversarial de 33 casos** |
-| 🤝 **Delegação não escala privilégio** | O sub-agente herda um contrato **congelado** do agente que o chamou — ferramentas (interseção com o especialista), rede, escrita nas Pastas do PC e política do sandbox. Nada disso é recalculado a partir da subtarefa, que é texto escrito pelo próprio modelo |
-| 🩺 **Healthcheck com métricas** | `GET /api/health` expõe uptime, política do antivírus, sandboxes ativos/órfãos e os limites de upload vigentes |
-| 📋 **LGPD embutida** | Consentimento registrado (art. 8º), exportar tudo em JSON, apagar histórico e excluir conta — **hard delete** |
+Uploads reportam o estado real do antivírus (`verificado`, `degradado` ou
+`sem-antivirus`). A sandbox roda sem privilégios, com limites de CPU, memória e
+processos; rede fica desligada por padrão. Conteúdo enviado ao modelo pode ser
+transmitido ao provedor configurado, então não envie dados sensíveis sem avaliar
+LGPD e sigilo.
 
-<details>
-<summary><b>⚠️ Limites que você precisa conhecer antes de publicar</b></summary>
+---
 
-<br>
+## ⚠️ Limites conhecidos
 
-- A sandbox roda **sem privilégios** (`CapDrop: ALL`, `no-new-privileges`, uid 1000),
-  com limites de CPU/memória/processos e **rede desligada por padrão** — abrir a rede
-  exige autorização do próprio pedido e recria o container. Com a rede aberta ainda
-  **não há allowlist de destino** (risco F-05b em [docs/AUDITORIA_2026-07.md](docs/AUDITORIA_2026-07.md)).
-- Máquina **dedicada** segue recomendada como defesa em profundidade, mesmo com o
-  `docker-guard` no lugar do acesso direto ao socket.
-- **Site público:** qualquer pessoa pode se cadastrar. Para uso amplo/indexado,
-  considere confirmação de e-mail e/ou aprovação de conta; enquanto isso, prefira
-  divulgar "por link" e mantenha os limites de uso ativos.
-- Conteúdo enviado ao modelo pode ser transmitido ao provedor configurado —
-  avalie **LGPD** e sigilo antes de enviar dados sensíveis.
-- **Regra da casa:** só anunciar o que está de fato ativo. Se desativar o ClamAV,
-  remova os selos de segurança correspondentes da interface.
+**Prontidão para produção: 🟡 amarelo — apto com restrições.** Este repositório
+contém um Studio funcional e exercitado, mas não deve ser anunciado como SaaS
+público sem operação responsável.
 
-</details>
-
-<details>
-<summary><b>🛡️ Conformidade LGPD em detalhe (Lei 13.709/2018)</b></summary>
-
-<br>
-
-- **Documentos publicados:** Política de Privacidade em `/privacidade` e Termos de
-  Uso em `/termos` (públicos, sem login), com links na landing, no cadastro e
-  dentro do app. Ao alterar os textos de forma relevante, atualize a
-  `TERMS_VERSION` em `backend/src/privacy.js` — todos os usuários verão o pedido
-  de aceite de novo.
-- **Consentimento (art. 8º):** checkbox opt-in (desmarcado por padrão) no
-  cadastro; para login social e contas antigas, um modal bloqueante pede o aceite
-  na primeira entrada. Cada aceite fica registrado em `user_consents` com versão,
-  data, IP e navegador.
-- **Direitos do titular (art. 18)** em **Privacidade e dados**: exportar tudo em
-  JSON (portabilidade), apagar todo o histórico e excluir a conta — tudo **hard
-  delete** (banco + workspaces em disco). Apagar o histórico remove também as
-  memórias e sugestões derivadas das conversas (as manuais e importadas são
-  preservadas).
-- **Minimização:** o cadastro pede só nome, e-mail e senha; retenção automática
-  opcional (`CONVERSATION_RETENTION_DAYS`); os logs do servidor não gravam o
-  conteúdo das conversas.
-
-</details>
+- A sandbox com rede liberada ainda não possui allowlist completa de destinos;
+  máquina dedicada continua recomendada como defesa em profundidade.
+- Qualquer pessoa pode se cadastrar quando o serviço está público; considere
+  confirmação/aprovação de conta e mantenha limites de uso ativos.
+- Disponibilidade de modelos, preços, OCR, ClamAV e exportações depende da
+  configuração dos serviços e provedores usados na implantação.
+- O pré-voo do GitHub não substitui a validação de escopos do PAT no momento do push.
+- Só anuncie uma proteção quando ela estiver ativa na implantação; consulte o
+  healthcheck e o estado do antivírus.
 
 ---
 
@@ -329,53 +115,24 @@ chave única do servidor para uso pessoal/de equipe.
 
 | Documento | Conteúdo |
 |---|---|
-| [REGRAS-DO-PROJETO.md](REGRAS-DO-PROJETO.md) | ⚖️ **Constituição de engenharia** — vale para pessoas, agentes de IA e automações. Documentação, arquitetura, banco, contratos, segurança, testes, Git e operação |
-| [CONTINUIDADE.md](CONTINUIDADE.md) | 📌 **Leia antes de iniciar uma frente** — estado atual, riscos abertos e como retomar (curto) |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Arquitetura real: serviços, fluxos, persistência, lacunas |
-| [docs/SECURITY.md](docs/SECURITY.md) | Modelo de ameaça, isolamento, sandbox, segredos, LGPD |
-| [docs/OPERATIONS.md](docs/OPERATIONS.md) | Runbook: monitoramento, limites, procedimentos, rollback |
-| [docs/AMBIENTE_EXECUCAO.md](docs/AMBIENTE_EXECUCAO.md) | Ambiente do agente: o que é persistente, o que é temporário, como recuperar uma tarefa e como diferenciar falha do ambiente de bug do projeto |
-| [docs/CONFIGURACAO.md](docs/CONFIGURACAO.md) | Primeira configuração, modo gratuito, Docling e acesso pelo celular |
-| [docs/BACKUP_RESTORE.md](docs/BACKUP_RESTORE.md) | Backup completo e restauração passo a passo |
-| [docs/TESTING.md](docs/TESTING.md) | Como rodar os testes, convenções e lacunas conhecidas |
-| [docs/AUDITORIA_2026-07.md](docs/AUDITORIA_2026-07.md) | Auditoria de produção: achados, correções e prontidão |
-| [docs/MULTIMODEL.md](docs/MULTIMODEL.md) | Modos multimodelo e o que ainda falta |
-| [docs/MEMORY.md](docs/MEMORY.md) | Memória semântica e recuperação de contexto |
-| [docs/DOCLING.md](docs/DOCLING.md) | Camada de compreensão documental |
-| [docs/DESIGN_STUDIO.md](docs/DESIGN_STUDIO.md) | Modo Design: tipos de saída, versionamento, isolamento da prévia e exportação |
-| [e2e/README.md](e2e/README.md) | Testes de navegador: como rodar, o provedor simulado e as armadilhas já pagas |
-| [docs/FREDERICO_COMPANION.md](docs/FREDERICO_COMPANION.md) | O copiloto Nino em detalhe |
+| [REGRAS-DO-PROJETO.md](REGRAS-DO-PROJETO.md) | Constituição de engenharia |
+| [CONTINUIDADE.md](CONTINUIDADE.md) | Estado atual, riscos e retomada |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Arquitetura e fluxos reais |
+| [docs/SECURITY.md](docs/SECURITY.md) | Modelo de ameaça e isolamento |
+| [docs/OPERATIONS.md](docs/OPERATIONS.md) | Runbook de operação |
+| [docs/CONFIGURACAO.md](docs/CONFIGURACAO.md) | Configuração e implantação |
+| [docs/TESTING.md](docs/TESTING.md) | Testes e lacunas conhecidas |
+| [docs/AUDITORIA_2026-07.md](docs/AUDITORIA_2026-07.md) | Auditoria e prontidão |
+| [docs/DESIGN_STUDIO.md](docs/DESIGN_STUDIO.md) | Modo Design |
+| [docs/FREDERICO_COMPANION.md](docs/FREDERICO_COMPANION.md) | Copiloto Nino |
 | [VPS-DEPLOY.md](VPS-DEPLOY.md) | Publicação em VPS com HTTPS |
-| [NOTEBOOK-SERVIDOR.md](NOTEBOOK-SERVIDOR.md) | Acesso remoto com notebook e Tailscale |
-| [docs/RELATORIO_ADAPTACAO_REGRAS.md](docs/RELATORIO_ADAPTACAO_REGRAS.md) | Como as regras do projeto foram adaptadas ao aplicativo (histórico) |
-| [docs/CHANGELOG_HISTORY.md](docs/CHANGELOG_HISTORY.md) | Histórico completo do projeto |
 
 ## 🤝 Contribuir
 
-**Antes de abrir um PR, leia o [REGRAS-DO-PROJETO.md](REGRAS-DO-PROJETO.md).** Ele é a
-constituição de engenharia do repositório e vale igualmente para pessoas e para agentes
-de IA — inclusive o que cada Pull Request precisa informar (Regra 10.3).
-
-Toda mudança relevante precisa: atualizar o `CONTINUIDADE.md` (que é **curto** — o
-histórico vai para `docs/CHANGELOG_HISTORY.md`), passar por `npm run check` nos dois
-lados, receber um commit descritivo em português e ser enviada ao GitHub na mesma sessão.
-
-Mexeu em interface, streaming ou login? Rode também os testes de navegador
-(`cd e2e && npm test` — exige PostgreSQL; ver [e2e/README.md](e2e/README.md)).
-Eles sobem o **build de produção** e conversam com um provedor de IA simulado,
-então não precisam de chave nem de internet.
-
-Mexeu nos kits de documento (`sandbox/kits.py`, `docpro.py`, `xlspro.py`,
-`pdfpro.py`)? Instale `python-docx`, `openpyxl`, `reportlab`, `pypdf` e
-`matplotlib` — e também `libreoffice-writer`/`libreoffice-calc` com as fontes
-`fonts-crosextra-carlito`/`-caladea` — **antes** de rodar
-`python -m unittest discover -s sandbox -p '*_test.py'`. Sem eles a suíte se
-pula sozinha e passa vazia. Ela fixa o contrato de layout e a conferência: se um
-bloco novo puser texto fora da grade, deixar a linha TOTAL órfã ou o sumário
-apontar a página errada, o teste acusa antes de o arquivo chegar ao cliente
-(ver [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §19). Para conferir com os
-próprios olhos, `python sandbox/exemplos/gerar_exemplos.py /tmp/exemplos`
-regenera os quatro documentos da revisão de design.
+Antes de abrir um PR, leia o [REGRAS-DO-PROJETO.md](REGRAS-DO-PROJETO.md). Toda
+mudança relevante deve atualizar `CONTINUIDADE.md`, passar por `npm run check` nos
+lados afetados e registrar honestamente o que foi exercitado e o que permanece
+limitado.
 
 <div align="center">
 
