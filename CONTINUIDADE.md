@@ -13,9 +13,11 @@ Desenvolvedor + prévia do Modo Design.
 
 | Frente | O que estava errado | Correção |
 | --- | --- | --- |
-| Nino | Só dava para desligar em Configurações / select do workspace Dev; ao desligar, sumia sem caminho óbvio de volta. | Botão **Ocultar** no avatar (`enabled: false` via `settingsForCompanionMode(OFF)`); botão persistente **Mostrar Nino** no chrome quando oculto. Código do Companion preservado. |
-| Modo Dev | Abrir "Modo desenvolvedor" ou o workspace sem sessão deixava casca de IDE com chat genérico (sem `mode`/`github`/`permissions` no envio). | `openDeveloper` e `changeWorkspace('developer')` entram no workspace Dev; sessão semeada do projeto ativo ou painel de tarefa; sair da sessão reabre o fluxo. |
+| Nino | Só dava para desligar em Configurações / select do workspace Dev; ao desligar, sumia sem caminho óbvio de volta. | Botão **Ocultar** no avatar (`enabled: false` via `settingsForCompanionMode(OFF)`); botão persistente **Mostrar Nino** no Companion quando oculto. Código do Companion preservado. |
+| Modo Dev | Abrir "Modo desenvolvedor" ou o workspace sem sessão deixava casca de IDE com chat genérico (sem `mode`/`github`/`permissions` no envio). | Plugin Vite `appDevNinoPatchPlugin` aplica no build: `openDeveloper`/`changeWorkspace('developer')` semeiam sessão; sair da sessão reabre o fluxo; placeholder do compositor. |
 | Modo Design | Troca de versão usava `#hash` no iframe → sem `onLoad` → prévia ficava em `opacity: 0` ("Carregando…" eterno). | Prévia recarrega por query `_v=` + `key` no iframe; recarregar manual também. |
+
+**Nota:** o `App.jsx` monolítico (~115 KB) não cabe no limite de payload do MCP usado nesta entrega; o wiring Dev entra via plugin Vite (transform no build/dev), não por reescrita do arquivo na árvore. Nino e Design foram editados nos arquivos-fonte.
 
 Aplicação multiusuário com agentes de IA, memória semântica, multimodelo, execução de
 ferramentas em sandbox Docker, geração de documentos, Docling, conector GitHub, copiloto
@@ -35,16 +37,17 @@ cliente (`/resume`), não automática no boot. Detalhes e frentes fechadas:
 | --- | --- | --- |
 | F-21 | `App.jsx` ainda concentra dezenas de `useState`; folga do bundle de entrada ~7 KB. | 🟡 Média |
 | — | Pré-voo do GitHub não verifica escopos reais do PAT (só na hora do push). | 🟢 Baixa |
+| — | Patches Dev via plugin Vite: se o texto-âncora do `App.jsx` mudar, o plugin avisa no build e o patch deixa de aplicar até atualizar as âncoras. | 🟡 Média |
 
 ---
 
 ## Próximos passos (resumo)
 
-1. Prova visual dos painéis novos (confiabilidade, handoff) — falta Chromium neste contêiner.
-2. Frente 16 — popular `model_tool_capability_cache` com a sonda `--live`.
-3. Frente 13 (Design) — compartilhamento público da prévia por token.
-4. Frente 9 — desmontar o `App.jsx` (etapas 2–4).
-5. Conferir em tela esta entrega (Ocultar/Mostrar Nino, workspace Dev com sessão, prévia Design).
+1. Prova visual (Ocultar/Mostrar Nino, workspace Dev com sessão, prévia Design).
+2. Incorporar os patches Dev no `App.jsx` fonte (eliminar o plugin) numa sessão com push local/git.
+3. Frente 16 — popular `model_tool_capability_cache` com a sonda `--live`.
+4. Frente 13 (Design) — compartilhamento público da prévia por token.
+5. Frente 9 — desmontar o `App.jsx` (etapas 2–4).
 
 ## Como retomar
 
