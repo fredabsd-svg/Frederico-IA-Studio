@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { appDevNinoPatchPlugin } from './plugins/appDevNinoPatchPlugin.js';
 // host:true + allowedHosts:true => o app pode ser aberto de outros aparelhos
 // (celular/tablet na rede, ou via Tailscale), não só do próprio PC.
 // proxy /api => tudo fica na MESMA origem (uma porta só): o Vite repassa as
@@ -18,19 +19,16 @@ const proxyApi = {
 };
 
 export default defineConfig({
-  // Wiring do Modo Dev vive no App.jsx (seedDeveloperSessionFromActive /
-  // openDeveloperWorkspace). O plugin de transform foi removido para o
-  // comportamento não depender de âncoras de texto no build.
-  plugins: [react()],
+  // TEMPORÁRIO nesta branch: plugin permanece até o App.jsx fonte com
+  // wiring Dev ser publicado (limite de payload MCP). Será removido no
+  // mesmo PR assim que App.jsx montado estiver no branch.
+  plugins: [react(), appDevNinoPatchPlugin()],
   server: {
     host: true,
     port: 5173,
     allowedHosts: true,
     proxy: proxyApi
   },
-  // `preview` serve o BUILD. Sem o mesmo proxy, o bundle de produção servido
-  // localmente não acha a API — é assim que os testes E2E (e2e/) exercitam o
-  // mesmo bundle que vai para a VPS, em vez do dev server.
   preview: {
     host: true,
     port: 4173,
