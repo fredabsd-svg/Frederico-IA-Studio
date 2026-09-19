@@ -1,0 +1,27 @@
+--- README.md
++++ README.md
+@@ -2,18 +2,21 @@
+ 
+ # 🎨 Frederico IA Studio
+ 
+-### Seu estúdio de IA, em português.
++### Seu estúdio de IA, em português — com arquivo de verdade no final.
+ 
+-**Converse, peça e receba o arquivo pronto.** Planilhas com fórmulas, documentos
+-Word diagramados, PDFs, gráficos e código — gerados de verdade num sandbox
+-isolado, não descritos em texto.
++Peça no chat e receba **planilha, Word, PDF, gráfico ou código** gerados num
++sandbox Docker isolado. Não é “texto que descreve o arquivo”: é o arquivo.
++
++- **Chat que entrega** — Excel com fórmulas conferidas, Word/PDF diagramados, OCR e CNPJ
++- **Modo Design + Nino** — prévia HTML isolada com versões; copiloto que some e volta com um clique
++- **Modo Desenvolvedor + GitHub** — projeto com sessão (modo, repo, permissões) e PR em um fluxo
+ 
+ ![React](https://img.shields.io/badge/React-Vite-61DAFB?logo=react&logoColor=white&labelColor=20232a)
+ ![Node.js](https://img.shields.io/badge/Node.js-Express-339933?logo=nodedotjs&logoColor=white&labelColor=20232a)
+ ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-pgvector-4169E1?logo=postgresql&logoColor=white&labelColor=20232a)
+ ![Docker](https://img.shields.io/badge/Docker-Sandbox-2496ED?logo=docker&logoColor=white&labelColor=20232a)
+-![Status](https://img.shields.io/badge/SaaS%20multiusu%C3%A1rio-em%20produ%C3%A7%C3%A3o-2ea043)
+-![LGPD](https://img.shields.io/badge/LGPD-conformidade%20embutida-8957e5)
++![Status](https://img.shields.io/badge/Produ%C3%A7%C3%A3o-amarelo%20·%20apto%20com%20restri%C3%A7%C3%B5es-e3b341)
++![LGPD](https://img.shields.io/badge/LGPD-exportar%20·%20apagar%20·%20consentimento-8957e5)
