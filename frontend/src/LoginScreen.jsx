@@ -32,10 +32,15 @@ export function LoginScreen({ initialMode = 'login', onBack = null }) {
   async function submit(e) {
     e.preventDefault();
     setError('');
+    // WHY: Better Auth (signUp/signIn) é o único login — nunca /api/login legado.
+    // Consentimento LGPD antes do busy evita spinner em rejeição óbvia.
+    if (mode === 'signup' && !consent) {
+      setError('Para criar a conta, é preciso ler e concordar com os Termos de Uso e a Política de Privacidade.');
+      return;
+    }
     setBusy(true);
     try {
       if (mode === 'signup') {
-        if (!consent) { setError('Para criar a conta, é preciso ler e concordar com os Termos de Uso e a Política de Privacidade.'); return; }
         const { error } = await signUp.email({ email, password, name: name.trim() || email.split('@')[0] });
         if (error) { setError(traduzErroAuth(error)); return; }
         // Registra o aceite no servidor (evidência LGPD) — a sessão já existe.
@@ -57,16 +62,12 @@ export function LoginScreen({ initialMode = 'login', onBack = null }) {
     setError('');
     setSocial(provider);
     try {
-      // Redireciona para o GitHub/Google e volta para a raiz já logado.
       const callbackURL = callbackURLForOrigin(window.location.origin);
-      // A Better Auth devolve { error } em vez de lançar — sem tratar, o botão
-      // ficava girando para sempre e travava o formulário inteiro.
       const { error } = (await signIn.social({ provider, callbackURL })) || {};
       if (error) {
         setSocial('');
         setError(traduzErroAuth(error));
       }
-      // Sem erro: o navegador já está sendo redirecionado ao provedor.
     } catch {
       setSocial('');
       setError('Não foi possível iniciar o login social.');
@@ -100,7 +101,6 @@ export function LoginScreen({ initialMode = 'login', onBack = null }) {
                 </button>
               )}
             </div>
-
             <div className="loginOr"><span>ou com e-mail</span></div>
           </>
         )}
@@ -134,7 +134,6 @@ export function LoginScreen({ initialMode = 'login', onBack = null }) {
           <a href="/termos" target="_blank" rel="noreferrer">Termos de Uso</a> e a{' '}
           <a href="/privacidade" target="_blank" rel="noreferrer">Política de Privacidade</a>.
         </p>
-
         <p className="loginToggle">
           {isSignup ? 'Já tem conta?' : 'Ainda não tem conta?'}{' '}
           <button type="button" onClick={() => { setMode(isSignup ? 'login' : 'signup'); setError(''); }}>
@@ -142,9 +141,6 @@ export function LoginScreen({ initialMode = 'login', onBack = null }) {
           </button>
         </p>
       </div>
-
-      {/* Selos de segurança — o usuário vê ANTES de entrar que o ambiente é
-          protegido: antivírus nos arquivos, conexão cifrada e LGPD. */}
       <div className="loginTrust">
         <span><ShieldCheck size={13} /> Arquivos verificados por antivírus</span>
         <span><Lock size={13} /> Conexão criptografada</span>
@@ -154,7 +150,6 @@ export function LoginScreen({ initialMode = 'login', onBack = null }) {
   );
 }
 
-// Ícone do GitHub (SVG inline) — os ícones de marca saíram do lucide-react.
 function GitHubIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -163,7 +158,6 @@ function GitHubIcon() {
   );
 }
 
-// Ícone do Google (SVG inline, cores oficiais) — evita dependência externa.
 function GoogleIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
