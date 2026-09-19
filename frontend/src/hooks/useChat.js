@@ -63,8 +63,24 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
     runsRef.current = next;
     setRuns(next);
   };
+  // WHY: Parar tem de abortar o fetch/SSE local além do POST /control —
+  // senão o reader continua aplicando deltas até o backend fechar o socket.
+  const abortControllersRef = useRef({}); // { [convId]: AbortController }
+  const abortConversationFetch = (convId) => {
+    const ac = abortControllersRef.current[convId];
+    if (!ac) return;
+    try { ac.abort(); } catch {}
+    delete abortControllersRef.current[convId];
+  };
+  const beginConversationFetch = (convId) => {
+    abortConversationFetch(convId);
+    const ac = new AbortController();
+    abortControllersRef.current[convId] = ac;
+    return ac;
+  };
   const endRun = (convId) => {
     if (!convId || !(convId in runsRef.current)) return;
+    abortConversationFetch(convId);
     const next = { ...runsRef.current };
     delete next[convId];
     runsRef.current = next;
@@ -108,6 +124,12 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
     if (action === 'pause') patchRun(conversationId, { status: 'Pausando...' });
     if (action === 'resume') patchRun(conversationId, { status: 'Retomando...' });
     if (action === 'stop') patchRun(conversationId, { status: 'Interrompendo...' });
+    // WHY: stop invalida a época e aborta o SSE local na hora; o POST /control
+    // pede ao backend para interromper o run (fonte de verdade).
+    if (action === 'stop') {
+      newStreamEpoch(conversationId);
+      abortConversationFetch(conversationId);
+    }
     try {
       const response = await fetch(`${API}/api/conversations/${conversationId}/control`, {
         method: 'POST',
@@ -240,11 +262,14 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
         // em CADA evento (não só nos `delta`) porque a reconexão pode
         // acontecer a qualquer momento — se travarmos no meio de um tool_call
         // longo, queremos retomar DEPOIS do último `tool_start` e não antes.
+        // WHY: `_seq` pode ser 0 — `||` descartaria o zero e atrasaria o fromSeq
+        // na reconexão (replay duplicado do primeiro evento).
         if (ev._seq != null) {
           const prev = liveCursorRef.current[convId] || { runId: null, seq: 0 };
+          const nextSeq = Number(ev._seq);
           liveCursorRef.current[convId] = {
             runId: ev._runId || prev.runId,
-            seq: Number(ev._seq) || prev.seq
+            seq: Number.isFinite(nextSeq) ? nextSeq : prev.seq
           };
         }
         if (ev.type === 'status') patchRun(convId, { status: ev.content || '' });
@@ -409,9 +434,11 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
     try {
       const params = new URLSearchParams();
       if (cursor?.runId) params.set('runId', cursor.runId);
-      if (cursor?.seq) params.set('fromSeq', String(cursor.seq));
+      // WHY: seq 0 é válido; checar truthy omitia fromSeq e forçava replay.
+      if (cursor && cursor.seq != null) params.set('fromSeq', String(cursor.seq));
       const qs = params.toString();
-      res = await fetch(`${API}/api/conversations/${convId}/stream${qs ? `?${qs}` : ''}`);
+      const ac = beginConversationFetch(convId);
+      res = await fetch(`${API}/api/conversations/${convId}/stream${qs ? `?${qs}` : ''}`, { signal: ac.signal });
     } catch {
       return { attached: false, sawDone: false };
     }
@@ -504,6 +531,8 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
     // openConversation.
     if (currentRef.current?.id !== conv.id) currentRef.current = conv;
     if (!isRetry) setInput('');
+    // WHY: developer.mode/permissions só desta conversa — nunca vazar a sessão
+    // Dev de A para o POST /chat de B (isolamento multimodelo/conversa).
     const activeDeveloper = developerSession && (!developerSession.conversationId || developerSession.conversationId === conv.id) ? developerSession : null;
     if (activeDeveloper && !activeDeveloper.conversationId) setDeveloperSession({ ...activeDeveloper, conversationId: conv.id });
     const epoch = newStreamEpoch(conv.id);
@@ -585,8 +614,9 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
     };
     let outcome = null;
     try {
+      const ac = beginConversationFetch(conv.id);
       const res = await fetch(`${API}/api/conversations/${conv.id}/chat`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: ac.signal
       });
       if (res.status === 401) { endRun(conv.id); setNeedLogin(true); return; }
       if (!res.ok) {
@@ -611,6 +641,11 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
       if (!reader) throw new Error('A resposta do servidor não pôde ser lida.');
       outcome = await consumeChatStream(reader, keyRef, text, conv.id, epoch);
     } catch (err) {
+      // WHY: abort local (Parar) NÃO é queda de rede — não religar o stream.
+      if (err?.name === 'AbortError') {
+        endRun(conv.id);
+        return;
+      }
       // A conexão SSE caiu (trocar de aba / minimizar no celular / rede
       // oscilando). A tarefa CONTINUA rodando no servidor.
       if (currentRef.current?.id !== conv.id) {
@@ -682,7 +717,8 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
     };
     let outcome = null;
     try {
-      const res = await fetch(`${API}/api/conversations/${id}/resume`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+      const ac = beginConversationFetch(id);
+      const res = await fetch(`${API}/api/conversations/${id}/resume`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: ac.signal });
       if (res.status === 401) { endRun(id); setNeedLogin(true); return; }
       if (!res.ok) {
         let msg = `Não foi possível continuar (${res.status}).`;
@@ -698,7 +734,9 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
       const reader = res.body?.getReader();
       if (!reader) throw new Error('A resposta do servidor não pôde ser lida.');
       outcome = await consumeChatStream(reader, keyRef, '', id, epoch);
-    } catch {
+    } catch (err) {
+      // WHY: abort local (Parar) NÃO é queda de rede — não religar o stream.
+      if (err?.name === 'AbortError') { endRun(id); return; }
       // Conexão caiu: a tarefa CONTINUA no servidor. Reconecta ao vivo (ou, se
       // o usuário está noutra conversa, um vigia limpa o indicador ao terminar).
       if (currentRef.current?.id !== id) { watchDetachedRun(id); return; }
