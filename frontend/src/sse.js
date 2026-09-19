@@ -8,14 +8,18 @@ function parseFrame(frame) {
   try { return JSON.parse(data); } catch { return null; }
 }
 
+// WHY: frames sem `data:` (heartbeat `: ping`) viram null e saem do filtro —
+// comentários SSE não podem virar eventos nem travar o parser.
 // Returns complete JSON SSE events and leaves an incomplete final frame in
-// `rest`. Passing flush=true consumes that final frame when the stream closes.
+// `rest`. Passing flush=true consumes that final frame when the stream closes
+// (proxies sometimes omit the trailing blank line on the last event).
 export function takeSseEvents(buffer, { flush = false } = {}) {
   const frames = String(buffer || '').split(/\r?\n\r?\n/);
+  // WHY: sem flush, o último pedaço pode estar incompleto — fica em `rest`.
+  // Com flush (EOF), esse pedaço é o evento final e tem de ser parseado.
   const rest = flush ? '' : (frames.pop() || '');
-  const complete = flush ? frames : frames;
   return {
-    events: complete.map(parseFrame).filter(Boolean),
+    events: frames.map(parseFrame).filter(Boolean),
     rest
   };
 }
