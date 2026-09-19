@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Moon } from 'lucide-react';
+import { Moon, Bot } from 'lucide-react';
 import { CompanionHideButton } from './CompanionHideButton.jsx';
+import { COMPANION_CONTROL_MODES, settingsForCompanionMode } from './companionMode.js';
 import { WritingBubble, ProactiveEventBubble } from './CompanionBubbles.jsx';
 import { useCopilotChat } from './hooks/useCopilotChat.js';
 import { CopilotWorkspace } from './components/CopilotWorkspace.jsx';
@@ -195,9 +196,23 @@ export function Companion({
     document.addEventListener('pointerup', up);
   }
 
-  if (!settings.enabled) return null;
-
   const characterName = settings.characterName || 'Nino';
+
+  // Quando desligado, o Companion some — mas deixa um controle persistente
+  // para o usuário reaparecer sem abrir Configurações.
+  if (!settings.enabled) {
+    return (
+      <button
+        type="button"
+        className="ninoShowBtn"
+        onClick={() => void companion.saveSettings(settingsForCompanionMode(COMPANION_CONTROL_MODES.ACTIVE, settings))}
+        title="Mostrar o Nino de novo"
+        aria-label="Mostrar Nino"
+      >
+        <Bot size={14}/> Mostrar Nino
+      </button>
+    );
+  }
 
   function toggleMin() {
     setMinimized(m => { const nv = !m; localStorage.setItem('fred_companion_min', nv ? '1' : '0'); if (nv) setOpen(false); return nv; });
