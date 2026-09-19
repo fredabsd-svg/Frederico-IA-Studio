@@ -8,15 +8,13 @@
 
 ## Estado atual
 
-**Última frente (esta entrega):** review inicial (Dev/Nino/Design) + README honesto.
-Plugin Vite de wiring Dev alinhado a `devWorkspaceBootstrap.js` (idempotente).
-`App.jsx` monolítico ainda não recebeu o wiring no fonte via MCP (limite de payload);
-script `frontend/scripts/apply-dev-wiring.mjs` aplica as mesmas edições com git local.
+**Última frente (esta entrega):** review inicial + wiring Dev no `App.jsx` fonte
+(elimina o plugin Vite de transform).
 
 | Frente | Estado |
 | --- | --- |
 | Nino ocultar/mostrar | No código-fonte (`CompanionHideButton` + botão **Mostrar Nino**). |
-| Modo Dev (sessão) | Wiring via plugin Vite (= bootstrap); fonte App.jsx pendente de apply local. |
+| Modo Dev (sessão) | `seedDeveloperSessionFromActive` / `openDeveloperWorkspace` importados no `App.jsx`; plugin `appDevNinoPatchPlugin` removido. |
 | Prévia Design | `DesignPreviewFrame` recarrega por query `_v=`/`_r=` + `key` (não `#hash`). |
 
 Aplicação multiusuário com agentes de IA, memória semântica, multimodelo, execução de
@@ -37,18 +35,17 @@ cliente (`/resume`), não automática no boot. Detalhes e frentes fechadas:
 | --- | --- | --- |
 | F-21 | `App.jsx` ainda concentra dezenas de `useState`; folga do bundle de entrada ~7 KB. | 🟡 Média |
 | — | Pré-voo do GitHub não verifica escopos reais do PAT (só na hora do push). | 🟢 Baixa |
-| — | Plugin Vite Dev: se o texto-âncora do `App.jsx` mudar, o plugin avisa no build. Mitigação: `apply-dev-wiring.mjs` + remover plugin. | 🟡 Média |
 
 ---
 
 ## Próximos passos (resumo)
 
-1. Com git local: `node frontend/scripts/apply-dev-wiring.mjs`, commitar `App.jsx`, remover plugin.
-2. Prova visual (Ocultar/Mostrar Nino, workspace Dev com sessão, prévia Design).
-3. Frente 16 — popular `model_tool_capability_cache` com a sonda `--live`.
-4. Frente 13 (Design) — compartilhamento público da prévia por token.
-5. Frente 9 — desmontar o `App.jsx` (etapas 2–4).
-6. Review profundo por domínio (SSE/chat, sandbox, auth, uploads).
+1. Prova visual (Ocultar/Mostrar Nino, workspace Dev com sessão, prévia Design).
+2. Frente 16 — popular `model_tool_capability_cache` com a sonda `--live`.
+3. Frente 13 (Design) — compartilhamento público da prévia por token.
+4. Frente 9 — desmontar o `App.jsx` (etapas 2–4).
+5. Review profundo por domínio (SSE/chat, sandbox, auth, uploads) — este PR só
+   cobriu caminhos críticos Dev/Nino/Design + remoção do hack Vite.
 
 ## Como retomar
 
