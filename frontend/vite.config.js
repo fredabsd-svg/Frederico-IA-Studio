@@ -1,6 +1,5 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import { appDevNinoPatchPlugin } from './plugins/appDevNinoPatchPlugin.js';
 // host:true + allowedHosts:true => o app pode ser aberto de outros aparelhos
 // (celular/tablet na rede, ou via Tailscale), não só do próprio PC.
 // proxy /api => tudo fica na MESMA origem (uma porta só): o Vite repassa as
@@ -19,7 +18,10 @@ const proxyApi = {
 };
 
 export default defineConfig({
-  plugins: [react(), appDevNinoPatchPlugin()],
+  // Wiring do Modo Dev vive no App.jsx (seedDeveloperSessionFromActive /
+  // openDeveloperWorkspace). O plugin de transform foi removido para o
+  // comportamento não depender de âncoras de texto no build.
+  plugins: [react()],
   server: {
     host: true,
     port: 5173,
