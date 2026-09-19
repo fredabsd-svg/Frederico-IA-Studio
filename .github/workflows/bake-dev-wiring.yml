@@ -1,0 +1,41 @@
+name: Bake Dev wiring into App.jsx
+
+# Roda no PR de review para gravar o wiring no fonte (MCP não aguenta o monolito).
+# Depois do merge, este workflow pode ser removido.
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'frontend/scripts/apply-dev-wiring.mjs'
+      - 'frontend/src/devWorkspaceBootstrap.js'
+      - '.github/workflows/bake-dev-wiring.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  bake:
+    if: github.head_ref == 'review/dev-wiring-readme' || github.ref_name == 'review/dev-wiring-readme'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply Dev wiring to App.jsx source
+        run: node frontend/scripts/apply-dev-wiring.mjs
+      - name: Commit if changed
+        run: |
+          if git diff --quiet -- frontend/src/App.jsx; then
+            echo "App.jsx already wired"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend/src/App.jsx
+          git commit -m "fix(frontend): grava wiring do Modo Dev no App.jsx fonte"
+          git push
