@@ -93,10 +93,11 @@ import { useSpeech } from './hooks/useSpeech.js';
 import { useFileUploads } from './hooks/useFileUploads.js';
 import { useChat } from './hooks/useChat.js';
 import { useTasks } from './hooks/useTasks.js';
-import { useDevProjects, projectContextText, developerSessionForConversation, permissionsPayloadFor } from './hooks/useDevProjects.js';
+import { useDevProjects, developerSessionForConversation, developerSessionFromProject } from './hooks/useDevProjects.js';
 import { LAYOUT_KEY, normalizeLayoutLevel, resolveLayout, sessionContextItems } from './devWorkspaceLayout.js';
 import { COMPANION_CONTROL_MODES, companionControlMode, settingsForCompanionMode } from './companionMode.js';
 import { useComposerHeight } from './hooks/useComposerHeight.js';
+import { MODEL_STORAGE_KEY, modelDisplayName, multiModelStatus, resolveModelChoice } from './modelChoice.js';
 
 const QUICK_ACTION_ICON = {
   document: FileText,
@@ -161,7 +162,9 @@ export default function App({ user } = {}) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [allModels, setAllModels] = useState([]);
-  const [model, setModel] = useState('');
+  // A escolha de modelo sobrevive ao recarregar (antes voltava ao primeiro da
+  // lista a cada F5). A validação contra o catálogo fica no efeito abaixo.
+  const [model, setModel] = useState(() => { try { return localStorage.getItem(MODEL_STORAGE_KEY) || ''; } catch { return ''; } });
   const [memoryOpen, setMemoryOpen] = useState(false);
   const [pcOpen, setPcOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
@@ -228,8 +231,6 @@ export default function App({ user } = {}) {
   const [needLogin, setNeedLogin] = useState(false);
   const [unprotected, setUnprotected] = useState(false);
   const [authWarnHidden, setAuthWarnHidden] = useState(() => localStorage.getItem('fred_authwarn_hidden') === '1');
-  const [password, setPassword] = useState('');
-  const [loginError, setLoginError] = useState('');
   const [toast, setToast] = useState(null);
   const [copiedIdx, setCopiedIdx] = useState(null);
   const [tplOpen, setTplOpen] = useState(false);
@@ -259,6 +260,7 @@ export default function App({ user } = {}) {
   // copiloto (position: fixed) não pousar em cima do botão de enviar.
   const composerWrapRef = useComposerHeight();
   const topActionsRef = useRef(null);
+  const exportRef = useRef(null);
   const sideScrollRef = useRef(null);
   const toastTimer = useRef(null);
   const copyTimer = useRef(null);
@@ -296,7 +298,9 @@ export default function App({ user } = {}) {
   const effectiveTeam = assistants.filter(a => !teamIds || teamIds.includes(a.id));
   const uploads = files.filter(f => f.kind === 'upload');
   // Multimodelo só vale com 2+ modelos selecionados; senão o fluxo é o normal
-  const effectiveMulti = multiModel?.enabled && (multiModel.config?.models?.length || 0) >= 2 ? multiModel.config : null;
+  // Membro indisponível (provedor removido) não conta: o envio cai no fluxo
+  // normal em vez de falhar no servidor — o seletor mostra o aviso.
+  const effectiveMulti = multiModel?.enabled && multiModelStatus(multiModel.config, allModels).ready ? multiModel.config : null;
   // ---- SMART AUTO-SCROLL do chat ----
   // A chave de conteúdo é derivada do que REALMENTE cresceu (tamanho do texto da
   // última mensagem, etapas, progresso da ferramenta), não da identidade do array
@@ -553,11 +557,17 @@ export default function App({ user } = {}) {
     const frame = window.requestAnimationFrame(resetSidebarScroll);
     return () => window.cancelAnimationFrame(frame);
   }, [workspace]);
-  // Fecha o painel da equipe ao clicar fora
+  // Fecha os menus da barra superior (mais opções / exportar) ao clicar fora
+  // ou com Esc — o de exportar ficava aberto até um segundo clique no botão.
   useEffect(() => {
-    function onDoc(e) { if (topActionsRef.current && !topActionsRef.current.contains(e.target)) setTopActionsOpen(false); }
+    function onDoc(e) {
+      if (topActionsRef.current && !topActionsRef.current.contains(e.target)) setTopActionsOpen(false);
+      if (exportRef.current && !exportRef.current.contains(e.target)) setExportOpen(false);
+    }
+    function onKey(e) { if (e.key === 'Escape') { setTopActionsOpen(false); setExportOpen(false); } }
     document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey); };
   }, []);
 
   function showToast(text, kind = 'err') {
@@ -592,12 +602,12 @@ export default function App({ user } = {}) {
     });
     if (!name?.trim()) return;
     try {
-      await fetch(`${API}/api/templates`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name.trim(), content: m.content }) });
-      showToast(`Template "${name.trim()}" salvo! Acesse em Templates, na barra lateral.`);
+      const res = await fetch(`${API}/api/templates`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name.trim(), content: m.content }) });
+      if (!res.ok) throw new Error();
+      showToast(`Template "${name.trim()}" salvo! Acesse em Templates, na barra lateral.`, 'ok');
     } catch { showToast('Não foi possível salvar o template.'); }
   }
-  async function deleteTemplate(id, e) {
-    e.stopPropagation();
+  async function deleteTemplate(id) {
     const confirmed = await askConfirm({
       title: 'Excluir template',
       message: 'Este template será removido da sua biblioteca. Essa ação não pode ser desfeita.',
@@ -605,7 +615,11 @@ export default function App({ user } = {}) {
       destructive: true
     });
     if (!confirmed) return;
-    try { await fetch(`${API}/api/templates/${id}`, { method: 'DELETE' }); await loadTemplates(); } catch {}
+    try {
+      const res = await fetch(`${API}/api/templates/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error();
+      await loadTemplates();
+    } catch { showToast('Não foi possível excluir o template.'); }
   }
 
   // ---- Exportar conversa ----
@@ -697,6 +711,26 @@ export default function App({ user } = {}) {
       setSideHidden(false);
       localStorage.setItem('fred_side_hidden', '0');
     }
+    // Entrar no workspace Desenvolvedor sem sessão deixava as colunas montadas
+    // mas o envio ia sem mode/github/permissions — chat genérico com casca de
+    // IDE. Com projeto ativo, a sessão nasce dele; sem projeto, abre o painel.
+    if (next === 'developer' && !seedDeveloperSessionFromActive()) {
+      setDeveloperStartMode(devProjects.active?.mode || 'plan');
+      setDeveloperOpen(true);
+    }
+  }
+
+  // Monta uma sessão a partir do projeto ativo para o inventário de ferramentas
+  // e o vínculo (GitHub/pasta) viajarem com o chat. Devolve a sessão ou null.
+  function seedDeveloperSessionFromActive() {
+    if (developerSession) return developerSession;
+    const project = devProjects.active;
+    if (!project) return null;
+    // conversationId nulo de propósito: a conversa que estiver aberta (talvez
+    // um chat comum do Estúdio) só entra no projeto no 1º envio da tarefa.
+    const session = developerSessionFromProject(project);
+    setDeveloperSession(session);
+    return session;
   }
 
   function openDeveloper(mode) {
@@ -704,6 +738,9 @@ export default function App({ user } = {}) {
     // projeto ativo para não sobrescrever a preferência do usuário.
     setDeveloperStartMode(mode || devProjects.active?.mode || 'plan');
     setDeveloperOpen(true);
+    // Revela as colunas do IDE junto com o painel: antes elas só apareciam
+    // DEPOIS de "Iniciar tarefa" e fechar o modal devolvia o chat genérico.
+    setWorkspace('developer');
   }
 
   function handleWelcomeAction(action) {
@@ -750,20 +787,10 @@ export default function App({ user } = {}) {
     setTeam(false);
     setWebSearch(false);
     if (developerAssistant) pickAssistant(developerAssistant.id);
-    // O vínculo do projeto vira o par (pasta do PC) OU (repositório GitHub) que
-    // o backend espera. As regras + memória do projeto viajam pelo canal `rules`.
-    const projectId = binding?.type === 'folder' ? (binding.folderId || null) : null;
-    const github = binding?.type === 'github' && binding.repo ? { repo: binding.repo, branch: binding.branch || '' } : null;
-    setDeveloperSession({
-      mode, projectId, github, rules: projectContextText(project),
-      devProjectId: project?.id || null,
-      conversationId: null,
-      // Autorizações já registradas no projeto: publicação (quando ainda válida
-      // para este vínculo) e comandos confirmados. Sem elas no payload,
-      // `github_push`/`github_create_pr` não entram no inventário e os
-      // comandos autorizados voltariam a pedir confirmação.
-      permissions: permissionsPayloadFor(project)
-    });
+    // Autorizações já registradas no projeto viajam na sessão: sem elas,
+    // `github_push`/`github_create_pr` não entram no inventário e os comandos
+    // autorizados voltariam a pedir confirmação.
+    setDeveloperSession(developerSessionFromProject(project, { mode, binding: binding || { type: 'none' } }));
     setInput(brief);
     setDeveloperOpen(false);
     setWorkspace('developer'); // revela o ambiente de desenvolvimento (colunas do IDE)
@@ -949,30 +976,31 @@ export default function App({ user } = {}) {
     } catch { showToast('Não foi possível remover o cliente.'); }
   }
 
-  async function doLogin(e) {
-    e?.preventDefault();
-    setLoginError('');
-    try {
-      const res = await fetch(`${API}/api/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) { setLoginError(data.error || 'Senha incorreta.'); return; }
-      setPassword('');
-      setNeedLogin(false);
-      init();
-    } catch {
-      setLoginError('Não foi possível conectar ao servidor.');
-    }
-  }
-
   async function loadModels() {
     try {
       const res = await fetch(`${API}/api/models`);
       const data = await res.json();
       const models = Array.isArray(data.models) ? data.models : [];
       setAllModels(models);
-      setModel(prev => models.some(m => m.id === prev) ? prev : (models.find(modelHasTools)?.id || models[0]?.id || ''));
     } catch {}
   }
+  // Valida o modelo escolhido contra o catálogo real. Id cru legado (assistente
+  // ou conversa antiga) vira a referência completa sem aviso; modelo que sumiu
+  // do catálogo é trocado COM aviso — antes a troca era silenciosa e a próxima
+  // mensagem saía por outro modelo.
+  useEffect(() => {
+    if (!allModels.length) return;
+    const choice = resolveModelChoice(allModels, [model], { prefer: modelHasTools });
+    if (!choice.id || choice.id === model) return;
+    setModel(choice.id);
+    if (choice.replaced) {
+      showToast(`O modelo "${modelDisplayName(allModels, choice.from)}" não está disponível agora. Usando ${modelDisplayName(allModels, choice.id)}.`);
+    }
+  }, [allModels, model]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!model) return;
+    try { localStorage.setItem(MODEL_STORAGE_KEY, model); } catch {}
+  }, [model]);
 
   async function openFilesDrawer() {
     if (!current?.id) { showToast('Abra uma conversa para ver os arquivos dela.'); return; }
@@ -990,11 +1018,39 @@ export default function App({ user } = {}) {
 
   const currentAssistant = assistants.find(a => a.id === assistantId);
 
+  // PRÉ-VOO REAL para a barra de contexto (Fase 55). Fica ANTES dos retornos
+  // antecipados (login/erro de conexão): hook depois deles muda a contagem de
+  // hooks entre renders e o React derruba o app em vez de mostrar a tela de erro.
+  // A branch mostrada precisa ser a de TRABALHO (que pode ser derivada da
+  // protegida), e quem sabe isso é o backend — a mesma função que decide o
+  // inventário do agente.
+  const [devPreflight, setDevPreflight] = useState(null);
+  useEffect(() => {
+    const repo = developerSession?.github?.repo;
+    if (workspace !== 'developer' || !repo) { setDevPreflight(null); return undefined; }
+    let alive = true;
+    const params = new URLSearchParams({
+      repo,
+      branch: developerSession?.github?.branch || '',
+      mode: developerSession?.mode || '',
+      conversationId: current?.id || '',
+      projectName: devProjects.active?.name || ''
+    });
+    (async () => {
+      try {
+        const res = await fetch(`${API}/api/connectors/github/preflight?${params}`);
+        const data = res.ok ? await res.json() : null;
+        if (alive) setDevPreflight(data && typeof data === 'object' ? data : null);
+      } catch { if (alive) setDevPreflight(null); }
+    })();
+    return () => { alive = false; };
+  }, [workspace, developerSession?.github?.repo, developerSession?.github?.branch, developerSession?.mode, current?.id, devProjects.active?.name]);
+
   // Sessão expirada durante o uso: leva de volta ao login.
   if (needLogin) {
     return <div className="connError">
       <div className="connErrorCard">
-        <div className="brand" style={{ marginBottom: 0 }}>Frederico <span>AI Studio</span></div>
+        <div className="brand" style={{ marginBottom: 0 }}>Frederico <span>IA Studio</span></div>
         <p>Sua sessão expirou. Entre novamente para continuar.</p>
         <button className="primary" onClick={() => { window.location.href = '/'; }}>Ir para o login</button>
       </div>
@@ -1038,31 +1094,6 @@ export default function App({ user } = {}) {
   // antigas, texto puro) mostram "Pronto".
   const lastAssistantMsg = [...messages].reverse().find(m => m.role === 'assistant');
   const lastExecState = lastAssistantMsg?.execution?.state || null;
-  // PRÉ-VOO REAL para a barra de contexto (Fase 55): a branch mostrada precisa
-  // ser a de TRABALHO (que pode ser derivada da protegida), e quem sabe isso é
-  // o backend — a mesma função que decide o inventário do agente.
-  const [devPreflight, setDevPreflight] = useState(null);
-  useEffect(() => {
-    const repo = developerSession?.github?.repo;
-    if (workspace !== 'developer' || !repo) { setDevPreflight(null); return undefined; }
-    let alive = true;
-    const params = new URLSearchParams({
-      repo,
-      branch: developerSession?.github?.branch || '',
-      mode: developerSession?.mode || '',
-      conversationId: current?.id || '',
-      projectName: devProjects.active?.name || ''
-    });
-    (async () => {
-      try {
-        const res = await fetch(`${API}/api/connectors/github/preflight?${params}`);
-        const data = res.ok ? await res.json() : null;
-        if (alive) setDevPreflight(data && typeof data === 'object' ? data : null);
-      } catch { if (alive) setDevPreflight(null); }
-    })();
-    return () => { alive = false; };
-  }, [workspace, developerSession?.github?.repo, developerSession?.github?.branch, developerSession?.mode, current?.id, devProjects.active?.name]);
-
   const devSessionItems = sessionContextItems({
     project: devProjects.active,
     session: developerSession,
@@ -1101,6 +1132,15 @@ export default function App({ user } = {}) {
           ? { label: 'Corrigir', icon: Bug, run: () => openDeveloper('fix') }
           : { label: 'Implementar', icon: Code2, run: () => openDeveloper('build') };
   const DevPrimaryIcon = devPrimaryAction.icon;
+  const composerPlaceholder = listening
+    ? 'Ouvindo... fale agora'
+    : workspace === 'developer'
+      ? (developerSession
+        ? 'Descreva a mudança, o bug ou a pergunta sobre o projeto…'
+        : 'Prepare uma tarefa (Planejar/Implementar) para ativar as ferramentas de código…')
+      : webSearch
+        ? 'Pesquisa na internet ativada — pergunte algo atual...'
+        : 'Peça para analisar arquivos, gerar Word, Excel, PDF...';
 
   // Permissões reais desta tarefa (não um toggle fictício): modo ativo (ou o do
   // projeto, se ainda não há sessão preparada) e o vínculo de pasta/repositório.
@@ -1189,9 +1229,9 @@ export default function App({ user } = {}) {
         </div>
         <div className="pickers desktopPickers">
           <button className="gear" onClick={openFilesDrawer} title="Arquivos da conversa" aria-label="Arquivos da conversa" disabled={!current?.id}><FolderOpen size={16}/></button>
-          <div className="mpicker">
-            <button className="gear" onClick={() => setExportOpen(o => !o)} title="Exportar conversa" disabled={exporting}>{exporting ? <span className="spin sm"/> : <FileDown size={16}/>}</button>
-            {exportOpen && <div className="mpPanel exportPanel">
+          <div className="mpicker" ref={exportRef}>
+            <button className="gear" onClick={() => setExportOpen(o => !o)} title="Exportar conversa" aria-label="Exportar conversa" aria-haspopup="menu" aria-expanded={exportOpen} disabled={exporting}>{exporting ? <span className="spin sm"/> : <FileDown size={16}/>}</button>
+            {exportOpen && <div className="mpPanel exportPanel" role="menu">
               <button className="mpItem" onClick={() => exportConv('pdf')}><span className="mpItemName">Exportar como PDF</span></button>
               <button className="mpItem" onClick={() => exportConv('docx')}><span className="mpItemName">Exportar como Word (.docx)</span></button>
             </div>}
@@ -1459,7 +1499,14 @@ export default function App({ user } = {}) {
               {devGitBusy === 'push' ? <span className="spin sm"/> : <Upload size={13}/>} Enviar para o GitHub
             </button>
           </div>}
-          <button onClick={() => setDeveloperSession(null)} title="Sair do modo desenvolvedor" aria-label="Sair do modo desenvolvedor"><X size={14}/></button>
+          {/* Sair da sessão reabre o painel de preparação: soltar a sessão e
+              continuar no workspace dev deixaria de novo a casca de IDE sem
+              ferramentas de código. */}
+          <button onClick={() => {
+            setDeveloperSession(null);
+            setDeveloperStartMode(devProjects.active?.mode || 'plan');
+            setDeveloperOpen(true);
+          }} title="Encerrar esta tarefa e preparar outra" aria-label="Encerrar esta tarefa de desenvolvimento"><X size={14}/></button>
         </div>}
         {uploads.length > 0 && <div className="attachChips">
           {uploads.map(f => <span className={`attachChip ${f.available === false ? 'missing' : ''}`} key={f.id} title={f.available === false ? 'Este arquivo não está mais disponível no servidor. Remova-o e anexe novamente.' : f.name}>
@@ -1522,7 +1569,7 @@ export default function App({ user } = {}) {
           <button className="attachBtn" onClick={() => fileInputRef.current?.click()} title="Anexar arquivo" aria-label="Anexar arquivo"><Paperclip size={19}/></button>
           <input ref={fileInputRef} type="file" multiple onChange={uploadFiles} style={{ display: 'none' }}/>
           <button className="attachBtn" onClick={() => setCameraOpen(true)} title="Tirar foto com a câmera" aria-label="Tirar foto com a câmera"><Camera size={19}/></button>
-          <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)} onInput={e => { e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 160) + 'px'; }} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (!uploadingFiles) sendMessage(); } }} placeholder={listening ? 'Ouvindo... fale agora' : (webSearch ? 'Pesquisa na internet ativada — pergunte algo atual...' : 'Peça para analisar arquivos, gerar Word, Excel, PDF...')} />
+          <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)} onInput={e => { e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 160) + 'px'; }} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (!uploadingFiles) sendMessage(); } }} placeholder={composerPlaceholder} aria-label="Mensagem" />
           <button className="sendBtn" onClick={sendMessage} disabled={busy || uploadingFiles} aria-label={uploadingFiles ? 'Aguardando anexos' : 'Enviar'}><ArrowUp size={18}/></button>
         </div>
         <div className="composerHints">
@@ -1587,7 +1634,6 @@ export default function App({ user } = {}) {
         onClose={() => setWorkspaceOpen(false)}/>
     </Suspense>}
 
-    {toast && <div className={`toast ${toast.kind || 'err'}`} role="alert">{toast.text}<button onClick={() => setToast(null)} aria-label="Fechar aviso"><X size={14}/></button></div>}
 
     {studioOpen && <Modal title={form.id ? 'Editar assistente' : 'Novo assistente'} icon={<Bot size={18}/>} onClose={() => setStudioOpen(false)}>
       <div className="frow">
@@ -1803,11 +1849,13 @@ export default function App({ user } = {}) {
       <div className="memList">
         {templates.length === 0 && <p className="muted">Nenhum template ainda.</p>}
         {templates.map(t => (
-          <button className="tplItem" key={t.id} onClick={() => useTemplate(t)} title="Usar este template">
-            <span className="tplName">{t.name}</span>
-            <span className="tplPreview">{t.content.slice(0, 110)}{t.content.length > 110 ? '…' : ''}</span>
-            <span className="memDel tplDel" onClick={(e) => deleteTemplate(t.id, e)} role="button" aria-label="Excluir template"><X size={15}/></span>
-          </button>
+          <div className="tplRow" key={t.id} style={{ position: 'relative' }}>
+            <button className="tplItem" onClick={() => useTemplate(t)} title="Usar este template">
+              <span className="tplName">{t.name}</span>
+              <span className="tplPreview">{t.content.slice(0, 110)}{t.content.length > 110 ? '…' : ''}</span>
+            </button>
+            <button type="button" className="memDel tplDel" onClick={() => deleteTemplate(t.id)} aria-label={`Excluir template ${t.name}`} title="Excluir template"><X size={15}/></button>
+          </div>
         ))}
       </div>
     </Modal>}
@@ -1839,7 +1887,6 @@ export default function App({ user } = {}) {
         ))}
       </div>
     </Drawer>}
-    {appDialog}
     {/* O Modo Design ocupa a tela inteira e tem compositor próprio; o mascote,
         que é `position: fixed`, pousaria em cima dele — a mesma sobreposição
         sobre o botão de enviar que o PR #147 corrigiu no chat principal. Aqui
@@ -1882,7 +1929,7 @@ export default function App({ user } = {}) {
             copiloto: () => setCopilotOpen(true),
             provedor: () => setProviderOpen(true),
             assistentes: openStudioNew,
-            dev: () => setDeveloperOpen(true),
+            dev: () => openDeveloper(),
             sandbox: () => setSandboxOpen(true),
             conectores: () => setConnectorsOpen(true),
             pastas: () => setPcOpen(true),
@@ -1897,5 +1944,10 @@ export default function App({ user } = {}) {
         />
       </Suspense>
     )}
+    {/* Por último no DOM: o diálogo de confirmação precisa ser o topo da pilha
+        de diálogos (Esc e foco) mesmo quando aberto de dentro do Modo Design, e
+        o aviso precisa aparecer acima de qualquer modal que o disparou. */}
+    {appDialog}
+    {toast && <div className={`toast ${toast.kind || 'err'}`} role="alert">{toast.text}<button onClick={() => setToast(null)} aria-label="Fechar aviso"><X size={14}/></button></div>}
   </div>;
 }

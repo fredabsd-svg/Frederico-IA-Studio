@@ -264,6 +264,16 @@ export function Companion({
           <div
             className="cmpAvatarWrap"
             onPointerDown={onAvatarPointerDown}
+            // Teclado: antes o personagem só respondia ao mouse/toque e o painel
+            // do copiloto era inalcançável sem apontador.
+            role="button"
+            tabIndex={0}
+            aria-label={`${open ? 'Fechar' : 'Abrir'} ${characterName}`}
+            aria-expanded={open}
+            onKeyDown={e => {
+              if (e.target !== e.currentTarget) return;
+              if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(o => !o); }
+            }}
             title={`${characterName} — ${STATE_CAPTION[state] || ''}. Clique para abrir, arraste para mover`}
           >
             {(hasCritical || hasWarning) && !busy && <span className={`cmpBadge ${hasCritical ? 'crit' : 'warn'}`}>{unread.length}</span>}

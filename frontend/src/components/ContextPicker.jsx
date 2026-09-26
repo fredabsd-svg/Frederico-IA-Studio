@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Bot, Users, Cpu, Check, Settings, ChevronDown, Calculator, FilePenLine, Code2, Telescope, Scale, Briefcase, BarChart3, Receipt, Landmark, Megaphone, Lightbulb, ShieldCheck, GraduationCap, Stethoscope, Hammer, Leaf } from 'lucide-react';
 import { ASSISTANT_COLORS } from '../constants.js';
 import { ModelPicker } from '../components.jsx';
+import { modelDisplayName } from '../modelChoice.js';
 
 // Mapa explícito em vez de Lucide[nome] sobre `import * as Lucide`: o import
 // estrela puxaria os ~1500 ícones da biblioteca para o bundle, porque mata o
@@ -102,7 +103,7 @@ export function ContextPicker({ models, model, onModel, assistants, assistantId,
       {team ? <Users size={15}/> : <AssistantGlyph value={currentAssistant?.emoji} size={15}/>}
       <span className="ctxBtnText">
         <b>{who}</b>
-        <small>{currentModel?.name || model}{currentModel && ` · ${modelCompatibilityLabel(currentModel)}`}</small>
+        <small>{currentModel?.name || modelDisplayName(models, model) || 'Nenhum modelo'}{currentModel && ` · ${modelCompatibilityLabel(currentModel)}`}</small>
       </span>
       <ChevronDown size={14}/>
     </button>
