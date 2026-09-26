@@ -21,6 +21,7 @@ Detalhes no PR e em `docs/CHANGELOG_HISTORY.md` (entrada de 2026-09-26).
 | Segurança | Config global de memória/sandbox só para admin; limites do modo gratuito em todos os caminhos (chat, resume, tarefas, Design, copiloto); SSRF da URL base do provedor; quarentena não vira anexo. |
 | Sucesso falso | Sem chave, erro do coordenador, backup truncado e resposta vazia deixaram de virar "concluído". |
 | Layout | Tema claro legível (regras mortas `.app.theme-light`), escala de z-index, Esc só fecha a camada de cima, grid do Modo Dev 981–1180px, `100dvh`, câmera que ficava ligada. |
+| Design do sistema | `tokens.css` (OKLCH) com as 7 paletas reais — 5 delas eram cópias de Escuro/Claro; barra lateral calma, cabeçalho de 56px, botões únicos, resposta sem cartão; landing refeita com o produto real no herói e dúvidas frequentes; CSS 210 → 207 KB. |
 
 Aplicação multiusuário com agentes de IA, memória semântica, multimodelo, execução de
 ferramentas em sandbox Docker, geração de documentos, Docling, conector GitHub, copiloto
@@ -43,6 +44,7 @@ cliente (`/resume`), não automática no boot. Detalhes e frentes fechadas:
 | — | Chamadas do SDK OpenAI ao provedor seguem redirecionamento sem revalidar DNS (a URL base já é validada no cadastro). Ver `docs/SECURITY.md`. | 🟡 Média |
 | — | Backup com workspaces em uso pode falhar (GNU tar sai com 1 em "file changed as we read it") — agora falha visível em vez de arquivo truncado; repetir o backup. | 🟢 Baixa |
 | — | Heurística de "pedido exige ferramenta" é por palavras-chave (`detectToolRequirement`); falso positivo gera "Não consegui concluir" numa conversa comum. | 🟢 Baixa |
+| — | Capturas da landing (`public/landing/produto-*.jpg`) precisam ser refeitas quando a interface mudar muito (`cd e2e && npm run capturar:landing`). | 🟢 Baixa |
 | — | Sem ESLint (`rules-of-hooks`): o `lint` é só verificação de sintaxe; o teste `appHooksOrder` cobre apenas o `App.jsx`. | 🟢 Baixa |
 
 ---

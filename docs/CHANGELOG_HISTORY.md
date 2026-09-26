@@ -23,6 +23,31 @@
 
 ---
 
+## Sistema visual e landing com a skill de design SaaS (2026-09-26)
+
+**Diagnóstico** (capturas antes/depois em 1440 e 390 px, escuro e claro): barra lateral
+com ladrilho em todo item e itens "acesos" sem estar ativos; ênfase espalhada (brilho no
+"Nova conversa", aviso de memória em caixa em toda resposta); `.msg` redefinido seis vezes
+no `styles.css`; `.primary` redefinido por painel; cinco das sete paletas do seletor sem
+nenhuma cor própria; landing em grade de cartões idênticos, sem o produto real.
+
+**Feito.** `tokens.css` em OKLCH com as paletas geradas por matiz e contraste AA conferido;
+`v2.css` reescrito como camada de acabamento única; 218 declarações mortas removidas por
+poda automática (só declarações sobrescritas depois pelo MESMO seletor, fora de `@media`);
+landing nova (herói com captura real rotulada, "o que você pede → o que recebe",
+como funciona, recursos em lista, segurança, dúvidas frequentes, um único chamado). Dois
+bugs achados pelas capturas/E2E: painel do seletor de contexto saía pela direita da
+janela (`useKeepInViewport`) e o botão "Ocultar" do Nino ficava fora da área protegida,
+cobrindo os botões do terminal.
+
+**Refazer as capturas da landing:** `cd e2e && E2E_DATABASE_URL=... npm run
+capturar:landing` (roteiro em `e2e/capturas/`, fora da suíte de testes). Ele cria uma
+conta com o provedor falso da E2E, abre quatro conversas e troca o texto da última
+resposta por um exemplo; grava `frontend/public/landing/produto-{dark,light}.jpg`
+(1280×780, JPEG 82).
+
+---
+
 ## Revisão completa do app: remendos, bugs, prompts e seletores (2026-09-26)
 
 **Remendo removido.** O wiring do Modo Desenvolvedor vivia num plugin do Vite
