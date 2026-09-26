@@ -127,6 +127,8 @@ details.memoryTrace{border-left:2px solid var(--line);padding-left:10px}
 .fcdl{border-radius:var(--r-md)}
 .atable th{background:var(--panel2)}
 .retryBtn{border-radius:var(--r-md)}
+.msgStopped{display:flex;align-items:center;gap:6px;margin:10px 0 0;font-size:var(--fs-xs);color:var(--muted)}
+.msgStopped svg{flex:none;color:var(--warn)}
 
 /* ---- Compositor ---------------------------------------------------------- */
 .composerWrap{background:linear-gradient(to top,var(--bg) 70%,transparent)}

@@ -23,6 +23,30 @@
 
 ---
 
+## "Parar" gravava a resposta cortada como concluída (2026-09-26)
+
+**Medição** (navegador real, provedor falso lento): o texto parava ~400 ms após o
+clique e a tela batia com o banco — mas o `execution_meta.state` gravado era
+`completed`, e nada indicava que a resposta estava incompleta. Instrumentado: o
+`/control` marcava `control.stopped = true`, mas o `stopped` local do laço seguia
+`false`.
+
+**Causa.** O abort chega enquanto o laço de streaming espera o próximo pedaço; o SDK
+encerra o stream "limpo" e a única checagem de parada — dentro do laço, ao processar
+um pedaço — não roda. O mesmo valia para a pausa (encerrava a resposta em vez de
+retomar), para os cartões do multimodelo ("concluído" com texto cortado) e para o
+coordenador do Modo Equipe.
+
+**Correção.** `throwIfInterruptedAfterStream` depois de cada um dos quatro laços;
+aviso "Resposta interrompida por você" na mensagem. Testes: `agent/loop.stop.test.js`
+(Parar, Pausar e multimodelo — os três falham no código anterior),
+`agent.control.test.js` e `e2e/tests/parar.spec.js` (falha sem a correção do backend).
+
+**Descartado do PR #209:** abortar o fetch no navegador ao clicar em Parar — resolvia
+~400 ms e podia mostrar "parado" com o run ainda vivo no servidor (Regra 8.1).
+
+---
+
 ## Sistema visual e landing com a skill de design SaaS (2026-09-26)
 
 **Diagnóstico** (capturas antes/depois em 1440 e 390 px, escuro e claro): barra lateral

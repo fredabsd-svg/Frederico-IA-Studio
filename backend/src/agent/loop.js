@@ -24,7 +24,7 @@ import { normalizeWebFetchUrl, classifyToolOutcome, webResearchStopReason, planT
 import { imageUploadParts, attachImagesToLastUserMessage, stripImagePartsFromMessages } from './vision.js';
 import { STREAM_RECOVERY_LIMIT, STREAM_RESUME_NOTE, STREAM_PAUSE_RESUME_NOTE, PROVIDER_TIMEOUT_NOTICE, isRetryableStreamError, openRouterRouting, retryDelay, addUsage, applyPromptCache, clearPromptCache, tagProviderError } from './provider.js';
 import { guardStreamStall, PROVIDER_CONNECT_TIMEOUT_MS } from './streamGuard.js';
-import { acquireConversationControl, releaseConversationControl, beginProviderRequest, releaseProviderRequest, beginToolRequest, releaseToolRequest, controlInterruptReason, gate } from './control.js';
+import { acquireConversationControl, releaseConversationControl, beginProviderRequest, releaseProviderRequest, beginToolRequest, releaseToolRequest, controlInterruptReason, gate, throwIfInterruptedAfterStream } from './control.js';
 import { clientScopeFor, memoryNote, saveMessage, persistAssistantReply } from './persistence.js';
 import { saveCheckpoint, clearCheckpoint, isResumableReason, buildResumeMessages, leadingSystemCount, trimCheckpointMessages, AUTO_CONTINUE_NOTE } from './checkpoint.js';
 import { untrustedContext, untrustedToolResult } from './promptRegistry.js';
@@ -1138,6 +1138,9 @@ export async function runAgent({ userId, conversationId, userText, model, assist
       }
       if (control.stopped) { stopped = true; break; }
     }
+    // Fim "limpo" do stream causado por Parar/Pausar vira o abort que o catch
+    // abaixo trata (Regra 4.2: cancelamento nunca vira "completed").
+    if (!stopped) throwIfInterruptedAfterStream(control, activeRequest);
     } catch (err) {
       tagProviderError(err, { providerName: provider.providerName, model: rawModelId(chosenModel) });
       const interrupted = controlInterruptReason(control, activeRequest);

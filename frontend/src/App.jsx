@@ -1431,6 +1431,10 @@ export default function App({ user } = {}) {
               request={pendingRequest.request}
               resolved={pendingRequest.resolved}
               onOpen={() => setInputRequestOpen(true)}/>}
+            {/* Resposta cortada pelo Parar: sem este aviso ela parecia completa,
+                ao vivo e depois de recarregar. O estado vem do backend
+                (execution_meta.state / run_state), não de um palpite da tela. */}
+            {m.role === 'assistant' && m.execution?.state === 'stopped' && <p className="msgStopped" role="note"><Square size={11} aria-hidden="true"/> Resposta interrompida por você — o texto acima está incompleto.</p>}
             {m.role === 'assistant' && m.resumable && !busy && <button className="retryBtn resumeBtn" onClick={() => resumeRun(current?.id)} title="Retoma a tarefa exatamente de onde parou, sem refazer o que já foi feito"><Play size={14}/> Continuar de onde parei</button>}
             {m.role === 'assistant' && m.failed && <button className="retryBtn" onClick={() => retrySend(idx, m.retryText)}><RefreshCw size={14}/> Reenviar</button>}
             {m.role === 'assistant' && <Suspense fallback={<PanelFallback/>}><LazyMemoryTrace memory={m.memory} onOpenMemory={() => setMemoryOpen(true)}/></Suspense>}

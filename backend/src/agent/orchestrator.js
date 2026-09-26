@@ -12,7 +12,7 @@ import { runAgent } from './loop.js';
 import { AGENTS, clipForBriefing, PERSPECTIVE_CHAR_LIMIT, BRIEFING_CHAR_LIMIT, uploadsNote, developerTeamContextFor, protectedProfilePrompt } from './prompts.js';
 import { STREAM_RECOVERY_LIMIT, STREAM_RESUME_NOTE, STREAM_PAUSE_RESUME_NOTE, isRetryableStreamError, openRouterRouting, retryDelay, addUsage, friendlyApiError, tagProviderError, applyPromptCache } from './provider.js';
 import { guardStreamStall, PROVIDER_CONNECT_TIMEOUT_MS } from './streamGuard.js';
-import { acquireConversationControl, releaseConversationControl, beginProviderRequest, releaseProviderRequest, controlInterruptReason, gate } from './control.js';
+import { acquireConversationControl, releaseConversationControl, beginProviderRequest, releaseProviderRequest, controlInterruptReason, gate, throwIfInterruptedAfterStream } from './control.js';
 import { clientScopeFor, memoryNote, saveMessage } from './persistence.js';
 import { emitExecutionState, finalExecutionState } from './executionState.js';
 import { untrustedContext } from './promptRegistry.js';
@@ -152,6 +152,8 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
           const d = chunk.choices?.[0]?.delta?.content || '';
           if (d) { segment += d; text += d; onEvent({ type: 'delta', content: d }); }
         }
+        // Parar/Pausar durante a espera do próximo pedaço (ver control.js).
+        throwIfInterruptedAfterStream(control, activeRequest);
         return text;
       } catch (err) {
         const interrupted = controlInterruptReason(control, activeRequest);
