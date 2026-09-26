@@ -156,6 +156,13 @@ export function validateCreate(body, limits) {
     return deny(`imagem não permitida: ${body.Image} (só ${limits.allowedImage})`);
   }
 
+  // 1b) Usuário: o sandbox roda como `sandbox` (USER da imagem). Criar o
+  //     container como root faria TODO exec herdar root — o mesmo buraco do
+  //     exec, pela porta da criação. O backend nunca define `User` aqui.
+  if (isRootUser(body.User)) {
+    return deny(`container como root não é permitido (User: ${String(body.User).slice(0, 40)})`);
+  }
+
   // 2) Identidade: sem a label do app o container ficaria invisível para a
   //    reconciliação de órfãos e para a checagem de posse.
   const labels = body.Labels || {};
@@ -235,10 +242,20 @@ export function validateCreate(body, limits) {
   return { allow: true };
 }
 
+// O Docker aceita o usuário como nome ou UID, com grupo opcional ("0:0",
+// "root:root"). Comparar só com a string "root" deixava passar "0", "0:0" e
+// "00" — todos UID 0, isto é, root dentro do container. Vazio = usuário da
+// imagem (o sandbox declara `USER sandbox`, UID 1000), que não é root.
+export function isRootUser(user) {
+  const name = String(user ?? '').trim().split(':')[0].trim().toLowerCase();
+  if (!name) return false;
+  return name === 'root' || /^0+$/.test(name);
+}
+
 // Exec: o container já é do app (posse conferida). Só barramos escalada.
 export function validateExec(body) {
   if (body && body.Privileged) return deny('exec Privileged não é permitido');
-  if (body && String(body.User || '') === 'root') return deny('exec como root não é permitido');
+  if (body && isRootUser(body.User)) return deny(`exec como root não é permitido (User: ${String(body.User).slice(0, 40)})`);
   return { allow: true };
 }
 

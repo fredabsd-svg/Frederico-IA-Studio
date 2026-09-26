@@ -118,6 +118,7 @@ isso o guarda lê e valida o corpo — é o que o plano anterior desta seção n
 | **Binds** | Toda origem precisa estar sob a raiz de workspace autorizada, com `..` normalizado antes da comparação e sem confundir prefixo (`/ws-outro` **não** está dentro de `/ws`). Blocklist absoluta: `/`, `/var/run`, `/proc`, `/sys`, `/dev`, `/etc`, `/root`, `/usr`, `/var/lib/docker` e **qualquer caminho terminado em `docker.sock`**. |
 | **Posse por label** | Operações sobre um container/exec específico só passam se o alvo tiver `com.frederico.app=frederico-ai-studio`. Um backend comprometido não derruba o Postgres nem lê outro container. Exec é resolvido até o container dono. Fail-closed: alvo desconhecido = recusa. |
 | **Label obrigatória na criação** | Sem ela o container ficaria invisível para a reconciliação de órfãos e para a checagem de posse. |
+| **Nunca root** (criação e exec) | `User` que seja root é recusado na criação do container **e** no exec, por nome ou por UID: `root`, `root:grupo`, `0`, `0:0`, `00` (`isRootUser`). Até 2026-09-26 só a string exata `"root"` era barrada no exec — `"0"` passava e o comando rodava como root no sandbox; a criação nem conferia `User`. Vazio vale o usuário da imagem (`sandbox`, uid 1000). A recusa vem antes da checagem de posse: o daemon não recebe nada (teste no proxy com daemon falso). |
 
 O `hijack`/upgrade do exec — por onde **toda** execução de ferramenta passa — é validado
 uma vez e então vira túnel de bytes, preservando o protocolo de frames do Docker.
