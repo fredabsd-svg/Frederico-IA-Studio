@@ -5,8 +5,16 @@
 :root{
   --r-sm:8px;--r-md:12px;--r-lg:16px;--r-xl:24px;--r-full:999px;
   --fs-2xs:11px;--fs-xs:12px;--fs-sm:13px;--fs-md:14px;--fs-lg:16px;--fs-xl:20px;--fs-2xl:26px;
+  /* Camadas (z-index) de tudo o que flutua sobre a tela inteira. Menus dentro
+     da barra superior (60–75) valem só dentro do contexto dela (z 30, v2.css).
+     Ordem: personagem < fundo da barra lateral móvel < gavetas < modais <
+     diálogo sobre modal < aceite LGPD < aviso (toast). O Nino fica ABAIXO de
+     tudo o que é diálogo: antes, com 1200, ele cobria modais, gavetas e até o
+     aceite dos termos. O aviso fica acima de tudo porque é o único jeito de a
+     pessoa saber que uma ação dentro de um modal falhou. */
+  --z-nino:35;--z-scrim:40;--z-sidebar:50;--z-drawer:80;--z-modal:100;--z-dialog-top:120;--z-consent:1000;--z-toast:1100;
 }
-:root{font-family:Inter,Arial,sans-serif;--code-bg:#050814;--code-line:#1b2437}*{box-sizing:border-box}body{margin:0}.dark{color-scheme:dark;--on-accent:#0b1020;--danger:#ef4444;--warn:#f59e0b;--ok:#22c55e;--bg:#0b1020;--panel:#111827;--panel2:#0f172a;--side:#0c1322;--text:#e5e7eb;--muted:#94a3b8;--line:#253149;--accent:#4f8cff;--bubble:#151d2e;--bubble-user:#33549f}.light{color-scheme:light;--on-accent:#fff;--danger:#b91c1c;--warn:#8a5200;--ok:#116b33;--bg:#f3f6fb;--panel:#fff;--panel2:#f8fafc;--side:#eef2f9;--text:#111827;--muted:#556070;--line:#dbe3ef;--accent:#1d4ed8;--bubble:#eef4ff;--bubble-user:#2f5cc0}body{background:var(--bg);color:var(--text)}.app{height:100vh;display:grid;grid-template-columns:280px 1fr}.sidebar{background:var(--side);border-right:1px solid var(--line);padding:18px;overflow:auto}.brand{font-weight:800;font-size:var(--fs-xl);margin-bottom:18px}.brand span{color:var(--accent)}button,select{border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:var(--r-md);padding:10px 12px;cursor:pointer}
+:root{font-family:Inter,Arial,sans-serif;--code-bg:#050814;--code-line:#1b2437}*{box-sizing:border-box}body{margin:0}.dark{color-scheme:dark;--on-accent:#0b1020;--danger:#ef4444;--warn:#f59e0b;--ok:#22c55e;--bg:#0b1020;--panel:#111827;--panel2:#0f172a;--side:#0c1322;--text:#e5e7eb;--muted:#94a3b8;--line:#253149;--accent:#4f8cff;--bubble:#151d2e;--bubble-user:#33549f}.light{color-scheme:light;--on-accent:#fff;--danger:#b91c1c;--warn:#8a5200;--ok:#116b33;--bg:#f3f6fb;--panel:#fff;--panel2:#f8fafc;--side:#eef2f9;--text:#111827;--muted:#556070;--line:#dbe3ef;--accent:#1d4ed8;--bubble:#eef4ff;--bubble-user:#2f5cc0}body{background:var(--bg);color:var(--text)}.app{height:100vh;height:100dvh;display:grid;grid-template-columns:280px 1fr}.sidebar{background:var(--side);border-right:1px solid var(--line);padding:18px;overflow:auto}.brand{font-weight:800;font-size:var(--fs-xl);margin-bottom:18px}.brand span{color:var(--accent)}button,select{border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:var(--r-md);padding:10px 12px;cursor:pointer}
 .new,.studio{width:100%;display:flex;gap:8px;align-items:center;justify-content:center}.studio{margin-bottom:8px;border-color:var(--accent);color:var(--accent)}.studio:hover{background:rgba(79,140,255,.12)}.convList{display:flex;flex-direction:column;gap:8px;margin:18px 0}.convList button{text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.convItem{display:flex;align-items:stretch;gap:6px}.convItem .convOpen{flex:1;min-width:0}.convItem.active .convOpen{border-color:var(--accent);background:rgba(79,140,255,.18)}.convItem .convDel{flex:none;display:flex;align-items:center;justify-content:center;padding:0 10px;color:var(--muted);opacity:.65}.convItem .convDel:hover{color:var(--danger);border-color:var(--danger);opacity:1}.chat{display:flex;flex-direction:column;min-width:0;position:relative}.dropOverlay{position:absolute;inset:84px 18px 88px;z-index:70;border:2px dashed var(--accent);border-radius:var(--r-lg);background:rgba(15,23,42,.82);display:flex;align-items:center;justify-content:center;gap:10px;color:#fff;font-weight:700;pointer-events:none;box-shadow:inset 0 0 0 1px rgba(255,255,255,.08),0 18px 50px rgba(0,0,0,.35)}.light .dropOverlay{background:rgba(255,255,255,.88);color:var(--accent)}.topbar{min-height:72px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:14px;padding:10px 22px;background:var(--panel)}.topbar small{display:block;color:var(--muted);margin-top:4px}.titleblock{min-width:0}.titleblock strong{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.pickers{display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end;flex:none}.pickers select{max-width:230px}
 .mpicker{position:relative}
 .mpBtn{display:flex;align-items:center;gap:8px;max-width:250px}
@@ -41,7 +49,7 @@
 .imgcard{display:inline-flex;flex-direction:column;gap:7px;border:1px solid var(--line);border-radius:var(--r-lg);padding:9px;background:var(--panel);max-width:340px;text-decoration:none}
 .imgcard:hover{border-color:var(--accent)}
 .imgcard img{width:100%;border-radius:var(--r-sm);display:block}
-.imgcard span{font-size:var(--fs-xs);color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.filecard{display:flex;align-items:center;gap:12px;text-decoration:none;color:var(--text);border:1px solid var(--line);background:var(--panel);border-radius:var(--r-md);padding:11px 13px;max-width:460px}.filecard:hover{border-color:var(--accent)}.fcicon{flex:none;width:38px;height:38px;border-radius:var(--r-sm);background:var(--panel2);display:flex;align-items:center;justify-content:center;color:var(--accent)}.fcinfo{flex:1;min-width:0;display:flex;flex-direction:column}.fcinfo b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600}.fcinfo small{color:var(--muted)}.fcdl{flex:none;display:flex;align-items:center;gap:6px;font-size:var(--fs-sm);font-weight:600;color:var(--on-accent);background:var(--accent);border-radius:var(--r-sm);padding:8px 12px}.attachChips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}.attachStatus{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:var(--fs-xs);margin-bottom:8px}.attachStatus.scanOk{color:var(--ok)}.attachChip{display:inline-flex;align-items:center;gap:7px;background:var(--panel2);border:1px solid var(--line);border-radius:var(--r-full);padding:5px 6px 5px 11px;font-size:var(--fs-xs);max-width:230px}.attachChip .chipname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.attachChip button{border:none;background:transparent;color:var(--muted);padding:2px;display:flex;border-radius:50%}.attachChip button:hover{color:var(--danger)}@keyframes micpulse{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.5)}50%{box-shadow:0 0 0 6px rgba(239,68,68,0)}}@media(prefers-reduced-motion:reduce){}.composer button{height:48px;width:52px}.muted{color:var(--muted)}.modalOverlay{position:fixed;inset:0;background:rgba(2,6,20,.6);display:flex;align-items:flex-start;justify-content:center;padding:32px 16px;overflow:auto;z-index:50}.modal{width:100%;max-width:620px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:0 20px 60px rgba(0,0,0,.4)}.modalHead{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--line)}.modalHead h2{margin:0;font-size:var(--fs-xl);display:flex;align-items:center;gap:9px}.modalHead .x{border:none;background:transparent;font-size:var(--fs-lg);color:var(--muted);padding:6px 10px}.modalBody{padding:18px 20px;display:flex;flex-direction:column;gap:16px}.modalBody label{display:flex;flex-direction:column;gap:6px;font-size:var(--fs-sm);font-weight:600;color:var(--muted)}.modalBody input,.modalBody textarea,.modalBody select{border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:var(--r-md);padding:10px 12px;font:inherit;font-weight:400;outline:none}.modalBody textarea{resize:vertical;min-height:120px;line-height:1.5}.modalBody input:focus,.modalBody textarea:focus,.modalBody select:focus{border-color:var(--accent)}.frow{display:flex;gap:12px}.frow .grow{flex:1}.emojiField{width:78px}.emojiField input{text-align:center;font-size:var(--fs-xl)}.field{display:flex;flex-direction:column;gap:10px}.fieldLabel{font-size:var(--fs-sm);font-weight:600;color:var(--muted)}.tools{display:grid;grid-template-columns:1fr 1fr;gap:8px}.chk{flex-direction:row!important;align-items:center;gap:8px;font-weight:400!important;color:var(--text)!important;border:1px solid var(--line);border-radius:var(--r-md);padding:8px 10px;cursor:pointer}.chk input{width:16px;height:16px;accent-color:var(--accent)}.slider{display:flex;flex-direction:column;gap:4px}.sliderTop{display:flex;justify-content:space-between;font-size:var(--fs-sm);color:var(--text);font-weight:600}.sliderTop b{color:var(--accent)}.slider input[type=range]{width:100%;accent-color:var(--accent);cursor:pointer;padding:0}.sliderHints{display:flex;justify-content:space-between;font-size:var(--fs-2xs);color:var(--muted)}.modalActions{display:flex;align-items:center;gap:10px;padding-top:6px}.modalActions .spacer{flex:1}.modalActions .primary,.memAdd .primary{background:var(--accent);color:var(--on-accent);border-color:var(--accent);font-weight:600}.modalActions .danger{color:var(--danger);border-color:var(--danger)}.memAdd{display:flex;gap:8px}.memAdd input{flex:1;border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:var(--r-md);padding:10px 12px;font:inherit;outline:none}.memAdd input:focus{border-color:var(--accent)}.memAdd .primary{white-space:nowrap}.memList{display:flex;flex-direction:column;gap:8px}.memDel{flex:none;border:none;background:transparent;color:var(--muted);padding:4px;display:flex}.memDel:hover{color:var(--danger)}
+.imgcard span{font-size:var(--fs-xs);color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.filecard{display:flex;align-items:center;gap:12px;text-decoration:none;color:var(--text);border:1px solid var(--line);background:var(--panel);border-radius:var(--r-md);padding:11px 13px;max-width:460px}.filecard:hover{border-color:var(--accent)}.fcicon{flex:none;width:38px;height:38px;border-radius:var(--r-sm);background:var(--panel2);display:flex;align-items:center;justify-content:center;color:var(--accent)}.fcinfo{flex:1;min-width:0;display:flex;flex-direction:column}.fcinfo b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600}.fcinfo small{color:var(--muted)}.fcdl{flex:none;display:flex;align-items:center;gap:6px;font-size:var(--fs-sm);font-weight:600;color:var(--on-accent);background:var(--accent);border-radius:var(--r-sm);padding:8px 12px}.attachChips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}.attachStatus{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:var(--fs-xs);margin-bottom:8px}.attachStatus.scanOk{color:var(--ok)}.attachChip{display:inline-flex;align-items:center;gap:7px;background:var(--panel2);border:1px solid var(--line);border-radius:var(--r-full);padding:5px 6px 5px 11px;font-size:var(--fs-xs);max-width:230px}.attachChip .chipname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.attachChip button{border:none;background:transparent;color:var(--muted);padding:2px;display:flex;border-radius:50%}.attachChip button:hover{color:var(--danger)}@keyframes micpulse{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.5)}50%{box-shadow:0 0 0 6px rgba(239,68,68,0)}}.composer button{height:48px;width:52px}.muted{color:var(--muted)}.modalOverlay{position:fixed;inset:0;background:rgba(2,6,20,.6);display:flex;align-items:flex-start;justify-content:center;padding:32px 16px;overflow:auto;z-index:var(--z-modal)}.modal{width:100%;max-width:620px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:0 20px 60px rgba(0,0,0,.4)}.modalHead{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--line)}.modalHead h2{margin:0;font-size:var(--fs-xl);display:flex;align-items:center;gap:9px}.modalHead .x{border:none;background:transparent;font-size:var(--fs-lg);color:var(--muted);padding:6px 10px}.modalBody{padding:18px 20px;display:flex;flex-direction:column;gap:16px}.modalBody label{display:flex;flex-direction:column;gap:6px;font-size:var(--fs-sm);font-weight:600;color:var(--muted)}.modalBody input,.modalBody textarea,.modalBody select{border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:var(--r-md);padding:10px 12px;font:inherit;font-weight:400;outline:none}.modalBody textarea{resize:vertical;min-height:120px;line-height:1.5}.modalBody input:focus,.modalBody textarea:focus,.modalBody select:focus{border-color:var(--accent)}.frow{display:flex;gap:12px}.frow .grow{flex:1}.emojiField{width:78px}.emojiField input{text-align:center;font-size:var(--fs-xl)}.field{display:flex;flex-direction:column;gap:10px}.fieldLabel{font-size:var(--fs-sm);font-weight:600;color:var(--muted)}.tools{display:grid;grid-template-columns:1fr 1fr;gap:8px}.chk{flex-direction:row!important;align-items:center;gap:8px;font-weight:400!important;color:var(--text)!important;border:1px solid var(--line);border-radius:var(--r-md);padding:8px 10px;cursor:pointer}.chk input{width:16px;height:16px;accent-color:var(--accent)}.slider{display:flex;flex-direction:column;gap:4px}.sliderTop{display:flex;justify-content:space-between;font-size:var(--fs-sm);color:var(--text);font-weight:600}.sliderTop b{color:var(--accent)}.slider input[type=range]{width:100%;accent-color:var(--accent);cursor:pointer;padding:0}.sliderHints{display:flex;justify-content:space-between;font-size:var(--fs-2xs);color:var(--muted)}.modalActions{display:flex;align-items:center;gap:10px;padding-top:6px}.modalActions .spacer{flex:1}.modalActions .primary,.memAdd .primary{background:var(--accent);color:var(--on-accent);border-color:var(--accent);font-weight:600}.modalActions .danger{color:var(--danger);border-color:var(--danger)}.memAdd{display:flex;gap:8px}.memAdd input{flex:1;border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:var(--r-md);padding:10px 12px;font:inherit;outline:none}.memAdd input:focus{border-color:var(--accent)}.memAdd .primary{white-space:nowrap}.memList{display:flex;flex-direction:column;gap:8px}.memDel{flex:none;border:none;background:transparent;color:var(--muted);padding:4px;display:flex}.memDel:hover{color:var(--danger)}
 .clampBtn{display:block;margin-top:8px;border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.12);color:inherit;font-size:var(--fs-xs);padding:5px 12px;border-radius:var(--r-full)}
 .clampBtn:hover{background:rgba(255,255,255,.22)}
 .tplItem{display:flex;flex-direction:column;align-items:flex-start;gap:3px;width:100%;text-align:left;border:1px solid var(--line);background:var(--panel2);border-radius:var(--r-md);padding:11px 38px 11px 13px;position:relative}
@@ -99,7 +107,10 @@
 @media(max-width:640px){.quickCards{grid-template-columns:1fr}}
 
 /* Aviso flutuante de erro */
-.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);z-index:100;display:flex;align-items:center;gap:10px;background:#7f1d1d;color:#fee2e2;border:1px solid #b91c1c;border-radius:var(--r-md);padding:11px 14px;font-size:var(--fs-sm);max-width:min(520px,90vw);box-shadow:0 8px 30px rgba(0,0,0,.35)}
+/* Pousa ACIMA do compositor (e do terminal inferior) em vez de em cima dele:
+   com bottom fixo em 20px o aviso cobria o botão de enviar, sobretudo no
+   celular. As variáveis vêm de useComposerHeight; sem elas, volta aos 16px. */
+.toast{position:fixed;bottom:calc(var(--composer-h,0px) + var(--dock-h,0px) + 16px);left:50%;transform:translateX(-50%);z-index:var(--z-toast);display:flex;align-items:center;gap:10px;background:#7f1d1d;color:#fee2e2;border:1px solid #b91c1c;border-radius:var(--r-md);padding:11px 14px;font-size:var(--fs-sm);max-width:min(520px,90vw);box-shadow:0 8px 30px rgba(0,0,0,.35)}
 .toast button{border:none;background:transparent;color:#fecaca;padding:2px;display:flex}
 .toast.ok{background:#14532d;color:#dcfce7;border-color:#16a34a}
 .toast.ok button{color:#bbf7d0}
@@ -139,8 +150,8 @@
 @media(max-width:980px){
   .app{grid-template-columns:1fr}
   .hamburger{display:flex}
-  .scrim{display:block;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:40}
-  .sidebar{position:fixed;top:0;left:0;bottom:0;width:290px;z-index:50;transform:translateX(-100%);transition:transform .2s ease;box-shadow:8px 0 30px rgba(0,0,0,.3)}
+  .scrim{display:block;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:var(--z-scrim)}
+  .sidebar{position:fixed;top:0;left:0;bottom:0;width:290px;z-index:var(--z-sidebar);transform:translateX(-100%);transition:transform .2s ease;box-shadow:8px 0 30px rgba(0,0,0,.3)}
   .sidebar.open{transform:translateX(0)}
   .pickers select{max-width:150px}
   .msg{max-width:100%}
@@ -329,7 +340,7 @@
 .cmpMenuPanel .cmpItem{height:auto;width:100%}
 .cmpMenuPanel .cmpItem>span{flex:1;min-width:0}
 /* Alinha os botões da caixa com o campo de texto (mesma altura, 44px) */
-.composer .cmpMenuBtn,.composer .sendBtn{height:44px;width:44px}
+.composer .sendBtn{height:44px;width:44px}
 /* Caixa de mensagem mais limpa: botão de opções sem borda, alinhado ao texto */
 .composer{align-items:center}
 
@@ -349,11 +360,10 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 
 /* Os recursos de conversa ficam agrupados no desktop e recolhidos em um menu no celular. */
 .mobileTopActions{display:none}
-.drawerOverlay{position:fixed;inset:0;z-index:80;display:flex;justify-content:flex-end;background:rgba(2,6,20,.34)}
+.drawerOverlay{position:fixed;inset:0;z-index:var(--z-drawer);display:flex;justify-content:flex-end;background:rgba(2,6,20,.34)}
 .drawer{height:100%;width:min(640px,100vw);display:flex;flex-direction:column;background:var(--panel);border-left:1px solid var(--line);box-shadow:-18px 0 48px rgba(0,0,0,.28)}
 .drawer .modalHead{flex:none;padding:16px 20px}
 .drawer .modalBody{flex:1;min-height:0;overflow-y:auto;padding:18px 20px 26px}
-.modalOverlay{z-index:100}
 .modalHead .x{display:flex;align-items:center;justify-content:center;width:36px;height:36px;padding:0;border-radius:var(--r-sm)}
 .modalHead .x:hover{background:var(--panel2);color:var(--accent)}
 .drawerIntro{margin:0;color:var(--muted);font-size:var(--fs-sm);line-height:1.5}
@@ -494,7 +504,6 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .sideBottom .developerBtn:hover{background:rgba(79,140,255,.18);color:var(--accent)}
 .developerDrawer .modalBody{gap:18px}
 
-.devModeTabs button.active{background:var(--panel);box-shadow:0 1px 3px rgba(0,0,0,.18);color:var(--accent)}
 .devField{display:flex;flex-direction:column;gap:7px}
 .devFieldHead{display:flex;align-items:center;justify-content:space-between;color:var(--muted);font-size:var(--fs-sm);font-weight:600}
 .devFolderButton{display:flex;align-items:center;justify-content:center;width:30px;height:30px;padding:0;border-radius:var(--r-sm);color:var(--muted)}
@@ -531,8 +540,6 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .devSessionBar .devGhBtn.primary:hover:not(:disabled){filter:brightness(1.08)}
 .devSessionBar .devGhBtn:disabled{opacity:.55;cursor:default}
 @media(max-width:440px){
-  .devModeTabs button{font-size:var(--fs-2xs);gap:4px}
-  .devModeTabs button svg{width:14px;height:14px}
   .devActionRow{align-items:stretch;flex-direction:column}
   .devActionRow .primary{min-height:42px}
 }
@@ -582,18 +589,28 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .workspaceActionPanel button{display:flex;align-items:center;gap:8px;width:100%;padding:8px 9px;border:0;background:transparent;border-radius:var(--r-sm);color:var(--text);font-size:var(--fs-xs);text-align:left}
 .workspaceActionPanel button:hover{background:var(--panel2);color:var(--accent)}
 
+/* Cada espaço tem a sua grade; a variante .sideHidden de CADA um precisa
+   existir aqui porque `.app.workspace-x` (0,2,0) vem depois de
+   `.app.sideHidden` (0,2,0) e ganhava o empate — recolher a barra lateral no
+   Essencial ou no Desenvolvedor não liberava a coluna. */
 @media(min-width:981px){
   .app.workspace-essential{grid-template-columns:232px minmax(0,1fr)}
+  .app.workspace-essential.sideHidden{grid-template-columns:0 minmax(0,1fr)}
   .app.workspace-focus:not(.sideHidden){grid-template-columns:236px minmax(0,1fr)}
   .app.workspace-focus.sideHidden{grid-template-columns:0 minmax(0,1fr)}
-  /* Ambiente de desenvolvimento: barra lateral · explorador · chat · atividade */
-  .app.workspace-developer{grid-template-columns:290px auto minmax(0,1fr) auto}
 }
+/* Ambiente de desenvolvimento: barra lateral · explorador · chat · atividade.
+   As quatro colunas só existem onde os trilhos aparecem (>=1181px). Entre 981
+   e 1180px os trilhos ficam `display:none` (somem da grade) e o <main> caía
+   na coluna `auto`, encolhido ao conteúdo, com a coluna 1fr vazia ao lado. */
 @media(min-width:1181px){
+  .app.workspace-developer{grid-template-columns:290px auto minmax(0,1fr) auto}
+  .app.workspace-developer.sideHidden{grid-template-columns:0 auto minmax(0,1fr) auto}
   .app.workspace-developer.devFocus{grid-template-columns:0 42px minmax(0,1fr) 42px}
 }
 @media(min-width:981px) and (max-width:1180px){
-  .app.workspace-developer.devFocus{grid-template-columns:0 minmax(0,1fr)}
+  .app.workspace-developer{grid-template-columns:290px minmax(0,1fr)}
+  .app.workspace-developer.sideHidden,.app.workspace-developer.devFocus{grid-template-columns:0 minmax(0,1fr)}
 }
 
 /* Essential keeps the whole app available while making repeated work denser. */
@@ -656,7 +673,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .workspace-developer.devFocus .messages{padding-top:18px;padding-bottom:18px}
 
 /* ── Colunas do ambiente de desenvolvimento (Explorador · Atividade) ──────── */
-.devRail{display:flex;flex-direction:column;min-height:0;height:100vh;width:270px;background:var(--panel2);border-right:1px solid var(--line);overflow:hidden}
+.devRail{display:flex;flex-direction:column;min-height:0;height:100vh;height:100dvh;width:270px;background:var(--panel2);border-right:1px solid var(--line);overflow:hidden}
 .devRailRight{border-right:0;border-left:1px solid var(--line)}
 .devRail.collapsed{width:42px;align-items:center;padding-top:12px;gap:12px}
 .devRailExpand{display:flex;align-items:center;justify-content:center;width:30px;height:30px;padding:0;border:1px solid var(--line);background:var(--panel);color:var(--muted);border-radius:var(--r-sm)}
@@ -707,7 +724,6 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 .devActCounts b{color:var(--text)}
 /* Memória do projeto */
 
-.devMemoryToggle .open{transform:rotate(180deg)}
 .devMemory{display:flex;flex-direction:column;gap:9px;margin-top:9px}
 .devMemoryField{display:flex;flex-direction:column;gap:4px;font-size:var(--fs-2xs);font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
 .devMemoryField textarea{font:inherit;font-size:var(--fs-xs);font-weight:400;text-transform:none;letter-spacing:0;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:var(--r-sm);padding:7px 9px;resize:vertical;min-height:44px}
@@ -893,8 +909,6 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
    caixa marcada. Colado na borda, o mesmo anel le como "focado". */
 input[type=checkbox]:focus-visible,input[type=radio]:focus-visible{outline-offset:0}
 
-.toolstep.error{border-color:rgba(239,68,68,.45);color:var(--danger)}
-.toolstep.error code,.toolstep.error .ic{color:var(--danger)}
 
 /* Anti-overflow do conteúdo das mensagens (bug em produção: caminhos longos,
    linhas "====" e tabelas grandes estouravam a tela no celular). Palavras/
@@ -962,7 +976,7 @@ input[type=checkbox]:focus-visible,input[type=radio]:focus-visible{outline-offse
 @media(prefers-reduced-motion:reduce){.esSpin{animation:none;opacity:.75}}
 
 /* Janela em tela cheia */
-.esOverlay{position:fixed;inset:0;z-index:120;background:rgba(6,10,20,.62);backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;padding:24px}
+.esOverlay{position:fixed;inset:0;z-index:var(--z-dialog-top);background:rgba(6,10,20,.62);backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;padding:24px}
 .esWindow{width:min(1080px,100%);height:min(760px,100%);display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:0 24px 70px rgba(0,0,0,.5);overflow:hidden}
 .esWinHead{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 18px;border-bottom:1px solid var(--line)}
 .esWinTitle{display:flex;align-items:center;gap:11px;min-width:0}
@@ -1203,7 +1217,7 @@ input[type=checkbox]:focus-visible,input[type=radio]:focus-visible{outline-offse
 .mmStepFeed{font-size:var(--fs-2xs);color:var(--muted);font-style:italic;padding:8px 13px 0}
 
 /* Tela cheia de um cartão */
-.mmFullOverlay{position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:24px}
+.mmFullOverlay{position:fixed;inset:0;z-index:var(--z-modal);background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:24px}
 .mmFullCard{display:flex;flex-direction:column;width:min(900px,100%);max-height:88vh;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-lg,12px);overflow:hidden}
 .mmFullHead{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--panel2)}
 .mmFullActions{display:flex;align-items:center;gap:8px}
@@ -1380,7 +1394,7 @@ body.dockResizing{user-select:none;cursor:ns-resize}
 .inputReqText span{font-size:var(--fs-xs);color:var(--muted)}
 .inputReqOpen{flex:none;font-size:var(--fs-xs);font-weight:700;padding:8px 14px;border-radius:var(--r-sm);border:1px solid var(--accent);background:var(--accent);color:var(--on-accent);cursor:pointer}
 .inputReqOpen:hover{filter:brightness(1.06)}
-.inputReqOverlay{position:fixed;inset:0;z-index:120;background:rgba(8,11,18,.62);display:flex;align-items:center;justify-content:center;padding:20px}
+.inputReqOverlay{position:fixed;inset:0;z-index:var(--z-dialog-top);background:rgba(8,11,18,.62);display:flex;align-items:center;justify-content:center;padding:20px}
 .inputReqDialog{width:100%;max-width:560px;max-height:86vh;overflow:auto;display:flex;flex-direction:column;gap:12px;padding:18px;border:1px solid var(--line);border-radius:var(--r-lg);background:var(--panel);box-shadow:0 22px 60px rgba(0,0,0,.42)}
 .inputReqHead{display:flex;align-items:flex-start;gap:10px}
 .inputReqHeadIcon{flex:none;display:flex;align-items:center;margin-top:2px;color:var(--accent)}

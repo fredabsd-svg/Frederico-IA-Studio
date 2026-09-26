@@ -131,7 +131,7 @@ export function ConsentGate({ onAccepted }) {
 
   return <div className="consentOverlay" role="dialog" aria-modal="true" aria-label="Termos de Uso e Política de Privacidade">
     <div className="consentCard">
-      <div className="brand" style={{ justifyContent: 'center' }}>Frederico <span>AI Studio</span></div>
+      <div className="brand" style={{ justifyContent: 'center' }}>Frederico <span>IA Studio</span></div>
       <h2>Antes de continuar</h2>
       <p>
         Para usar o aplicativo, precisamos do seu aceite dos nossos documentos legais — eles explicam

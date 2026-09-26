@@ -61,3 +61,14 @@ test('fabricante vem do id, não da família curada do backend', () => {
   assert.equal(modelVendor({ id: 'p4::deepseek-chat' }), 'deepseek');
   assert.equal(modelVendor({ id: 'p5::modelo-interno', family: 'Acme' }), 'acme');
 });
+
+test('listas curadas casam id nativo e id OpenRouter, sem recomendar aposentado', async () => {
+  const { curatedMatch } = await import('./modelFilters.js');
+  const lista = ['claude-sonnet-5', 'gpt-5.6'];
+  assert.equal(curatedMatch({ id: 'p1::claude-sonnet-5' }, lista), 'claude-sonnet-5');
+  assert.equal(curatedMatch({ id: 'p2::anthropic/claude-sonnet-5', providerModelId: 'anthropic/claude-sonnet-5' }, lista), 'claude-sonnet-5');
+  assert.equal(curatedMatch({ id: 'p3::gpt-5.6-luna' }, lista), 'gpt-5.6');
+  assert.equal(curatedMatch({ id: 'p3::gpt-5.6', status: 'deprecated' }, lista), null);
+  assert.equal(curatedMatch({ id: 'p3::gpt-5.6', sunsetOn: '2026-10-16' }, lista), null);
+  assert.equal(curatedMatch({ id: 'p4::llama-4' }, lista), null);
+});

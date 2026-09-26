@@ -1,5 +1,5 @@
 /* ============================================================
-   Frederico AI Studio — camada v2
+   Frederico IA Studio — camada v2
    Importado DEPOIS de styles.css em main.jsx, então vence empates
    de especificidade por ordem de carga.
 
@@ -65,7 +65,8 @@ button,select{border-radius:10px}
    position+z-index sao OBRIGATORIOS aqui: backdrop-filter cria um contexto
    de empilhamento, entao sem eles o z-index:60 do .ctxPanel/.mpPanel passa a
    valer so dentro da topbar e as mensagens pintam por cima dos dropdowns.
-   30 fica acima das mensagens e abaixo de .scrim(40)/modais(50)/drawer(80). */
+   30 fica acima das mensagens e abaixo do Nino, do .scrim, das gavetas e dos
+   modais (escala --z-* no :root do styles.css). */
 .topbar{position:relative;z-index:30;background:color-mix(in srgb,var(--side) 72%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
 .titleblock strong{font-size:14px;letter-spacing:-.01em}
 .workspaceTopLabel{font-size:11px;font-weight:600;color:var(--muted);background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:4px 10px;display:inline-flex;align-items:center;gap:6px}
@@ -167,8 +168,6 @@ button,select{border-radius:10px}
    real de `unprotected` (/api/health), nao um verde fixo. */
 .sideFoot{flex:none;display:flex;align-items:center;gap:7px;margin-top:4px;padding:11px 2px 2px;border-top:1px solid var(--line);font-size:10px;font-weight:600;color:var(--muted)}
 
-.sideFoot.warn{color:var(--warn)}
-.sideFoot.warn .sideFootDot{background:var(--warn);box-shadow:0 0 0 3px color-mix(in srgb,var(--warn) 18%,transparent)}
 
 /* ---- Seletor de cliente ---- */
 .clientPicker{position:relative;margin-bottom:10px}

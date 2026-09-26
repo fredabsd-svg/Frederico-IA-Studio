@@ -4,6 +4,7 @@
 // (canvas → JPEG) antes de virar anexo, para ficar leve e boa para OCR.
 import React, { useEffect, useRef, useState } from 'react';
 import { X, RotateCcw, RefreshCw, ImageUp, Check, Camera } from 'lucide-react';
+import { useDialogFocus } from './components.jsx';
 
 const MAX_DIM = 2000;        // maior lado da imagem (px) — leve e legível
 const JPEG_QUALITY = 0.85;
@@ -59,6 +60,13 @@ export function CameraCapture({ onCapture, onClose }) {
   const streamRef = useRef(null);
   const fileRef = useRef(null);
   const capturedRef = useRef(null);
+  const dialogRef = useRef(null);
+  // Número da abertura de câmera em curso. O getUserMedia pode demorar (a
+  // pessoa ainda está decidindo no aviso de permissão): se o modal fechar ou
+  // "Refazer" pedir outra câmera nesse meio-tempo, o fluxo que chegar atrasado
+  // não é mais o atual e precisa desligar o próprio fluxo — senão a luz da
+  // câmera ficava acesa depois de o modal sumir.
+  const startSeq = useRef(0);
   const [stage, setStage] = useState('loading'); // loading | live | review | error
   const [errorMsg, setErrorMsg] = useState('');
   const [preview, setPreview] = useState(null);
@@ -69,6 +77,7 @@ export function CameraCapture({ onCapture, onClose }) {
   }
 
   async function start(facingMode = 'environment') {
+    const seq = ++startSeq.current;
     stopStream();
     setStage('loading'); setErrorMsg('');
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -78,6 +87,10 @@ export function CameraCapture({ onCapture, onClose }) {
     }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode }, audio: false });
+      if (seq !== startSeq.current) {
+        stream.getTracks().forEach(t => { try { t.stop(); } catch {} });
+        return;
+      }
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
@@ -85,6 +98,7 @@ export function CameraCapture({ onCapture, onClose }) {
       }
       setStage('live');
     } catch (err) {
+      if (seq !== startSeq.current) return; // fechado/reaberto enquanto esperava
       setStage('error');
       const name = err?.name || '';
       if (name === 'NotAllowedError' || name === 'SecurityError') {
@@ -97,7 +111,13 @@ export function CameraCapture({ onCapture, onClose }) {
     }
   }
 
-  useEffect(() => { start('environment'); return stopStream; }, []); // inicia uma vez; encerra ao fechar
+  // Inicia uma vez; ao fechar, invalida a abertura pendente e encerra o fluxo.
+  useEffect(() => {
+    start('environment');
+    return () => { startSeq.current++; stopStream(); };
+  }, []);
+  // Esc fecha, Tab fica dentro e o foco volta a quem abriu a câmera.
+  useDialogFocus(dialogRef, onClose);
 
   async function capture() {
     const video = videoRef.current;
@@ -129,11 +149,11 @@ export function CameraCapture({ onCapture, onClose }) {
   }
 
   return (
-    <div className="camOverlay" role="dialog" aria-modal="true" aria-label="Tirar foto">
-      <div className="camModal">
+    <div className="camOverlay">
+      <div ref={dialogRef} className="camModal" role="dialog" aria-modal="true" aria-label="Tirar foto" tabIndex={-1}>
         <div className="camHead">
           <span className="camTitle"><Camera size={18} /> Tirar foto</span>
-          <button className="camX" onClick={onClose} aria-label="Fechar"><X size={18} /></button>
+          <button className="camX" onClick={onClose} aria-label="Fechar a câmera" title="Fechar"><X size={18} /></button>
         </div>
 
         <div className="camBody">
@@ -185,9 +205,10 @@ export function CameraCapture({ onCapture, onClose }) {
               <ImageUp size={16} /> Enviar da galeria
             </button>
           )}
-          <input ref={fileRef} type="file" accept="image/*" onChange={onPickFile} style={{ display: 'none' }} />
         </div>
       </div>
+      {/* Fora do diálogo de propósito: o <input> oculto entraria na volta do Tab. */}
+      <input ref={fileRef} type="file" accept="image/*" onChange={onPickFile} style={{ display: 'none' }} />
     </div>
   );
 }

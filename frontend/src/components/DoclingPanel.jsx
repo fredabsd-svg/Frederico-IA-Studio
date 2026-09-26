@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { API } from '../constants.js';
+import { Modal } from '../components.jsx';
 import { FileText, Table, ScanLine, Coins, RefreshCw, AlertTriangle, CheckCircle2, Loader2, Braces, Sparkles, Settings, Image, Trash2, XCircle, Ban } from 'lucide-react';
 
 // Painel de compreensão documental (Docling): mostra, por documento processado,
@@ -158,13 +159,12 @@ export function DoclingPanel({ docs = [], onReprocess, onCancel, onPurge, isAdmi
         );
       })}
 
+      {/* Modal do app (e não uma sobreposição solta): entra na pilha de
+          diálogos, então o Esc fecha só ele — não a gaveta de arquivos embaixo. */}
       {openMd && (
-        <div className="doclingMdModal" onClick={() => setOpenMd(null)}>
-          <div className="doclingMdBox" onClick={e => e.stopPropagation()}>
-            <div className="doclingMdHead">Markdown enviado à IA <button onClick={() => setOpenMd(null)}>Fechar</button></div>
-            <pre>{openMd.text}</pre>
-          </div>
-        </div>
+        <Modal title="Markdown enviado à IA" icon={<FileText size={18} />} onClose={() => setOpenMd(null)} className="doclingMdBox">
+          <pre className="doclingMdText">{openMd.text}</pre>
+        </Modal>
       )}
     </div>
   );

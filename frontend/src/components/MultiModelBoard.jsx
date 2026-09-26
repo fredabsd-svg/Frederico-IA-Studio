@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import { Copy, Check, Square, ArrowRightCircle, MessageSquareQuote, Layers, Coins, Clock3, AlertTriangle, ChevronDown, ChevronRight, Maximize2, X, GitCompare, Users, Swords, Workflow, Gavel } from 'lucide-react';
 import { MULTI_MODE_LABEL } from '../constants.js';
+import { useDialogFocus } from '../components.jsx';
 
 // Quadro da execução MULTIMODELO. Cada MODO tem uma apresentação própria,
 // coerente com a sua lógica de execução:
@@ -140,18 +141,26 @@ export function MultiModelBoard({ multi, live = false, onCancelSlot, onContinueW
       <button className="mmCombineBtn" onClick={onCombine}><Layers size={13}/> Gerar resposta combinada das melhores partes</button>
     </div>}
 
-    {full && <div className="mmFullOverlay" onClick={() => setFull(null)}>
-      <div className="mmFullCard" onClick={e => e.stopPropagation()}>
-        <div className="mmFullHead">
-          <div className="mmCardWho"><b>{full.name}</b><small>{[full.provider, full.roleLabel].filter(Boolean).join(' · ')}</small></div>
-          <div className="mmFullActions">
-            <button onClick={() => copyText(full.text, `full-${full.slot}`)}>{copiedSlot === `full-${full.slot}` ? <Check size={14}/> : <Copy size={14}/>} Copiar</button>
-            <button onClick={() => setFull(null)} title="Fechar"><X size={16}/></button>
-          </div>
+    {full && <FullCard full={full} copyText={copyText} copiedSlot={copiedSlot} onClose={() => setFull(null)}/>}
+  </div>;
+}
+
+// Tela cheia de um cartão. É um diálogo de verdade: rótulo, Esc fecha, Tab
+// fica dentro e o foco volta ao botão que abriu (useDialogFocus).
+function FullCard({ full, copyText, copiedSlot, onClose }) {
+  const ref = useRef(null);
+  useDialogFocus(ref, onClose);
+  return <div className="mmFullOverlay" onClick={onClose}>
+    <div ref={ref} className="mmFullCard" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={`Resposta de ${full.name}`} tabIndex={-1}>
+      <div className="mmFullHead">
+        <div className="mmCardWho"><b>{full.name}</b><small>{[full.provider, full.roleLabel].filter(Boolean).join(' · ')}</small></div>
+        <div className="mmFullActions">
+          <button onClick={() => copyText(full.text, `full-${full.slot}`)}>{copiedSlot === `full-${full.slot}` ? <Check size={14}/> : <Copy size={14}/>} Copiar</button>
+          <button onClick={onClose} title="Fechar" aria-label="Fechar a tela cheia"><X size={16}/></button>
         </div>
-        <div className="mmFullBody"><Md>{full.text || '_Sem resposta._'}</Md></div>
       </div>
-    </div>}
+      <div className="mmFullBody"><Md>{full.text || '_Sem resposta._'}</Md></div>
+    </div>
   </div>;
 }
 

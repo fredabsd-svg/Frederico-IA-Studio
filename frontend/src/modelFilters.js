@@ -97,3 +97,22 @@ export function filterModels(models, filters = {}) {
     return true;
   });
 }
+
+// Listas curadas (recomendados / melhores para arquivos) comparam o id SEM o
+// prefixo do fabricante: `anthropic/claude-sonnet-5` (OpenRouter) e
+// `claude-sonnet-5` (chave direta) são o mesmo modelo. Antes as listas só
+// tinham o formato OpenRouter, e quem usava chave direta via "Sugestões" vazia.
+// Modelo aposentado ou em desativação nunca é recomendado.
+const RETIRED_STATUS = new Set(['deprecated', 'legacy', 'inactive', 'retired']);
+
+export function bareModelId(model) {
+  const id = String(model?.providerModelId || model?.id || '').toLowerCase();
+  const raw = id.includes('::') ? id.slice(id.indexOf('::') + 2) : id;
+  return raw.includes('/') ? raw.slice(raw.indexOf('/') + 1) : raw;
+}
+
+export function curatedMatch(model, prefixes) {
+  if (RETIRED_STATUS.has(String(model?.status || '').toLowerCase()) || model?.sunsetOn) return null;
+  const bare = bareModelId(model);
+  return (prefixes || []).find(prefix => bare === prefix || bare.startsWith(prefix)) || null;
+}

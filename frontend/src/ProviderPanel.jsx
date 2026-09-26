@@ -3,10 +3,13 @@ import { KeyRound, Check, X, RefreshCw, Sparkles, Wand2, Plus, Trash2, Pencil, E
 import { API } from './constants.js';
 import { Drawer } from './components.jsx';
 import { KEY_PROVIDERS } from './KeyWizard.jsx';
+import { apiJson, apiErrorMessage } from './apiJson.js';
 
 const CUSTOM = { id: 'custom', name: 'Outro (OpenAI compatível)', base: '', modelExample: '' };
 
-export function ProviderPanel({ showToast, freeStatus, onOpenWizard, onFreeChange, onProvidersChange, onClose }) {
+// `askConfirm` (de useAppDialog) é opcional: sem ele, a remoção cai no
+// confirm() do navegador — o App ainda não repassa o diálogo a este painel.
+export function ProviderPanel({ showToast, freeStatus, onOpenWizard, onFreeChange, onProvidersChange, onClose, askConfirm }) {
   const [providers, setProviders] = useState(null);
   const [formOpen, setFormOpen] = useState(false);
   const [providerType, setProviderType] = useState('openrouter');
@@ -114,7 +117,11 @@ export function ProviderPanel({ showToast, freeStatus, onOpenWizard, onFreeChang
   const moneyLabel = (value, currency = 'USD') => Number(value).toLocaleString('pt-BR', { style: 'currency', currency: currency || 'USD' });
 
   async function removeProvider(provider) {
-    if (!window.confirm(`Remover a chave e os modelos de ${provider.name}?`)) return;
+    const message = `Remover a chave e os modelos de ${provider.name}?`;
+    const ok = askConfirm
+      ? await askConfirm({ title: 'Remover provedor?', message, confirmLabel: 'Remover', destructive: true })
+      : window.confirm(message);
+    if (!ok) return;
     setActiveId(provider.id);
     try {
       const res = await fetch(`${API}/api/providers/${provider.id}`, { method: 'DELETE' });
@@ -123,6 +130,19 @@ export function ProviderPanel({ showToast, freeStatus, onOpenWizard, onFreeChang
       await load(); onProvidersChange?.();
     } catch (error) { showToast(error.message || 'Não foi possível remover o provedor.'); }
     finally { setActiveId(''); }
+  }
+
+  // Liga/desliga o modo gratuito. Só avisa sucesso com o 2xx do backend: antes o
+  // "Modo gratuito ativado!" aparecia mesmo com a recusa (ou a rede fora).
+  async function setFreeMode(enable) {
+    setBusy(true);
+    try {
+      await apiJson(`${API}/api/free-tier/opt-in`, { method: 'POST', body: { enable } });
+      showToast(enable ? 'Modo gratuito ativado!' : 'Modo gratuito desativado.', 'ok');
+      onFreeChange?.(); onProvidersChange?.();
+    } catch (error) {
+      showToast(apiErrorMessage(error, enable ? 'Não foi possível ativar o modo gratuito' : 'Não foi possível sair do modo gratuito'));
+    } finally { setBusy(false); }
   }
 
   return <Drawer title="Provedores de IA" icon={<KeyRound size={18}/>} onClose={onClose} className="providerDrawer">
@@ -171,7 +191,7 @@ export function ProviderPanel({ showToast, freeStatus, onOpenWizard, onFreeChang
           <button onClick={() => editProvider(provider)} disabled={activeId === provider.id}><Pencil size={14}/> Editar</button>
           {provider.dashboardURL && <a href={provider.dashboardURL} target="_blank" rel="noreferrer"><Activity size={14}/> Painel <ExternalLink size={11}/></a>}
           {provider.billingURL && <a href={provider.billingURL} target="_blank" rel="noreferrer"><CreditCard size={14}/> Cobrança <ExternalLink size={11}/></a>}
-          <button className="danger" onClick={() => removeProvider(provider)} disabled={activeId === provider.id} title="Remover provedor"><Trash2 size={14}/></button>
+          <button className="danger" onClick={() => removeProvider(provider)} disabled={activeId === provider.id} title="Remover provedor" aria-label={`Remover o provedor ${provider.name}`}><Trash2 size={14}/></button>
         </div>
       </article>)}
     </div>
@@ -214,12 +234,8 @@ export function ProviderPanel({ showToast, freeStatus, onOpenWizard, onFreeChang
 
     {freeStatus?.configured && providers?.length === 0 && (
       freeStatus.active
-        ? <button className="freeToggleBtn" disabled={busy} onClick={async () => {
-            setBusy(true); try { await fetch(`${API}/api/free-tier/opt-in`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enable: false }) }); showToast('Modo gratuito desativado.', 'ok'); onFreeChange?.(); onProvidersChange?.(); } finally { setBusy(false); }
-          }}><X size={14}/> Sair do modo gratuito</button>
-        : <button className="freeToggleBtn primaryish" disabled={busy || !freeStatus.enabled} onClick={async () => {
-            setBusy(true); try { await fetch(`${API}/api/free-tier/opt-in`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enable: true }) }); showToast('Modo gratuito ativado!', 'ok'); onFreeChange?.(); onProvidersChange?.(); } finally { setBusy(false); }
-          }}><Sparkles size={14}/> {freeStatus.enabled ? 'Começar gratuitamente' : 'Modo gratuito indisponível'}</button>
+        ? <button className="freeToggleBtn" disabled={busy} onClick={() => setFreeMode(false)}><X size={14}/> Sair do modo gratuito</button>
+        : <button className="freeToggleBtn primaryish" disabled={busy || !freeStatus.enabled} onClick={() => setFreeMode(true)}><Sparkles size={14}/> {freeStatus.enabled ? 'Começar gratuitamente' : 'Modo gratuito indisponível'}</button>
     )}
 
     <div className="pcHint">🔒 As chaves ficam criptografadas no servidor. O aplicativo nunca as devolve por completo.</div>

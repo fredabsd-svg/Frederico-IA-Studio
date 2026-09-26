@@ -982,6 +982,13 @@ export default function App({ user } = {}) {
       const data = await res.json();
       const models = Array.isArray(data.models) ? data.models : [];
       setAllModels(models);
+      // Provedor cuja chave o servidor não consegue decifrar (ex.: chave mestra
+      // trocada) sai da lista — sem este aviso os modelos dele sumiam calados.
+      const unavailable = Array.isArray(data.unavailableProviders) ? data.unavailableProviders : [];
+      if (unavailable.length) {
+        const names = unavailable.map(p => p?.name).filter(Boolean).join(', ');
+        showToast(`A chave de ${names || 'um provedor'} não pôde ser lida e os modelos dele foram ocultados. Cadastre a chave de novo em Provedor de IA.`);
+      }
     } catch {}
   }
   // Valida o modelo escolhido contra o catálogo real. Id cru legado (assistente
@@ -1719,14 +1726,14 @@ export default function App({ user } = {}) {
       </div>
     </Modal>}
 
-    {memoryOpen && <Suspense fallback={<PanelFallback/>}><LazyMemoryPanel assistants={assistants} clients={clients} clientId={clientId} showToast={showToast} askConfirm={askConfirm} askPrompt={askPrompt} onClose={() => setMemoryOpen(false)}/></Suspense>}
+    {memoryOpen && <Suspense fallback={<PanelFallback/>}><LazyMemoryPanel isAdmin={Boolean(me?.isAdmin)} assistants={assistants} clients={clients} clientId={clientId} showToast={showToast} askConfirm={askConfirm} askPrompt={askPrompt} onClose={() => setMemoryOpen(false)}/></Suspense>}
     {pcOpen && <PcFoldersPanel showToast={showToast} askConfirm={askConfirm} onClose={() => setPcOpen(false)}/>}
     {toolsOpen && <ToolsPanel onPick={pickTool} onClose={() => setToolsOpen(false)}/>}
     {developerOpen && <Suspense fallback={<PanelFallback/>}><LazyDeveloperPanel devProjects={devProjects} team={team} initialMode={developerStartMode} onStart={startDeveloperTask} onManageFolders={() => { setDeveloperOpen(false); setPcOpen(true); }} onOpenConnectors={() => { setDeveloperOpen(false); setConnectorsOpen(true); }} onClose={() => setDeveloperOpen(false)}/></Suspense>}
-    {sandboxOpen && <SandboxPanel onClose={() => setSandboxOpen(false)}/>}
+    {sandboxOpen && <SandboxPanel isAdmin={Boolean(me?.isAdmin)} showToast={showToast} onClose={() => setSandboxOpen(false)}/>}
     {routinesOpen && <RoutinesPanel assistants={assistants} clients={clients} showToast={showToast} askConfirm={askConfirm} onClose={() => setRoutinesOpen(false)}/>}
     {inboxOpen && <InboxPanel clients={clients} clientId={clientId} showToast={showToast} askConfirm={askConfirm} onOpenConversation={(id) => { fetchConversations(); openConversation(id); }} onClose={() => setInboxOpen(false)}/>}
-    {providerOpen && <Suspense fallback={<PanelFallback/>}><LazyProviderPanel showToast={showToast} freeStatus={freeStatus}
+    {providerOpen && <Suspense fallback={<PanelFallback/>}><LazyProviderPanel showToast={showToast} askConfirm={askConfirm} freeStatus={freeStatus}
       onOpenWizard={() => { setProviderOpen(false); setKeyWizardOpen(true); }}
       onFreeChange={refreshFreeStatus}
       onProvidersChange={loadModels}

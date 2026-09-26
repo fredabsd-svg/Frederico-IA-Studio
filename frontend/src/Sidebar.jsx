@@ -19,18 +19,12 @@ export function Sidebar({
   onPollTasks,
   onSignOut
 }) {
-  function openDeveloperMode() {
-    // Persiste a preferência de workspace; o App também chama setWorkspace
-    // ao iniciar a tarefa. Isto evita cair no Estúdio se o painel for fechado.
-    try { localStorage.setItem('fred_workspace', 'developer'); } catch { /* ignore */ }
-    onOpenDeveloper();
-  }
   return (
     <aside className={`sidebar ${menuOpen ? 'open' : ''}`} aria-label="Navegação do app">
       <div className="brandRow">
         <div className="brandLead">
           <span className="brandMark" aria-hidden="true">F</span>
-          <div className="brand">Frederico <span>AI Studio</span></div>
+          <div className="brand">Frederico <span>IA Studio</span></div>
         </div>
         <button className="sideCollapse" onClick={toggleSide} title="Esconder a barra lateral" aria-label="Esconder a barra lateral"><PanelLeft size={17}/></button>
       </div>
@@ -72,7 +66,9 @@ export function Sidebar({
         </div>
         <div className="navGroup navGroupDeveloper">
           <div className="navGroupTitle">Desenvolvimento</div>
-          <button className="studio developerBtn" onClick={openDeveloperMode} title="Perguntar, planejar, implementar, corrigir ou revisar um projeto"><Code2 size={16}/> Modo desenvolvedor</button>
+          {/* O App (openDeveloper) já troca o espaço para Desenvolvedor e o
+              persiste em fred_workspace; gravar aqui também duplicava a regra. */}
+          <button className="studio developerBtn" onClick={() => onOpenDeveloper()} title="Perguntar, planejar, implementar, corrigir ou revisar um projeto"><Code2 size={16}/> Modo desenvolvedor</button>
         </div>
         <div className="navGroup navGroupAutomation">
           <div className="navGroupTitle">Automação</div>

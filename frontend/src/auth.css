@@ -161,7 +161,7 @@
 
 /* ---- LGPD: modal bloqueante de aceite dos termos (contas sem registro) ---- */
 .consentOverlay {
-  position: fixed; inset: 0; z-index: 1000;
+  position: fixed; inset: 0; z-index: var(--z-consent);
   display: flex; align-items: center; justify-content: center;
   background: color-mix(in srgb, var(--bg) 72%, transparent);
   backdrop-filter: blur(6px);

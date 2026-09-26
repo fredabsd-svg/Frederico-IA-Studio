@@ -242,6 +242,12 @@ export function useChat({ input, setInput, messages, setMessages, uploads, team,
         // longo, queremos retomar DEPOIS do último `tool_start` e não antes.
         if (ev._seq != null) {
           const prev = liveCursorRef.current[convId] || { runId: null, seq: 0 };
+          // RUN NOVO no meio da reconexão: o backend reenvia o run novo desde o
+          // começo. O balão ainda mostra o run anterior — sem limpar, o texto
+          // novo seria colado depois do antigo (resposta mista).
+          if (prev.runId && ev._runId && ev._runId !== prev.runId) {
+            update(m => ({ ...m, content: '', blocks: [], failed: false, resumable: false }));
+          }
           liveCursorRef.current[convId] = {
             runId: ev._runId || prev.runId,
             seq: Number(ev._seq) || prev.seq

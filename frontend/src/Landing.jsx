@@ -28,7 +28,7 @@ const STEPS = [
 
 const TRUST = [
   { icon: ShieldCheck, title: 'Dados isolados por usuário', text: 'Cada conta acessa somente as próprias conversas, arquivos, configurações e memórias.' },
-  { icon: KeyRound, title: 'BYOK ou modo gratuito', text: 'Você escolhe entre usar uma chave própria ou começar com os limites transparentes da plataforma.' },
+  { icon: KeyRound, title: 'Chave própria ou modo gratuito', text: 'Você escolhe entre usar uma chave própria ou começar com os limites transparentes da plataforma.' },
   { icon: Lock, title: 'Credenciais criptografadas', text: 'Chaves de API e tokens ficam cifrados no servidor e nunca são enviados ao sandbox.' },
   { icon: BadgeCheck, title: 'Verificação de arquivos', text: 'Uploads podem ser verificados por antivírus antes de entrarem no fluxo da IA.' },
   { icon: Globe, title: 'HTTPS e proteção de rede', text: 'Acesso criptografado, isolamento de serviços e filtros contra endereços internos.' },
@@ -90,9 +90,9 @@ export default function Landing() {
 
   return <div className="lp">
     <header className="lpHeader">
-      <a className="lpBrand" href="#top" aria-label="Frederico AI Studio — início">
+      <a className="lpBrand" href="#top" aria-label="Frederico IA Studio — início">
         <span className="lpBrandMark">F</span>
-        <span>Frederico <b>AI Studio</b></span>
+        <span>Frederico <b>IA Studio</b></span>
       </a>
       <nav className="lpNav" aria-label="Navegação da página">
         <a href="#recursos">Recursos</a>
@@ -161,9 +161,9 @@ export default function Landing() {
       <section id="provedores" className="lpSection lpProvidersSection">
         <SectionHeading eyebrow="Transparência" title="O modelo escolhido é o modelo que responde" text="O aplicativo é uma ponte para provedores compatíveis. Sem troca escondida de modelo, sem maquiar o fornecedor e sem prender você a uma única empresa."/>
         <div className="lpRealPoints">
-          <div className="lpRealPoint"><KeyRound size={20}/><div><b>Sua chave, sua conta</b><span>Use BYOK e acompanhe custos diretamente no provedor.</span></div></div>
+          <div className="lpRealPoint"><KeyRound size={20}/><div><b>Sua chave, sua conta</b><span>Use a sua própria chave de API e acompanhe os custos diretamente no provedor.</span></div></div>
           <div className="lpRealPoint"><Cpu size={20}/><div><b>Modelo explícito</b><span>Nome, provedor, capacidades e custo ficam visíveis antes do envio.</span></div></div>
-          <div className="lpRealPoint"><CircleCheckBig size={20}/><div><b>Sem substituição silenciosa</b><span>Fallback só acontece quando configurado e é tratado como recuperação.</span></div></div>
+          <div className="lpRealPoint"><CircleCheckBig size={20}/><div><b>Sem substituição silenciosa</b><span>A troca para um modelo reserva só acontece quando você configura e é tratada como recuperação.</span></div></div>
         </div>
         <div className="lpProviderWall">
           {PROVIDERS.map(([file, name]) => <div className="lpProvider" key={file}><img src={`/providers/${file}.png`} alt=""/><span>{name}</span></div>)}
@@ -213,7 +213,7 @@ export default function Landing() {
     </main>
 
     <footer className="lpFooter">
-      <a className="lpBrand" href="#top"><span className="lpBrandMark">F</span><span>Frederico <b>AI Studio</b></span></a>
+      <a className="lpBrand" href="#top"><span className="lpBrandMark">F</span><span>Frederico <b>IA Studio</b></span></a>
       <span><a href="/privacidade">Política de Privacidade</a> · <a href="/termos">Termos de Uso</a> · Feito no Brasil · <button onClick={() => openLogin('login')}>Entrar</button></span>
     </footer>
   </div>;
