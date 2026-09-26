@@ -23,6 +23,36 @@
 
 ---
 
+## Revisão completa do app: remendos, bugs, prompts e seletores (2026-09-26)
+
+**Remendo removido.** O wiring do Modo Desenvolvedor vivia num plugin do Vite
+(`appDevNinoPatchPlugin`) que reescrevia o `App.jsx` por substituição de texto no
+build — se a âncora mudasse, a correção sumia em silêncio. Foi para a fonte; o plugin
+e o `devWorkspaceBootstrap.js` (morto) saíram. A sessão de desenvolvedor passou a ter
+fonte única (`developerSessionFromProject`).
+
+**Frente anterior (Nino/Modo Dev/Design, PR #208)**, registrada aqui ao sair do
+`CONTINUIDADE.md`: botão Ocultar/Mostrar Nino; semeadura da sessão Dev ao entrar no
+workspace; prévia do Modo Design recarregada por query `_v=` (o `#hash` não disparava
+`onLoad` e a prévia ficava em "Carregando…").
+
+**Auditoria em quatro frentes** (prompts, seletores de modelo, telas/CSS, backend),
+cada achado conferido no código e corrigido com teste que falha antes e passa depois.
+Principais: hooks após retorno antecipado no `App.jsx`; subagente sem a tarefa no
+prompt; regras de projeto do usuário embrulhadas como dado não confiável; config
+global de memória/sandbox alterável por qualquer usuário; limites do modo gratuito
+contornáveis (chat com `free::`, `/resume` de pipeline, tarefas, Design, copiloto);
+SSRF pela URL base de provedor personalizado; arquivo em quarentena aceito como anexo;
+importação de memória que nunca funcionou (`req.file.buffer` com multer em disco);
+painel de uso do admin sempre 500; seletor de modelo trocando o modelo sem aviso;
+tema claro com regras mortas (`.app.theme-light` nunca existiu); heurística que
+contava "teste" como ação e alvo ao mesmo tempo.
+
+Versões de prompt: release 2026.09.26.1 (global 4.3.0, tools 3.4.0, developer 2.1.0,
+multiModel 3.2.0) — ver `backend/src/agent/promptRegistry.js`.
+
+---
+
 ## Sonda de tool calling: o modo `--live` nunca chamou provedor (2026-09-03)
 
 **O defeito.** Os dois pontos de entrada do modo live — a rota
