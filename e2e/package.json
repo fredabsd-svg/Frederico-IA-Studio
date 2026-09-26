@@ -9,7 +9,8 @@
     "test:headed": "playwright test --headed",
     "relatorio": "playwright show-report",
     "navegador": "playwright install --with-deps chromium",
-    "verificar:provedor-falso": "node verificar-provedor-falso.mjs"
+    "verificar:provedor-falso": "node verificar-provedor-falso.mjs",
+    "capturar:landing": "playwright test -c capturas/playwright.capturas.config.js"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.0"

@@ -1,85 +1,68 @@
 import React, { useState } from 'react';
 import {
-  Sparkles, Bot, FileSpreadsheet, FileText, Building2, Search, Brain,
-  ArrowRight, Check, ShieldCheck, KeyRound, Lock, Cpu, BadgeCheck,
-  Globe, Scale, Layers, Users, MessageSquare, GitBranch, Code2,
-  ListChecks, Wrench, Bug, ScanSearch, Rocket, Terminal, Database,
-  Eye, Settings2, Workflow, Boxes, ServerCog, CircleCheckBig
+  ArrowRight, Check, FileSpreadsheet, FileText, ScanText, Building2, Search, Brain,
+  Layers, Code2, LayoutTemplate, TerminalSquare, ShieldCheck, KeyRound, Lock, BadgeCheck,
+  Globe, Scale, Cpu, CircleCheckBig, Plus
 } from 'lucide-react';
 import { LoginScreen } from './LoginScreen.jsx';
-import { DEV_WORK_MODES } from './constants.js';
-import { MULTI_MODE_LABEL } from './constants.js';
-import { MULTI_ROLE_OPTIONS } from './components/MultiModelPicker.jsx';
 
-const FEATURES = [
-  { icon: Bot, title: 'Resolve de verdade', text: 'Executa código e tarefas num sandbox Linux isolado, confere o resultado e entrega o trabalho pronto.' },
-  { icon: FileSpreadsheet, title: 'Documentos prontos', text: 'Gera Excel, Word, PDF, CSV, gráficos e arquivos reais já formatados para usar ou enviar.' },
-  { icon: FileText, title: 'Entende seus arquivos', text: 'Lê PDFs, planilhas, imagens e documentos escaneados, com visão e OCR quando necessário.' },
-  { icon: Building2, title: 'Consulta CNPJ', text: 'Busca razão social, situação, CNAE, endereço e quadro societário em bases públicas.' },
-  { icon: Search, title: 'Pesquisa atualizada', text: 'Pesquisa a internet, abre páginas e organiza a resposta com fontes para você conferir.' },
-  { icon: Brain, title: 'Memória controlável', text: 'Mantém contexto entre conversas quando você permite, com painel para revisar, editar e apagar.' },
+// Landing pública. Regras (Regra 1.1 + skill de design SaaS):
+// - só anuncia o que o código faz hoje — nada de número, logo de cliente ou
+//   depoimento inventado;
+// - UM chamado principal ("Criar conta grátis"), repetido no topo e no fim;
+// - o herói mostra o PRODUTO de verdade (captura do app), com o conteúdo da
+//   conversa rotulado como ilustrativo.
+
+// "Você escreve → você recebe": os mesmos exemplos do README, que descrevem
+// entregas que o app produz de fato (kits de documento, visão/OCR, CNPJ, web).
+const EXEMPLOS = [
+  { pede: 'Monte uma planilha de fluxo de caixa com estes lançamentos', recebe: 'Arquivo .xlsx com fórmulas recalculadas e conferidas' },
+  { pede: 'Faça um relatório em Word a partir deste PDF', recebe: 'Arquivo .docx com capa, tabelas estilizadas e rodapé paginado' },
+  { pede: 'Fotografei esta nota fiscal — extraia os dados', recebe: 'Leitura por visão ou OCR, sem você digitar nada' },
+  { pede: 'Consulte o CNPJ desta empresa', recebe: 'Razão social, situação, CNAE, endereço e sócios' },
+  { pede: 'Pesquise as mudanças da reforma tributária e resuma', recebe: 'Resumo com as fontes abertas para você conferir' }
 ];
 
-const STEPS = [
-  { n: 1, title: 'Crie sua conta', text: 'Entre com e-mail e senha, GitHub ou Google.' },
-  { n: 2, title: 'Escolha como trabalhar', text: 'Use o modo gratuito ou conecte a sua própria chave de provedor.' },
-  { n: 3, title: 'Peça e receba pronto', text: 'Converse em português, anexe arquivos e acompanhe a execução real.' },
+const PASSOS = [
+  { titulo: 'Crie sua conta', texto: 'E-mail e senha, GitHub ou Google. Sem cartão de crédito.' },
+  { titulo: 'Escolha o modelo de IA', texto: 'Conecte a sua chave de um provedor ou use o modo gratuito, quando o administrador o habilita.' },
+  { titulo: 'Peça e receba pronto', texto: 'Escreva em português, anexe arquivos e acompanhe cada etapa da execução até o arquivo final.' }
 ];
 
-const TRUST = [
-  { icon: ShieldCheck, title: 'Dados isolados por usuário', text: 'Cada conta acessa somente as próprias conversas, arquivos, configurações e memórias.' },
-  { icon: KeyRound, title: 'Chave própria ou modo gratuito', text: 'Você escolhe entre usar uma chave própria ou começar com os limites transparentes da plataforma.' },
-  { icon: Lock, title: 'Credenciais criptografadas', text: 'Chaves de API e tokens ficam cifrados no servidor e nunca são enviados ao sandbox.' },
-  { icon: BadgeCheck, title: 'Verificação de arquivos', text: 'Uploads podem ser verificados por antivírus antes de entrarem no fluxo da IA.' },
-  { icon: Globe, title: 'HTTPS e proteção de rede', text: 'Acesso criptografado, isolamento de serviços e filtros contra endereços internos.' },
-  { icon: Scale, title: 'LGPD na prática', text: 'Exporte os seus dados, apague o histórico ou exclua a conta diretamente no aplicativo.' },
+const RECURSOS = [
+  { icon: TerminalSquare, titulo: 'Execução real', texto: 'O código roda num ambiente isolado; o resultado é conferido antes de ser entregue.' },
+  { icon: FileSpreadsheet, titulo: 'Excel, Word e PDF', texto: 'Arquivos diagramados por kits próprios, com auditoria de formatação.' },
+  { icon: ScanText, titulo: 'Leitura de documentos', texto: 'PDFs, planilhas, imagens e digitalizados, com OCR e tabelas.' },
+  { icon: Building2, titulo: 'Consulta de CNPJ', texto: 'Dados cadastrais de bases públicas, direto na conversa.' },
+  { icon: Search, titulo: 'Pesquisa na internet', texto: 'Abre as páginas, resume e mostra de onde veio cada informação.' },
+  { icon: Brain, titulo: 'Memória sob controle', texto: 'Opcional, pesquisável e editável; você revisa e apaga quando quiser.' },
+  { icon: Layers, titulo: 'Vários modelos juntos', texto: 'Compare, faça um conselho, um debate ou uma sequência de especialistas.' },
+  { icon: Code2, titulo: 'Modo Desenvolvedor', texto: 'Projetos, permissões por modo e publicação no GitHub com confirmação.' },
+  { icon: LayoutTemplate, titulo: 'Modo Design', texto: 'Sites, apresentações e peças visuais refinadas conversando.' }
 ];
 
-const MULTI_DESCRIPTIONS = {
-  compare: 'Respostas paralelas, lado a lado, para comparar qualidade, enfoque e profundidade.',
-  council: 'Vários modelos analisam e um coordenador combina as melhores partes numa resposta final.',
-  debate: 'Os modelos criticam e revisam as respostas uns dos outros em rodadas controladas.',
-  pipeline: 'Especialistas trabalham em sequência: pesquisa, arquitetura, implementação, revisão e teste.',
-};
-
-const MULTI_ICONS = {
-  compare: Layers,
-  council: Users,
-  debate: MessageSquare,
-  pipeline: Workflow,
-};
-
-const DEV_ICON = {
-  ask: Eye,
-  plan: ListChecks,
-  build: Code2,
-  fix: Bug,
-  review: ScanSearch,
-  auto: Rocket,
-};
-
-const PROVIDERS = [
+const PROVEDORES = [
   ['openrouter', 'OpenRouter'], ['openai', 'OpenAI'], ['anthropic', 'Anthropic'],
   ['gemini', 'Google Gemini'], ['deepseek', 'DeepSeek'], ['mistral', 'Mistral'],
-  ['grok', 'xAI'], ['qwen', 'Qwen'], ['meta', 'Meta'],
-  ['perplexity', 'Perplexity'], ['cohere', 'Cohere'], ['nvidia', 'NVIDIA'],
+  ['grok', 'xAI'], ['qwen', 'Qwen'], ['meta', 'Meta'], ['perplexity', 'Perplexity']
 ];
 
-const MEMORY = [
-  { icon: Eye, label: 'Perfil' },
-  { icon: Settings2, label: 'Preferências' },
-  { icon: Boxes, label: 'Projetos' },
-  { icon: Database, label: 'Fatos' },
-  { icon: ServerCog, label: 'Manuais' },
+const SEGURANCA = [
+  { icon: ShieldCheck, titulo: 'Dados isolados por conta', texto: 'Cada pessoa vê só as próprias conversas, arquivos e memórias.' },
+  { icon: Lock, titulo: 'Chaves cifradas', texto: 'Chaves de API e tokens ficam criptografados e nunca vão para o ambiente de execução.' },
+  { icon: BadgeCheck, titulo: 'Antivírus nos anexos', texto: 'Quando o antivírus está ativo, o arquivo só chega à IA depois de verificado.' },
+  { icon: Globe, titulo: 'Proteção de rede', texto: 'HTTPS, serviços internos isolados e bloqueio de endereços internos.' },
+  { icon: KeyRound, titulo: 'Sua chave, seu custo', texto: 'O uso é cobrado pelo provedor da sua chave, sem intermediário.' },
+  { icon: Scale, titulo: 'LGPD na prática', texto: 'Exporte seus dados, apague o histórico ou exclua a conta pelo app.' }
 ];
 
-function SectionHeading({ eyebrow, title, text, tone = 'accent' }) {
-  return <div className="lpSectionHead">
-    <span className={`lpEyebrow lpEyebrow-${tone}`}>{eyebrow}</span>
-    <h2 className="lpSectionTitle">{title}</h2>
-    {text && <p className="lpSectionSub">{text}</p>}
-  </div>;
-}
+const DUVIDAS = [
+  { p: 'Preciso de cartão de crédito?', r: 'Não. A conta é gratuita. O custo de IA é o do provedor da sua chave — ou nenhum no modo gratuito, quando o administrador da instalação o habilita, com limite diário.' },
+  { p: 'Quais modelos de IA posso usar?', r: 'Qualquer provedor compatível com a API da OpenAI, como OpenRouter, DeepSeek, Groq, Gemini e Mistral. Modelos locais (Ollama, LM Studio) funcionam quando o administrador libera endereços locais. O modelo que você escolhe é o que responde — não há troca escondida.' },
+  { p: 'O conteúdo da conversa vai para o provedor de IA?', r: 'Sim: o texto e os trechos necessários vão ao provedor do modelo escolhido para gerar a resposta. Evite incluir dados sensíveis desnecessários. Os detalhes estão na Política de Privacidade.' },
+  { p: 'Onde ficam meus arquivos?', r: 'No servidor onde o Studio está instalado, separados por conta. Cada conversa tem o próprio espaço de arquivos, e você baixa ou apaga o que quiser.' },
+  { p: 'Posso apagar tudo?', r: 'Sim. Em Configurações › Privacidade você exporta seus dados, apaga o histórico ou exclui a conta.' }
+];
 
 export default function Landing() {
   const [showLogin, setShowLogin] = useState(false);
@@ -89,132 +72,119 @@ export default function Landing() {
   if (showLogin) return <LoginScreen initialMode={mode} onBack={() => setShowLogin(false)} />;
 
   return <div className="lp">
+    <a className="lpSkip" href="#conteudo">Pular para o conteúdo</a>
     <header className="lpHeader">
       <a className="lpBrand" href="#top" aria-label="Frederico IA Studio — início">
-        <span className="lpBrandMark">F</span>
+        <span className="lpBrandMark" aria-hidden="true">F</span>
         <span>Frederico <b>IA Studio</b></span>
       </a>
-      <nav className="lpNav" aria-label="Navegação da página">
+      <nav className="lpNav" aria-label="Seções da página">
+        <a href="#como-funciona">Como funciona</a>
         <a href="#recursos">Recursos</a>
-        <a href="#multimodelo">Multi-modelo</a>
-        <a href="#devmode">Modo Dev</a>
         <a href="#seguranca">Segurança</a>
+        <a href="#duvidas">Dúvidas</a>
       </nav>
       <div className="lpHeaderActions">
-        <button className="lpHeaderLogin" onClick={() => openLogin('login')}>Entrar</button>
-        <button className="lpBtn lpBtnPrimary lpBtnSmall" onClick={() => openLogin('signup')}>Criar conta grátis</button>
+        <button type="button" className="lpBtn lpBtnQuiet" onClick={() => openLogin('login')}>Entrar</button>
+        <button type="button" className="lpBtn lpBtnPrimary" onClick={() => openLogin('signup')}>Criar conta grátis</button>
       </div>
     </header>
 
     <main id="top">
-      <section className="lpHero">
+      <section className="lpHero" id="conteudo">
         <div className="lpHeroText">
-          <span className="lpKicker"><Sparkles size={15}/> Estúdio de IA com execução real</span>
-          <h1 className="lpH1">O assistente de IA que <span>faz o trabalho</span>, não só responde.</h1>
-          <p className="lpLead">Use modelos de diferentes provedores com total transparência. Leia arquivos, pesquise, programe, gere documentos e combine várias IAs na mesma tarefa.</p>
+          <p className="lpKicker">Estúdio de IA em português</p>
+          <h1>Peça em português.<br/>Receba o arquivo pronto.</h1>
+          <p className="lpLead">Planilhas com fórmulas, documentos Word diagramados, PDFs e código — feitos de verdade num ambiente isolado, com o modelo de IA que você escolher.</p>
           <div className="lpCtas">
-            <button className="lpBtn lpBtnPrimary" onClick={() => openLogin('signup')}>Criar conta grátis <ArrowRight size={18}/></button>
-            <button className="lpBtn lpBtnGhost" onClick={() => openLogin('login')}>Já tenho conta</button>
+            <button type="button" className="lpBtn lpBtnPrimary lpBtnLg" onClick={() => openLogin('signup')}>Criar conta grátis <ArrowRight size={18} aria-hidden="true"/></button>
+            <button type="button" className="lpBtn lpBtnLg" onClick={() => openLogin('login')}>Já tenho conta</button>
           </div>
-          <p className="lpReassure"><Check size={15}/> Sem cartão · modo gratuito com limites claros · chave própria quando preferir</p>
+          <p className="lpReassure"><Check size={15} aria-hidden="true"/> Sem cartão de crédito · sua chave de IA ou o modo gratuito</p>
         </div>
-
-        <div className="lpMultiMock" aria-label="Exemplo de comparação entre três modelos">
-          <div className="lpMockTop">
-            <span className="lpMockDots"><i/><i/><i/></span>
-            <span className="lpMockStatus"><Layers size={12}/> Comparação · 3 modelos ativos</span>
-          </div>
-          <div className="lpMockPrompt">Analise este balancete e me diga se o DRE está correto.</div>
-          <div className="lpMockGrid">
-            <article><span className="blue"><i/> DeepSeek</span><p>Estrutura correta; recomendo destacar margem operacional e líquida.</p></article>
-            <article><span className="purple"><i/> Claude</span><p>Encontrei uma diferença entre receita bruta e receita líquida.</p></article>
-            <article><span className="green"><i/> GPT</span><p>A conta de despesas administrativas destoa do período anterior.</p></article>
-          </div>
-          <div className="lpMockCombine"><Boxes size={14}/> Gerar resposta combinada das melhores partes</div>
-        </div>
+        <figure className="lpShot">
+          {/* A imagem acompanha o TEMA do app (classe no <body>), não o do
+              sistema operacional — senão a captura clara aparecia numa página escura. */}
+          <img className="lpShotDark" src="/landing/produto-dark.jpg" width="1280" height="780" fetchPriority="high"
+            alt="Tela do Frederico IA Studio: conversa em que o assistente entrega a planilha fluxo-de-caixa-setembro.xlsx verificada, com a barra lateral de conversas à esquerda."/>
+          <img className="lpShotLight" src="/landing/produto-light.jpg" width="1280" height="780" loading="lazy"
+            alt="Tela do Frederico IA Studio no tema claro: conversa em que o assistente entrega a planilha fluxo-de-caixa-setembro.xlsx verificada."/>
+          <figcaption>Tela real do app. O conteúdo da conversa é ilustrativo.</figcaption>
+        </figure>
       </section>
 
-      <section id="recursos" className="lpSection">
-        <SectionHeading eyebrow="Recursos" title="Um estúdio completo, não apenas outro chat" text="O modelo conversa, usa ferramentas reais, acompanha a execução e entrega arquivos que você pode abrir."/>
-        <div className="lpFeatures">
-          {FEATURES.map(({ icon: Icon, title, text }) => <article className="lpCard" key={title}>
-            <span className="lpCardIcon"><Icon size={22}/></span><h3>{title}</h3><p>{text}</p>
-          </article>)}
+      <section className="lpSection" aria-labelledby="t-exemplos">
+        <h2 id="t-exemplos" className="lpH2">O que você pede — e o que chega na conversa</h2>
+        <dl className="lpExamples">
+          {EXEMPLOS.map(e => <div className="lpExample" key={e.pede}>
+            <dt>“{e.pede}”</dt>
+            <dd><ArrowRight size={15} aria-hidden="true"/> {e.recebe}</dd>
+          </div>)}
+        </dl>
+      </section>
+
+      <section className="lpSection" id="como-funciona" aria-labelledby="t-como">
+        <h2 id="t-como" className="lpH2">Como funciona</h2>
+        <ol className="lpSteps">
+          {PASSOS.map((p, i) => <li key={p.titulo}><span className="lpStepN" aria-hidden="true">{i + 1}</span><h3>{p.titulo}</h3><p>{p.texto}</p></li>)}
+        </ol>
+      </section>
+
+      <section className="lpSection" id="recursos" aria-labelledby="t-recursos">
+        <h2 id="t-recursos" className="lpH2">Um estúdio de trabalho, não só um chat</h2>
+        <p className="lpSub">O modelo conversa, usa ferramentas reais, mostra cada etapa e entrega arquivos que você abre e envia.</p>
+        <ul className="lpFeatures">
+          {RECURSOS.map(({ icon: Icon, titulo, texto }) => <li key={titulo}>
+            <Icon size={20} aria-hidden="true"/><div><h3>{titulo}</h3><p>{texto}</p></div>
+          </li>)}
+        </ul>
+      </section>
+
+      <section className="lpSection lpModels" aria-labelledby="t-modelos">
+        <div>
+          <h2 id="t-modelos" className="lpH2">O modelo que você escolhe é o que responde</h2>
+          <ul className="lpChecks">
+            <li><Cpu size={18} aria-hidden="true"/> Nome, provedor, capacidades e preço visíveis antes do envio.</li>
+            <li><CircleCheckBig size={18} aria-hidden="true"/> Troca de modelo só com aviso — nunca em silêncio.</li>
+            <li><KeyRound size={18} aria-hidden="true"/> Sua chave, sua conta no provedor, seu controle de custo.</li>
+          </ul>
         </div>
+        <ul className="lpProviders" aria-label="Alguns fabricantes de modelos disponíveis por provedores compatíveis">
+          {PROVEDORES.map(([arquivo, nome]) => <li key={arquivo}><img src={`/providers/${arquivo}.png`} alt="" width="20" height="20" loading="lazy"/>{nome}</li>)}
+        </ul>
       </section>
 
-      <section id="multimodelo" className="lpBand lpBandMulti">
-        <div className="lpBandInner">
-          <SectionHeading eyebrow="Multi-modelo" tone="purple" title="Várias IAs trabalhando na mesma mensagem" text="Combine de 2 a 6 modelos, atribua uma função a cada um e escolha como eles devem colaborar."/>
-          <div className="lpModeGrid">
-            {Object.entries(MULTI_MODE_LABEL).map(([id, label]) => {
-              const Icon = MULTI_ICONS[id] || Layers;
-              return <article className="lpModeCard" key={id}><span className="lpModeIcon purple"><Icon size={20}/></span><h3>{label}</h3><p>{MULTI_DESCRIPTIONS[id]}</p></article>;
-            })}
-          </div>
-          <div className="lpRoleCloud" aria-label="Funções disponíveis para os modelos">
-            {MULTI_ROLE_OPTIONS.slice(0, 10).map(role => <span key={role.id}>{role.label}</span>)}
-          </div>
-        </div>
+      <section className="lpSection" id="seguranca" aria-labelledby="t-seg">
+        <h2 id="t-seg" className="lpH2">Feito para proteger o que é seu</h2>
+        <ul className="lpFeatures lpFeatures2">
+          {SEGURANCA.map(({ icon: Icon, titulo, texto }) => <li key={titulo}>
+            <Icon size={20} aria-hidden="true"/><div><h3>{titulo}</h3><p>{texto}</p></div>
+          </li>)}
+        </ul>
       </section>
 
-      <section id="provedores" className="lpSection lpProvidersSection">
-        <SectionHeading eyebrow="Transparência" title="O modelo escolhido é o modelo que responde" text="O aplicativo é uma ponte para provedores compatíveis. Sem troca escondida de modelo, sem maquiar o fornecedor e sem prender você a uma única empresa."/>
-        <div className="lpRealPoints">
-          <div className="lpRealPoint"><KeyRound size={20}/><div><b>Sua chave, sua conta</b><span>Use a sua própria chave de API e acompanhe os custos diretamente no provedor.</span></div></div>
-          <div className="lpRealPoint"><Cpu size={20}/><div><b>Modelo explícito</b><span>Nome, provedor, capacidades e custo ficam visíveis antes do envio.</span></div></div>
-          <div className="lpRealPoint"><CircleCheckBig size={20}/><div><b>Sem substituição silenciosa</b><span>A troca para um modelo reserva só acontece quando você configura e é tratada como recuperação.</span></div></div>
-        </div>
-        <div className="lpProviderWall">
-          {PROVIDERS.map(([file, name]) => <div className="lpProvider" key={file}><img src={`/providers/${file}.png`} alt=""/><span>{name}</span></div>)}
-        </div>
-        <p className="lpLocalNote"><Terminal size={15}/> Também funciona com endpoints compatíveis e modelos locais expostos por ferramentas como Ollama ou LM Studio.</p>
+      <section className="lpSection lpFaq" id="duvidas" aria-labelledby="t-duvidas">
+        <h2 id="t-duvidas" className="lpH2">Dúvidas frequentes</h2>
+        {DUVIDAS.map(d => <details key={d.p}>
+          <summary>{d.p}<Plus size={18} aria-hidden="true"/></summary>
+          <p>{d.r}</p>
+        </details>)}
       </section>
 
-      <section id="devmode" className="lpBand lpDevBand">
-        <div className="lpBandInner">
-          <SectionHeading eyebrow="Modo Desenvolvedor" tone="green" title="Um ambiente dedicado para trabalhar em projetos" text="Projetos persistentes, arquivos, atividade, alterações e memória ao redor da conversa — com permissões claras por modo."/>
-          <div className="lpDevGrid">
-            {DEV_WORK_MODES.map(item => {
-              const Icon = DEV_ICON[item.id] || Code2;
-              return <article className="lpDevCard" key={item.id}>
-                <span className={`lpModeIcon ${item.write ? 'green' : 'blue'}`}><Icon size={20}/></span>
-                <div><h3>{item.label}</h3><p>{item.short}</p><small>{item.write ? 'Pode editar e executar' : 'Somente leitura'}</small></div>
-              </article>;
-            })}
-          </div>
-          <div className="lpDevFlow"><GitBranch size={15}/><b>Fluxo típico:</b> Planejar <ArrowRight size={13}/> Implementar <ArrowRight size={13}/> Revisar <ArrowRight size={13}/> Testar e publicar</div>
-        </div>
-      </section>
-
-      <section id="memoria" className="lpSection lpMemorySection">
-        <SectionHeading eyebrow="Memória" tone="purple" title="Contexto que continua com você" text="A memória é opt-in, pesquisável por significado e separada por usuário. Você pode revisar, editar ou apagar tudo."/>
-        <div className="lpMemoryChips">{MEMORY.map(({ icon: Icon, label }) => <span key={label}><Icon size={15}/>{label}</span>)}</div>
-        <p className="lpMemoryNote"><Brain size={17}/> O aplicativo usa apenas o contexto relevante para cada pergunta, em vez de despejar todo o histórico em todas as mensagens.</p>
-      </section>
-
-      <section id="seguranca" className="lpSection">
-        <SectionHeading eyebrow="Segurança e LGPD" tone="green" title="Feito para proteger o que é seu" text="Privacidade não fica escondida num rodapé: ela aparece nas decisões de arquitetura e nos controles da sua conta."/>
-        <div className="lpTrustGrid">{TRUST.map(({ icon: Icon, title, text }) => <div className="lpTrustItem" key={title}><Icon size={21}/><div><b>{title}</b><span>{text}</span></div></div>)}</div>
-      </section>
-
-      <section className="lpBand lpStepsBand">
-        <div className="lpBandInner">
-          <SectionHeading eyebrow="Começar" title="Simples assim" text="Do primeiro acesso ao resultado pronto em três passos."/>
-          <div className="lpSteps">{STEPS.map(step => <article className="lpStep" key={step.n}><span>{step.n}</span><h3>{step.title}</h3><p>{step.text}</p></article>)}</div>
-        </div>
-      </section>
-
-      <section className="lpFinal">
-        <h2>Pronto para colocar a IA para trabalhar?</h2>
-        <p>Crie sua conta e faça o primeiro pedido em menos de um minuto.</p>
-        <button className="lpBtn lpBtnPrimary" onClick={() => openLogin('signup')}>Criar conta grátis <ArrowRight size={18}/></button>
+      <section className="lpFinal" aria-labelledby="t-final">
+        <h2 id="t-final" className="lpH2">Comece pelo primeiro pedido</h2>
+        <p>Crie a conta, escolha o modelo e peça o que precisa — em português.</p>
+        <button type="button" className="lpBtn lpBtnPrimary lpBtnLg" onClick={() => openLogin('signup')}>Criar conta grátis <ArrowRight size={18} aria-hidden="true"/></button>
       </section>
     </main>
 
     <footer className="lpFooter">
-      <a className="lpBrand" href="#top"><span className="lpBrandMark">F</span><span>Frederico <b>IA Studio</b></span></a>
-      <span><a href="/privacidade">Política de Privacidade</a> · <a href="/termos">Termos de Uso</a> · Feito no Brasil · <button onClick={() => openLogin('login')}>Entrar</button></span>
+      <span className="lpBrand"><span className="lpBrandMark" aria-hidden="true">F</span><span>Frederico <b>IA Studio</b></span></span>
+      <nav aria-label="Rodapé">
+        <a href="/privacidade">Política de Privacidade</a>
+        <a href="/termos">Termos de Uso</a>
+        <button type="button" onClick={() => openLogin('login')}>Entrar</button>
+      </nav>
     </footer>
   </div>;
 }

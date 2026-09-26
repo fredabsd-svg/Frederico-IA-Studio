@@ -63,6 +63,8 @@ cd e2e
 npm install
 npm run navegador        # baixa o Chromium do Playwright (uma vez)
 E2E_DATABASE_URL=postgres://studio:studio@127.0.0.1:5432/studio npm test
+# não é teste: refaz as capturas do produto usadas na landing
+E2E_DATABASE_URL=postgres://studio:studio@127.0.0.1:5432/studio npm run capturar:landing
 ```
 
 Com Postgres disponível, **nenhum** teste do backend deve ser pulado — o CI falha se

@@ -30,6 +30,11 @@ npm run navegador          # baixa o Chromium do Playwright (uma vez)
 E2E_DATABASE_URL='postgres://studio:studio@127.0.0.1:5432/studio' npm test
 ```
 
+`npm run capturar:landing` **não é teste**: com o mesmo ambiente, refaz as
+capturas do produto usadas na landing (`frontend/public/landing/`). O roteiro
+mora em `capturas/`, fora de `tests/`, e troca o texto da última resposta por um
+exemplo — a landing rotula a imagem como conteúdo ilustrativo.
+
 Os três servidores (provedor falso, backend, frontend) sobem sozinhos — não
 os inicie à mão.
 
