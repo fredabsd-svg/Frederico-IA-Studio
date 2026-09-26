@@ -22,7 +22,9 @@ const MAX_TEXT = 20_000;
 // Normalização defensiva de ENTRADA (tamanhos/da forma). A normalização de
 // conteúdo (memória com as chaves certas, modo válido, permissions no uso) é
 // do projectStore e dos módulos de autorização.
-function sanitizeProjectInput(raw) {
+// Devolve null (forma inválida), { error } (conteúdo recusável com mensagem
+// própria) ou { project, conversationIds }.
+export function sanitizeProjectInput(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const id = String(raw.id || '').trim();
   const name = String(raw.name || '').trim().slice(0, 200);
@@ -41,10 +43,17 @@ function sanitizeProjectInput(raw) {
   };
   // `permissions` só viaja quando veio no payload (COALESCE no upsert preserva
   // o registro do servidor para chamadores que não enviam o campo).
+  // Acima do teto o registro é RECUSADO (400): a versão anterior cortava o
+  // JSON serializado no meio e o JSON.parse lançava — a rota respondia 500 e o
+  // import em lote inteiro caía.
   if (raw.permissions !== undefined) {
-    project.permissions = raw.permissions && typeof raw.permissions === 'object' && !Array.isArray(raw.permissions)
-      ? JSON.parse(JSON.stringify(raw.permissions).slice(0, MAX_TEXT))
-      : null;
+    if (raw.permissions && typeof raw.permissions === 'object' && !Array.isArray(raw.permissions)) {
+      const serialized = JSON.stringify(raw.permissions);
+      if (serialized.length > MAX_TEXT) return { error: `As permissões do projeto passam do limite de ${MAX_TEXT} caracteres.` };
+      project.permissions = JSON.parse(serialized);
+    } else {
+      project.permissions = null;
+    }
   }
   const conversationIds = Array.isArray(raw.conversationIds)
     ? raw.conversationIds.filter(value => typeof value === 'string').slice(0, 200)
@@ -61,6 +70,7 @@ router.get('/dev-projects', async (req, res) => {
 router.put('/dev-projects/:id', async (req, res) => {
   const input = sanitizeProjectInput({ ...req.body, id: req.params.id });
   if (!input) return res.status(400).json({ error: 'Projeto inválido: id e nome são obrigatórios.' });
+  if (input.error) return res.status(400).json({ error: input.error });
   const saved = await upsertProject(req.userId, input.project);
   if (!saved) return res.status(400).json({ error: 'Não foi possível salvar o projeto.' });
   if (input.conversationIds.length) await adoptConversations(req.userId, saved.id, input.conversationIds);
@@ -80,7 +90,7 @@ router.post('/dev-projects/import', async (req, res) => {
   let imported = 0;
   for (const item of raw) {
     const input = sanitizeProjectInput(item);
-    if (!input) continue;
+    if (!input || input.error) continue;
     const saved = await upsertProject(req.userId, input.project);
     if (!saved) continue;
     imported += 1;

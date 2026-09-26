@@ -26,7 +26,16 @@ export function validateAttachmentManifest(userId, conversationId, manifest = []
   for (const item of Array.isArray(manifest) ? manifest : []) {
     const relative = String(item?.path || '').replaceAll('\\', '/').replace(/^\/+/, '');
     const full = path.resolve(ws.base, relative);
+    // `uploads/.quarantine/` NÃO é anexo: é onde fica o que foi aceito com o
+    // antivírus fora do ar e ainda não foi re-escaneado. Aceitar esse caminho
+    // no manifesto entregaria à IA (e ao sandbox) um arquivo não verificado —
+    // exatamente o que a quarentena existe para impedir. Idem para qualquer
+    // outro componente oculto (".algo") dentro de uploads/.
+    const hidden = relative.split('/').slice(1).some(part => part.startsWith('.'));
+    const quarantine = insideBase(path.join(ws.uploads, '.quarantine'), full);
     const safe = relative.startsWith('uploads/')
+      && !hidden
+      && !quarantine
       && insideBase(ws.uploads, full)
       && realInside(ws.uploads, full);
     let stat = null;

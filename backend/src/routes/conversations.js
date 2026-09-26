@@ -24,7 +24,7 @@ import { workspaceFor, insideBase, realInside } from '../sandbox.js';
 import { sanitizeToolProtocolText } from '../toolProtocol.js';
 import { deleteConversationDeep } from '../privacy.js';
 import { validate, schemas } from '../validation.js';
-import { getUserProvider } from '../userProvider.js';
+import { resolveFreeUsage, resolveBareModelToRef } from '../userProvider.js';
 import { enforceFreeTierLimits, bumpFreeTierUsage, logFreeTierEvent, freeTierStatusFor } from '../freeTier.js';
 import { acquireFreeSlot, cancelFreeJob, freeQueueSnapshot } from '../freeQueue.js';
 import { makeRouter, upload, scanOrReject, decodeUploadName, loadAssistant, ensureConversation, enforceDailyLimit, looksLikeFailedAssistantReply, beginUpload, enforceUploadLimits, cleanupRequestUploads } from './helpers.js';
@@ -38,6 +38,29 @@ import { resolveDefaultModelRef } from '../defaults.js';
 import { recordUsage } from '../usage.js';
 
 const router = makeRouter();
+
+// Teto de execuções simultâneas por usuário (multiconversa). Configurável por
+// env; vale para /chat e para as duas formas de /resume.
+function maxActiveRunsPerUser() {
+  return Math.max(1, Number(process.env.MAX_ACTIVE_RUNS_PER_USER) || 5);
+}
+
+// Referências de modelo que um run vai de fato usar, com a MESMA precedência
+// dos runners (agent/loop.js, orchestrator.js, multiModel.js). É o conjunto
+// que decide se o modo gratuito entra em jogo — ver resolveFreeUsage.
+function modelRefsForChat({ body, multiConfig, assistant, teamAssistants = [], executor = null }) {
+  if (multiConfig) return [...multiConfig.models.map(m => m.id), multiConfig.coordinator].filter(Boolean);
+  const main = body?.model || assistant?.model_ref || assistant?.model || '';
+  if (!body?.orchestrate) return [main];
+  const members = [...teamAssistants, executor].filter(Boolean).flatMap(a => [a.model_ref, a.model]).filter(Boolean);
+  return [body?.model || '', ...members];
+}
+
+// Status HTTP e corpo de uma recusa do modo gratuito (limite/bloqueio/desligado).
+function freeDenialResponse(denial) {
+  const status = denial.code === 'free_blocked' ? 403 : 429;
+  return { status, body: { error: denial.error, code: denial.code, resetAt: denial.resetAt, used: denial.used, limit: denial.limit } };
+}
 
 router.get('/conversations', async (req, res) => {
   // `active` em cada linha: a conversa está processando AGORA? A barra lateral
@@ -165,8 +188,11 @@ router.post('/conversations/:id/upload', (req, res, next) => {
       await db.prepare('INSERT INTO files (id,conversation_id,kind,name,path,size,hash,mime,created_at) VALUES (?,?,?,?,?,?,?,?,?)')
         .run(id, req.params.id, 'upload', original, finalRel, size, hash, mime, now());
       if (inQuarantine) {
-        // Registro na quarentena para reprocessar quando o clamd voltar.
-        db.prepare(
+        // Registro na quarentena para reprocessar quando o clamd voltar. COM
+        // await: sem ele, uma falha do INSERT virava rejeição solta (o arquivo
+        // ficava em .quarantine/ sem linha na fila e nunca era re-escaneado) e a
+        // resposta dizia "salvo" antes de o registro existir.
+        await db.prepare(
           "INSERT INTO quarantined_uploads (id, conversation_id, user_id, storage_path, original_name, mime, size, hash, status, quarantined_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)"
         ).run(id, req.params.id, req.userId, finalRel, original, mime, size, hash, now());
         // Docling NÃO roda em quarentena: o conteúdo ainda não é confiável.
@@ -300,6 +326,13 @@ router.post('/conversations/:id/export', async (req, res) => {
 router.post('/conversations/:id/truncate', async (req, res) => {
   const conv = await db.prepare('SELECT id FROM conversations WHERE id=? AND user_id=?').get(req.params.id, req.userId);
   if (!conv) return res.status(404).json({ error: 'Não encontrado' });
+  // Com uma resposta em andamento, apagar mensagens/arquivos por baixo do run
+  // deixaria o runner gravando a resposta numa conversa já regravada (e
+  // arquivos gerados órfãos). Posse ANTES do estado: 404 para conversa alheia,
+  // 409 só para a do próprio usuário.
+  if (isConversationActive(req.params.id)) {
+    return res.status(409).json({ error: 'Esta conversa ainda está processando uma resposta. Aguarde terminar ou pare o processamento antes de editar uma mensagem.' });
+  }
   const msg = await db.prepare('SELECT id, seq FROM messages WHERE id=? AND conversation_id=?').get(req.body?.messageId, req.params.id);
   if (!msg) return res.status(404).json({ error: 'Mensagem não encontrada' });
   // "Desta mensagem em diante" = mesma ordem de inserção ou posterior (seq).
@@ -446,17 +479,25 @@ router.get('/conversations/:id/stream', async (req, res) => {
     { fromSeq, runId: fromRunId }
   );
   res.on('close', () => { clearInterval(heartbeat); unsubscribe(); gone = true; });
+  // Run JÁ TERMINADO (buffer na janela de carência): o replay acima entregou
+  // tudo o que faltava — inclusive o evento terminal, se o cursor não o tinha
+  // visto. Se o cliente já tinha visto até o fim, nada foi escrito e nenhum
+  // evento novo virá: sem este encerramento, a conexão ficava pendurada só com
+  // o ping para sempre.
+  if (live.done) { unsubscribe(); closeUp(); }
 });
 
 router.post('/conversations/:id/chat', validate(schemas.chat), async (req, res) => {
   // Tipo/tamanho/trim de `message` já garantidos por validate(schemas.chat).
   const text = req.body.message;
   const multiConfig = req.body?.multiModel ? normalizeMultiModelConfig(req.body.multiModel) : null;
-  if (isConversationActive(req.params.id)) {
-    return res.status(409).json({ error: 'Esta conversa já está processando uma resposta. Aguarde terminar ou pare o processamento antes de enviar outra mensagem.' });
-  }
+  // POSSE antes do ESTADO: conversa de outro usuário responde 404 — nunca 409,
+  // que revelaria que ela existe e está processando.
   if (!await ensureConversation(req.userId, req.params.id, req.body?.model)) {
     return res.status(404).json({ error: 'Não encontrado' });
+  }
+  if (isConversationActive(req.params.id)) {
+    return res.status(409).json({ error: 'Esta conversa já está processando uma resposta. Aguarde terminar ou pare o processamento antes de enviar outra mensagem.' });
   }
   // Depois de restart o Map local está vazio, mas o coordenador persistente
   // continua sendo a autoridade. Mensagem nova não pode fechar ou substituir
@@ -472,7 +513,7 @@ router.post('/conversations/:id/chat', validate(schemas.chat), async (req, res) 
   // Multiconversa: várias conversas podem processar AO MESMO TEMPO, mas com um
   // teto por usuário para proteger a VPS (cada execução consome provedor,
   // memória e possivelmente um sandbox). Configurável por env.
-  const maxRuns = Math.max(1, Number(process.env.MAX_ACTIVE_RUNS_PER_USER) || 5);
+  const maxRuns = maxActiveRunsPerUser();
   if (countActiveRunsForUser(req.userId) >= maxRuns) {
     return res.status(429).json({ error: `Você já tem ${maxRuns} conversas processando ao mesmo tempo. Aguarde alguma terminar (o indicador na barra lateral para de girar) ou pare uma delas antes de iniciar outra.` });
   }
@@ -490,18 +531,43 @@ router.post('/conversations/:id/chat', validate(schemas.chat), async (req, res) 
   }
   const limitMsg = await enforceDailyLimit(req.userId);
   if (limitMsg) return res.status(429).json({ error: limitMsg });
+  // Assistentes carregados UMA vez: servem tanto para decidir o modo gratuito
+  // (o modelo do assistente conta) quanto para a execução mais abaixo.
+  // O assistente escolhido vale no chat simples E no multimodelo (perfil e
+  // estilo de cada participante e do coordenador — ver runMultiModel). No
+  // Modo Equipe, o `assistantId` é o executor, carregado à parte.
+  const assistant = (multiConfig || !req.body?.orchestrate) ? await loadAssistant(req.userId, req.body?.assistantId) : null;
+  const teamAssistants = (!multiConfig && req.body?.orchestrate)
+    ? (await Promise.all((req.body?.orchestrateIds || []).map(id => loadAssistant(req.userId, id)))).filter(Boolean)
+    : [];
+  const executor = (!multiConfig && req.body?.orchestrate) ? await loadAssistant(req.userId, req.body?.assistantId) : null;
   // MODO GRATUITO: limites próprios (diário/por minuto/bloqueio) checados ANTES
   // do SSE começar — o front recebe um JSON estruturado (code) e mostra a tela
-  // amigável de limite, não um erro técnico.
-  const provider = await getUserProvider(req.userId);
-  const freeMode = provider.source === 'free';
+  // amigável de limite, não um erro técnico. A decisão usa os MESMOS modelos
+  // que o runner vai resolver (modelo pedido, assistente, membros do
+  // multimodelo/equipe): antes ela olhava só o provedor PADRÃO da conta, e um
+  // usuário com chave própria que escolhesse "free::X" usava a chave da
+  // plataforma sem limite, fila nem contabilidade.
+  const freeProvider = await resolveFreeUsage(req.userId, modelRefsForChat({ body: req.body, multiConfig, assistant, teamAssistants, executor }));
+  const freeMode = Boolean(freeProvider);
+  const provider = freeProvider || {};
   if (freeMode) {
     const denial = await enforceFreeTierLimits(req.userId);
     if (denial) {
       logFreeTierEvent({ userId: req.userId, model: provider.model, status: denial.code === 'free_blocked' ? 'blocked' : 'limited', detail: denial.code });
-      const status = denial.code === 'free_blocked' ? 403 : 429;
-      return res.status(status).json({ error: denial.error, code: denial.code, resetAt: denial.resetAt, used: denial.used, limit: denial.limit });
+      const { status, body } = freeDenialResponse(denial);
+      return res.status(status).json(body);
     }
+  }
+  // O modelo escolhido no seletor passa a ser o da CONVERSA: antes ele só era
+  // gravado na criação, e reabrir a conversa voltava ao modelo antigo. Grava a
+  // referência completa (`provedor::modelo`) quando o id cru é resolvível,
+  // senão a string já validada por schemas.chat. Multimodelo não mexe: a
+  // configuração dele não é "o modelo da conversa".
+  const requestedModel = typeof req.body?.model === 'string' ? req.body.model.trim() : '';
+  if (requestedModel && !multiConfig) {
+    const modelRef = (await resolveBareModelToRef(req.userId, requestedModel)) || requestedModel;
+    await db.prepare('UPDATE conversations SET model=? WHERE id=? AND user_id=?').run(modelRef.slice(0, 360), req.params.id, req.userId);
   }
   // FECHAMENTO DO TOCTOU: o controle da conversa é adquirido AQUI, de forma
   // síncrona, ANTES de abrir o LiveStream. Sem isto, um segundo POST /chat
@@ -524,6 +590,9 @@ router.post('/conversations/:id/chat', validate(schemas.chat), async (req, res) 
         webSearch: Boolean(req.body?.webSearch),
         effort: req.body?.effort ?? null,
         developer: req.body?.developer || null,
+        // A retomada (/resume) recarrega o MESMO assistente: sem isto, as
+        // etapas retomadas perdiam o perfil que as primeiras usaram.
+        assistantId: assistant?.id || null,
         runId
       }
     };
@@ -623,6 +692,15 @@ router.post('/conversations/:id/chat', validate(schemas.chat), async (req, res) 
     if (freeMode) {
       const snapshot = freeQueueSnapshot();
       send({ type: 'free_queue', state: 'preparing', provider: provider.providerName, model: provider.model });
+      // Fallback explícito (Regra 5.5): o provedor pedido não tinha chave
+      // utilizável e quem atende é a chave da plataforma — o usuário é avisado.
+      // O controle é marcado para o runAgent (que grava o fallback no
+      // execution_meta) não repetir o mesmo aviso.
+      if (provider.fallback?.message) {
+        console.warn(`[chat] fallback para o modo gratuito (usuário ${req.userId}): ${provider.fallback.reason}`);
+        send({ type: 'status', content: provider.fallback.message });
+        control.providerFallbackNotified = true;
+      }
       if (snapshot.running >= snapshot.concurrency) {
         send({ type: 'free_queue', state: 'waiting', position: snapshot.waiting + 1, total: snapshot.waiting + 1 });
       }
@@ -654,15 +732,15 @@ router.post('/conversations/:id/chat', validate(schemas.chat), async (req, res) 
         onEvent: send,
         control,
         pipelineReservation,
-        runIdOverride: runId
+        runIdOverride: runId,
+        assistant
       });
       // A partir do retorno, o próprio runner já fechou o coordenador como
       // done/stopped/error. Antes disso, a rota ainda é dona da limpeza.
       pipelineReservation = null;
     } else if (req.body?.orchestrate) {
-      const assistants = (await Promise.all((req.body?.orchestrateIds || []).map(id => loadAssistant(req.userId, id)))).filter(Boolean);
+      const assistants = teamAssistants;
       kind = 'orquestrador'; usageAssistantId = null;
-      const executor = await loadAssistant(req.userId, req.body?.assistantId);
       result = await runOrchestrator({
         userId: req.userId,
         conversationId: req.params.id,
@@ -677,7 +755,6 @@ router.post('/conversations/:id/chat', validate(schemas.chat), async (req, res) 
         control
       });
     } else {
-      const assistant = await loadAssistant(req.userId, req.body?.assistantId);
       result = await runAgent({ userId: req.userId, conversationId: req.params.id, userText: text, model: req.body?.model, assistant, webSearch: !!req.body?.webSearch, effort: req.body?.effort, developer: req.body?.developer, onEvent: send, runIdOverride: runId, control });
     }
     runOutcome.messageId = result?.messageId || null;
@@ -879,6 +956,28 @@ router.post('/conversations/:id/resume', async (req, res) => {
       const lastUser = await db.prepare("SELECT content FROM messages WHERE conversation_id=? AND role='user' ORDER BY created_at DESC, seq DESC LIMIT 1").get(conversationId);
       userText = lastUser?.content || '';
     }
+    // Mesmos portões do /chat, TODOS antes de abrir o SSE — depois do
+    // flushHeaders o status HTTP já foi enviado (200) e um res.status(429) ali
+    // era ignorado: o cliente via "sucesso" com um erro dentro do stream.
+    const maxRuns = maxActiveRunsPerUser();
+    if (countActiveRunsForUser(req.userId) >= maxRuns) {
+      return res.status(429).json({ error: `Você já tem ${maxRuns} conversas processando ao mesmo tempo. Aguarde alguma terminar antes de continuar esta.` });
+    }
+    const pipelineConfig = activePipeline.config || {};
+    const pipelineRefs = [...(Array.isArray(pipelineConfig.models) ? pipelineConfig.models.map(m => m?.id) : []), pipelineConfig.coordinator].filter(Boolean);
+    // MODO GRATUITO: retomar um pipeline também consome o provedor em cada
+    // etapa — antes este caminho não passava pela fila, não contava no limite
+    // diário e não registrava o consumo.
+    const pFree = await resolveFreeUsage(req.userId, pipelineRefs);
+    const pFreeMode = Boolean(pFree);
+    if (pFreeMode) {
+      const denial = await enforceFreeTierLimits(req.userId);
+      if (denial) {
+        logFreeTierEvent({ userId: req.userId, model: pFree.model, status: denial.code === 'free_blocked' ? 'blocked' : 'limited', detail: denial.code });
+        const { status, body } = freeDenialResponse(denial);
+        return res.status(status).json(body);
+      }
+    }
     // Mesmo fechamento de TOCTOU do /chat: controle antes do LiveStream.
     let control;
     try { control = acquireConversationControl(conversationId, req.userId); }
@@ -903,25 +1002,27 @@ router.post('/conversations/:id/resume', async (req, res) => {
     };
     const heartbeat = setInterval(() => { if (!clientGone && !res.writableEnded) { try { res.write(': ping\n\n'); } catch { clientGone = true; } } }, 15000);
     const cancelOnDisconnect = String(process.env.CANCEL_ON_DISCONNECT || '').toLowerCase() === 'true';
-    res.on('close', () => { clientGone = true; clearInterval(heartbeat); if (cancelOnDisconnect && !res.writableEnded) setControl(conversationId, 'stop'); });
+    res.on('close', () => {
+      clientGone = true;
+      clearInterval(heartbeat);
+      if (cancelOnDisconnect && !res.writableEnded) setControl(conversationId, 'stop');
+      if (!res.writableEnded) cancelFreeJob(conversationId);
+    });
+    let releaseFreeSlot = null;
     try {
-      // Modo gratuito e limites iguais ao /chat
-      const pResume = await getUserProvider(req.userId);
-      if (pResume.source === 'free') {
-        const denial = await enforceFreeTierLimits(req.userId);
-        if (denial) {
-          logFreeTierEvent({ userId: req.userId, model: pResume.model, status: denial.code === 'free_blocked' ? 'blocked' : 'limited', detail: denial.code });
-          const st = denial.code === 'free_blocked' ? 403 : 429;
-          send({ type: 'error', content: denial.error });
-          send({ type: 'done' });
-          return res.status(st).end();
-        }
-      }
-      const config = activePipeline.config || {};
+      const config = pipelineConfig;
       if (!config.models || !Array.isArray(config.models) || config.models.length < 2) {
         send({ type: 'error', content: 'A configuração do pipeline salva está incompleta. Envie a mensagem novamente.' });
         send({ type: 'done' });
         return res.end();
+      }
+      if (pFreeMode) {
+        send({ type: 'free_queue', state: 'preparing', provider: pFree.providerName, model: pFree.model });
+        releaseFreeSlot = await acquireFreeSlot({
+          id: conversationId,
+          onPosition: (position, total) => send({ type: 'free_queue', state: 'waiting', position, total })
+        });
+        send({ type: 'free_queue', state: 'processing' });
       }
       const result = await runMultiModel({
         userId: req.userId,
@@ -935,7 +1036,8 @@ router.post('/conversations/:id/resume', async (req, res) => {
         saveUserMessage: false,
         onEvent: send,
         control,
-        runIdOverride: runId
+        runIdOverride: runId,
+        assistant: await loadAssistant(req.userId, execution.assistantId)
       });
       runOutcome.messageId = result?.messageId || null;
       if (result?.usage) {
@@ -950,13 +1052,34 @@ router.post('/conversations/:id/resume', async (req, res) => {
           completionTokens: result.usage.completion_tokens,
         });
       }
+      if (pFreeMode) {
+        const tokens = result?.usage?.total_tokens || 0;
+        await bumpFreeTierUsage(req.userId, tokens);
+        logFreeTierEvent({ userId: req.userId, model: result?.model || pFree.model, status: 'ok', tokens });
+        try { send({ type: 'free_status', ...(await freeTierStatusFor(req.userId, { optedIn: true, source: 'free' })) }); } catch {}
+      }
       send({ type: 'done' });
     } catch (err) {
-      console.error('[resume/pipeline]', err);
-      send({ type: 'error', content: friendlyApiError(err) });
-      runOutcome.state = 'fatal_error';
-      runOutcome.detail = String(err?.message || err).slice(0, 500);
+      if (err?.code === 'FREE_QUEUE_CANCELLED') {
+        logFreeTierEvent({ userId: req.userId, model: pFree?.model, status: 'cancelled', detail: 'cancelado na fila (retomada de pipeline)' });
+        send({ type: 'free_queue', state: 'cancelled' });
+        send({ type: 'done' });
+        runOutcome.state = 'stopped';
+        runOutcome.detail = 'Cancelado na fila do modo gratuito.';
+      } else if (err?.code === 'FREE_QUEUE_FULL') {
+        logFreeTierEvent({ userId: req.userId, model: pFree?.model, status: 'limited', detail: 'fila cheia (retomada de pipeline)' });
+        send({ type: 'error', content: 'O modo gratuito está com muitas solicitações agora. Aguarde alguns minutos e tente continuar de novo.' });
+        runOutcome.state = 'fatal_error';
+        runOutcome.detail = 'Fila do modo gratuito cheia.';
+      } else {
+        console.error('[resume/pipeline]', err);
+        if (pFreeMode) logFreeTierEvent({ userId: req.userId, model: pFree.model, status: 'error', detail: String(err?.message || err).slice(0, 300) });
+        send({ type: 'error', content: friendlyApiError(err) });
+        runOutcome.state = 'fatal_error';
+        runOutcome.detail = String(err?.message || err).slice(0, 500);
+      }
     } finally {
+      releaseFreeSlot?.();
       clearInterval(heartbeat);
       releaseConversationControl(conversationId, control);
       runLog.finish(runOutcome);
@@ -969,20 +1092,24 @@ router.post('/conversations/:id/resume', async (req, res) => {
   if (!checkpoint) {
     return res.status(409).json({ error: 'Não há execução salva para continuar. Envie a mensagem novamente.' });
   }
-  const maxRuns = Math.max(1, Number(process.env.MAX_ACTIVE_RUNS_PER_USER) || 5);
+  const maxRuns = maxActiveRunsPerUser();
   if (countActiveRunsForUser(req.userId) >= maxRuns) {
     return res.status(429).json({ error: `Você já tem ${maxRuns} conversas processando ao mesmo tempo. Aguarde alguma terminar antes de continuar esta.` });
   }
+  const meta = checkpoint.meta || {};
+  const assistant = meta.assistantId ? await loadAssistant(req.userId, meta.assistantId) : null;
   // MODO GRATUITO: retomar também consome o provedor — valem os mesmos limites
-  // e a mesma fila do /chat.
-  const provider = await getUserProvider(req.userId);
-  const freeMode = provider.source === 'free';
+  // e a mesma fila do /chat. O modelo é o do CHECKPOINT (o que estava rodando,
+  // inclusive um de reserva), com a mesma precedência do runAgent.
+  const freeProvider = await resolveFreeUsage(req.userId, [checkpoint.model || assistant?.model_ref || assistant?.model || '']);
+  const freeMode = Boolean(freeProvider);
+  const provider = freeProvider || {};
   if (freeMode) {
     const denial = await enforceFreeTierLimits(req.userId);
     if (denial) {
       logFreeTierEvent({ userId: req.userId, model: provider.model, status: denial.code === 'free_blocked' ? 'blocked' : 'limited', detail: denial.code });
-      const status = denial.code === 'free_blocked' ? 403 : 429;
-      return res.status(status).json({ error: denial.error, code: denial.code, resetAt: denial.resetAt, used: denial.used, limit: denial.limit });
+      const { status, body } = freeDenialResponse(denial);
+      return res.status(status).json(body);
     }
   }
   // Mesmo fechamento de TOCTOU do /chat: controle antes do LiveStream.
@@ -1029,8 +1156,6 @@ router.post('/conversations/:id/resume', async (req, res) => {
       });
       send({ type: 'free_queue', state: 'processing' });
     }
-    const meta = checkpoint.meta || {};
-    const assistant = meta.assistantId ? await loadAssistant(req.userId, meta.assistantId) : null;
     // O `saved` precisa apontar para a mensagem de usuário REAL (a que originou a
     // tarefa) — buscamos a última da conversa em vez de gravar uma nova.
     const lastUser = await db.prepare("SELECT id FROM messages WHERE conversation_id=? AND role='user' ORDER BY created_at DESC, seq DESC LIMIT 1").get(conversationId);

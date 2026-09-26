@@ -264,31 +264,62 @@ export async function markQuarantineResult(id, { clean, virus, error }) {
   } catch {}
 }
 
+// Caminho ABSOLUTO de um item da quarentena. `storage_path` é relativo ao
+// workspace da conversa ("uploads/.quarantine/<nome>"), não ao diretório de
+// trabalho do processo — a versão anterior fazia path.join(dirname(dirname(rel)),
+// rel), que resolvia relativo ao cwd do backend: o arquivo nunca era achado, o
+// item virava 'stale' a cada tentativa e ficava preso na quarentena para sempre.
+// Devolve null quando o caminho gravado não está DENTRO de uploads/.quarantine
+// do dono (linha adulterada/legada): nunca escaneia nem move nada fora dali.
+export function resolveQuarantinePaths(workspace, storagePath) {
+  const rel = String(storagePath || '').replaceAll('\\', '/');
+  if (!rel.startsWith('uploads/.quarantine/')) return null;
+  const qdir = path.resolve(quarantineDirFor(workspace.uploads));
+  const full = path.resolve(workspace.base, rel);
+  if (!full.startsWith(qdir + path.sep)) return null;
+  const name = path.basename(full);
+  if (!name || name === '.' || name === '..') return null;
+  // O nome em disco já é opaco e único (timestamp_nanoid_nome-saneado, ver a
+  // rota de upload): ao liberar, ele vai para uploads/ com o MESMO nome. A
+  // versão anterior tentava "limpar" o prefixo com uma regex que não casava com
+  // o nanoid (maiúsculas, '-' e '_') e, quando casava, podia colidir com outro
+  // arquivo de mesmo nome original e sobrescrevê-lo.
+  return { full, target: path.join(workspace.uploads, name), relTarget: `uploads/${name}` };
+}
+
+async function defaultWorkspaceOf(item) {
+  const { workspaceFor } = await import('./sandbox.js');
+  return workspaceFor(item.conversation_id, item.user_id);
+}
+
 // Re-escaneia a fila de quarentena. Chamado depois de um scan BEM-SUCEDIDO
 // (sinal de que o clamd está vivo de novo). Limite conservador de 10 por
 // chamada — o resto fica para a próxima. Devolve um resumo com o que fez.
-export async function reprocessQuarantine() {
-  if (!scanEnabled()) return { skipped: true, reason: 'av-desligado' };
-  const items = await listQuarantinedReady(10);
+// `workspaceOf`/`scan`/`listReady` são injetáveis para os testes (sem Docker,
+// sem clamd e sem disputar a fila global com outros testes).
+export async function reprocessQuarantine({ workspaceOf = defaultWorkspaceOf, scan = scanFilePath, enabled = scanEnabled(), listReady = listQuarantinedReady } = {}) {
+  if (!enabled) return { skipped: true, reason: 'av-desligado' };
+  const items = await listReady(10);
   if (!items.length) return { skipped: true, reason: 'fila-vazia' };
   const result = { processed: 0, cleared: 0, infected: 0, stale: 0, errors: [] };
   for (const item of items) {
     if (!await claimQuarantineItem(item.id)) continue;
     result.processed += 1;
     try {
-      const fullPath = path.join(path.dirname(path.dirname(item.storage_path)), item.storage_path);
-      const r = await scanFilePath(fullPath);
+      const paths = resolveQuarantinePaths(await workspaceOf(item), item.storage_path);
+      if (!paths) throw new Error('caminho da quarentena fora de uploads/.quarantine');
+      const r = await scan(paths.full);
       if (r.clean) {
-        const target = path.join(path.dirname(path.dirname(fullPath)), 'uploads', path.basename(fullPath).replace(/^\d+_[a-z0-9]+_/, ''));
-        fs.mkdirSync(path.dirname(target), { recursive: true });
-        fs.renameSync(fullPath, target);
-        try { fs.chownSync(target, 1000, 1000); } catch {}
-        const newRel = path.relative(path.dirname(path.dirname(target)), target).replaceAll('\\', '/');
-        try { await db.prepare("UPDATE files SET path=? WHERE id=?").run(newRel, item.id); } catch {}
+        fs.mkdirSync(path.dirname(paths.target), { recursive: true });
+        fs.renameSync(paths.full, paths.target);
+        try { fs.chownSync(paths.target, 1000, 1000); } catch {}
+        // `files` e `quarantined_uploads` compartilham o id (1:1) — o UPDATE é
+        // escopado também pela conversa para não tocar em linha de outra.
+        await db.prepare('UPDATE files SET path=? WHERE id=? AND conversation_id=?').run(paths.relTarget, item.id, item.conversation_id);
         await markQuarantineResult(item.id, { clean: true });
         result.cleared += 1;
       } else {
-        try { fs.rmSync(fullPath, { force: true }); } catch {}
+        try { fs.rmSync(paths.full, { force: true }); } catch {}
         await markQuarantineResult(item.id, { clean: false, virus: r.virus });
         result.infected += 1;
       }

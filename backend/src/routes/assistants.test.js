@@ -158,3 +158,26 @@ test('PUT /assistants/:id com model=null solta a fixação e volta ao default', 
   // Voltou ao default canônico (resolvido contra os catálogos do usuário).
   assert.equal(solto.body.model_ref, 'prov-or::deepseek/deepseek-chat');
 });
+
+// Regressão: os assistentes padrão nasciam com o MESMO created_at e a ordem da
+// lista (e o assistente pré-selecionado numa conta nova) ficava ao acaso.
+test('GET /assistants desempata created_at igual com "Assistente geral" primeiro', { skip: needsDb }, async () => {
+  const USER_B = `assist-ordem-${stamp}`;
+  await db.prepare('INSERT INTO "user" (id,name,email,"emailVerified","createdAt","updatedAt") VALUES (?,?,?,?,?,?)')
+    .run(USER_B, USER_B, `${USER_B}@teste.local`, false, now(), now());
+  const t = '2026-01-01T00:00:00.000Z';
+  const ins = 'INSERT INTO assistants (id,user_id,name,emoji,model,system_prompt,tools,personality,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)';
+  // O "z" no id faz a ordem física/por id favorecer o Codex se não houver desempate.
+  await db.prepare(ins).run(`a-${stamp}-z`, USER_B, 'Assistente geral', 'bot', 'm', 'p', '[]', '{}', t, t);
+  await db.prepare(ins).run(`a-${stamp}-a`, USER_B, 'Programação (Codex)', 'code-2', 'm', 'p', '[]', '{}', t, t);
+  currentUser = USER_B;
+  try {
+    const r = await call('GET', '/api/assistants');
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.map(a => a.name), ['Assistente geral', 'Programação (Codex)']);
+  } finally {
+    currentUser = USER_A;
+    await db.prepare('DELETE FROM assistants WHERE user_id=?').run(USER_B);
+    await db.prepare('DELETE FROM "user" WHERE id=?').run(USER_B);
+  }
+});

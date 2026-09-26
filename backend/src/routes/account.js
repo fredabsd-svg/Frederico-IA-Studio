@@ -57,7 +57,11 @@ router.get('/consent', async (req, res) => {
 
 // Registra o aceite da versão vigente (com IP e navegador como evidência).
 router.post('/consent', async (req, res) => {
-  const ip = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket?.remoteAddress || null;
+  // req.ip, não o X-Forwarded-For cru: com `trust proxy` = 1 (server.js), o
+  // Express pega o endereço que o NOSSO proxy anotou. O primeiro item do
+  // cabeçalho é escrito pelo cliente — qualquer um gravava o IP que quisesse
+  // como evidência do aceite (LGPD).
+  const ip = req.ip || req.socket?.remoteAddress || null;
   await recordConsent(req.userId, { ip, userAgent: req.headers['user-agent'] || null });
   res.json({ ok: true, version: TERMS_VERSION });
 });

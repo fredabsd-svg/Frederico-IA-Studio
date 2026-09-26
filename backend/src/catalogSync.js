@@ -105,27 +105,44 @@ async function recordHistory(userId, providerId, providerName, report) {
   return rows.length;
 }
 
+function savedModels(row) {
+  try { const d = JSON.parse(row?.models || '[]'); return Array.isArray(d) ? d : []; } catch { return []; }
+}
+
+// Grava um catálogo recém-importado para UM provedor pelo caminho ÚNICO:
+// mescla preservando o dado bom do catálogo anterior, calcula o diff, persiste
+// e registra o histórico. TODA escrita de catálogo importado passa por aqui —
+// rotina diária, botão de sincronizar, leitura de /api/models com catálogo
+// vencido e o "atualizar" do cartão do provedor. Antes, as duas últimas
+// gravavam o catálogo cru da API: um GET /models incompleto apagava preço e
+// contexto já conhecidos e nenhuma mudança entrava no histórico.
+export async function applyImportedCatalog(row, importedModels) {
+  const oldModels = savedModels(row);
+  const merged = mergePreserving(oldModels, importedModels);
+  const report = diffCatalog(oldModels, merged, row.provider_type);
+  const t = now();
+  await db.prepare('UPDATE user_ai_providers SET models=?,last_validated_at=?,updated_at=?,last_sync_status=?,last_sync_error=? WHERE id=? AND user_id=?')
+    .run(JSON.stringify(merged), t, t, 'ok', null, row.id, row.user_id);
+  const recorded = await recordHistory(row.user_id, row.id, row.name || row.provider_type, report);
+  return { merged, report, recorded };
+}
+
 // Orquestra a sincronização de UM provedor: importa fresco, mescla preservando,
-// diffa, persiste e registra histórico. Devolve o relatório para a interface.
+// diffa, persiste e registra histórico. Devolve o relatório para a interface
+// (e `models`, o catálogo mesclado que ficou gravado).
 // `automatic` controla se o fallback de validação por chat é permitido (na
 // rotina diária, não fazemos chamadas pagas de chat).
 export async function runProviderSync(row, { automatic = true } = {}) {
   const providerLabel = row.name || row.provider_type;
   const apiKey = decryptSecret(row.api_key_enc);
   if (!apiKey) return { provider: providerLabel, ok: false, error: 'Sem chave para este provedor.' };
-  const oldModels = (() => { try { const d = JSON.parse(row.models || '[]'); return Array.isArray(d) ? d : []; } catch { return []; } })();
   try {
     const imported = await importProviderCatalog({
       apiKey, baseURL: row.base_url, providerType: row.provider_type,
       modelHint: row.default_model, allowModelValidation: !automatic
     });
-    const merged = mergePreserving(oldModels, imported.models);
-    const report = diffCatalog(oldModels, merged, row.provider_type);
-    const t = now();
-    await db.prepare('UPDATE user_ai_providers SET models=?,last_validated_at=?,updated_at=?,last_sync_status=?,last_sync_error=? WHERE id=? AND user_id=?')
-      .run(JSON.stringify(merged), t, t, 'ok', null, row.id, row.user_id);
-    const recorded = await recordHistory(row.user_id, row.id, providerLabel, report);
-    return { provider: providerLabel, providerId: row.id, ok: true, total: merged.length, ...report, recorded };
+    const { merged, report, recorded } = await applyImportedCatalog(row, imported.models);
+    return { provider: providerLabel, providerId: row.id, ok: true, total: merged.length, models: merged, ...report, recorded };
   } catch (error) {
     await db.prepare('UPDATE user_ai_providers SET last_sync_status=?,last_sync_error=?,updated_at=? WHERE id=? AND user_id=?')
       .run('error', String(error?.message || '').slice(0, 300), now(), row.id, row.user_id).catch(() => {});

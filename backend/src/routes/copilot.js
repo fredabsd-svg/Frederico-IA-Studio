@@ -8,6 +8,7 @@ import { nanoid } from 'nanoid';
 import { makeRouter, safeParse } from './helpers.js';
 import { db, now } from '../db.js';
 import { getUserProvider } from '../userProvider.js';
+import { openFreeTierGate } from '../freeTierGate.js';
 import { sanitizeSettings } from './companion.js';
 import { audit } from '../companion/audit.js';
 import { decide, readPermissions } from '../companion/permissions.js';
@@ -15,7 +16,7 @@ import { normalizeScheduleDay, normalizeScheduleHour } from '../scheduling.js';
 import {
   buildChatMessages, buildReviseMessages, buildSummaryMessages, estimateTokens,
   buildContextBlock, buildNotesBlock, buildKnowledgeBlock, decideContextAccess,
-  CONTEXT_ACCESS, RESPONSE_STYLES, TONES, NOTE_KINDS,
+  sanitizeCharacterName, copilotModelRef, CONTEXT_ACCESS, RESPONSE_STYLES, TONES, NOTE_KINDS,
 } from '../copilot/core.js';
 import { findKnowledge } from '../copilot/knowledge.js';
 import {
@@ -33,22 +34,77 @@ const router = makeRouter();
 const NO_KEY_MSG = 'Nenhum provedor de IA configurado. Adicione uma chave em Configurações › Provedor de IA para conversar com o copiloto.';
 const CALL_FAIL_MSG = 'Não consegui falar com o provedor de IA agora. Tente de novo em instantes.';
 
-// Lê a configuração do Companion (compartilha a tabela companion_settings) só
-// para saber qual modelo o copiloto deve usar.
-async function copilotModelRef(userId) {
+// Lê a configuração do Companion (compartilha a tabela companion_settings):
+// o modelo do copiloto e o nome do personagem.
+async function companionSettings(userId) {
   const row = await db.prepare('SELECT settings FROM companion_settings WHERE user_id=?').get(userId);
-  const settings = sanitizeSettings(row ? safeParse(row.settings, {}) : {});
-  return settings.model || '';
+  return sanitizeSettings(row ? safeParse(row.settings, {}) : {});
 }
 
-async function resolveProvider(userId) {
-  const ref = await copilotModelRef(userId);
-  return getUserProvider(userId, ref);
+async function resolveProvider(req) {
+  const settings = await companionSettings(req.userId);
+  return getUserProvider(req.userId, copilotModelRef(settings, req.body));
+}
+
+// Perfil do assistente escolhido como "Persona" no Companion (null = padrão).
+// Escopado pelo dono: um id de outro usuário simplesmente não acha nada.
+async function personaProfileFor(userId) {
+  const { assistantId } = await companionSettings(userId);
+  if (!assistantId) return null;
+  const row = await db.prepare('SELECT system_prompt FROM assistants WHERE id=? AND user_id=?').get(String(assistantId), userId);
+  return row?.system_prompt || null;
+}
+
+async function characterNameFor(userId) {
+  return sanitizeCharacterName((await companionSettings(userId)).characterName);
 }
 
 // Extrai o texto de uma resposta de chat completion (compatível OpenAI).
 function replyText(completion) {
   return String(completion?.choices?.[0]?.message?.content || '').trim();
+}
+
+// Aviso de fallback (Regra 5.5): o provedor pedido ficou sem chave utilizável e
+// quem atendeu foi a chave da PLATAFORMA. Vai na resposta JSON para a interface
+// mostrar — nunca uma troca silenciosa.
+function fallbackNotice(provider) {
+  if (!provider?.fallback) return {};
+  return { providerFallback: { to: provider.fallback.to, reason: provider.fallback.reason, message: provider.fallback.message } };
+}
+
+// ÚNICO caminho do copiloto até o provedor de IA. Quando o provedor resolvido é
+// a chave da PLATAFORMA (modo gratuito), passa pelos mesmos portões do /chat:
+// limite/bloqueio ANTES da chamada (403/429 com `code`), vaga na fila,
+// contabilidade do consumo e registro — ver freeTierGate.js. Antes, as quatro
+// rotas chamavam o provedor gratuito direto, sem teto nem registro.
+//
+// Devolve `{ ok:true, text }` ou `{ ok:false, status, body }` pronto para a
+// rota responder.
+async function askModel(req, provider, { label, messages, temperature }) {
+  let gate = null;
+  if (provider.source === 'free') {
+    gate = await openFreeTierGate({ userId: req.userId, model: provider.model, label: `copiloto:${label}` });
+    if (!gate.ok) {
+      const { ok: _ok, status, ...body } = gate;
+      return { ok: false, status, body };
+    }
+  }
+  let completion;
+  try {
+    completion = await provider.client.chat.completions.create({ model: provider.model, messages, temperature });
+  } catch (err) {
+    console.error(`[copilot] falha (${label}):`, err?.message);
+    await gate?.failed(err);
+    return { ok: false, status: 502, body: { error: CALL_FAIL_MSG } };
+  } finally {
+    gate?.release?.();
+  }
+  // A chamada chegou ao provedor: no modo gratuito ela CONTA, mesmo que a
+  // resposta venha vazia — o consumo da chave da plataforma já ocorreu.
+  await gate?.succeeded(completion);
+  const text = replyText(completion);
+  if (!text) return { ok: false, status: 502, body: { error: CALL_FAIL_MSG } };
+  return { ok: true, text };
 }
 
 // ---- Chat isolado -----------------------------------------------------------
@@ -119,7 +175,7 @@ router.post('/copilot/chat', async (req, res) => {
   const text = String(req.body?.text || '').trim();
   if (!text) return res.status(400).json({ error: 'Mensagem vazia.' });
 
-  const provider = await resolveProvider(req.userId);
+  const provider = await resolveProvider(req);
   if (!provider.hasKey || !provider.client) return res.status(400).json({ error: NO_KEY_MSG });
 
   const prefs = await readPrefs(req.userId);
@@ -128,26 +184,18 @@ router.post('/copilot/chat', async (req, res) => {
   const { notesBlock, knowledgeBlock, contextBlock, used } = await gatherContext(req, { prefs, text });
   const messages = buildChatMessages(history, text, {
     prefs, notes: notesBlock, knowledge: knowledgeBlock, context: contextBlock,
+    characterName: await characterNameFor(req.userId),
+    personaProfile: await personaProfileFor(req.userId),
   });
 
-  let answer = '';
-  try {
-    const completion = await provider.client.chat.completions.create({
-      model: provider.model,
-      messages,
-      temperature: 0.4,
-    });
-    answer = replyText(completion);
-  } catch (err) {
-    console.error('[copilot] falha no chat:', err?.message);
-    return res.status(502).json({ error: CALL_FAIL_MSG });
-  }
-  if (!answer) return res.status(502).json({ error: CALL_FAIL_MSG });
+  const reply = await askModel(req, provider, { label: 'chat', messages, temperature: 0.4 });
+  if (!reply.ok) return res.status(reply.status).json(reply.body);
+  const answer = reply.text;
 
   // Só persiste depois de uma resposta válida (evita mensagens órfãs).
   const userMsg = await appendCopilotMessage(req.userId, conv.id, 'user', text);
   const botMsg = await appendCopilotMessage(req.userId, conv.id, 'assistant', answer);
-  res.json({ conversationId: conv.id, userMessage: userMsg, message: botMsg, used });
+  res.json({ conversationId: conv.id, userMessage: userMsg, message: botMsg, used, ...fallbackNotice(provider) });
 });
 
 // Limpa o histórico do copiloto (recomeçar).
@@ -228,26 +276,16 @@ router.post('/copilot/actions/template', async (req, res) => {
 
 // Resume a conversa do copiloto e guarda o resultado na caixa de documentos.
 router.post('/copilot/actions/summary', async (req, res) => {
-  const provider = await resolveProvider(req.userId);
+  const provider = await resolveProvider(req);
   if (!provider.hasKey || !provider.client) return res.status(400).json({ error: NO_KEY_MSG });
 
   const conv = await ensureCopilotConversation(req.userId);
   const history = await listCopilotMessages(req.userId, conv.id);
   if (history.length < 2) return res.status(400).json({ error: 'A conversa ainda é curta demais para resumir.' });
 
-  let summary = '';
-  try {
-    const completion = await provider.client.chat.completions.create({
-      model: provider.model,
-      messages: buildSummaryMessages(history),
-      temperature: 0.2,
-    });
-    summary = replyText(completion);
-  } catch (err) {
-    console.error('[copilot] falha no resumo:', err?.message);
-    return res.status(502).json({ error: CALL_FAIL_MSG });
-  }
-  if (!summary) return res.status(502).json({ error: CALL_FAIL_MSG });
+  const reply = await askModel(req, provider, { label: 'resumo', messages: buildSummaryMessages(history), temperature: 0.2 });
+  if (!reply.ok) return res.status(reply.status).json(reply.body);
+  const summary = reply.text;
 
   const document = await createDocument(req.userId, {
     kind: 'relatorio',
@@ -256,7 +294,7 @@ router.post('/copilot/actions/summary', async (req, res) => {
     content: summary,
     meta: { origem: 'acao_resumo', mensagens: history.length },
   });
-  res.json({ summary, document });
+  res.json({ summary, document, ...fallbackNotice(provider) });
 });
 
 // ---- Ferramentas executivas exclusivas do Nino ------------------------------
@@ -330,22 +368,16 @@ router.post('/copilot/tools/executive-action', async (req, res) => {
   const content = String(req.body?.content || '').trim();
   if (!['logic-review', 'optimize-prompt'].includes(action)) return res.status(400).json({ error: 'Ação executiva inválida.' });
   if (!content) return res.status(400).json({ error: 'Informe o conteúdo para analisar.' });
-  const provider = await resolveProvider(req.userId);
+  const provider = await resolveProvider(req);
   if (!provider.hasKey || !provider.client) return res.status(400).json({ error: NO_KEY_MSG });
-  try {
-    const completion = await provider.client.chat.completions.create({
-      model: provider.model,
-      messages: buildExecutiveActionMessages(action, content),
-      temperature: 0.2,
-    });
-    const result = replyText(completion);
-    if (!result) return res.status(502).json({ error: CALL_FAIL_MSG });
-    await audit(req.userId, { actor: 'copiloto', category: 'consultar', action, authorized: true, level: 'info', detail: 'conteúdo não registrado no log' });
-    res.json({ action, result });
-  } catch (err) {
-    console.error('[copilot] falha na ação executiva:', err?.message);
-    res.status(502).json({ error: CALL_FAIL_MSG });
-  }
+  const reply = await askModel(req, provider, {
+    label: `acao:${action}`,
+    messages: buildExecutiveActionMessages(action, content, { characterName: await characterNameFor(req.userId) }),
+    temperature: 0.2,
+  });
+  if (!reply.ok) return res.status(reply.status).json(reply.body);
+  await audit(req.userId, { actor: 'copiloto', category: 'consultar', action, authorized: true, level: 'info', detail: 'conteúdo não registrado no log' });
+  res.json({ action, result: reply.text, ...fallbackNotice(provider) });
 });
 
 // ---- Revisão de escrita (balão proativo do avatar) --------------------------
@@ -357,22 +389,12 @@ router.post('/copilot/revise', async (req, res) => {
   const text = String(req.body?.text || '').trim();
   if (!text) return res.status(400).json({ error: 'Nada para revisar.' });
 
-  const provider = await resolveProvider(req.userId);
+  const provider = await resolveProvider(req);
   if (!provider.hasKey || !provider.client) return res.status(400).json({ error: NO_KEY_MSG });
 
-  let revised = '';
-  try {
-    const completion = await provider.client.chat.completions.create({
-      model: provider.model,
-      messages: buildReviseMessages(text),
-      temperature: 0.2,
-    });
-    revised = replyText(completion);
-  } catch (err) {
-    console.error('[copilot] falha na revisão:', err?.message);
-    return res.status(502).json({ error: CALL_FAIL_MSG });
-  }
-  if (!revised) return res.status(502).json({ error: CALL_FAIL_MSG });
+  const reply = await askModel(req, provider, { label: 'revisao', messages: buildReviseMessages(text), temperature: 0.2 });
+  if (!reply.ok) return res.status(reply.status).json(reply.body);
+  const revised = reply.text;
 
   let document = null;
   try {
@@ -386,7 +408,7 @@ router.post('/copilot/revise', async (req, res) => {
   } catch (err) {
     console.error('[copilot] não guardei o texto revisado:', err?.message);
   }
-  res.json({ revised, document });
+  res.json({ revised, document, ...fallbackNotice(provider) });
 });
 
 // ---- Caixa de documentos ----------------------------------------------------

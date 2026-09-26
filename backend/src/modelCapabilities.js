@@ -356,6 +356,17 @@ export async function clearModelToolCapabilityCache(providerId, model) {
   } catch { return false; }
 }
 
+// Ação e alvo precisam ser palavras DIFERENTES: "teste" está nas duas listas
+// ("teste o código" / "crie um teste"), e sozinho satisfazia as duas — "Olá,
+// teste de tela" virava tarefa obrigatória de ferramenta e a resposta comum
+// terminava em "Não consegui concluir esta execução".
+function actionWithTarget(text) {
+  const action = TOOL_ACTION_RE.exec(text);
+  if (!action) return false;
+  const rest = text.slice(0, action.index) + ' ' + text.slice(action.index + action[0].length);
+  return TOOL_TARGET_RE.test(rest);
+}
+
 export function detectToolRequirement({ userText, webSearch = false, developer = false, hasUploads = false } = {}) {
   const reasons = [];
   const text = normalizedText(userText);
@@ -367,7 +378,7 @@ export function detectToolRequirement({ userText, webSearch = false, developer =
   if (webSearch) reasons.push('a pesquisa na internet ativada');
   if (developer) reasons.push('o modo desenvolvedor');
   if (hasUploads && UPLOAD_REFERENCE_RE.test(text)) reasons.push('a leitura dos arquivos anexados');
-  if (!textOnly && ((TOOL_ACTION_RE.test(text) && TOOL_TARGET_RE.test(text)) || DIRECT_DELIVERY_RE.test(text))) {
+  if (!textOnly && (actionWithTarget(text) || DIRECT_DELIVERY_RE.test(text))) {
     reasons.push('a criação ou o processamento solicitado');
   }
   return { required: reasons.length > 0, reasons, expectsOutput };
@@ -420,13 +431,13 @@ export function buildModelRuntimeState(input = {}) {
 export function modelCompatibilityMessage(plan) {
   const name = plan?.profile?.name || plan?.profile?.id || 'Este modelo';
   if (plan?.blocked?.capability === 'text') {
-    return `O modelo **${name}** nao esta catalogado para conversa em texto. Escolha um modelo marcado como **Texto** para continuar esta conversa.`;
+    return `O modelo **${name}** não está catalogado para conversa em texto. Escolha um modelo marcado como **Texto** para continuar esta conversa.`;
   }
   if (plan?.blocked?.capability === 'tools') {
     const reason = plan.requirements?.reasons?.[0] || 'esta tarefa';
-    return `O modelo **${name}** conversa por texto, mas nao oferece **ferramentas** neste ambiente. Para ${reason}, escolha um modelo marcado com **Ferramentas** e envie este mesmo pedido novamente.`;
+    return `O modelo **${name}** conversa por texto, mas não oferece **ferramentas** neste ambiente. Para ${reason}, escolha um modelo marcado com **Ferramentas** e envie este mesmo pedido novamente.`;
   }
-  return `O modelo **${name}** nao oferece a capacidade necessaria para esta tarefa.`;
+  return `O modelo **${name}** não oferece a capacidade necessária para esta tarefa.`;
 }
 
 function errorText(error) {

@@ -203,3 +203,13 @@ test('recognizes provider vision errors for the OCR fallback', () => {
   assert.equal(isUnsupportedVisionError(new Error('This model does not support image messages')), true);
   assert.equal(isUnsupportedVisionError(new Error('Rate limit exceeded')), false);
 });
+
+// Regressão: "teste" está na lista de ações E na de alvos; sozinho, satisfazia
+// as duas e uma saudação virava tarefa obrigatória de ferramenta.
+test('uma única palavra não conta como ação e alvo ao mesmo tempo', () => {
+  assert.equal(detectToolRequirement({ userText: 'Olá, teste de tela' }).required, false);
+  assert.equal(detectToolRequirement({ userText: 'teste' }).required, false);
+  assert.equal(detectToolRequirement({ userText: 'Crie um teste para o login' }).required, true);
+  assert.equal(detectToolRequirement({ userText: 'Teste o código do backend' }).required, true);
+  assert.equal(detectToolRequirement({ userText: 'Rode os testes do projeto' }).required, true);
+});

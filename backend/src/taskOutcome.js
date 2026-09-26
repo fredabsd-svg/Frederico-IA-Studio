@@ -1,11 +1,12 @@
 const FALLBACK_MESSAGES = {
-  compatibility: 'A tarefa nao pode ser executada pelo modelo selecionado.',
-  provider: 'O provedor do modelo interrompeu a tarefa antes da conclusao.',
+  compatibility: 'A tarefa não pode ser executada pelo modelo selecionado.',
+  configuration: 'Nenhum provedor de IA utilizável para esta tarefa. Configure uma chave em Configurações › Provedor de IA.',
+  provider: 'O provedor do modelo interrompeu a tarefa antes da conclusão.',
   incomplete: 'A tarefa terminou sem concluir o resultado solicitado.'
 };
 
-// A resposta do agente e rica para o chat, mas a fila precisa de um estado
-// objetivo para nao chamar de "concluida" uma tarefa que terminou em erro.
+// A resposta do agente é rica para o chat, mas a fila precisa de um estado
+// objetivo para não chamar de "concluída" uma tarefa que terminou em erro.
 export function classifyTaskResult(result = {}) {
   if (result.stopped) {
     return { status: 'canceled', progress: 'Cancelada', error: null };
@@ -20,8 +21,18 @@ export function classifyTaskResult(result = {}) {
   if (result.compatibility) {
     return {
       status: 'error',
-      progress: 'Modelo incompativel',
+      progress: 'Modelo incompatível',
       error: result.failureMessage || FALLBACK_MESSAGES.compatibility
+    };
+  }
+  // Dependência ausente (sem chave/provedor utilizável para o modelo) é falha
+  // do AMBIENTE, nunca "concluída" (Regra 4.2): a resposta orienta o usuário,
+  // mas a tarefa não foi feita.
+  if (result.configurationError) {
+    return {
+      status: 'error',
+      progress: 'Provedor não configurado',
+      error: result.failureMessage || FALLBACK_MESSAGES.configuration
     };
   }
   if (result.providerFailure) {
@@ -34,7 +45,7 @@ export function classifyTaskResult(result = {}) {
   if (result.incomplete) {
     return {
       status: 'error',
-      progress: 'Nao concluida',
+      progress: 'Não concluída',
       error: result.failureMessage || FALLBACK_MESSAGES.incomplete
     };
   }

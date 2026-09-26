@@ -11,7 +11,7 @@ test('marks a stopped task as canceled', () => {
 test('does not report a compatibility refusal as success', () => {
   const outcome = classifyTaskResult({ compatibility: 'tools' });
   assert.equal(outcome.status, 'error');
-  assert.equal(outcome.progress, 'Modelo incompativel');
+  assert.equal(outcome.progress, 'Modelo incompatível');
 });
 
 test('does not report an exhausted provider retry as success', () => {
@@ -26,7 +26,7 @@ test('marks a missing generated file as an incomplete execution', () => {
     failureMessage: 'A tarefa solicitou um arquivo, mas nenhum arquivo foi criado.'
   });
   assert.equal(outcome.status, 'error');
-  assert.equal(outcome.progress, 'Nao concluida');
+  assert.equal(outcome.progress, 'Não concluída');
   assert.match(outcome.error, /nenhum arquivo/i);
 });
 
@@ -60,4 +60,16 @@ test('awaiting_user tem precedência sobre incomplete (não emite execution_fail
 test('cancelamento continua vencendo awaiting_user', () => {
   const outcome = classifyTaskResult({ stopped: true, execution: { state: 'awaiting_user' } });
   assert.equal(outcome.status, 'canceled');
+});
+
+// Dependência ausente (conta sem chave para o modelo) é falha do ambiente:
+// antes o resultado vinha sem marca nenhuma e a tarefa agendada ficava
+// "Concluida" (Regra 4.2).
+test('provedor não configurado é erro, nunca "Concluida"', () => {
+  const outcome = classifyTaskResult({ text: 'Nenhuma chave de API configurada.', configurationError: true });
+  assert.equal(outcome.status, 'error');
+  assert.equal(outcome.progress, 'Provedor não configurado');
+  assert.match(outcome.error, /provedor/i);
+  const comMensagem = classifyTaskResult({ configurationError: true, failureMessage: 'O modelo "x" não está no catálogo.' });
+  assert.equal(comMensagem.error, 'O modelo "x" não está no catálogo.');
 });

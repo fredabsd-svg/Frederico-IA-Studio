@@ -4,6 +4,7 @@ import { encryptSecret, decryptSecret, maskSecret } from '../crypto.js';
 import { getUserProvider } from '../userProvider.js';
 import { enrichProviderCatalog, fetchProviderBalance, importProviderCatalog, normalizeProviderType, providerPublicMetadata, PROVIDER_PRESETS } from '../providerCatalog.js';
 import { modelProfileFromProvider } from '../modelCapabilities.js';
+import { applyImportedCatalog } from '../catalogSync.js';
 import { makeRouter } from './helpers.js';
 
 const router = makeRouter();
@@ -141,11 +142,15 @@ router.post('/providers/:id/refresh', async (req, res) => {
   try {
     const automatic = req.body?.automatic === true;
     const checked = await validateBody({}, existing, { automatic });
+    // O catálogo passa pelo caminho único do catalogSync (mescla preservando o
+    // dado bom + histórico de mudanças) — antes o "atualizar" do cartão
+    // gravava a resposta crua da API e não deixava rastro no histórico.
+    const { merged } = await applyImportedCatalog(existing, checked.models);
     const t = now();
     const balance = await balanceFor(checked);
-    await db.prepare('UPDATE user_ai_providers SET models=?,default_model=?,last_validated_at=?,updated_at=?,balance_info=?,balance_checked_at=?,last_sync_status=?,last_sync_error=? WHERE id=? AND user_id=?')
-      .run(JSON.stringify(checked.models), checked.defaultModel || null, t, t, JSON.stringify(balance), t, 'ok', null, existing.id, req.userId);
-    res.json({ ok: true, imported: checked.models.length });
+    await db.prepare('UPDATE user_ai_providers SET default_model=?,updated_at=?,balance_info=?,balance_checked_at=? WHERE id=? AND user_id=?')
+      .run(checked.defaultModel || null, t, JSON.stringify(balance), t, existing.id, req.userId);
+    res.json({ ok: true, imported: merged.length });
   } catch (error) {
     await db.prepare('UPDATE user_ai_providers SET last_sync_status=?,last_sync_error=?,updated_at=? WHERE id=? AND user_id=?')
       .run('error', String(error?.message || '').slice(0, 300), now(), existing.id, req.userId).catch(() => {});

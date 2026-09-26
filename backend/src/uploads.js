@@ -78,6 +78,44 @@ export const upload = multer({
   }
 });
 
+// ---- Erros do multer -> resposta HTTP ---------------------------------------
+// Quando um teto do multer estoura (arquivo grande demais, arquivos demais,
+// campo inesperado), ele chama next(err) com um MulterError. Sem este
+// mapeamento, o tratador global respondia 500 "Erro interno" — o cliente não
+// sabia que era LIMITE — e o parcial gravado em disco ficava no staging até a
+// varredura horária. Regra 4.4: limite de upload = 413; pedido malformado = 400.
+const MULTER_MESSAGES = {
+  LIMIT_FILE_SIZE: () => `Um dos arquivos passa do limite de ${Math.round(UPLOAD_LIMITS.maxFileBytes / MB)} MB por arquivo.`,
+  LIMIT_FILE_COUNT: () => `Envie no máximo ${UPLOAD_LIMITS.maxFiles} arquivos por vez.`,
+  LIMIT_UNEXPECTED_FILE: () => 'Campo de arquivo inesperado neste envio.',
+  LIMIT_PART_COUNT: () => 'O envio tem partes demais.',
+  LIMIT_FIELD_KEY: () => 'Nome de campo longo demais no envio.',
+  LIMIT_FIELD_VALUE: () => 'Um dos campos do envio passa do tamanho permitido.',
+  LIMIT_FIELD_COUNT: () => 'O envio tem campos demais.',
+  MISSING_FIELD_NAME: () => 'Campo do envio sem nome.'
+};
+const MULTER_BAD_REQUEST = new Set(['LIMIT_FILE_COUNT', 'LIMIT_UNEXPECTED_FILE', 'MISSING_FIELD_NAME']);
+
+// PURA: devolve { status, body } para um erro do multer, ou null quando o erro
+// não é do multer (o chamador segue o tratamento genérico).
+export function uploadErrorResponse(err) {
+  if (!(err instanceof multer.MulterError) && !(err?.name === 'MulterError' && typeof err?.code === 'string')) return null;
+  const code = String(err.code || '');
+  const status = MULTER_BAD_REQUEST.has(code) ? 400 : (code.startsWith('LIMIT_') ? 413 : 400);
+  const message = (MULTER_MESSAGES[code] || (() => 'Envio de arquivo inválido.'))();
+  return { status, body: { error: message, code: `upload_${code.toLowerCase()}` } };
+}
+
+// Middleware de erro (4 argumentos) para montar ANTES do tratador global:
+// responde o erro do multer com o status certo e SEMPRE limpa o staging.
+export function uploadErrorHandler(err, req, res, next) {
+  const mapped = uploadErrorResponse(err);
+  if (!mapped) return next(err);
+  cleanupRequestUploads(req);
+  if (res.headersSent) return res.end();
+  return res.status(mapped.status).json(mapped.body);
+}
+
 // Remove todo o staging da requisição. Idempotente; nunca lança.
 export function cleanupRequestUploads(req) {
   const stage = req?._uploadStage;

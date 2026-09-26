@@ -15,7 +15,7 @@
 | Usuário → usuário | Toda query escopada por `user_id`; workspace físico e sandbox escopados pelo dono (§3). |
 | Backend → sandbox | Container sem privilégios, sem rede por padrão (§4). |
 | Sandbox → host | Único ponto de contato: o bind do próprio workspace. |
-| Backend → internet | Bloqueio de SSRF em `web_fetch` (§6). |
+| Backend → internet | Bloqueio de SSRF em `web_fetch` e na URL base de provedor BYOK (§6). |
 
 ---
 
@@ -56,8 +56,13 @@ Três camadas independentes — nenhuma delas é a única barreira:
 Ação de um usuário **não** afeta outro: `destroySandboxesForUser()` substituiu o
 `destroyAllSandboxes()` global que era disparado ao mexer nas pastas do PC (F-02).
 
-Provas: `backend/src/sandbox.isolation.test.js` (11 casos) e
-`backend/src/routes/upload.http.test.js` (upload real de dois usuários).
+**Posse antes de estado:** rotas que respondem 409 por "conversa processando"
+(`/chat`, `/truncate`, `POST /tasks`) conferem o dono **primeiro** — conversa alheia
+responde 404, nunca 409 (que revelaria que ela existe e está ativa).
+
+Provas: `backend/src/sandbox.isolation.test.js` (11 casos),
+`backend/src/routes/upload.http.test.js` (upload real de dois usuários) e
+`backend/src/routes/conversations.auditoria.http.test.js` (404 x 409).
 
 ---
 
@@ -188,6 +193,15 @@ modo gratuito e na configuração global do Docling. Nada disso deixava registro
 Trocar o e-mail da conta administrativa **não** perde o papel; criar outra conta com o mesmo
 e-mail **não** ganha o papel. Provas em `backend/src/routes/admin.test.js`.
 
+**Configurações globais são administrativas** (auditoria 2026-09): `PUT /api/memory-config`
+(orçamento de contexto, memórias por resposta, extração automática) e `PUT
+/api/sandbox-config` (política de rede do código executado — lida pelo agente de **todos**
+os usuários) passam por `requireAdmin` e ficam em `admin_audit`. Antes, qualquer conta
+logada as alterava. Os valores têm faixa (`memoryService.SETTINGS_LIMITS`): números fora
+dela são grampeados na escrita **e** na leitura; texto/objeto ou política fora de 0/1/2
+responde 400. A leitura (`GET`) continua livre. Provas em
+`backend/src/routes/memories.http.test.js`.
+
 Para transferir o papel: `DELETE FROM user_roles WHERE role='admin';` e reivindicar de novo,
 ou inserir a linha do novo administrador diretamente.
 
@@ -204,6 +218,21 @@ ou inserir a linha do novo administrador diretamente.
 
 Resta a janela TOCTOU entre resolver e conectar — mitigação padrão do ecossistema.
 Testes: `backend/src/tools.ssrf.test.js`.
+
+**URL base de provedor BYOK** (`providerCatalog.js → assertProviderUrlAllowed`, auditoria
+2026-09): o backend faz requisições **autenticadas** à URL que o usuário digita (GET
+`/models`, saldo, validação por chat). Antes só o esquema era conferido — qualquer conta
+apontava para `169.254.169.254`, `postgres:5432` ou o `docker-guard` e lia o corpo do erro
+devolvido. Agora, antes de **qualquer** requisição: `isBlockedHost` no nome, resolução de DNS
+e conferência de **cada IP**; redirecionamento não é seguido (`redirect: 'manual'`) e, se o
+`/models` redirecionar, o fallback de validação pelo SDK (que seguiria o 30x) **não** roda;
+o corpo de erro do provedor chega ao usuário só como frase curta, sem tags nem quebras
+(`sanitizeUpstreamDetail`, 160 caracteres). Endpoint local legítimo (Ollama/LM Studio)
+exige opt-in do operador: `PROVIDER_ALLOW_PRIVATE_URLS=true` — e mesmo assim link-local
+(`169.254.0.0/16`, `fe80::/10`) segue bloqueado. Testes: `backend/src/providerCatalog.test.js`.
+**Resíduo:** as chamadas de chat pelo SDK (`aiClient.js`) não revalidam o DNS a cada
+requisição nem desligam redirecionamentos — a guarda vale no cadastro/atualização do
+provedor.
 
 O **navegador headless** do backend (miniatura de página do `web_fetch` e
 impressão em PDF do Modo Design) passa pela mesma guarda: `guardRoute` em
@@ -247,6 +276,74 @@ Ver `docs/OPERATIONS.md` §3 para os limites. Política do antivírus:
 Regra inegociável: **um arquivo nunca é apresentado como verificado se não foi analisado.**
 `/api/health` expõe a política vigente, se houve degradação e o horário do último erro.
 Arquivo infectado é apagado do disco imediatamente.
+
+**Quarentena** (modo degradado): o arquivo vai para `uploads/.quarantine/` e ganha linha em
+`quarantined_uploads` **antes** de a resposta sair (o INSERT é aguardado; falha nele é 500,
+nunca "salvo"). Enquanto estiver lá, ele **não é anexo**: `validateAttachmentManifest`
+recusa qualquer caminho dentro de `.quarantine/` (ou com componente oculto), então um
+cliente que mande esse caminho no manifesto recebe 409 `attachments_not_ready` e o
+conteúdo não chega à IA nem ao sandbox. O re-escaneamento (`reprocessQuarantine`) resolve
+o caminho **dentro do workspace do dono** (antes resolvia relativo ao cwd do processo e
+nenhum item saía da quarentena), recusa `storage_path` fora de `uploads/.quarantine/` e,
+se limpo, libera o arquivo para `uploads/` com o mesmo nome opaco. Provas em
+`backend/src/attachments.test.js`, `backend/src/clamav.quarantine.test.js` e
+`backend/src/routes/conversations.auditoria.http.test.js`.
+
+Limites do multer (arquivo grande demais, arquivos demais, campo inesperado) respondem
+413/400 com mensagem útil e o staging é removido (`uploads.js → uploadErrorHandler`);
+antes viravam 500 e o parcial ficava em disco até a varredura horária.
+
+---
+
+## 7.1 Modo gratuito — a chave da plataforma
+
+A chave do modo gratuito (`FREE_TIER_API_KEY`) é da **plataforma**: todo uso dela passa por
+limite diário/por minuto, bloqueio por abuso, fila global e contabilidade
+(`free_tier_usage`/`free_tier_events`). A decisão "esta execução usa a chave gratuita?" é
+tomada pelos **mesmos modelos que o runner vai resolver** (`userProvider.resolveFreeUsage`):
+modelo pedido, modelo do assistente, cada membro do multimodelo/equipe e o coordenador.
+
+Antes (auditoria 2026-09), a rota decidia pelo provedor **padrão** da conta: quem tinha chave
+própria e escolhia `free::X` no seletor usava a chave da plataforma sem limite, fila nem
+registro. Os mesmos portões agora valem em `POST /chat`, nas duas formas de `POST /resume`
+(a retomada de pipeline também ganhou o teto de execuções simultâneas e recusa **antes** do
+SSE, com status HTTP real), na fila de tarefas em segundo plano (`routes/tasks.js`) e nas
+chamadas **avulsas** ao provedor — Modo Design (`design/generate.js`) e as quatro rotas do
+copiloto que chamam o modelo (`POST /copilot/chat`, `/copilot/actions/summary`,
+`/copilot/tools/executive-action`, `/copilot/revise`). As avulsas usam um portão único,
+`backend/src/freeTierGate.js`: recusa **antes** da chamada (403 `free_blocked`; 429 com
+`code` `free_limit`/`free_minute`/`free_disabled`/`free_queue_full`), vaga na fila, e toda
+chamada que chegou ao provedor conta no limite (`total_tokens`) e vira evento. A rota do Modo
+Design repassa esse status (antes trocava tudo por 502).
+
+Onde não há como contabilizar, a chave da plataforma **não** é usada:
+
+- a extração automática de fatos da memória (pós-resposta e importação, `memory/indexer.js`)
+  é **pulada** quando o provedor resolvido é o gratuito — os trechos (embeddings locais)
+  seguem salvos e a importação informa `factsSkipped: 'free_mode'`;
+- a cadeia de failover do runner descarta referências `free::` de `MODEL_FALLBACKS` quando o
+  run não está no modo gratuito (`buildFallbackChain` em `agent/loop.js`).
+
+Quando o provedor pedido está sem chave legível e o modo gratuito assume, a troca é
+**explícita** (Regra 5.5): `getUserProvider` devolve `fallback: { to: 'free', reason,
+message }`, o usuário é avisado uma vez no stream (rota ou runner), o `execution_meta` da
+resposta grava `providerFallback` e a execução conta no limite gratuito. O copiloto devolve o
+mesmo aviso no campo `providerFallback` da resposta JSON.
+
+Provas: `backend/src/userProvider.freeUsage.test.js`,
+`backend/src/routes/conversations.auditoria.http.test.js`,
+`backend/src/design/generate.freeTier.test.js`, `backend/src/routes/design.freeTier.http.test.js`,
+`backend/src/routes/copilot.freeTier.http.test.js`, `backend/src/memory/indexer.freeMode.test.js`
+e `backend/src/agent/loop.providerFallback.test.js`.
+
+### Mensagens de erro ao usuário
+
+`friendlyApiError` (`agent/provider.js`) não ecoa texto interno: erro **sem** status HTTP de
+provedor (banco, disco, bug) vira mensagem genérica — só conexão/timeout têm texto próprio — e
+o texto que o provedor devolve passa por `sanitizeUpstreamDetail` (`backend/src/upstreamDetail.js`:
+sem HTML/controle, com teto, mascarando `sk-…`/`Bearer …`). Erro do próprio app escrito para o
+usuário marca `userFacing = true`. Prova: `backend/src/agent/providerError.test.js` (casos
+adversariais de erro do Postgres, caminho de arquivo e chave ecoada).
 
 ---
 

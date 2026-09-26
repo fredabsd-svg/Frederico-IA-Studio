@@ -50,8 +50,13 @@ async function seedAssistants(userId) {
     { name: 'Programação (Codex)', emoji: 'code-2', prompt: AGENTS.codigo.prompt }
   ];
   const stmt = db.prepare('INSERT INTO assistants (id,user_id,name,emoji,model,model_ref,system_prompt,tools,personality,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)');
-  const t = now();
-  for (const d of defaults) await stmt.run(nanoid(), userId, d.name, d.emoji, model, modelRef, d.prompt, DEFAULT_TOOLS_JSON, JSON.stringify({ form: 50, det: 50, criat: 20 }), t, t);
+  // Um milissegundo de diferença entre eles: com o MESMO created_at, a ordem da
+  // lista (e o assistente pré-selecionado numa conta nova) ficava ao acaso.
+  const base = Date.now();
+  for (const [i, d] of defaults.entries()) {
+    const t = new Date(base + i).toISOString();
+    await stmt.run(nanoid(), userId, d.name, d.emoji, model, modelRef, d.prompt, DEFAULT_TOOLS_JSON, JSON.stringify({ form: 50, det: 50, criat: 20 }), t, t);
+  }
 }
 
 // Cria o assistente "Documentos profissionais" deste usuário com o prompt

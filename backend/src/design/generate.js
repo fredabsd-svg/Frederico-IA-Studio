@@ -4,6 +4,7 @@
 // tenha um contrato só: `{ ok, content, usage, model }` ou `{ ok:false, error }`
 // com mensagem já escrita para o usuário. Nada aqui toca o banco.
 import { getUserProvider } from '../userProvider.js';
+import { openFreeTierGate } from '../freeTierGate.js';
 import { buildGenerateMessages, extractArtifact, MAX_EDIT_CONTEXT_CHARS } from './core.js';
 
 // Teto de saída. Vários provedores compatíveis com a OpenAI default para 4096
@@ -29,6 +30,17 @@ export async function generateArtifact({
   const provider = await getUserProvider(userId, model);
   if (!provider.hasKey || !provider.client) return { ok: false, error: NO_KEY_MSG };
 
+  // MODO GRATUITO: o Modo Design usa a chave da PLATAFORMA quando o modelo do
+  // projeto é "free::…" (ou quando o provedor pedido ficou sem chave). Antes
+  // esta chamada não passava por limite, fila nem contabilidade — gerar
+  // designs era um jeito de gastar a chave da casa sem teto nenhum. Valem os
+  // mesmos portões do chat (portão compartilhado: freeTierGate.js).
+  let gate = null;
+  if (provider.source === 'free') {
+    gate = await openFreeTierGate({ userId, model: provider.model, label: 'design' });
+    if (!gate.ok) return { ok: false, status: gate.status, code: gate.code, error: gate.error, resetAt: gate.resetAt };
+  }
+
   const messages = buildGenerateMessages({ outputType, prompt, current, designSystem, history, target });
 
   let completion;
@@ -39,12 +51,20 @@ export async function generateArtifact({
     );
   } catch (err) {
     console.error('[design] falha na geração:', err?.message);
+    await gate?.failed(err);
     const status = err?.status || err?.response?.status;
     if (status === 401 || status === 403) {
       return { ok: false, error: `A chave do provedor ${provider.providerName || ''} foi recusada. Confira em Configurações › Provedor de IA.`.replace('  ', ' ') };
     }
     return { ok: false, error: 'Não consegui falar com o provedor de IA agora. Tente de novo em instantes.' };
+  } finally {
+    gate?.release?.();
   }
+
+  // A chamada ao provedor aconteceu: no modo gratuito ela CONTA no limite
+  // diário mesmo que o artefato venha cortado ou inválido logo abaixo — o
+  // consumo da chave da plataforma já ocorreu.
+  await gate?.succeeded(completion);
 
   const choice = completion?.choices?.[0];
   const raw = String(choice?.message?.content || '').trim();

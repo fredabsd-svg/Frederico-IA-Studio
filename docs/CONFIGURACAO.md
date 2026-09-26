@@ -61,7 +61,9 @@ próprio (proíbe revenda direta de acesso à API e multi-contas para burlar lim
 a cota é por conta: ~50 req/dia, ou ~1.000 req/dia após uma compra única de US$ 10).
 Alguns provedores **proíbem** servir usuários finais no nível gratuito (ex.: NVIDIA
 NIM, Cohere trial, GitHub Models) — não os use como `FREE_TIER_BASE_URL`. Modelos
-locais (Ollama em `http://host:11434/v1`) também funcionam, sem termos de terceiros.
+locais (Ollama em `http://host:11434/v1`) também funcionam, sem termos de terceiros
+(como provedor **do usuário**, um endpoint local exige `PROVIDER_ALLOW_PRIVATE_URLS=true`
+— ver "Roteamento dos modelos").
 
 **Privacidade:** muitos modelos gratuitos registram/treinam com os prompts. Se
 ativar o modo gratuito num site público, reflita isso na sua Política de Privacidade.
@@ -76,6 +78,7 @@ ativar o modo gratuito num site público, reflita isso na sua Política de Priva
 | `OPENROUTER_QUANTIZATIONS` | `fp8,fp16,bf16,fp32,unknown` | Precisões aceitas. O padrão exclui só a compressão agressiva (`int4/int8/fp4/fp6`), onde a qualidade cai. Use `bf16,fp16,fp32` para exigir precisão cheia, ou `off` para desligar o filtro |
 | `OPENROUTER_ALLOW_FALLBACKS` | ligado | Reroteia entre provedores da faixa permitida se o preferido cair. `0` trava no preferido (erro em vez de troca silenciosa) |
 | `MODEL_FALLBACKS` | — | Modelos de reserva (em ordem) para failover automático |
+| `PROVIDER_ALLOW_PRIVATE_URLS` | `false` | Libera URL base de provedor na rede interna/local (Ollama, LM Studio, vLLM). Desligado, a URL base é conferida contra loopback, redes privadas, link-local e `.local`/`.internal` — inclusive depois de resolver o DNS — e recusada (proteção contra SSRF; ver `docs/SECURITY.md` §6). Ligue **só** em instalação pessoal/confiável. Link-local (`169.254.x`, metadados de nuvem) fica bloqueado mesmo ligado |
 
 **Resolução de modelo por provedor (`backend/src/userProvider.js`).** Cada
 chamada carrega a referência `<providerId>::<modelo>` (forma interna). O
