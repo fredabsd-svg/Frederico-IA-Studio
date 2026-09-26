@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   evaluateRequest, validateCreate, stripApiVersion,
-  normalizeHostPath, isInsideRoot, isForbiddenSource, bindSource,
+  normalizeHostPath, isInsideRoot, isForbiddenSource, bindSource, isRootUser,
   APP_LABEL, APP_LABEL_VALUE
 } from './policy.js';
 
@@ -253,6 +253,10 @@ test('operações sobre recurso específico pedem checagem de posse', () => {
 test('exec privilegiado ou como root é recusado', () => {
   assert.equal(evaluateRequest({ method: 'POST', path: '/containers/abc/exec', body: { Privileged: true } }, limits).allow, false);
   assert.equal(evaluateRequest({ method: 'POST', path: '/containers/abc/exec', body: { User: 'root' } }, limits).allow, false);
+  // UID 0 numérico, com grupo, com zeros à esquerda ou em maiúsculas também é root.
+  for (const User of ['0', '0:0', '00', '0:1000', ' 0 ', 'ROOT', 'root:root']) {
+    assert.equal(evaluateRequest({ method: 'POST', path: '/containers/abc/exec', body: { User } }, limits).allow, false, `exec com User ${JSON.stringify(User)} tem de ser recusado`);
+  }
   assert.equal(evaluateRequest({ method: 'POST', path: '/containers/abc/exec', body: { User: 'sandbox' } }, limits).allow, true);
 });
 
@@ -364,4 +368,19 @@ test('o socket do Docker é barrado mesmo se a raiz o contiver', () => {
   const raizAbsurda = { ...limits, workspaceRoot: '/var/run' };
   const corpo = corpoLegitimo({}, { Binds: ['/var/run/docker.sock:/workspace'] });
   assert.equal(validateCreate(corpo, raizAbsurda).allow, false);
+});
+
+test('isRootUser reconhece root por nome e por UID, sem falso positivo', () => {
+  for (const u of ['root', 'ROOT', 'root:root', '0', '00', '0:0', '0:1000', ' 0 ']) assert.equal(isRootUser(u), true, u);
+  for (const u of ['sandbox', '1000', '1000:1000', '10', '100', 'rootless', '', undefined, null]) assert.equal(isRootUser(u), false, String(u));
+});
+
+test('criar o container como root é recusado (o exec herdaria root)', () => {
+  for (const User of ['root', '0', '0:0']) {
+    const r = validateCreate({ ...corpoLegitimo(), User }, limits);
+    assert.equal(r.allow, false, `create com User ${User} tem de ser recusado`);
+    assert.match(r.reason, /root/);
+  }
+  assert.equal(validateCreate({ ...corpoLegitimo(), User: 'sandbox' }, limits).allow, true);
+  assert.equal(validateCreate(corpoLegitimo(), limits).allow, true, 'sem User = usuário da imagem');
 });

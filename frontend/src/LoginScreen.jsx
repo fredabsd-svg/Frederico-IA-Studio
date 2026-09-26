@@ -32,10 +32,15 @@ export function LoginScreen({ initialMode = 'login', onBack = null }) {
   async function submit(e) {
     e.preventDefault();
     setError('');
+    // O aceite é conferido ANTES de marcar ocupado: a recusa é imediata e o
+    // botão não pisca "Criando conta…" por um pedido que nem sai do navegador.
+    if (mode === 'signup' && !consent) {
+      setError('Para criar a conta, é preciso ler e concordar com os Termos de Uso e a Política de Privacidade.');
+      return;
+    }
     setBusy(true);
     try {
       if (mode === 'signup') {
-        if (!consent) { setError('Para criar a conta, é preciso ler e concordar com os Termos de Uso e a Política de Privacidade.'); return; }
         const { error } = await signUp.email({ email, password, name: name.trim() || email.split('@')[0] });
         if (error) { setError(traduzErroAuth(error)); return; }
         // Registra o aceite no servidor (evidência LGPD) — a sessão já existe.

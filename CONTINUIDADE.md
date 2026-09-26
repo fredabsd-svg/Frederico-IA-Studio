@@ -8,9 +8,13 @@
 
 ## Estado atual
 
-**Última frente (esta entrega, 2026-09-26):** revisão completa do app — remendos
-removidos, bugs corrigidos em todas as telas, system prompts e seletores de modelo.
-Detalhes no PR e em `docs/CHANGELOG_HISTORY.md` (entrada de 2026-09-26).
+**Última frente (2026-09-26):** docker-guard recusa root por UID (`"0"`, `"0:0"`,
+`"00"`) no exec e na criação — antes só a string `"root"`; aproveitado do PR #209,
+que foi fechado por repetir o que o #210 já entregou com scripts de patch.
+
+**Frente anterior (PR #210, mesclado):** revisão completa do app — remendos
+removidos, bugs corrigidos em todas as telas, system prompts, seletores de modelo e
+novo sistema visual. Detalhes em `docs/CHANGELOG_HISTORY.md` (entradas de 2026-09-26).
 
 | Frente | Resultado |
 | --- | --- |
@@ -51,11 +55,13 @@ cliente (`/resume`), não automática no boot. Detalhes e frentes fechadas:
 
 ## Próximos passos (resumo)
 
-1. Frontend: exibir `execution_meta.providerFallback`/`modelSwap` como selo na mensagem e `factsSkipped` na importação de memória.
-2. Adotar ESLint só com `react-hooks` no `npm run check`.
-3. Frente 16 — popular `model_tool_capability_cache` com a sonda `--live`.
-4. Frente 13 (Design) — compartilhamento público da prévia por token.
-5. Frente 9 — desmontar o `App.jsx` (etapas 2–4).
+1. "Parar" com abort local do stream (ideia do #209): abortar só DEPOIS de o `/control` confirmar e recarregar a conversa do banco; E2E clicando em Parar no meio da resposta.
+2. README reduzido a porta de entrada honesta (selo "apto com restrições"), reescrito sobre o estado pós-#210.
+3. Frontend: exibir `execution_meta.providerFallback`/`modelSwap` como selo na mensagem e `factsSkipped` na importação de memória.
+4. Adotar ESLint só com `react-hooks` no `npm run check`.
+5. Frente 16 — popular `model_tool_capability_cache` com a sonda `--live`.
+6. Frente 13 (Design) — compartilhamento público da prévia por token.
+7. Frente 9 — desmontar o `App.jsx` (etapas 2–4).
 
 ## Como retomar
 

@@ -145,6 +145,32 @@ test('BLOQUEIO REAL: rotas perigosas não passam', async () => {
 
 // ---- Posse por label --------------------------------------------------------
 
+test('BLOQUEIO REAL: exec como root por UID ("0", "0:0", "00") nem chega ao daemon', async () => {
+  // A política só recusava a string "root"; UID 0 numérico passava direto e o
+  // comando rodava como root no sandbox. A recusa vem ANTES da checagem de
+  // posse, então nem a inspeção do container pode ter acontecido.
+  for (const User of ['root', '0', '0:0', '00']) {
+    recebidas.length = 0;
+    const r = await pedir('POST', '/v1.41/containers/sandbox-do-app/exec', { Cmd: ['id'], User });
+    assert.equal(r.status, 403, `exec com User ${User} tem de ser 403`);
+    assert.match(r.body, /root/);
+    assert.deepEqual(recebidas, [], `o daemon não pode ter visto o exec com User ${User}`);
+  }
+});
+
+test('exec como o usuário do sandbox continua chegando ao daemon', async () => {
+  recebidas.length = 0;
+  await pedir('POST', '/v1.41/containers/sandbox-do-app/exec', { Cmd: ['id'], User: 'sandbox' });
+  assert.ok(recebidas.some(x => x.includes('/containers/sandbox-do-app/exec')), 'o exec legítimo precisa passar');
+});
+
+test('BLOQUEIO REAL: criar container como root nem chega ao daemon', async () => {
+  recebidas.length = 0;
+  const r = await pedir('POST', '/v1.41/containers/create', { ...criacaoLegitima, User: '0' });
+  assert.equal(r.status, 403);
+  assert.deepEqual(recebidas, [], 'NENHUMA requisição pode ter chegado ao daemon');
+});
+
 test('POSSE: operar um container do app é permitido', async () => {
   const r = await pedir('POST', '/containers/sandbox-do-app/kill', {});
   assert.equal(r.status, 200);
