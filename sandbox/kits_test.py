@@ -175,5 +175,33 @@ class AuditoriaTests(unittest.TestCase):
                          ["pagina-vazia"])
 
 
+class EstruturaTests(unittest.TestCase):
+    """Quando o documento ganha capa — a regra é a mesma no Word e no PDF."""
+
+    def test_capa_automatica_so_em_documento_longo(self):
+        limiar = kits.MINIMO_SECOES_PARA_CAPA
+        self.assertIsNone(kits.decide_capa("faixa", None, 1))
+        self.assertIsNone(kits.decide_capa("faixa", None, limiar - 1))
+        self.assertEqual(kits.decide_capa("faixa", None, limiar), "faixa")
+        self.assertEqual(kits.decide_capa("simples", None, limiar + 3), "simples")
+
+    def test_pedido_explicito_vence_o_preset(self):
+        self.assertEqual(kits.decide_capa("faixa", True, 1), "faixa")
+        self.assertEqual(kits.decide_capa(None, True, 1), "simples")
+        self.assertEqual(kits.decide_capa("faixa", "simples", 1), "simples")
+        self.assertIsNone(kits.decide_capa("faixa", False, 10))
+
+    def test_preset_sem_capa_nunca_ganha_capa_sozinho(self):
+        self.assertIsNone(kits.decide_capa(None, None, 12))   # carta, sóbrio
+
+    def test_fechamento_automatico_acompanha_a_capa(self):
+        self.assertEqual(kits.decide_fechamento("faixa", None, True), "faixa")
+        self.assertIsNone(kits.decide_fechamento("faixa", None, False))
+        self.assertIsNone(kits.decide_fechamento("auto", None, True))
+        self.assertEqual(kits.decide_fechamento("faixa", "pagina", False), "pagina")
+        self.assertEqual(kits.decide_fechamento("auto", True, False), "faixa")
+        self.assertIsNone(kits.decide_fechamento("faixa", False, True))
+
+
 if __name__ == "__main__":
     unittest.main()

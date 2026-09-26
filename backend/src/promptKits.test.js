@@ -154,3 +154,42 @@ test('a seção de documentos entra com run_python e só com ele', async () => {
   assert.match(promptFor(null), /DOCUMENTOS PROFISSIONAIS/);
   assert.doesNotMatch(promptFor({ tools: ['consultar_cnpj'] }), /DOCUMENTOS PROFISSIONAIS/);
 });
+
+// Capa em TODO relatório: o preset gerencial punha capa de página inteira até
+// num resumo de duas seções, e o prompt reforçava ("capa ... sai do PRESET").
+// Desde os kits 2.1 a capa automática só entra em documento longo; o prompt
+// tem de ensinar a MESMA regra, com o MESMO limiar do código, e não pode
+// empurrar o modelo a forçar capa.
+test('o prompt ensina a regra da capa com o limiar do próprio kit', async () => {
+  const { readFileSync } = await import('node:fs');
+  const kits = readFileSync(path.join(aqui, '..', '..', 'sandbox', 'kits.py'), 'utf8');
+  const limiar = Number(kits.match(/^MINIMO_SECOES_PARA_CAPA = (\d+)/m)?.[1]);
+  assert.ok(limiar > 1, 'kits.py deveria declarar MINIMO_SECOES_PARA_CAPA');
+
+  const texto = await prompt();
+  assert.match(texto, new RegExp(`${limiar} ou mais títulos de 1º nível`),
+    'o prompt deve citar o mesmo limiar de seções que o kit usa');
+  assert.match(texto, /capa=True` só quando a pessoa pedir capa/,
+    'capa forçada só a pedido da pessoa');
+  assert.match(texto, /NÃO passe `capa=True`, não chame `r\.capa\(\)`/);
+  assert.match(texto, /Planilha não tem aba de capa/);
+  assert.doesNotMatch(texto, /\br\.capa\(\)\s*;|^\s*[rq]\.capa\(/m, 'nenhum exemplo chama capa() à mão');
+
+  const api = apiDosKits();
+  for (const alvo of ['Relatorio.__init__', 'RelatorioPDF.__init__']) {
+    for (const nome of ['capa', 'abertura']) {
+      assert.ok(api.assinaturas[alvo].includes(nome), `${alvo} deveria aceitar ${nome}=`);
+    }
+  }
+});
+
+// Os exemplos traziam "02 de setembro de 2026", "set/2026", "até 10/09/2026" e
+// "Palmas/TO": o modelo copiava a data e a cidade do exemplo para o documento
+// do cliente. Exemplo de data agora é de ano PASSADO (formato, não "hoje") e a
+// cidade vem de variável com dado real.
+test('os exemplos do prompt não trazem data de hoje nem cidade para copiar', async () => {
+  const texto = await prompt();
+  assert.doesNotMatch(texto, /\b20(2[6-9]|[3-9]\d)\b/, 'nenhum ano corrente ou futuro nos exemplos');
+  assert.doesNotMatch(texto, /Palmas\/TO/);
+  assert.doesNotMatch(texto, /000000|00\.000\.000\/0001-00/, 'nada de registro zerado para copiar');
+});

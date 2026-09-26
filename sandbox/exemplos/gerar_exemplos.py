@@ -8,8 +8,9 @@ aceite — cada um sai com a `CONFERÊNCIA` limpa e sem os defeitos apontados:
 
     relatório  sumário com as páginas REAIS · tabela de 5 linhas inteira numa
                página · KPIs em UMA linha · PDF gêmeo com marcadores
-    proposta   3 páginas (capa, conteúdo, conteúdo + faixa) — sem página só de
-               sumário nem só de assinatura
+    proposta   2 páginas (cabeçalho + conteúdo, conteúdo + faixa) — três
+               seções não pedem capa (kits 2.1); sem página só de sumário nem
+               só de assinatura
     ata        NIRE inteiro numa linha · corpo justificado · zero cor
     planilha   impressão em UMA página de largura · filtro no cabeçalho · eixo
                do gráfico sem centavos · aba Notas por último

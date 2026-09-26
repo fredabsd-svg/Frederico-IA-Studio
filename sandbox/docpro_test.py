@@ -61,7 +61,7 @@ class DocProTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def _nu(self, *a, **k):
-        """Relatório SEM capa, sumário e fechamento automáticos.
+        """Relatório SEM capa, cabeçalho, sumário e fechamento automáticos.
 
         Os presets da v2 acrescentam esses blocos sozinhos; num teste que mede
         UM bloco (a aresta da tabela, a grade da linha do tempo) eles só entram
@@ -69,6 +69,7 @@ class DocProTests(unittest.TestCase):
         k.setdefault("capa", False)
         k.setdefault("sumario", False)
         k.setdefault("contracapa", False)
+        k.setdefault("abertura", False)
         return docpro.Relatorio(*(a or ("T",)), **k)
 
     def _relatorio(self):
@@ -516,6 +517,72 @@ class DocProTests(unittest.TestCase):
                         if titulo in docpro._sem_linhas_de_sumario(texto))
             self.assertEqual(declarada, real,
                              "o sumário diz %d para %r" % (declarada, titulo))
+
+    # ---------- 2.1: capa só em documento longo ----------
+    def _curto(self, preset="gerencial", secoes=("Resumo", "Números"), **kw):
+        r = docpro.Relatorio("Faturamento de agosto", cliente="ACME LTDA",
+                             emissor="Escritório", preset=preset, **kw)
+        for nome in secoes:
+            r.titulo(nome)
+            r.paragrafo("Conteúdo da seção %s com tamanho realista. " % nome * 4)
+        r.salvar(self.path, pdf=False)
+        return r, Document(self.path)
+
+    def test_relatorio_curto_nao_ganha_capa_e_abre_com_cabecalho(self):
+        """O defeito relatado: TODO relatório saía com capa de página inteira —
+        um resumo de duas seções virava duas páginas, a primeira só com o
+        título. Documento curto abre com cabeçalho na primeira página."""
+        for preset in ("gerencial", "parecer", "proposta"):
+            with self.subTest(preset=preset):
+                r, doc = self._curto(preset)
+                self.assertFalse(r._capa_feita, "documento de 2 seções não leva capa")
+                self.assertFalse(doc.sections[0].different_first_page_header_footer)
+                corpo = docpro.textos_do_docx(doc)
+                # O cabeçalho vem ANTES da primeira seção, na mesma página.
+                self.assertEqual(corpo[1], "Faturamento de agosto")
+                self.assertIn("Cliente: ACME LTDA", corpo[2])
+                self.assertIn("CONFIDENCIAL", corpo[2])
+                quebras = doc.element.body.xml.count('w:type="page"')
+                self.assertEqual(quebras, 0, "sem capa não pode haver quebra de página")
+                # O título do documento não é seção: fora do painel de navegação.
+                estilos = {p.style.name for p in doc.paragraphs
+                           if p.text == "Faturamento de agosto"}
+                self.assertNotIn("Heading 1", estilos)
+                # Fechamento automático acompanha a capa: sem capa, sem faixa.
+                self.assertFalse(r._contracapa_feita)
+
+    def test_relatorio_longo_continua_com_capa_e_sumario(self):
+        r, doc = self._curto("gerencial", secoes=("Resumo", "Receita", "Custos", "Riscos"))
+        self.assertTrue(r._capa_feita)
+        self.assertFalse(r._abertura_feita)
+        self.assertIn("Conteúdo deste documento", docpro.textos_do_docx(doc))
+
+    def test_capa_pedida_explicitamente_vence_o_limiar(self):
+        r, _ = self._curto("gerencial", capa=True)
+        self.assertTrue(r._capa_feita)
+        r, _ = self._curto("parecer", secoes=("A", "B", "C", "D", "E"), capa=False)
+        self.assertFalse(r._capa_feita)
+        self.assertTrue(r._abertura_feita, "sem capa, o título ainda precisa aparecer")
+
+    def test_carta_nao_ganha_cabecalho_de_relatorio(self):
+        c = docpro.Relatorio("Comunicado", emissor="Escritório", preset="carta")
+        c.paragrafo("Prezado cliente, segue a comunicação solicitada com tamanho realista.")
+        c.salvar(self.path, pdf=False)
+        self.assertFalse(c._abertura_feita)
+        self.assertNotIn("Comunicado", docpro.textos_do_docx(Document(self.path)))
+
+    @unittest.skipUnless(HAS_PDF, "LibreOffice/pypdf ausentes")
+    def test_relatorio_curto_cabe_numa_pagina(self):
+        """Medido no PDF gêmeo: antes eram 2 páginas (capa + conteúdo)."""
+        r = docpro.Relatorio("Faturamento de agosto", cliente="ACME LTDA",
+                             emissor="Escritório", subtitulo="Competência 08/2026")
+        r.titulo("Resumo")
+        r.paragrafo("O faturamento do mês fechou acima da média do trimestre. " * 3)
+        r.tabela(["Cliente", "Valor"], [["Alfa", 12000], ["Beta", 8000]],
+                 moeda=["Valor"], total="soma")
+        rel = r.salvar(self.path)
+        self.assertTrue(rel["ok"], rel["achados"])
+        self.assertEqual(rel["paginas"], 1)
 
     @unittest.skipUnless(HAS_PDF, "LibreOffice/pypdf ausentes")
     def test_sumario_com_poucas_entradas_nao_ganha_pagina_propria(self):

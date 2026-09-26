@@ -1,6 +1,6 @@
 """pdfpro — motor de layout profissional para PDF (.pdf) sobre reportlab.
 
-Instalado no sandbox do Frederico AI Studio. O objetivo deste módulo NÃO é
+Instalado no sandbox do Frederico IA Studio. O objetivo deste módulo NÃO é
 "ter alguns helpers bonitos": é ser a ÚNICA porta de entrada para gerar PDF,
 de modo que nenhum documento saia com os defeitos estruturais clássicos de
 quem desenha reportlab na mão (margens de tamanhos diferentes na mesma página,
@@ -129,7 +129,9 @@ CORES_GRAF = [colors.HexColor(c) for c in kits.CORES_GRAF]
 
 #: Registro por tipo de documento — o MESMO do docpro, para o modelo escolher o
 #: preset e não os blocos. `sobrio` existe só aqui (no Word ele é a classe
-#: `docpro.Sobrio`).
+#: `docpro.Sobrio`). `capa` é o ESTILO da capa quando ela entra — e ela só
+#: entra sozinha em documento longo (`kits.MINIMO_SECOES_PARA_CAPA`); o curto
+#: abre com cabeçalho na primeira página.
 PRESETS = {
     "gerencial": {"capa": "faixa", "sumario": "auto", "numeracao": "secao",
                   "corpo": "esquerda", "fechamento": "auto",
@@ -450,6 +452,9 @@ class _CanvasNumerado(_canvas.Canvas):
     fonte = FONTE
     fonte_bold = FONTE_BOLD
     confidencial = False
+    #: A página 1 leva rodapé? Não quando é capa; sim quando o documento abre
+    #: com o cabeçalho de abertura, que é página de conteúdo como as outras.
+    rodape_na_primeira = False
     #: Marcadores do outline: (página, nível, texto, chave). Reiniciada a
     #: cada `salvar()` — é atributo de CLASSE porque o platypus constrói o
     #: canvas por dentro e não dá para passar estado pelo construtor.
@@ -468,7 +473,7 @@ class _CanvasNumerado(_canvas.Canvas):
         nivel_anterior = -1
         for i, estado in enumerate(self._paginas):
             self.__dict__.update(estado)
-            if i > 0:  # a capa (página 1) não leva rodapé
+            if i > 0 or self.rodape_na_primeira:  # capa não leva rodapé; cabeçalho leva
                 self._rodape(i + 1, total)
             # Marcadores (outline) da página corrente: registrados AQUI, na
             # reemissão, porque é só agora que a página existe de verdade.
@@ -565,7 +570,8 @@ class RelatorioPDF:
     def __init__(self, caminho, titulo="Documento", cliente="", emissor="",
                  subtitulo="", tipo=None, data_str=None, cor_marca=None,
                  estilo=None, assunto="", confidencial=True, preset=None,
-                 tipografia="office", capa=None, sumario=None, contracapa=None):
+                 tipografia="office", capa=None, sumario=None, contracapa=None,
+                 abertura=None):
         # `estilo="sobrio"` continua aceito (compatibilidade): vira o preset de
         # mesmo nome.
         if preset is None:
@@ -621,7 +627,10 @@ class RelatorioPDF:
         self._quer_capa = capa
         self._quer_sumario = sumario
         self._quer_contracapa = contracapa
+        self._quer_abertura = abertura
         self._contracapa_feita = False
+        self._tem_capa = False
+        self._tem_abertura = False
         self._construir_estilos()
 
     # ---------- estilos ----------
@@ -768,6 +777,50 @@ class RelatorioPDF:
                                      spaceBefore=10)
             destino.append(Paragraph("CONFIDENCIAL", st_conf))
         destino.append(PageBreak())
+        self._tem_capa = True
+        return self
+
+    def _pede_abertura(self):
+        """Cabeçalho de abertura: só em documento SEM capa cujo preset é de
+        relatório (gerencial, parecer, proposta). Carta e sóbrio não têm
+        título — abrem com local, data, destinatário ou a identificação."""
+        if self._tem_capa or self._tem_abertura or self._quer_abertura is False:
+            return False
+        return bool(self._quer_abertura) or self.regras["capa"] is not None
+
+    def _abertura(self):
+        """Cabeçalho da primeira página do documento curto: emissor e tipo em
+        versalete de latão, o título em serifa, subtítulo, cliente, data e a
+        marca de sigilo, fechados por um filete. Ocupa o topo da página — o
+        conteúdo começa logo abaixo, na mesma folha, em vez de uma capa
+        gastando uma folha só com o título."""
+        p = self.pal
+        st = self._estilos_de_capa()
+        st_topo = ParagraphStyle("ab_topo", parent=st["tipo"], fontSize=ESCALA["kicker"],
+                                 leading=12, spaceAfter=4)
+        st_tit = ParagraphStyle("ab_tit", parent=st["titulo"],
+                                fontSize=ESCALA["abertura_titulo"],
+                                leading=round(ESCALA["abertura_titulo"] * 1.2, 1),
+                                spaceBefore=0)
+        st_sub = ParagraphStyle("ab_sub", parent=st["sub"], spaceBefore=2)
+        st_meta = ParagraphStyle("ab_meta", parent=self.s_pequeno, spaceBefore=6)
+        bloco = []
+        topo = " · ".join(_plano(x).upper() for x in (self.emissor, self.tipo) if x)
+        if topo:
+            bloco.append(Paragraph(texto_seguro(topo, self.fonte), st_topo))
+        bloco.append(Paragraph(texto_seguro(self.titulo_doc, self.display), st_tit))
+        if self.subtitulo:
+            bloco.append(Paragraph(texto_seguro(self.subtitulo, self.display), st_sub))
+        meta = ["<b>%s:</b> %s" % (_plano(rot), texto_seguro(val, self.fonte))
+                for rot, val in (("Cliente", self.cliente), ("Data", self.data_str)) if val]
+        if self.confidencial:
+            meta.append('<font color="%s"><b>CONFIDENCIAL</b></font>' % p["latao"].hexval()
+                        .replace("0x", "#"))
+        if meta:
+            bloco.append(Paragraph(" &nbsp;·&nbsp; ".join(meta), st_meta))
+        bloco += [Spacer(1, 0.3 * cm), self._regua(p["latao"], 1.2), Spacer(1, 0.6 * cm)]
+        self._capa.append(KeepTogether(bloco))
+        self._tem_abertura = True
         return self
 
     def _estilos_de_capa(self, sobre_tinta=False):
@@ -988,9 +1041,20 @@ class RelatorioPDF:
                 alinhamentos.append("D" if valores and numericas >= max(1, len(valores) * 0.6) else "E")
 
         estilo_por_al = {"E": self.s_celula, "D": self.s_celula_dir, "C": self.s_centro}
-        dados = [[Paragraph(texto_seguro(c, self.fonte), self.s_celula_cab) for c in cabecalho]]
-        for linha in linhas:
-            dados.append([Paragraph(texto_seguro(v, self.fonte), estilo_por_al[alinhamentos[j]])
+        # A linha TOTAL em negrito: o FONTNAME do TableStyle não alcança o
+        # texto de um Paragraph, então o negrito tem de vir do próprio estilo.
+        negrito_por_al = {al: ParagraphStyle(e.name + "_total", parent=e,
+                                             fontName=self.fonte_bold)
+                          for al, e in estilo_por_al.items()}
+        # Cabeçalho da coluna numérica alinhado com os números que ele encima.
+        # Decidido ANTES de montar a Table: trocar a célula depois não tem
+        # efeito, e o rótulo ficava à esquerda de uma coluna alinhada à direita.
+        dados = [[Paragraph(texto_seguro(c, self.fonte),
+                            self.s_celula_cab_dir if alinhamentos[j] == "D" else self.s_celula_cab)
+                  for j, c in enumerate(cabecalho)]]
+        for i, linha in enumerate(linhas):
+            estilos = negrito_por_al if (total and i == len(linhas) - 1) else estilo_por_al
+            dados.append([Paragraph(texto_seguro(v, self.fonte), estilos[alinhamentos[j]])
                           for j, v in enumerate(linha)])
 
         if not larguras:
@@ -1023,11 +1087,6 @@ class RelatorioPDF:
                 ("LINEABOVE", (0, n), (-1, n), 1.2, p["latao"]),
                 ("FONTNAME", (0, n), (-1, n), self.fonte_bold),
             ]
-        # Cabeçalho da coluna numérica alinhado com os números que ele encima.
-        for j, al in enumerate(alinhamentos):
-            if al == "D":
-                dados[0][j] = Paragraph(texto_seguro(cabecalho[j], self.fonte),
-                                        self.s_celula_cab_dir)
         t.setStyle(TableStyle(estilo))
         bloco = [t]
         if fonte:
@@ -1641,11 +1700,12 @@ class RelatorioPDF:
         explicitamente. Capa e sumário são montados AGORA — quando já se sabe
         quantas seções o documento tem — e entram na FRENTE da story."""
         secoes = sum(1 for nivel, _ in self._titulos if nivel == 1)
-        quer_capa = self._quer_capa
-        if quer_capa is None:
-            quer_capa = self.regras["capa"] is not None
-        if quer_capa and not self._capa:
-            self.capa(estilo=None if quer_capa is True else quer_capa)
+        estilo_capa = None if (self._tem_capa or self._tem_abertura) else \
+            kits.decide_capa(self.regras["capa"], self._quer_capa, secoes)
+        if estilo_capa:
+            self.capa(estilo=estilo_capa)
+        elif self._pede_abertura():
+            self._abertura()
 
         quer_sumario = self._quer_sumario
         if quer_sumario is None:
@@ -1667,9 +1727,8 @@ class RelatorioPDF:
                 texto_seguro(self._fecho_pendente, self.fonte), self.s_apoio))
             self._fecho_pendente = None
 
-        fechamento = self._quer_contracapa
-        if fechamento is None:
-            fechamento = self.regras["fechamento"]
+        fechamento = kits.decide_fechamento(self.regras["fechamento"],
+                                            self._quer_contracapa, self._tem_capa)
         if fechamento in ("faixa", "pagina") and not self._contracapa_feita:
             self.contracapa(estilo=fechamento)
         return self._capa + self._sumario + self.story
@@ -1689,9 +1748,9 @@ class RelatorioPDF:
             leftMargin=MARGEM["esq"], rightMargin=MARGEM["dir"],
             topMargin=MARGEM["sup"], bottomMargin=MARGEM["inf"],
             title=_plano(self.titulo_doc) or "Documento",
-            author=_plano(self.emissor or self.cliente) or "Frederico AI Studio",
+            author=_plano(self.emissor or self.cliente) or "Frederico IA Studio",
             subject=_plano(self.assunto) or _plano(self.tipo),
-            creator="Frederico AI Studio", lang="pt-BR")
+            creator="Frederico IA Studio", lang="pt-BR")
         frame = Frame(doc.leftMargin, doc.bottomMargin, doc.width, doc.height,
                       leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0,
                       id="conteudo")
@@ -1702,6 +1761,7 @@ class RelatorioPDF:
         _CanvasNumerado.fonte = self.fonte
         _CanvasNumerado.fonte_bold = self.fonte_bold
         _CanvasNumerado.confidencial = self.confidencial
+        _CanvasNumerado.rodape_na_primeira = self._tem_abertura
         _CanvasNumerado.marcadores = []
         if self._toc is not None:
             # multiBuild: o sumário só sabe as páginas na 2ª passagem.

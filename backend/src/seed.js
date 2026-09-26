@@ -24,9 +24,12 @@ const promptsDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '.
 // execução gerava .docx sem saber que o kit existia, e diagramava na mão.
 export const DOCPRO_PROMPT = PERSONA_DOCUMENTOS;
 // Versões antigas do prompt padrão (para a migração em seedDocProAssistant).
+// Comparadas SEM os brancos das pontas: desde o v4.2 o que fica gravado no
+// assistente é a persona já aparada (`PERSONA_DOCUMENTOS`), e um arquivo
+// arquivado com a quebra de linha final que todo editor põe deixaria de bater.
 const OLD_DOCPRO_PROMPTS = fs.readdirSync(promptsDir)
   .filter((f) => f.endsWith('.txt') && f !== 'atual.txt')
-  .map((f) => fs.readFileSync(path.join(promptsDir, f), 'utf8'));
+  .map((f) => fs.readFileSync(path.join(promptsDir, f), 'utf8').trim());
 const DEFAULT_TOOLS_JSON = JSON.stringify(ASSISTANT_TOOL_NAMES);
 
 // Modelo padrão canônico. Mantemos o id "nu" do modelo em `model` (a coluna
@@ -71,7 +74,7 @@ async function seedDocProAssistant(userId) {
       const t = now();
       await db.prepare('INSERT INTO assistants (id,user_id,name,emoji,model,model_ref,system_prompt,tools,personality,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
         .run(nanoid(), userId, 'Documentos profissionais', 'file-pen-line', model, modelRef, DOCPRO_PROMPT, DEFAULT_TOOLS_JSON, JSON.stringify({ form: 60, det: 60, criat: 30 }), t, t);
-    } else if (!String(exists.system_prompt || '').trim() || OLD_DOCPRO_PROMPTS.includes(exists.system_prompt)) {
+    } else if (!String(exists.system_prompt || '').trim() || OLD_DOCPRO_PROMPTS.includes(String(exists.system_prompt).trim())) {
       // Migra dos prompts padrão anteriores (legacy, v2…v9) para o atual —
       // sem tocar em versões personalizadas pelo usuário.
       await db.prepare('UPDATE assistants SET system_prompt=?, updated_at=? WHERE id=? AND user_id=?')

@@ -970,15 +970,30 @@ documento em decisões de diagramação:
 
 | preset | capa | sumário | numeração | corpo | fechamento |
 | --- | --- | --- | --- | --- | --- |
-| `gerencial` | faixa de tinta | automático com 4+ seções | SEÇÃO 01 | esquerda | faixa (ou `estilo="pagina"`) |
-| `parecer` | simples | automático com 4+ seções | 1., 1.1 | justificado | faixa |
-| `proposta` | faixa de tinta | nunca | sem | esquerda | faixa |
+| `gerencial` | faixa de tinta, com 4+ seções | automático com 4+ seções | SEÇÃO 01 | esquerda | só com `contracapa()` |
+| `parecer` | simples, com 4+ seções | automático com 4+ seções | 1., 1.1 | justificado | faixa, se houver capa |
+| `proposta` | faixa de tinta, com 4+ seções | nunca | sem | esquerda | faixa, se houver capa |
 | `carta` | nenhuma | nunca | sem | justificado | assinatura |
 | `sobrio` (PDF; no Word é a classe `Sobrio`) | nenhuma | nunca | rígida no texto | justificado | assinaturas + testemunhas |
 
 Capa e sumário são montados no `salvar()`, quando já se sabe quantas seções o
-documento tem, e movidos para a frente do corpo. `capa=False`, `sumario=False` e
-`contracapa="faixa"|"pagina"|False` sobrescrevem o preset caso a caso.
+documento tem, e movidos para a frente do corpo. **Capa automática só em
+documento longo** (`kits.MINIMO_SECOES_PARA_CAPA` = 4 títulos de 1º nível, o
+mesmo limiar do sumário — `kits.decide_capa`). Até os kits 2.0 os presets
+gerencial, parecer e proposta punham capa de página inteira em todo documento:
+um resumo de duas seções saía com duas páginas, a primeira só com o título.
+Documento curto desses presets abre com um **cabeçalho de abertura** no topo da
+página 1 — emissor e tipo em versalete de latão, título em serifa, subtítulo,
+cliente, data e sigilo, fechados por um filete — e a página 1 leva o rodapé
+paginado. O título do cabeçalho não usa estilo "Heading": não é seção e não
+entra no sumário nem nos marcadores. A faixa de fechamento automática
+acompanha a capa (`kits.decide_fechamento`): documento que abriu com cabeçalho
+não fecha com faixa sozinho.
+
+`capa=True|False|"faixa"|"simples"`, `sumario=False`, `abertura=False` e
+`contracapa="faixa"|"pagina"|False` sobrescrevem o preset caso a caso. Carta e
+sóbrio não ganham cabeçalho: abrem com local, data, destinatário ou a
+identificação registrável.
 
 ### 19.3 O contrato de grade
 

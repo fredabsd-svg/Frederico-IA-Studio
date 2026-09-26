@@ -1,4 +1,4 @@
-# CONTINUIDADE — estado atual do Frederico AI Studio
+# CONTINUIDADE — estado atual do Frederico IA Studio
 
 > Arquivo **curto** de propósito. Só o presente: estado, riscos abertos e como retomar.
 > O histórico completo está preservado em `docs/CHANGELOG_HISTORY.md` — nada é apagado,
@@ -8,7 +8,17 @@
 
 ## Estado atual
 
-**Última frente (2026-09-26):** "Parar" no meio da resposta. Medido com navegador
+**Última frente (2026-09-26):** kits de documento sem capa por hábito. Os
+presets gerencial, parecer e proposta punham capa de página inteira em TODO
+documento. Kits 2.1: capa e sumário automáticos só com 4+ seções; o curto abre
+com cabeçalho na página 1 e a faixa de fechamento acompanha a capa. Prompt de
+documentos lapidado (`docpro@14.0.0`): seção "capa é do tamanho, não do
+hábito", exemplos sem data e cidade fixas (o modelo as copiava) e persona com
+"Frederico IA Studio" — a do v4.2 nunca tinha sido arquivada, agora é `v14.txt`
+e um hash no teste acusa a próxima mudança sem arquivo. De passagem, no PDF: o
+cabeçalho da coluna numérica passou a ficar à direita e o TOTAL em negrito.
+
+**Antes (mesmo PR #212):** "Parar" no meio da resposta. Medido com navegador
 real: o texto parava em ~400 ms, mas a resposta cortada era gravada como `completed`
 e a tela não dizia que estava incompleta. Causa no backend (fim "limpo" do stream
 depois do abort) — corrigida nos quatro laços de streaming, com teste de agente,
