@@ -88,6 +88,13 @@ export function planToolCallBatch(calls, seenWebFetches = new Set(), maxCalls = 
 // ferramenta de execução de código"). Este era o bug real dos relatórios de CNPJ.
 export const WEB_TOOL_NAMES = new Set(['web_search', 'web_fetch']);
 
-export function webResearchFinalizationNote(reason) {
-  return `A PESQUISA NA WEB foi encerrada (${reason}) — não faça novas buscas. Isso NÃO encerra a tarefa: as demais ferramentas continuam disponíveis. Se o pedido é um arquivo (Word/Excel/PDF), GERE o arquivo agora com run_python usando os dados que você já obteve (ex.: o extrato do CNPJ e o que apareceu nas buscas) e salve em /workspace/outputs. Cite as fontes e diga com franqueza o nível de confiança; não invente dados ausentes. Só responda apenas em texto se o pedido não exigia arquivo.`;
+// `toolNames` são as ferramentas que SOBRARAM na chamada. A instrução de gerar o
+// arquivo com run_python só vale para quem tem run_python — sem ele, a nota
+// mandava usar uma ferramenta inexistente e o modelo tentava chamá-la.
+export function webResearchFinalizationNote(reason, toolNames = ['run_python']) {
+  const hasPython = Array.isArray(toolNames) && toolNames.includes('run_python');
+  const fileStep = hasPython
+    ? 'Isso NÃO encerra a tarefa: as demais ferramentas continuam disponíveis. Se o pedido é um arquivo (Word/Excel/PDF), GERE o arquivo agora com run_python usando os dados que você já obteve (ex.: o extrato do CNPJ e o que apareceu nas buscas) e salve em /workspace/outputs.'
+    : 'Responda agora em texto com os dados que você já obteve. Nesta chamada não há ferramenta para gerar arquivo: se o pedido era um arquivo, diga isso com franqueza em vez de prometer o download.';
+  return `A PESQUISA NA WEB foi encerrada (${reason}) — não faça novas buscas. ${fileStep} Cite as fontes e diga com franqueza o nível de confiança; não invente dados ausentes.${hasPython ? ' Só responda apenas em texto se o pedido não exigia arquivo.' : ''}`;
 }

@@ -14,7 +14,7 @@ export {
   materializeTextOutput
 } from './agent/repair.js';
 export { fileSignature } from './agent/outputs.js';
-export { clipForBriefing, AGENTS, systemPrompt } from './agent/prompts.js';
+export { clipForBriefing, AGENTS } from './agent/prompts.js';
 export {
   normalizeWebFetchUrl,
   classifyToolOutcome,

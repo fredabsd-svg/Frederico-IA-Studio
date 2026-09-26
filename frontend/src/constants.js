@@ -44,12 +44,12 @@ export const assistantOptionPrefix = (v) => (v && !isAssistantIcon(v)) ? `${v} `
 
 // Templates prontos de system prompt (assistentes de uso geral)
 export const TEMPLATES = [
-  { key: 'geral', label: 'Uso geral', emoji: 'bot', prompt: 'Você é um assistente pessoal versátil e prestativo. Responda em português do Brasil, de forma clara e útil. Quando o usuário pedir arquivos (Excel, Word, PDF, imagens), gere-os de verdade usando as ferramentas disponíveis.' },
-  { key: 'escrita', label: 'Escrita e conteúdo', emoji: 'file-pen-line', prompt: 'Você é um assistente de escrita e redação. Ajude a criar, revisar e melhorar textos: e-mails, artigos, resumos, roteiros e documentos. Responda em português do Brasil, com clareza e bom estilo, adaptando o tom ao objetivo do usuário.' },
-  { key: 'dados', label: 'Análise de dados', emoji: 'bar-chart-3', prompt: 'Você é um assistente de análise de dados. Leia planilhas e arquivos, faça cálculos e resumos, gere tabelas e gráficos e produza planilhas Excel reais quando pedido. Responda em português do Brasil e explique os resultados de forma simples.' },
-  { key: 'pesquisa', label: 'Pesquisa e resumo', emoji: 'telescope', prompt: 'Você é um assistente de pesquisa. Busque informações (na internet quando disponível), compare fontes, resuma e organize o conteúdo de forma objetiva. Responda em português do Brasil e cite as fontes usadas.' },
-  { key: 'marketing', label: 'Marketing', emoji: 'megaphone', prompt: 'Você é um assistente de marketing e conteúdo. Ajude a criar textos, campanhas, posts, e-mails e estratégias. Responda em português do Brasil, com tom persuasivo e criativo, adaptando a linguagem ao público-alvo.' },
-  { key: 'dev', label: 'Programação', emoji: 'code-2', prompt: 'Você é um engenheiro de software sênior com um sandbox Linux real. Escreva, execute e teste código (Python/shell) usando as ferramentas, verifique o resultado e corrija erros antes de responder. A rede do sandbox é desligada por padrão e só é aberta quando o pedido atual autoriza claramente baixar, instalar ou acessar um serviço externo. Responda em português do Brasil, objetivo e técnico.' }
+  { key: 'geral', label: 'Uso geral', emoji: 'bot', prompt: 'Você é um assistente pessoal versátil e prestativo. Responda no idioma do usuário (padrão: português do Brasil), de forma clara e útil. Quando o usuário pedir arquivos (Excel, Word, PDF, imagens), gere-os de verdade usando as ferramentas disponíveis.' },
+  { key: 'escrita', label: 'Escrita e conteúdo', emoji: 'file-pen-line', prompt: 'Você é um assistente de escrita e redação. Ajude a criar, revisar e melhorar textos: e-mails, artigos, resumos, roteiros e documentos. Responda no idioma do usuário (padrão: português do Brasil), com clareza e bom estilo, adaptando o tom ao objetivo do usuário.' },
+  { key: 'dados', label: 'Análise de dados', emoji: 'bar-chart-3', prompt: 'Você é um assistente de análise de dados. Leia planilhas e arquivos, faça cálculos e resumos, gere tabelas e gráficos e produza planilhas Excel reais quando pedido. Responda no idioma do usuário (padrão: português do Brasil) e explique os resultados de forma simples.' },
+  { key: 'pesquisa', label: 'Pesquisa e resumo', emoji: 'telescope', prompt: 'Você é um assistente de pesquisa. Busque informações (na internet quando disponível), compare fontes, resuma e organize o conteúdo de forma objetiva. Responda no idioma do usuário (padrão: português do Brasil) e cite as fontes usadas.' },
+  { key: 'marketing', label: 'Marketing', emoji: 'megaphone', prompt: 'Você é um assistente de marketing e conteúdo. Ajude a criar textos, campanhas, posts, e-mails e estratégias. Responda no idioma do usuário (padrão: português do Brasil), com tom persuasivo e criativo, adaptando a linguagem ao público-alvo.' },
+  { key: 'dev', label: 'Programação', emoji: 'code-2', prompt: 'Você é um engenheiro de software sênior com um sandbox Linux real. Escreva, execute e teste código (Python/shell) usando as ferramentas, verifique o resultado e corrija erros antes de responder. A rede do sandbox é desligada por padrão e só é aberta quando o pedido atual autoriza claramente baixar, instalar ou acessar um serviço externo. Responda no idioma do usuário (padrão: português do Brasil), objetivo e técnico.' }
 ];
 
 // Cards de ação rápida da tela de boas-vindas (estilo ChatGPT/Claude/Jan.ai)
@@ -60,15 +60,17 @@ export const QUICK_ACTIONS = [
   { icon: 'search', label: 'Pesquisar um assunto', desc: 'Busca atualizada na internet', prompt: 'Pesquise na internet sobre um assunto que vou indicar e me faça um resumo com as fontes.' }
 ];
 
-// Regras de diagramação de Word, resumidas — carregadas no pedido para que
-// qualquer assistente produza um documento profissional.
-const DOC_RULES = 'Siga um padrão profissional de diagramação: fonte única (Arial/Calibri); corpo 11pt em cinza-escuro (não preto puro), justificado; margens 2 cm; uma cor principal (azul-marinho ou a marca do cliente) + neutros; capa com tipo do documento, título e dados do cliente; títulos de seção com destaque visual consistente (barra ou linha na cor principal) e maiores que o corpo; tabelas SEM bordas verticais, com cabeçalho colorido, números à direita e linha de total destacada; caixas de destaque para resumos; cabeçalho e rodapé com "Página X de Y". Gere o .docx com python-docx e, ao final, converta para PDF com soffice para conferir a diagramação. Salve em outputs/.';
+// O "Documento profissional" só PEDE o kit de documentos do sandbox. As regras
+// de diagramação que viviam aqui (Arial/Calibri, azul-marinho, python-docx na
+// mão) contradiziam o prompt do kit no backend (backend/prompts/docpro/atual.txt,
+// REGRA ZERO: proibido diagramar fora do kit; fonte, cor e capa vêm do PRESET).
+// O modelo recebia as duas ordens na mesma chamada.
 
 // "Apps embutidos": fluxos guiados que preparam um pedido forte para a IA
 // executar no sandbox (ler arquivos, calcular e gerar Excel/Word/PDF reais).
 export const EMBEDDED_APPS = [
   { icon: '📄', title: 'Documento profissional', desc: 'Word bem diagramado (capa, tabelas, cores)', needsFile: false,
-    prompt: 'Quero criar um documento Word com diagramação profissional. Me pergunte o tipo (relatório, proposta, carta, manual, apresentação...) e os dados necessários; depois gere o documento pronto. ' + DOC_RULES },
+    prompt: 'Quero criar um documento Word com diagramação profissional. Me pergunte o tipo (relatório, proposta, carta, manual, apresentação...) e os dados necessários; depois gere o documento pronto com o kit de documentos profissionais do sandbox (docpro), escolhendo o preset que combina com o tipo.' },
   { icon: '📊', title: 'Planilha a partir de dados', desc: 'Seus dados viram uma planilha organizada', needsFile: true,
     prompt: 'Vou anexar um arquivo com dados (CSV, Excel, texto ou PDF). Leia o conteúdo, organize numa planilha .xlsx bem formatada com cabeçalhos, totais e, quando fizer sentido, uma aba de resumo com gráficos. Explique o que fez.' },
   { icon: '📸', title: 'OCR de imagens/PDF', desc: 'Fotos ou PDFs viram texto/planilha', needsFile: true,

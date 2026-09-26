@@ -3,13 +3,14 @@
 // tradução de erros da API em mensagens amigáveis.
 // Extraído de agent.js (refatoração mecânica, sem mudança de comportamento).
 import { isUnsupportedToolError } from '../modelCapabilities.js';
+import { sanitizeUpstreamDetail } from '../upstreamDetail.js';
 
 const modelApiBaseUrl = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com';
 
 export const STREAM_RECOVERY_LIMIT = Math.max(0, Number(process.env.MODEL_STREAM_RECOVERY_LIMIT || 2));
-export const STREAM_RESUME_NOTE = 'A resposta anterior do provedor foi interrompida temporariamente. Continue exatamente do ponto em que parou, sem repetir texto nem desfazer as ferramentas ja executadas. Conclua a tarefa.';
+export const STREAM_RESUME_NOTE = 'A resposta anterior do provedor foi interrompida temporariamente. Continue exatamente do ponto em que parou, sem repetir texto nem desfazer as ferramentas já executadas. Conclua a tarefa.';
 export const STREAM_PAUSE_RESUME_NOTE = 'A resposta anterior foi pausada pelo usuário. Continue exatamente do ponto em que parou, sem repetir texto e sem desfazer ferramentas já executadas.';
-export const PROVIDER_TIMEOUT_NOTICE = '\n\n_Nota: o provedor do modelo ficou indisponivel enquanto esta etapa era gerada. O aplicativo tentou retomar automaticamente, mas nao recebeu uma resposta completa. Reenvie esta mesma tarefa para continuar a partir do trabalho ja salvo._';
+export const PROVIDER_TIMEOUT_NOTICE = '\n\n_Nota: o provedor do modelo ficou indisponível enquanto esta etapa era gerada. O aplicativo tentou retomar automaticamente, mas não recebeu uma resposta completa. Reenvie esta mesma tarefa para continuar a partir do trabalho já salvo._';
 
 export function isRetryableStreamError(error) {
   // Watchdog de stream parado (streamGuard.js): o provedor deixou de mandar
@@ -173,15 +174,25 @@ export function tagProviderError(err, { providerName, model } = {}) {
   return err;
 }
 
-// Traduz erros comuns da API do provedor em mensagens claras em português
+// Traduz erros comuns da API do provedor em mensagens claras em português.
+//
+// Regra 6.2/4.4: a mensagem vai para o chat e para a fila de tarefas — nunca
+// ecoa texto interno. O texto do PROVEDOR (corpo de erro de API) passa por
+// `sanitizeUpstreamDetail` (sem HTML/controle, sem nada com cara de chave, com
+// teto). Erro SEM status HTTP não veio do provedor (banco, disco, bug): antes o
+// fallback devolvia `err.message` cru — um erro de constraint do Postgres
+// aparecia no chat. Agora só conexão/timeout têm mensagem própria; o resto é
+// genérico (o detalhe fica no log de quem chamou). Erro do próprio app escrito
+// para o usuário pode marcar `userFacing = true` para manter a mensagem.
 export function friendlyApiError(err) {
-  const status = err?.status || err?.response?.status;
+  const status = Number(err?.status || err?.response?.status) || 0;
   const raw = String(err?.message || '');
   // "do provedor X" / "(modelo Y)" só entram quando são conhecidos — nunca
   // inventamos um nome, porque um nome errado é pior que nenhum.
   const quem = err?.providerName ? ` do provedor "${err.providerName}"` : '';
   const qual = err?.providerModel ? ` (modelo ${err.providerModel})` : '';
   if (err?.code === 'CONVERSATION_BUSY') return 'Esta conversa já está processando uma resposta. Aguarde terminar ou pare o processamento antes de enviar outra mensagem.';
+  if (err?.userFacing && raw) return sanitizeUpstreamDetail(raw, 300);
   if (status === 401) return `Chave da API${quem} recusada${qual}: inválida, expirada ou sem acesso a este modelo. Se você tem mais de um provedor cadastrado, confira a chave DESSE provedor em Configurações → Provedor de IA.`;
   if (status === 402) return `Sem créditos no provedor${quem ? ` "${err.providerName}"` : ' (OpenRouter/DeepSeek)'}${qual}. Adicione créditos na sua conta e tente de novo.`;
   if (status === 429) return 'Limite de uso atingido (erro 429). Modelos GRATUITOS têm cota pequena e fila compartilhada — aguarde alguns minutos ou, melhor, escolha um modelo pago (ex.: DeepSeek Chat, que custa centavos).';
@@ -192,13 +203,27 @@ export function friendlyApiError(err) {
   if (isUnsupportedToolError(err)) {
     return 'Este modelo não oferece ferramentas neste ambiente. Ele ainda pode conversar por texto; para criar arquivos, pesquisar ou executar algo, escolha no seletor um modelo marcado com Ferramentas.';
   }
+  // Motivo real dado pelo provedor (ex.: "xyz is not a valid model id"),
+  // saneado: é texto externo não confiável.
+  const detail = sanitizeUpstreamDetail(String(err?.error?.message || err?.response?.data?.error?.message || ''), 180);
   if (status === 404) {
-    // Mostra o motivo real do provedor (ex.: "xyz is not a valid model id",
-    // "No endpoints found for <modelo>"). Sem isso, todo 404 virava um genérico
-    // "Modelo não encontrado" que escondia QUAL modelo e por quê.
-    const detail = String(err?.error?.message || err?.response?.data?.error?.message || '').trim();
-    return `Modelo não encontrado ou indisponível no provedor${detail ? ` (${detail.slice(0, 180)})` : ''}. Escolha outro modelo no seletor.`;
+    // Sem o motivo, todo 404 virava um genérico "Modelo não encontrado" que
+    // escondia QUAL modelo e por quê.
+    return `Modelo não encontrado ou indisponível no provedor${detail ? ` (${detail})` : ''}. Escolha outro modelo no seletor.`;
   }
   if (status >= 500) return 'O provedor do modelo está instável neste momento. Tente novamente em instantes.';
-  return raw.slice(0, 300) || 'Erro inesperado ao falar com o modelo.';
+  if (status >= 400) {
+    return `O provedor${err?.providerName ? ` "${err.providerName}"` : ''} recusou a solicitação (HTTP ${status})${qual}${detail ? `: ${detail}` : ''}.`;
+  }
+  // Daqui para baixo não há resposta HTTP do provedor.
+  const name = String(err?.name || '');
+  const code = String(err?.code || '');
+  if (code === 'STREAM_STALLED') return `O provedor${quem} parou de enviar a resposta no meio. Tente novamente em instantes.`;
+  if (name === 'APIConnectionTimeoutError' || code === 'ETIMEDOUT' || /request timed out/i.test(raw)) {
+    return `O provedor${quem} demorou demais para responder. Tente novamente em instantes.`;
+  }
+  if (name === 'APIConnectionError' || ['ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND', 'EAI_AGAIN'].includes(code) || /fetch failed|connection error/i.test(raw)) {
+    return `Não foi possível conectar ao provedor${quem} do modelo. Confira a URL do provedor em Configurações → Provedor de IA e tente novamente.`;
+  }
+  return 'Erro inesperado ao processar a resposta. Tente novamente; se continuar, avise o suporte.';
 }

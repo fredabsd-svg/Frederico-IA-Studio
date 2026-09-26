@@ -59,3 +59,14 @@ test('sem execução exigida ou sem ferramentas, não repara', () => {
   assert.equal(shouldRepairExecution({ requiresExecution: false, toolsAvailable: true, outputsBefore: new Map(), outputsAfter: [] }), false);
   assert.equal(shouldRepairExecution({ requiresExecution: true, toolsAvailable: false, outputsBefore: new Map(), outputsAfter: [] }), false);
 });
+
+// Revisão 2026-09: avisos que o usuário LÊ (e notas que o modelo lê) saíam sem
+// acento — "concluida", "ja", "indisponivel", "saida".
+test('avisos de truncamento e de provedor saem com acentuação correta', async () => {
+  const { RESPONSE_TRUNCATED_REPAIR_NOTE, RESPONSE_TRUNCATED_NOTICE } = await import('./repair.js');
+  const { PROVIDER_TIMEOUT_NOTICE, STREAM_RESUME_NOTE } = await import('./provider.js');
+  const textos = [RESPONSE_TRUNCATED_REPAIR_NOTE, RESPONSE_TRUNCATED_NOTICE, PROVIDER_TIMEOUT_NOTICE, STREAM_RESUME_NOTE].join('\n');
+  assert.doesNotMatch(textos, /\b(concluida|ja|indisponivel|nao|saida|usuario|verificavel)\b/);
+  assert.match(RESPONSE_TRUNCATED_NOTICE, /saída maior/);
+  assert.match(PROVIDER_TIMEOUT_NOTICE, /indisponível/);
+});

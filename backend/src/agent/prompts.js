@@ -98,7 +98,7 @@ export const AGENTS = {
   },
   codigo: {
     label: 'Programação',
-    prompt: `Você é o Frederico AI Studio no MODO PROGRAMAÇÃO: um engenheiro de software sênior, com um sandbox Linux real, ajudando um colega. Fale em português do Brasil, de forma objetiva e técnica, mas sem formalidade desnecessária — direto como quem faz um bom pair programming.
+    prompt: `Você é o Frederico IA Studio no MODO PROGRAMAÇÃO: um engenheiro de software sênior, com um sandbox Linux real, ajudando um colega. Responda no idioma do usuário (padrão: português do Brasil), de forma objetiva e técnica, mas sem formalidade desnecessária — direto como quem faz um bom pair programming.
 Você PODE e DEVE escrever, executar e testar código usando as ferramentas (run_python, bash, write_file, read_file, list_files, zip_outputs).
 
 Fluxo de trabalho:
@@ -117,11 +117,9 @@ Limites importantes do sandbox (complementam as regras gerais de sandbox desta c
   }
 };
 
-// Mantido por compatibilidade
-export const systemPrompt = AGENTS.geral.prompt;
-
-// Ajusta o prompt conforme os sliders de personalidade do assistente
-function personalitySuffix(p) {
+// Ajusta o prompt conforme os sliders de personalidade do assistente.
+// Exportada para o multimodelo aplicar o MESMO estilo do assistente escolhido.
+export function personalitySuffix(p) {
   if (!p) return '';
   const parts = [];
   if (typeof p.form === 'number') parts.push(p.form >= 66 ? 'Use um tom bastante formal e profissional.' : p.form <= 33 ? 'Use um tom informal e descontraído.' : 'Use um tom cordial e profissional.');
@@ -224,12 +222,20 @@ export function protectedProfilePrompt(profile, { includeQuality = true, include
 export function promptFor(assistant, { tools = null, model = null, sandboxNetworkEnabled = false, now = undefined } = {}) {
   const profile = assistant?.system_prompt || AGENTS.geral.prompt;
   const disponiveis = tools || toolsFor(assistant);
-  const comDocumentos = disponiveis.some(tool => tool?.function?.name === 'run_python');
-  const vars = callContextVars({ model, sandboxNetworkEnabled, ...(now ? { now } : {}) });
+  const nomes = new Set(disponiveis.map(tool => tool?.function?.name));
+  const comDocumentos = nomes.has('run_python');
+  // As seções de execução e de sandbox seguem o mesmo critério da de
+  // documentos: saem quando o assistente não tem como usá-las (ver
+  // `corpoDoPromptV4`). A decisão é pela CONFIGURAÇÃO do assistente, e não
+  // pelas ferramentas do turno, para `messages[0]` continuar estável na
+  // conversa (é o primeiro breakpoint do cache de prompt).
+  const comExecucao = disponiveis.length > 0;
+  const comSandbox = [...nomes].some(name => SANDBOX_TOOL_NAMES.has(name));
+  const vars = callContextVars({ model, sandboxNetworkEnabled, comBash: nomes.has('bash'), ...(now ? { now } : {}) });
   return [
     IMMUTABLE_CORE_PROMPT,
     assistantProfileBlock(profile) + personalitySuffix(assistant?.personality),
-    corpoDoPromptV4({ comDocumentos, vars })
+    corpoDoPromptV4({ comDocumentos, comExecucao, comSandbox, vars })
   ].join('\n\n');
 }
 
@@ -263,6 +269,14 @@ const WORKSPACE_READ_TOOL_NAMES = ['read_file', 'list_files', 'run_python', 'bas
 // desta conversa, e é somente leitura sobre os arquivos.
 const PAGE_CHECK_TOOL_NAME = 'validar_pagina';
 const WORKSPACE_WRITE_TOOL_NAMES = ['write_file', 'run_python', 'bash'];
+// Ferramentas que tocam o workspace/sandbox da conversa. Com pelo menos uma
+// delas, a seção SANDBOX do prompt e as linhas de caminhos/rede da nota de
+// ferramentas fazem sentido; sem nenhuma, só contradizem o que o assistente pode.
+const SANDBOX_TOOL_NAMES = new Set([
+  'run_python', 'bash', 'write_file', 'read_file', 'list_files', 'zip_outputs',
+  'generate_image', 'find_file', 'search_text', 'validar_pagina', 'ambiente',
+  'github_clone', 'github_push', 'github_create_pr'
+]);
 
 export function toolsFor(assistant) {
   const all = [...toolDefinitions, ...imageToolDefinitions];
@@ -366,16 +380,45 @@ export function developerTeamContextFor(request, userId) {
   ].filter(Boolean).join('\n\n');
 }
 
-export function toolAvailabilityNote(tools, { includeInventory = false, sandboxNetworkEnabled = false, githubNote = null } = {}) {
+// Por que NENHUMA ferramenta foi oferecida nesta chamada. São três situações
+// com respostas diferentes para o usuário, e a nota antiga dava a mesma para
+// todas ("configurado sem ferramentas, habilite no Assistant Studio") — inclusive
+// num "oi", em que o loop tira as ferramentas de propósito, e num modelo que
+// não aceita tool calling, em que o assistente está configurado certo.
+export const NO_TOOLS_REASONS = ['config', 'greeting', 'model'];
+const NO_TOOLS_NOTE = {
+  config: '- Este assistente está CONFIGURADO sem ferramentas de execução. Não diga que o modelo ou o aplicativo é incapaz de ler PDFs ou gerar arquivos; explique que as ferramentas deste assistente estão desativadas e oriente o usuário a habilitá-las no Assistant Studio ou escolher outro assistente.',
+  greeting: '- Este turno é conversa curta (saudação, agradecimento, confirmação): nenhuma ferramenta foi oferecida NESTA resposta, de propósito. Responda em texto, sem prometer execução e sem dizer que o assistente não tem ferramentas — elas voltam assim que a pessoa pedir uma tarefa.',
+  model: '- O MODELO em uso nesta resposta não aceita chamadas de ferramenta, então nenhuma foi oferecida. Não diga que o aplicativo ou o assistente não tem ferramentas: explique que este modelo não executa ferramentas e sugira escolher um modelo marcado com **Ferramentas** para ler arquivos, gerar documentos ou pesquisar.'
+};
+
+// Exemplos da frase "CHAME a ferramenta certa" — montados das ferramentas
+// PRESENTES. A frase fixa mandava chamar run_python/web_search/consultar_cnpj
+// mesmo quando elas não estavam na chamada, e o modelo tentava.
+const CALL_EXAMPLES = [
+  ['run_python', 'run_python para criar Excel/Word/PDF e rodar código'],
+  ['bash', 'bash para comandos do sandbox'],
+  ['read_file', 'read_file para ler anexos de texto'],
+  ['web_search', 'web_search para pesquisar'],
+  ['consultar_cnpj', 'consultar_cnpj para CNPJ'],
+  ['generate_image', 'generate_image para imagens']
+];
+
+export function toolAvailabilityNote(tools, { includeInventory = false, sandboxNetworkEnabled = false, githubNote = null, reason = 'config' } = {}) {
   const names = new Set(tools.map(t => t.function.name));
   const lines = ['FERRAMENTAS E AMBIENTE DISPONÍVEIS NESTA CHAMADA:'];
-  lines.push('Arquivos da conversa: uploads do usuário em /workspace/uploads; salve as entregas em /workspace/outputs — só esse caminho vira cartão de download no chat, e o app cria o cartão sozinho (não use sandbox:/mnt/user-data/outputs, /mnt/user-data/outputs nem links markdown inventados).');
-  lines.push(sandboxNetworkEnabled
-    ? 'Rede direta do sandbox: HABILITADA somente para o objetivo atual. Não envie arquivos ou dados do usuário a terceiros sem pedido explícito.'
-    : 'Rede direta do sandbox: DESLIGADA. Não tente usar curl/wget, instalar pacotes ou acessar APIs pelo Python/shell. web_search/web_fetch, quando listadas, funcionam separadamente pelo backend.');
-  lines.push('Para executar algo — gerar arquivo, rodar código, pesquisar, ler anexo — CHAME a ferramenta certa pelo function-calling da API: run_python para criar Excel/Word/PDF; web_search para pesquisar; consultar_cnpj para CNPJ.');
+  if ([...names].some(name => SANDBOX_TOOL_NAMES.has(name))) {
+    lines.push('Arquivos da conversa: uploads do usuário em /workspace/uploads; salve as entregas em /workspace/outputs — só esse caminho vira cartão de download no chat, e o app cria o cartão sozinho (não use sandbox:/mnt/user-data/outputs, /mnt/user-data/outputs nem links markdown inventados).');
+    lines.push(sandboxNetworkEnabled
+      ? 'Rede direta do sandbox: HABILITADA somente para o objetivo atual. Não envie arquivos ou dados do usuário a terceiros sem pedido explícito.'
+      : 'Rede direta do sandbox: DESLIGADA. Não tente usar curl/wget, instalar pacotes ou acessar APIs pelo Python/shell. web_search/web_fetch, quando listadas, funcionam separadamente pelo backend.');
+  }
+  if (tools.length) {
+    const exemplos = CALL_EXAMPLES.filter(([name]) => names.has(name)).map(([, text]) => text);
+    lines.push(`Para executar algo, CHAME a ferramenta certa pelo function-calling da API${exemplos.length ? `: ${exemplos.join('; ')}` : ''}. Só existem as ferramentas listadas abaixo.`);
+  }
 
-  lines.push('Ferramentas do chat habilitadas para você:');
+  lines.push(tools.length ? 'Ferramentas do chat habilitadas para você:' : 'Ferramentas do chat habilitadas para você: nenhuma nesta chamada.');
   if (names.has('run_python')) lines.push('- run_python: executar Python 3 real no sandbox.');
   if (names.has('bash')) lines.push('- bash: executar comandos Linux no sandbox.');
   if (names.has('write_file')) lines.push('- write_file: criar ou sobrescrever arquivos no workspace.');
@@ -404,7 +447,7 @@ export function toolAvailabilityNote(tools, { includeInventory = false, sandboxN
   // Delegação: o modelo precisa saber que o sub-agente NÃO vê a conversa, senão
   // manda "continue a análise" e o filho não tem contexto nenhum para trabalhar.
   if (names.has('delegar_subagente')) lines.push('- delegar_subagente: delegar uma subtarefa AUTOCONTIDA a um sub-agente com contexto próprio, que executa ferramentas e devolve só o resultado. GATILHO: pedido com TRÊS OU MAIS entregas independentes entre si — delegue as isoláveis, UMA chamada por entrega (as do mesmo lote correm em paralelo), em vez de executar todas em linha. Vale também para subtarefa única e pesada (varrer muitos arquivos, ler um documento longo, apurar um ponto específico). Ele NÃO enxerga o histórico daqui: escreva a tarefa inteira, com caminhos, números e regras. Fica com você o que é curto, o que depende deste contexto e a integração final das partes.');
-  if (!tools.length) lines.push('- Este assistente está CONFIGURADO sem ferramentas de execução. Não diga que o modelo ou o aplicativo é incapaz de ler PDFs ou gerar arquivos; explique que as ferramentas deste assistente estão desativadas e oriente o usuário a habilitá-las no Assistant Studio ou escolher outro assistente.');
+  if (!tools.length) lines.push(NO_TOOLS_NOTE[reason] || NO_TOOLS_NOTE.config);
 
   if (includeInventory && names.has('run_python')) {
     lines.push('Inventário Python instalado via run_python:');

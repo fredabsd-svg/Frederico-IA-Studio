@@ -51,11 +51,46 @@ export const ECONOMY_CONTEXT_TOKENS = 8000;
 // continua SÍNCRONO e o comportamento do app não muda.
 let settingsCache = { ...DEFAULT_SETTINGS };
 
+// Faixas válidas de cada configuração. Estas chaves são GLOBAIS (valem para
+// todos os usuários da instalação): um valor fora da faixa — gravado por uma
+// versão antiga, à mão no banco ou por um cliente malicioso — não pode virar
+// orçamento de contexto negativo, 10⁹ memórias por resposta ou uma política de
+// rede do sandbox inexistente. `clampSetting` é aplicado na ESCRITA e na
+// LEITURA (defesa em profundidade para linhas antigas).
+export const SETTINGS_LIMITS = Object.freeze({
+  memory_enabled: { min: 0, max: 1, integer: true },
+  auto_memory: { min: 0, max: 1, integer: true },
+  review_auto_memory: { min: 0, max: 1, integer: true },
+  economy_mode: { min: 0, max: 1, integer: true },
+  context_target_tokens: { min: 2000, max: 2_000_000, integer: true },
+  max_memories: { min: 0, max: 100, integer: true },
+  max_chunks: { min: 0, max: 100, integer: true },
+  importance_threshold: { min: 1, max: 5, integer: true },
+  // Enumeração, não faixa: 0 automático, 1 sempre ligada, 2 sempre desligada.
+  sandbox_network_policy: { values: [0, 1, 2] }
+});
+
+// Devolve o valor normalizado ou null quando não há como aceitá-lo (não
+// numérico, ou fora de uma enumeração). Números fora da faixa são GRAMPEADOS.
+export function clampSetting(key, value) {
+  const limits = SETTINGS_LIMITS[key];
+  if (!limits || value === undefined || value === null || value === '' || typeof value === 'object') return null;
+  const n = Number(value); // true/false viram 1/0
+  if (!Number.isFinite(n)) return null;
+  if (limits.values) return limits.values.includes(n) ? n : null;
+  const rounded = limits.integer ? Math.round(n) : n;
+  return Math.min(limits.max, Math.max(limits.min, rounded));
+}
+
 export async function loadSettings() {
   try {
     const rows = await db.prepare('SELECT key, value FROM settings').all();
     const out = { ...DEFAULT_SETTINGS };
-    for (const r of rows) if (r.key in out) out[r.key] = Number(r.value);
+    for (const r of rows) {
+      if (!(r.key in out)) continue;
+      const v = clampSetting(r.key, r.value);
+      if (v !== null) out[r.key] = v;
+    }
     settingsCache = out;
   } catch (e) { console.error('[memória] loadSettings falhou:', e.message); }
   return { ...settingsCache };
@@ -65,12 +100,25 @@ export function getSettings() {
   return { ...settingsCache };
 }
 
+// Grava só as chaves conhecidas e já normalizadas. Valor inválido é ignorado
+// aqui; a ROTA é quem decide responder 400 (ver `invalidSettingKeys`).
 export async function setSettings(partial) {
   const stmt = db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value');
   for (const [k, v] of Object.entries(partial || {})) {
-    if (k in DEFAULT_SETTINGS && v !== undefined && v !== null && !Number.isNaN(Number(v))) await stmt.run(k, String(Number(v)));
+    if (!(k in DEFAULT_SETTINGS)) continue;
+    const value = clampSetting(k, v);
+    if (value !== null) await stmt.run(k, String(value));
   }
   return loadSettings();
+}
+
+// Chaves CONHECIDAS cujo valor enviado não pode ser aceito (texto, objeto,
+// valor fora da enumeração). A rota usa isto para responder 400 em vez de
+// ignorar em silêncio.
+export function invalidSettingKeys(partial) {
+  return Object.entries(partial || {})
+    .filter(([k, v]) => k in DEFAULT_SETTINGS && v !== undefined && clampSetting(k, v) === null)
+    .map(([k]) => k);
 }
 
 // ---- Piso de similaridade da busca ----

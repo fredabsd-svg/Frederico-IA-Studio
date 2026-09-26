@@ -24,6 +24,16 @@ function resolveExtractModel(modelRef) {
 }
 export { resolveExtractModel };
 
+// Modelo da extração na IMPORTAÇÃO de conversas. Lá não há conversa de onde
+// herdar o modelo, então o de referência é o do PRÓPRIO provedor resolvido
+// (`provider.modelRef`). Antes a chamada passava `resolveExtractModel(null)`
+// cru — o modelo padrão global, com o prefixo `<provedor>::` quando houvesse e
+// sem garantia de pertencer ao provedor da chave usada: o mesmo 404 que a
+// extração pós-resposta já tinha corrigido com `rawModelId`.
+export function importExtractModel(provider) {
+  return rawModelId(resolveExtractModel(provider?.modelRef || null));
+}
+
 // Estimativa de tokens ciente de alfabeto. O fator plano len/3.5 é calibrado
 // para texto latino e SUBESTIMA 2–3× em japonês/chinês/coreano, árabe, cirílico
 // etc. — o que fazia o orçamento de contexto estourar em silêncio (o provedor
@@ -45,7 +55,10 @@ export const estimateTokens = (s) => {
   return Math.max(1, Math.ceil(ascii / 3.5 + cjk * 1.1 + other * 0.9));
 };
 
-const EXTRACT_PROMPT = `Você é o módulo de memória de um assistente. Analise o trecho de conversa e devolva APENAS um JSON válido, sem comentários, no formato:
+// Os textos saem em português do Brasil independentemente do idioma do trecho:
+// a memória é lida pela interface (pt-BR) e recuperada por busca semântica, e
+// fatos em idiomas misturados pioram as duas coisas.
+export const EXTRACT_PROMPT = `Você é o módulo de memória de um assistente. Analise o trecho de conversa e devolva APENAS um JSON válido, sem comentários, no formato:
 {
   "summary_short": "resumo da conversa em 1 frase",
   "summary_long": "resumo em até 5 frases (ou null se a conversa for curta)",
@@ -59,7 +72,8 @@ Regras para facts:
 - Salve apenas o que for útil no FUTURO: identidade (nome, profissão, registro), preferências de resposta/formato, projetos em andamento, decisões tomadas, pendências.
 - Escreva cada fato de forma independente (ex.: "O usuário prefere respostas curtas e diretas").
 - NÃO salve: dados temporários, senhas/chaves/tokens, conteúdo ambíguo, detalhes sem valor futuro.
-- Se não houver nada digno de memória, devolva "facts": [].`;
+- Se não houver nada digno de memória, devolva "facts": [].
+Idioma: escreva summary_short, summary_long, tags e o content de cada fato em português do Brasil, mesmo que o trecho esteja em outro idioma (nomes próprios e termos técnicos ficam como estão).`;
 
 function parseJson(text) {
   const cleaned = String(text || '').replace(/```json|```/g, '').trim();
@@ -78,6 +92,27 @@ function parseExtraction(text) {
     tags: Array.isArray(value.tags) ? value.tags.filter(tag => typeof tag === 'string').slice(0, 5) : [],
     facts: Array.isArray(value.facts) ? value.facts.filter(fact => fact && typeof fact === 'object').slice(0, 6) : []
   };
+}
+
+// Provedor para a extração de fatos (segundo plano) — ou null para pular.
+//
+// No modo GRATUITO a extração é pulada, de forma explícita: `getUserProvider`
+// devolve a chave da PLATAFORMA (por adesão ou por fallback), e estas chamadas
+// de segundo plano não passam por limite diário, fila nem contabilidade — cada
+// resposta/importação gastaria a chave da casa em silêncio. Os trechos para
+// busca semântica (embeddings locais, sem custo) continuam sendo salvos.
+let freeSkipLogged = false;
+export async function extractionProviderFor(userId, modelRef = null) {
+  const provider = await getUserProvider(userId, modelRef || undefined);
+  if (!provider?.client) return null;
+  if (provider.source === 'free') {
+    if (!freeSkipLogged) {
+      freeSkipLogged = true;
+      console.info('[memória] modo gratuito: extração automática de fatos desativada (a chave da plataforma não é usada em segundo plano). Os trechos da conversa seguem indexados.');
+    }
+    return null;
+  }
+  return provider;
 }
 
 // Chamado após cada resposta do assistente (fire-and-forget).
@@ -119,8 +154,9 @@ export async function indexAfterReply(userId, conversationId, modelRef = null) {
   // BYOK: a extração de fatos (LLM) usa a chave do próprio usuário — de
   // preferência a do modelo que está na conversa (modelRef), para não dar
   // 404 de "modelo não pertence a este provedor" em contas multi-chave.
-  const provider = await getUserProvider(userId, modelRef || undefined);
-  if (!provider.client) return;
+  // (no modo gratuito, `extractionProviderFor` devolve null — ver acima).
+  const provider = await extractionProviderFor(userId, modelRef);
+  if (!provider) return;
   try {
     const recent = msgs.slice(-6).map(m => `${m.role === 'user' ? 'Usuário' : 'Assistente'}: ${m.content.slice(0, 700)}`).join('\n');
     const input = `Resumo atual da conversa: ${conv.summary_short || '(nenhum)'}\nTotal de mensagens: ${msgs.length}\n\nTrecho recente:\n${recent}`;
@@ -225,8 +261,25 @@ function parseImport(name, text) {
   return [{ title: name.replace(/\.[a-z]+$/i, ''), text: String(raw) }];
 }
 
-// Estado da importação (consultado pela interface para mostrar progresso)
-export const importStatus = { running: false, file: '', scope: 'global', total: 0, processed: 0, chunks: 0, facts: 0, error: null, done: false };
+// Estado da importação POR USUÁRIO (consultado pela interface para mostrar o
+// progresso). Antes era UM objeto global com UMA trava: a importação de uma
+// conta bloqueava a de todas as outras e o progresso (nome do arquivo,
+// contagens) era o mesmo para todo mundo. Cada conta tem a sua entrada; a
+// rota só devolve a do próprio usuário.
+const IDLE_IMPORT_STATUS = Object.freeze({ running: false, file: '', scope: 'global', total: 0, processed: 0, chunks: 0, facts: 0, factsSkipped: null, error: null, done: false });
+const importStatuses = new Map(); // userId -> estado
+
+// Teto de importações simultâneas no servidor (embeddings em CPU): a trava
+// global virou por usuário, mas sem limite nenhum N contas em paralelo
+// derrubariam a VPS.
+function maxConcurrentImports() {
+  return Math.max(1, Number(process.env.MEMORY_IMPORT_MAX_CONCURRENT) || 2);
+}
+
+export function getImportStatus(userId) {
+  const status = userId ? importStatuses.get(userId) : null;
+  return { ...(status || IDLE_IMPORT_STATUS) };
+}
 
 function normalizeImportScope(scope) {
   const s = String(scope || 'global');
@@ -234,30 +287,55 @@ function normalizeImportScope(scope) {
   return 'global';
 }
 
-// Inicia a importação em SEGUNDO PLANO (a rota responde na hora)
+// Inicia a importação em SEGUNDO PLANO (a rota responde na hora). O estado
+// `running` é marcado de forma SÍNCRONA — um segundo pedido da mesma conta,
+// logo em seguida, já encontra a trava.
 export function startImport(userId, fileName, buffer, scope = 'global') {
-  if (importStatus.running) return { ok: false, error: 'Já existe uma importação em andamento.' };
+  if (importStatuses.get(userId)?.running) {
+    return { ok: false, status: 409, error: 'Já existe uma importação em andamento.' };
+  }
+  const running = [...importStatuses.values()].filter(status => status.running).length;
+  if (running >= maxConcurrentImports()) {
+    return { ok: false, status: 429, error: 'O servidor já está processando outras importações. Tente de novo em alguns minutos.' };
+  }
   const targetScope = normalizeImportScope(scope);
-  Object.assign(importStatus, { running: true, file: fileName, scope: targetScope, total: 0, processed: 0, chunks: 0, facts: 0, error: null, done: false });
-  importConversations(userId, fileName, buffer, targetScope)
-    .then(r => Object.assign(importStatus, { running: false, done: true, ...r }))
-    .catch(err => Object.assign(importStatus, { running: false, done: true, error: err.message }));
+  const status = { ...IDLE_IMPORT_STATUS, running: true, file: fileName, scope: targetScope };
+  importStatuses.set(userId, status);
+  importConversations(userId, fileName, buffer, targetScope, status)
+    .then(r => Object.assign(status, { running: false, done: true, ...r }))
+    .catch(err => {
+      console.error('[memória] importação falhou:', err?.message);
+      // Erro de formato (JSON não reconhecido) é mensagem nossa; o resto é
+      // genérico para não ecoar detalhe interno.
+      const error = /JSON|reconhecido|Unexpected token/i.test(String(err?.message || ''))
+        ? 'O arquivo não está num formato reconhecido (export do Claude, do ChatGPT, {title, messages}, .txt, .md ou .html).'
+        : 'Não foi possível concluir a importação. Tente de novo.';
+      Object.assign(status, { running: false, done: true, error });
+    });
   return { ok: true };
 }
 
-export async function importConversations(userId, fileName, buffer, scope = 'global') {
+// `progress` (opcional): o objeto de estado desta importação, atualizado ao
+// longo do caminho (startImport passa o do usuário).
+export async function importConversations(userId, fileName, buffer, scope = 'global', progress = {}) {
   const targetScope = normalizeImportScope(scope);
-  const provider = await getUserProvider(userId);          // BYOK p/ extração de fatos
+  // BYOK p/ extração de fatos. No modo gratuito vem null: a importação salva só
+  // os trechos (locais, sem custo) e o resultado diz POR QUE não há fatos.
+  const provider = await extractionProviderFor(userId);
+  const freeMode = !provider && (await getUserProvider(userId)).source === 'free';
+  const factsSkipped = freeMode ? 'free_mode' : (provider ? null : 'no_provider');
+  progress.factsSkipped = factsSkipped;
   const text = buffer.toString('utf8');
   const convs = parseImport(fileName, text).slice(0, 200);
-  importStatus.total = convs.length;
+  progress.total = convs.length;
+  progress.processed = 0;
   let chunks = 0, facts = 0;
   for (const conv of convs) {
-    importStatus.processed++;
-    importStatus.chunks = chunks;
-    importStatus.facts = facts;
+    progress.processed++;
+    progress.chunks = chunks;
+    progress.facts = facts;
     // LGPD: o log NÃO imprime o título (conteúdo do usuário) — só o progresso.
-    console.log(`[memória] importando ${importStatus.processed}/${convs.length}`);
+    console.log(`[memória] importando ${progress.processed}/${convs.length}`);
     const title = `Importada: ${String(conv.title).slice(0, 80)}`;
     // divide em janelas de ~1400 caracteres
     const body = String(conv.text || '').trim();
@@ -276,10 +354,10 @@ export async function importConversations(userId, fileName, buffer, scope = 'glo
       }
     }
     // colhe fatos do começo da conversa importada (perfil, preferências...)
-    if (!provider.client) continue;                        // sem chave: só os chunks (grátis)
+    if (!provider) continue;                               // sem chave (ou modo gratuito): só os chunks
     try {
       const completion = await provider.client.chat.completions.create({
-        model: resolveExtractModel(null),
+        model: importExtractModel(provider),
         messages: [{ role: 'system', content: EXTRACT_PROMPT }, { role: 'user', content: untrustedContext('imported-conversation', `Conversa importada "${conv.title}":\n${body.slice(0, 5000)}`) }],
         temperature: 0,
         // Mesma política de qualidade das respostas principais (evita fp4 etc.).
@@ -299,7 +377,7 @@ export async function importConversations(userId, fileName, buffer, scope = 'glo
       }
     } catch {}
   }
-  importStatus.chunks = chunks;
-  importStatus.facts = facts;
-  return { conversations: convs.length, chunks, facts };
+  progress.chunks = chunks;
+  progress.facts = facts;
+  return { conversations: convs.length, chunks, facts, factsSkipped };
 }

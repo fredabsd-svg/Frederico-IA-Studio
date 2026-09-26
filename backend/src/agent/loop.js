@@ -2,7 +2,7 @@
 // ferramentas, reparos, failover de modelo e entrega de arquivos.
 // Extraído de agent.js (refatoração mecânica, sem mudança de comportamento).
 import { getUserProvider } from '../userProvider.js';
-import { rawModelId } from '../modelRef.js';
+import { rawModelId, parseModelRef } from '../modelRef.js';
 import { freeTierConfigured } from '../freeTier.js';
 import { nanoid } from 'nanoid';
 import { webToolDefinitions, runTool } from '../tools.js';
@@ -28,6 +28,7 @@ import { acquireConversationControl, releaseConversationControl, beginProviderRe
 import { clientScopeFor, memoryNote, saveMessage, persistAssistantReply } from './persistence.js';
 import { saveCheckpoint, clearCheckpoint, isResumableReason, buildResumeMessages, leadingSystemCount, trimCheckpointMessages, AUTO_CONTINUE_NOTE } from './checkpoint.js';
 import { untrustedContext, untrustedToolResult } from './promptRegistry.js';
+import { userProjectRulesBlock } from './promptPolicy.js';
 import { finalExecutionState } from './executionState.js';
 import { createRunStateTracker } from './runStateMachine.js';
 import { resolveSandboxNetwork, isToolCallAllowed } from './assistantPolicy.js';
@@ -62,6 +63,96 @@ export function buildProviderRequest({ model, messages, tools = [], forceNativeT
     stream: true,
     stream_options: { include_usage: true }
   };
+}
+
+// Cauda da conversa enviada ao modelo: o histórico (agente principal) ou a
+// SUBTAREFA (sub-agente). O sub-agente não tem histórico — o pedido dele não é
+// gravado na conversa —, e antes disto o `userText` do filho nunca entrava nas
+// mensagens: ele recebia o prompt e as notas, mas não a tarefa que devia
+// executar. Pura de propósito: é o ponto testável desse contrato.
+export function conversationTailMessages({ isSubagent = false, history = [], userText = '' } = {}) {
+  if (isSubagent) {
+    const task = String(userText || '').trim();
+    return task ? [{ role: 'user', content: task }] : [];
+  }
+  return (Array.isArray(history) ? history : [])
+    .map(m => ({
+      role: m.role,
+      content: m.role === 'assistant' ? sanitizeToolProtocolText(m.content) : m.content
+    }))
+    .filter(m => String(m.content || '').trim());
+}
+
+// Nota de pesquisa web: cita só as ferramentas que ESTÃO na chamada. A versão
+// fixa mandava usar consultar_cnpj mesmo para um assistente sem ela.
+export function webSearchNote(toolNames = []) {
+  const names = new Set(toolNames);
+  const cnpj = names.has('consultar_cnpj') ? ' Para CNPJ, use a ferramenta consultar_cnpj.' : '';
+  return `PESQUISA NA INTERNET — o usuário ativou a busca. Você tem acesso real à web, pelas ferramentas web_search (procurar) e web_fetch (abrir uma página). Nunca diga que "não tem acesso à internet".
+
+Pense antes de buscar: eu já sei isso com confiança e é algo que não muda com o tempo? Então responda direto — não pesquise por pesquisar. Busque quando a resposta depender de algo atual, externo ou verificável (legislação, prazos, tabelas, cotações, notícias, dados de uma empresa/produto) ou quando tiver dúvida.
+
+Ao pesquisar, aja como uma pessoa atenta faria:
+- Diga em UMA linha curta e no seu tom o que vai olhar — ex.: "Deixa eu conferir isso numa fonte atual." Varie as palavras; não repita a mesma frase nem narre cada consulta.
+- Monte buscas específicas (termos exatos, ano, órgão, cidade). Se a primeira vier fraca, refine em vez de repetir. Abra cada página no máximo uma vez.
+- Leia de verdade as páginas relevantes com web_fetch antes de afirmar algo; não confie apenas no resuminho da busca.
+
+Ao trazer o que encontrou:
+- Sintetize com suas palavras e mostre como chegou à conclusão. NÃO cole uma lista de links soltos.
+- Se as fontes divergirem, diga isso e aponte qual é mais confiável (site oficial > blog) e por quê.
+- Cite a fonte no meio do texto (nome + link) para o usuário conferir; prefira fontes oficiais e recentes e avise quando algo estiver incerto ou desatualizado.
+- Varie a forma de apresentar: evite começar sempre com "De acordo com a pesquisa…".
+
+O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente a rede direta do sandbox.${cnpj}`;
+}
+
+// Motivo de a chamada seguir SEM ferramentas (ver `toolAvailabilityNote`).
+// Turno social tira as ferramentas de propósito; modelo sem tool calling as
+// perde no plano de capacidades ou no fallback; o resto é configuração.
+// `plannedToolCount` é o que sobrou DEPOIS do plano de capacidades do modelo:
+// pedido com ferramentas e plano sem nenhuma = o modelo é que não as aceita.
+export function noToolsReason({ lowSignalTurn = false, requestedToolCount = 0, plannedToolCount = 0, toolFallbackApplied = false } = {}) {
+  if (lowSignalTurn) return 'greeting';
+  if (toolFallbackApplied || (requestedToolCount > 0 && plannedToolCount === 0)) return 'model';
+  return 'config';
+}
+
+// Cadeia de modelos de reserva (failover) de um run. MODEL_FALLBACKS (env) só
+// vale fora do modo gratuito — e, mesmo ali, SEM referências `free::`: o
+// failover de um run com chave própria não pode cair na chave da PLATAFORMA,
+// que só é contabilizada/limitada quando a rota decide o modo gratuito ANTES
+// do run. No modo gratuito, a reserva é a allowlist gratuita (fallbackModels).
+export function buildFallbackChain({ provider = {}, chosenModel = '', envFallbacks = '' } = {}) {
+  const fromEnv = provider.source === 'free'
+    ? []
+    : String(envFallbacks || '').split(',').map(s => s.trim()).filter(Boolean)
+      .filter(ref => parseModelRef(ref).providerId !== 'free');
+  return [
+    ...fromEnv,
+    ...(provider.fallbackModels || []),
+    ...(provider.modelRef && provider.modelRef !== chosenModel ? [provider.modelRef] : [])
+  ];
+}
+
+// Forma gravada no execution_meta: só campos sem segredo.
+function providerFallbackMeta(fallback) {
+  return {
+    to: fallback.to,
+    reason: fallback.reason,
+    requestedProviderId: fallback.requestedProviderId || null,
+    requestedProviderName: fallback.requestedProviderName || null,
+    message: fallback.message || null
+  };
+}
+
+// Troca de modelo ANTES do primeiro passo: no modo gratuito, um modelo pedido
+// fora da allowlist (ou de um provedor cuja chave não pôde ser lida — ver
+// `provider.fallback`) é substituído pelo gratuito padrão. Devolve
+// `{ from, to, reason }` para o aviso e o execution_meta, ou null.
+export function initialModelSwap({ provider = {}, requestedModel = '', chosenModel = '' } = {}) {
+  if (provider.source !== 'free' || !requestedModel || !chosenModel) return null;
+  if (rawModelId(requestedModel) === rawModelId(chosenModel)) return null;
+  return { from: requestedModel, to: chosenModel, reason: provider.fallback?.reason || 'free_allowlist' };
 }
 
 export function buildOutputBaseline(files = [], { acceptAll = false, continuationPaths = [] } = {}) {
@@ -116,11 +207,14 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   if (provider.source === 'free' && !(provider.freeModels || []).includes(chosenModel)) {
     chosenModel = provider.modelRef;
   }
-  // Modelo com que a tarefa COMEÇA. Se um failover trocar de modelo no meio da
-  // execução, comparamos o modelo final com este para registrar a troca NA
-  // PRÓPRIA RESPOSTA — uma substituição de modelo nunca pode passar despercebida
-  // (foi exatamente a queixa que originou esta mudança: o usuário só percebeu a
-  // troca depois que a tarefa terminou).
+  // A troca ACIMA (pedido → gratuito padrão) também é substituição de modelo e
+  // precisa aparecer. Antes, `startedModel` era capturado só depois dela: o
+  // modelo "inicial" já era o gratuito e o aviso de troca nunca saía.
+  const modelSwap = initialModelSwap({ provider, requestedModel, chosenModel });
+  // Modelo com que a tarefa COMEÇA (já depois da troca inicial, que tem aviso
+  // próprio). Se um failover trocar de modelo no meio da execução, comparamos
+  // o modelo final com este para registrar a troca NA PRÓPRIA RESPOSTA — uma
+  // substituição de modelo nunca pode passar despercebida.
   const startedModel = chosenModel;
   // FAILOVER (MM-04): se o provedor cair no meio da tarefa, antes o app só
   // repetia o MESMO modelo e desistia. Agora há uma cadeia de reserva — os
@@ -128,11 +222,7 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   // gratuito) e, por padrão, o modelo-base da conta — acionada só quando o
   // modelo escolhido falha de forma recuperável, sem perder o trabalho já feito
   // (as mensagens/ferramentas já executadas ficam).
-  const fallbackChain = [
-    ...(provider.source === 'free' ? [] : String(process.env.MODEL_FALLBACKS || '').split(',').map(s => s.trim()).filter(Boolean)),
-    ...(provider.fallbackModels || []),
-    ...(provider.modelRef && provider.modelRef !== chosenModel ? [provider.modelRef] : [])
-  ];
+  const fallbackChain = buildFallbackChain({ provider, chosenModel, envFallbacks: process.env.MODEL_FALLBACKS });
   // No resume, preserva a cadeia de failover já tentada (não retenta modelos
   // que já falharam nesta tarefa).
   const triedModels = new Set(resume?.triedModels?.length ? resume.triedModels : [chosenModel]);
@@ -397,6 +487,22 @@ export async function runAgent({ userId, conversationId, userText, model, assist
             : existingUserMessageId));
   runState.to(developerContext ? 'planning' : 'analyzing', resume ? 'Retomando do checkpoint seguro' : 'Preparando a execução');
 
+  // FALLBACK EXPLÍCITO (Regra 5.5): o provedor pedido ficou sem chave e quem
+  // atende é a chave da PLATAFORMA. O aviso sai UMA vez por execução — a rota
+  // do chat (que decide o modo gratuito antes do run) marca o controle quando
+  // já avisou; tarefas agendadas e retomadas não avisam, e o aviso sai daqui.
+  // O registro permanente vai no execution_meta (`providerFallback`).
+  if (provider.fallback?.message && !control.providerFallbackNotified) {
+    control.providerFallbackNotified = true;
+    console.warn(`[agente] fallback para o modo gratuito (usuário ${userId}): ${provider.fallback.reason}`);
+    onEvent({ type: 'status', content: provider.fallback.message });
+  }
+  // Troca pela allowlist gratuita sem fallback de provedor: aviso próprio (no
+  // fallback, a mensagem acima já explica a troca — sem aviso duplicado).
+  if (modelSwap && !provider.fallback) {
+    onEvent({ type: 'status', content: `Usando ${rawModelId(modelSwap.to)} (modo gratuito) no lugar de ${rawModelId(modelSwap.from)}.` });
+  }
+
   // BYOK: sem chave de API configurada, orienta a cadastrar e encerra.
   if (!provider.hasKey) {
     // F-1: quando há chave mas o MODELO pedido não está em catálogo nenhum,
@@ -410,12 +516,29 @@ export async function runAgent({ userId, conversationId, userText, model, assist
         : 'Nenhuma chave de API configurada. Vá em **Configurações → Provedor de IA** e cadastre a sua chave (OpenRouter/DeepSeek) para começar a conversar.';
     onEvent({ type: 'status', content: 'Chave de API não configurada' });
     onEvent({ type: 'delta', content: finalText });
-    const execution = runState.to('awaiting_user', 'Configuração do provedor necessária');
+    // FALHA EXPLÍCITA (Regra 4.2): dependência ausente não é "concluído" nem
+    // "aguardando resposta". Antes o estado era `awaiting_user` e o resultado
+    // não carregava marca nenhuma — `classifyTaskResult` devolvia `done` e a
+    // tarefa agendada aparecia como "Concluída". `configurationError` é o
+    // sinal que o classificador reconhece; o estado gravado é `fatal_error`.
+    const failureMessage = isSubagent
+      ? 'Provedor sem chave para o modelo do sub-agente.'
+      : (provider.attributionError || 'Nenhuma chave de API configurada para o modelo desta execução.');
+    const execution = runState.to('fatal_error', 'Configuração do provedor necessária', { configuration: 'provider' });
     if (!isSubagent) {
       const assistantMessageId = await saveMessage(userId, conversationId, 'assistant', finalText, { executionMeta: execution });
       onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId });
     }
-    return { text: finalText, usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }, model: chosenModel, stopped: false, ...(isSubagent ? { incomplete: true, failureMessage: 'Provedor sem chave para o modelo do sub-agente.' } : {}) };
+    return {
+      text: finalText,
+      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      model: chosenModel,
+      stopped: false,
+      configurationError: true,
+      failureMessage,
+      execution,
+      ...(isSubagent ? { incomplete: true } : {})
+    };
   }
 
   if (modelPlan.blocked) {
@@ -458,16 +581,37 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   //   depois, os dados não confiáveis (role user, com untrustedContext) e UMA
   //   mensagem com as notas de sistema desta chamada, fechando o prefixo
   //   estático (breakpoint 2 cai sobre ela por ser a última e ser system).
+  // Nota de ferramentas: UMA montagem para a mensagem inicial e para todas as
+  // reconstruções (fallback sem tools, fim da pesquisa web, troca de modelo).
+  // Antes cada ponto repetia a chamada com opções diferentes — o inventário
+  // sumia no meio do run e a nota sem ferramentas mandava "habilitar no
+  // Assistant Studio" até num "oi" ou num modelo sem tool calling.
+  // `fallback` vem de quem chama (o `toolFallbackApplied` é declarado mais
+  // adiante e ainda não existe na primeira montagem).
+  const toolNoteFor = (currentTools, { fallback = false } = {}) => toolAvailabilityNote(currentTools, {
+    includeInventory: includeEnvironmentInventory,
+    sandboxNetworkEnabled,
+    githubNote,
+    reason: noToolsReason({
+      lowSignalTurn,
+      requestedToolCount: requestedTools.length,
+      plannedToolCount: modelRuntime.tools.length,
+      toolFallbackApplied: fallback
+    })
+  });
   const messages = [
     // A `QUALITY_BAR` saiu daqui: o v4.2 já traz a seção PADRÃO DE RESPOSTA, com
     // as mesmas regras numa voz só. Anexar as duas repetia "não invente
     // resultado de ferramenta" três vezes na mesma mensagem.
     { role: 'system', content: chosenPrompt },
-    { role: 'system', content: toolAvailabilityNote(tools, { includeInventory: includeEnvironmentInventory, sandboxNetworkEnabled, githubNote }) }
+    { role: 'system', content: toolNoteFor(tools) }
   ];
   if (executionBriefing) messages.push({ role: 'user', content: untrustedContext('team-briefing', clipForBriefing(String(executionBriefing), BRIEFING_CHAR_LIMIT)) });
   if (environmentNote) messages.push({ role: 'user', content: untrustedContext('verified-environment-output', environmentNote) });
-  if (developerContext?.userRules) messages.push({ role: 'user', content: untrustedContext('project-rules', developerContext.userRules) });
+  // Regras de projeto do Modo Desenvolvedor: texto do PRÓPRIO usuário, no
+  // degrau do pedido atual (ver `userProjectRulesBlock`), não dado não confiável.
+  const projectRules = userProjectRulesBlock(developerContext?.userRules);
+  if (projectRules) messages.push({ role: 'user', content: projectRules });
   const callNotes = [];
   // Reinício do sandbox entre turnos: o modelo precisa saber ANTES de agir. Sem
   // este aviso ele continua supondo que os pacotes instalados, os processos e os
@@ -491,22 +635,7 @@ export async function runAgent({ userId, conversationId, userText, model, assist
   if (developerContext?.canWrite && subagentsOffered) callNotes.push(PLAN_DELEGATION_TOPIC);
   if (updatePlanOffered) callNotes.push(PLAN_TOOL_NOTE);
   if (eff.nudge) callNotes.push(eff.nudge);
-  if (webSearchActive) callNotes.push(`PESQUISA NA INTERNET — o usuário ativou a busca. Você tem acesso real à web, pelas ferramentas web_search (procurar) e web_fetch (abrir uma página). Nunca diga que "não tem acesso à internet".
-
-Pense antes de buscar: eu já sei isso com confiança e é algo que não muda com o tempo? Então responda direto — não pesquise por pesquisar. Busque quando a resposta depender de algo atual, externo ou verificável (legislação, prazos, tabelas, cotações, notícias, dados de uma empresa/produto) ou quando tiver dúvida.
-
-Ao pesquisar, aja como uma pessoa atenta faria:
-- Diga em UMA linha curta e no seu tom o que vai olhar — ex.: "Deixa eu conferir isso numa fonte atual." Varie as palavras; não repita a mesma frase nem narre cada consulta.
-- Monte buscas específicas (termos exatos, ano, órgão, cidade). Se a primeira vier fraca, refine em vez de repetir. Abra cada página no máximo uma vez.
-- Leia de verdade as páginas relevantes com web_fetch antes de afirmar algo; não confie apenas no resuminho da busca.
-
-Ao trazer o que encontrou:
-- Sintetize com suas palavras e mostre como chegou à conclusão. NÃO cole uma lista de links soltos.
-- Se as fontes divergirem, diga isso e aponte qual é mais confiável (site oficial > blog) e por quê.
-- Cite a fonte no meio do texto (nome + link) para o usuário conferir; prefira fontes oficiais e recentes e avise quando algo estiver incerto ou desatualizado.
-- Varie a forma de apresentar: evite começar sempre com "De acordo com a pesquisa…".
-
-O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente a rede direta do sandbox. Para CNPJ, use a ferramenta consultar_cnpj.`);
+  if (webSearchActive) callNotes.push(webSearchNote(requestedTools.map(tool => tool.function.name)));
   if (callNotes.length) messages.push({ role: 'system', content: callNotes.join('\n\n') });
   // Fim do preâmbulo ESTÁVEL (prompt-base + notas de sistema): tudo daqui pra
   // frente (memória, uploads, histórico) muda a cada turno. É o ponto natural
@@ -556,9 +685,13 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
   // ELEMENTOS VISUAIS (gráficos/assinaturas/selos): nota transparente adaptada à
   // visão do modelo. Com visão, as imagens são anexadas mais abaixo; sem visão,
   // o modelo é avisado para NÃO fingir que interpretou o elemento.
+  // O índice fica guardado para a troca de modelo reescrever a nota: com um
+  // fallback de visão diferente, "as imagens seguem anexadas" (ou o contrário)
+  // passava a ser mentira no meio do run.
+  let visualNoteIndex = -1;
   if (docContext?.pictures?.length) {
     const vnote = visualElementsNote(docContext.pictures, modelPlan.capabilities?.vision === true);
-    if (vnote) messages.push({ role: 'system', content: vnote });
+    if (vnote) { visualNoteIndex = messages.length; messages.push({ role: 'system', content: vnote }); }
   }
   const pcNote = pcFoldersNote(sandboxOptions);
   if (pcNote) messages.push({ role: 'system', content: pcNote });
@@ -574,13 +707,8 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
     memoryMeta = { ...memoryMeta, history: historyPlan.meta };
     onEvent({ type: 'memory_context', memory: memoryMeta });
   }
-  const history = historyPlan.rows;
-  messages.push(...history
-    .map(m => ({
-      role: m.role,
-      content: m.role === 'assistant' ? sanitizeToolProtocolText(m.content) : m.content
-    }))
-    .filter(m => String(m.content || '').trim()));
+  // Sub-agente: sem histórico, mas COM a subtarefa como mensagem do usuário.
+  messages.push(...conversationTailMessages({ isSubagent, history: historyPlan.rows, userText }));
 
   // RETOMADA: descarta o contexto recém-montado e usa o ESTADO SALVO do run
   // interrompido. O array do checkpoint já traz objetivo, plano, tool_calls,
@@ -599,11 +727,14 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
   // recebem as imagens aqui — continuam lendo por OCR no sandbox. No resume as
   // imagens já estão no array do checkpoint (não reanexar).
   let visionApplied = false;
+  // Imagens dos uploads + figuras extraídas pelo Docling. A MESMA lista na
+  // montagem inicial e na troca de modelo — antes o fallback reanexava só as
+  // dos uploads, e as figuras do documento sumiam para o modelo de reserva.
+  const visualPartsForRun = () => [...imageUploadParts(userId, conversationId), ...doclingImageParts(docContext?.pictures || [])];
   if (!resume && modelPlan.capabilities?.vision === true) {
     // Imagens dos uploads + figuras/gráficos extraídos pelo Docling (quando o
     // documento foi processado) — o modelo com visão enxerga ambos.
-    const visualParts = [...imageUploadParts(userId, conversationId), ...doclingImageParts(docContext?.pictures || [])];
-    visionApplied = attachImagesToLastUserMessage(messages, visualParts);
+    visionApplied = attachImagesToLastUserMessage(messages, visualPartsForRun());
     if (visionApplied) onEvent({ type: 'status', content: 'Enviando a imagem para o modelo analisar...' });
   }
 
@@ -619,13 +750,17 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
     reasoningEffort = candidateRuntime.reasoningEffort;
     toolFallbackApplied = false;
     forceNativeToolCall = mustInspectUploads && executedToolCalls === 0;
-    messages[1] = { role: 'system', content: toolAvailabilityNote(tools, { includeInventory: includeEnvironmentInventory, sandboxNetworkEnabled, githubNote }) };
+    messages[1] = { role: 'system', content: toolNoteFor(tools) };
     if (!resume) {
-      if (candidatePlan.capabilities?.vision === true) {
-        visionApplied = attachImagesToLastUserMessage(messages, imageUploadParts(userId, conversationId));
-      } else {
-        stripImagePartsFromMessages(messages);
-        visionApplied = false;
+      const hasVision = candidatePlan.capabilities?.vision === true;
+      // Sempre volta ao texto puro antes de reanexar: anexar por cima de um
+      // conteúdo que já é multimodal trocava o texto do pedido pelo genérico
+      // "Analise a(s) imagem(ns)".
+      stripImagePartsFromMessages(messages);
+      visionApplied = hasVision ? attachImagesToLastUserMessage(messages, visualPartsForRun()) : false;
+      if (visualNoteIndex >= 0) {
+        const vnote = visualElementsNote(docContext?.pictures || [], hasVision);
+        if (vnote) messages[visualNoteIndex] = { role: 'system', content: vnote };
       }
     }
     applyPromptCache(messages, chosenModel, resumePrefixEnd, provider.baseURL);
@@ -951,7 +1086,7 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
       }
       toolFallbackApplied = true;
       tools = [];
-      messages[1] = { role: 'system', content: toolAvailabilityNote(tools, { sandboxNetworkEnabled, githubNote }) };
+      messages[1] = { role: 'system', content: toolNoteFor(tools, { fallback: true }) };
       onEvent({ type: 'status', content: 'Este modelo não oferece ferramentas; respondendo em texto.' });
       step -= 1;
       continue;
@@ -1125,8 +1260,8 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
       if (webResearchStop && !webResearchConclusionAttempted) {
         webResearchConclusionAttempted = true;
         tools = tools.filter(tool => !WEB_TOOL_NAMES.has(tool.function.name));
-        messages[1] = { role: 'system', content: toolAvailabilityNote(tools, { sandboxNetworkEnabled, githubNote }) };
-        messages.push({ role: 'system', content: webResearchFinalizationNote(webResearchStop) });
+        messages[1] = { role: 'system', content: toolNoteFor(tools, { fallback: toolFallbackApplied }) };
+        messages.push({ role: 'system', content: webResearchFinalizationNote(webResearchStop, tools.map(tool => tool.function.name)) });
         onEvent({ type: 'status', content: 'Reunindo o que encontrei e cruzando as fontes...' });
         step -= 1;
         continue;
@@ -1550,8 +1685,8 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
     if (webResearchStop && !webResearchConclusionAttempted) {
       webResearchConclusionAttempted = true;
       tools = tools.filter(tool => !WEB_TOOL_NAMES.has(tool.function.name));
-      messages[1] = { role: 'system', content: toolAvailabilityNote(tools, { sandboxNetworkEnabled, githubNote }) };
-      messages.push({ role: 'system', content: webResearchFinalizationNote(webResearchStop) });
+      messages[1] = { role: 'system', content: toolNoteFor(tools, { fallback: toolFallbackApplied }) };
+      messages.push({ role: 'system', content: webResearchFinalizationNote(webResearchStop, tools.map(tool => tool.function.name)) });
       onEvent({ type: 'status', content: 'Concluindo a pesquisa com as fontes já verificadas...' });
       step -= 1;
       continue;
@@ -1628,6 +1763,14 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
   // estado/badge já reporta o modelo final, mas a nota garante que o usuário
   // SEMPRE saiba, no texto salvo, que a tarefa terminou num modelo diferente do
   // escolhido — sem substituição silenciosa.
+  if (modelSwap) {
+    const motivo = modelSwap.reason === 'provider_key_unavailable'
+      ? 'a chave do provedor dele não pôde ser lida'
+      : 'ele não está entre os modelos do modo gratuito';
+    const swapNote = `\n\n_ℹ️ O modelo escolhido (**${rawModelId(modelSwap.from)}**) não foi usado porque ${motivo}; esta resposta foi gerada no modo gratuito com **${rawModelId(modelSwap.to)}**._`;
+    finalText += swapNote;
+    onEvent({ type: 'delta', content: swapNote });
+  }
   if (rawModelId(chosenModel) !== rawModelId(startedModel)) {
     const modelSwitchNote = `\n\n_ℹ️ O modelo escolhido (**${rawModelId(startedModel)}**) ficou indisponível durante a execução; a tarefa foi concluída com o modelo de reserva **${rawModelId(chosenModel)}**. Para uma indisponibilidade retornar erro em vez de trocar de modelo, não configure modelos de reserva (variável MODEL_FALLBACKS)._`;
     finalText += modelSwitchNote;
@@ -1736,7 +1879,11 @@ O globo libera web_search/web_fetch pelo backend, mas não abre automaticamente 
     // Estado real da integração com o GitHub nesta execução (sem token, sem
     // segredo): a interface mostra a CAUSA de um bloqueio em vez de "a ferramenta
     // não está habilitada".
-    ...(githubState.connected || githubState.repository ? { github: githubState } : {})
+    ...(githubState.connected || githubState.repository ? { github: githubState } : {}),
+    // Rastreabilidade do fallback (Regra 5.5): quem atendeu e por quê. Sem
+    // chave, sem segredo — só o motivo, o provedor pedido e a mensagem.
+    ...(provider.fallback ? { providerFallback: providerFallbackMeta(provider.fallback) } : {}),
+    ...(modelSwap ? { modelSwap } : {})
   });
   // Persistência e cartões só acontecem depois da validação. O estado gravado
   // é a fonte de verdade quando a conversa for reaberta.
