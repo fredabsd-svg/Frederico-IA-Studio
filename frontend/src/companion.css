@@ -536,9 +536,12 @@ body.light .cmpMinFace { background: #f1e6d4; }
    (Antes em nino-visibility.css; juntado aqui para o Nino ter um arquivo só.) */
 .cmpHideBtn {
   position: absolute;
+  /* DENTRO da área do personagem: pendurado abaixo dele, o botão caía sobre
+     controles que o Nino arrastado respeita (cabeçalho do terminal, envio) —
+     a área protegida mede o avatar, não o que sobra para fora dele. */
   left: 50%;
-  bottom: -4px;
-  transform: translate(-50%, 100%);
+  bottom: 0;
+  transform: translateX(-50%);
   display: inline-flex;
   align-items: center;
   gap: 4px;

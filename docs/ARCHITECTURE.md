@@ -779,9 +779,22 @@ main.jsx → AuthGate → App.jsx
   ├─ rodapé do chat: ChatJumpToBottom + ExecutionTerminalDock (chunk sob demanda) +
   │          compositor. As duas faixas publicam a própria altura em `--composer-h` e
   │          `--dock-h`; quem flutua no canto (Companion) soma as duas.
-  └─ CSS: styles.css + v2.css + 8 arquivos temáticos (auth, camera, companion,
-          copilot, docling, landing, nino, design)
+  └─ CSS: tokens.css → styles.css → v2.css + 8 arquivos temáticos (auth, camera,
+          companion, copilot, docling, landing, nino, design)
 ```
+
+**Sistema visual (2026-09-26).** `tokens.css` é a única fonte de cor, tipografia,
+raio, movimento e camadas (z-index). As 7 paletas do seletor "Aparência"
+(`constants.js › THEMES`) são geradas em OKLCH a partir de cinco parâmetros por paleta
+(`--h`, `--hc`, `--ha`, `--ac`, `--al` em `body.dark|light.t-<id>`); o contraste WCAG
+2.2 AA (texto 4,5:1, borda de campo e foco 3:1) foi conferido para as sete. Os
+componentes consomem só os tokens semânticos (`--bg`, `--side`, `--panel`, `--panel2`,
+`--text`, `--muted`, `--line`, `--line-strong`, `--accent`, `--accent-text`,
+`--accent-soft`, `--on-accent`, `--focus`, `--danger`, `--warn`, `--ok`). `styles.css`
+guarda a estrutura (grid, posições); `v2.css` é a camada de acabamento com o sistema de
+botões (`.primary`, padrão, `.ghost`, `.danger`), a moldura calma (barra lateral sem
+ladrilhos, um único item aceso) e os módulos. A landing (`Landing.jsx`) mostra capturas
+reais do app em `public/landing/` (conteúdo da conversa rotulado como ilustrativo).
 
 **A coluna do chat é limitada pela janela.** `.app` é um grid com `height:100vh` e
 `grid-template-rows: minmax(0, 1fr)`; `.chat` tem `min-height: 0; overflow: hidden`. Sem

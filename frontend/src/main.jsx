@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import AuthGate from './AuthGate.jsx';
 import ErrorBoundary from './ErrorBoundary.jsx';
 import { PrivacyPolicy, TermsOfUse } from './LegalPages.jsx';
+import './tokens.css';
 import './styles.css';
 import './v2.css';
 import './auth.css';

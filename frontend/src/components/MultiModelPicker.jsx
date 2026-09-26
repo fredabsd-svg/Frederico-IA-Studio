@@ -3,6 +3,7 @@ import { Layers, Plus, X, Check, ChevronDown, Save, Trash2, Users, Coins } from 
 import { API } from '../constants.js';
 import { MULTI_MODE_LABEL } from '../constants.js';
 import { modelDisplayName, multiModelStatus } from '../modelChoice.js';
+import { useKeepInViewport } from '../hooks/useKeepInViewport.js';
 
 // Seletor MULTIMODELO da barra superior: liga/desliga o modo, escolhe os
 // modelos e a função de cada um, o modo de colaboração, o coordenador, o
@@ -83,6 +84,8 @@ export function MultiModelPicker({ models, value, onChange, showToast }) {
   const [savingPreset, setSavingPreset] = useState(false);
   const [presetName, setPresetName] = useState('');
   const ref = useRef(null);
+  const panelRef = useRef(null);
+  useKeepInViewport(panelRef, open);
 
   const enabled = Boolean(value?.enabled);
   const config = { ...DEFAULT_MULTI_CONFIG, ...(value?.config || {}) };
@@ -173,7 +176,7 @@ export function MultiModelPicker({ models, value, onChange, showToast }) {
       </span>
       <ChevronDown size={14}/>
     </button>
-    {open && <div className="ctxPanel mmPanel">
+    {open && <div className="ctxPanel mmPanel" ref={panelRef}>
       <div className="mmPanelScroll">
         <label className="mmToggle">
           <input type="checkbox" checked={enabled} onChange={e => onChange({ enabled: e.target.checked, config })}/>
