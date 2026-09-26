@@ -15,7 +15,7 @@ const ICONS = {
 export function SettingsHub({ onClose, actions = {}, isAdmin, pcFoldersEnabled, freeConfigured }) {
   const TABS = [
     { id: 'geral', label: 'Geral', items: [
-      { id: 'aparencia', label: 'Aparência e tema', desc: 'Paleta, espaço de trabalho e densidade.' },
+      { id: 'aparencia', label: 'Aparência e tema', desc: 'Paleta de cores e espaço de trabalho.' },
     ] },
     { id: 'agente', label: 'Agente', items: [
       { id: 'copilotoAjustes', label: 'Copiloto — Personalização', desc: 'Personagem, persona, modelo, modo e proatividade (alertas e revisão de escrita).' },
@@ -38,7 +38,7 @@ export function SettingsHub({ onClose, actions = {}, isAdmin, pcFoldersEnabled, 
       { id: 'analises', label: 'Análises de uso', desc: 'Tokens, custos e consumo por modelo.' },
     ] },
     { id: 'avancado', label: 'Avançado', items: [
-      { id: 'inbox', label: 'Caixa de entrada', desc: 'Itens e notificações do app.' },
+      { id: 'inbox', label: 'Caixa de entrada', desc: 'Documentos acumulados por cliente, prontos para abrir numa conversa.' },
       isAdmin && { id: 'backup', label: 'Backup completo', desc: 'Banco + workspaces (somente administrador).' },
       (isAdmin && freeConfigured) && { id: 'gratuito', label: 'Modo gratuito', desc: 'Usuários, consumo e limites (somente administrador).' },
     ] },

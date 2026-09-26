@@ -58,24 +58,38 @@ class LiveStream {
     return rec;
   }
 
-  // Reproduz o que já passou (passando o filtro) e passa a receber os próximos.
-  // O filtro combina dois critérios:
-  //   - runId: se o cliente passou um, só recebe eventos do MESMO run. Sem isto,
-  //     um cliente que reconectou depois de um novo run começar pularia eventos
-  //     do run novo com o seq do antigo (falsa "deduplicação").
-  //   - fromSeq: pula tudo o que o cliente já viu neste run.
+  // Reproduz o que já passou e passa a receber os próximos, com UM ÚNICO filtro
+  // valendo para o replay E para os eventos ao vivo (antes o filtro só valia no
+  // replay: os eventos novos chegavam sem filtro nenhum).
+  //   - runId: identifica o run que o cliente estava acompanhando. Se ele NÃO
+  //     é o run deste stream (um run novo começou entre a desconexão e a
+  //     reconexão), o cursor `fromSeq` do run antigo não significa nada aqui —
+  //     o cliente recebe o run ATUAL desde o seq 0 (replay completo). A versão
+  //     anterior descartava o replay inteiro nesse caso e entregava só os
+  //     eventos ao vivo, a partir do meio: resposta remontada sem o começo e,
+  //     se o run já tinha terminado, uma conexão que nunca recebia o "done".
+  //   - fromSeq: pula o que o cliente já viu NESTE run. Um cursor MAIOR que o
+  //     último seq publicado é impossível para este stream — acontece quando o
+  //     run foi RETOMADO (/resume reabre o stream com o mesmo runId e o seq
+  //     recomeça do 1). Nesse caso o cursor é descartado e o replay é completo;
+  //     respeitá-lo pularia os primeiros eventos da retomada.
+  // Cada seq é entregue no máximo uma vez por assinatura (sem duplicidade
+  // entre o fim do replay e o começo do ao vivo).
   // Retorna a função para cancelar a assinatura.
   subscribe(fn, { fromSeq = 0, runId = null } = {}) {
-    const filtro = (rec) => {
-      if (runId && rec.runId && rec.runId !== runId) return false;
-      if (rec.seq <= fromSeq) return false;
-      return true;
+    const sameRun = !runId || !this.runId || runId === this.runId;
+    const requested = Math.max(0, Number(fromSeq) || 0);
+    const cursor = sameRun && requested <= this.seq ? requested : 0;
+    let lastDelivered = cursor;
+    const deliver = (rec) => {
+      if (rec.runId && this.runId && rec.runId !== this.runId) return;
+      if (rec.seq <= lastDelivered) return;
+      lastDelivered = rec.seq;
+      try { fn(rec); } catch {}
     };
-    for (const rec of this.events) {
-      if (filtro(rec)) { try { fn(rec); } catch {} }
-    }
-    this.subscribers.add(fn);
-    return () => { this.subscribers.delete(fn); };
+    for (const rec of this.events) deliver(rec);
+    this.subscribers.add(deliver);
+    return () => { this.subscribers.delete(deliver); };
   }
 
   finish() {

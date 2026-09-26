@@ -58,8 +58,11 @@ async function totalsByFeature(sinceIso) {
 
 async function topUsers(sinceIso, limit = 5) {
   const rows = await db.prepare(
+    // `u` é a tabela `usage` (não tem name/email); o nome vem do JOIN com a
+    // tabela de usuários (`usr`). Selecionar u.name derrubava o painel inteiro
+    // com 500 ("column u.name does not exist").
     `SELECT u.user_id,
-            COALESCE(u.name, u.email, u.user_id) AS display,
+            COALESCE(usr.name, usr.email, u.user_id) AS display,
             COUNT(*)::int AS requests,
             COALESCE(SUM(u.total_tokens),0)::bigint AS tokens
        FROM usage u

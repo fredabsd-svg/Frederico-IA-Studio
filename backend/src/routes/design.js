@@ -131,6 +131,7 @@ router.post('/design/projects', validate(schemas.designProjectCreate), async (re
     // pedido no chat em vez de recomeçar do zero.
     return res.status(generated.status || 502).json({
       error: generated.error,
+      ...freeCodeFields(generated),
       project: await projectPayload(req.userId, project.id),
     });
   }
@@ -216,6 +217,15 @@ function targetLabel(target) {
   return [`<${target.tag || 'elemento'}>`, texto].filter(Boolean).join(' ');
 }
 
+// Campos da recusa do modo gratuito (`code`, `resetAt`) que a interface usa
+// para distinguir cota de falha — só entram quando existem.
+function freeCodeFields(result) {
+  return {
+    ...(result.code ? { code: result.code } : {}),
+    ...(result.resetAt ? { resetAt: result.resetAt } : {}),
+  };
+}
+
 async function runGeneration(req, project, prompt) {
   const limitError = await enforceDailyLimit(req.userId);
   if (limitError) return { ok: false, status: 429, error: limitError };
@@ -247,7 +257,11 @@ async function runGeneration(req, project, prompt) {
   await addMessage(req.userId, project.id, 'user', target ? `${prompt}\n↳ ${targetLabel(target)}` : prompt);
   if (!result.ok) {
     await addMessage(req.userId, project.id, 'assistant', result.error);
-    return { ok: false, status: 502, error: result.error };
+    // O status de `generateArtifact` passa adiante: 429/403 do modo gratuito
+    // (limite, fila, bloqueio) precisam chegar ao cliente com o `code` para a
+    // interface mostrar a tela de limite — um 502 fixo dizia "falha do
+    // provedor" para o que era cota. Sem status próprio, é falha upstream (502).
+    return { ok: false, status: result.status || 502, code: result.code, resetAt: result.resetAt, error: result.error };
   }
 
   const created = await addVersion(req.userId, project.id, { content: result.content, promptUsed: prompt });
@@ -281,7 +295,7 @@ router.post('/design/projects/:id/generate', validate(schemas.designGenerate), a
     versions: await listVersions(req.userId, project.id),
     messages: await listMessages(req.userId, project.id),
   };
-  if (!result.ok) return res.status(result.status || 502).json({ error: result.error, ...payload });
+  if (!result.ok) return res.status(result.status || 502).json({ error: result.error, ...freeCodeFields(result), ...payload });
   res.json(payload);
 });
 

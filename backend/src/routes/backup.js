@@ -108,20 +108,38 @@ router.get('/backup', async (req, res) => {
       res.setHeader('Content-Type', 'application/gzip');
       res.setHeader('Content-Disposition', `attachment; filename="frederico-backup-${stamp}.tar.gz"`);
     };
-    tar.stderr.on('data', () => {}); // drena o stderr (senão o buffer enche e o tar trava)
+    let tarStderr = '';
+    // Drena o stderr (senão o buffer enche e o tar trava) guardando o começo
+    // para o log de falha.
+    tar.stderr.on('data', (d) => { if (tarStderr.length < 2000) tarStderr += String(d).slice(0, 2000 - tarStderr.length); });
     tar.stdout.on('data', (chunk) => { sendHeaders(); if (!res.write(chunk)) tar.stdout.pause(); });
     res.on('drain', () => tar.stdout.resume());
     // O cliente pode abortar o download no meio: encerra o tar e limpa o staging.
     res.on('close', () => { if (!res.writableEnded) { try { tar.kill('SIGKILL'); } catch {} } cleanup(); });
-    tar.stdout.on('end', () => { if (headersSent) res.end(); cleanup(); });
     tar.on('error', (err) => {
       console.error('[backup]', err.message);
       cleanup();
       if (!headersSent) res.status(500).json({ error: 'Falha ao gerar o backup (tar indisponível?).' });
-      else res.end();
+      else res.destroy(err);
     });
-    tar.on('close', (code) => {
-      if (!headersSent && code !== 0) { cleanup(); res.status(500).json({ error: 'Falha ao gerar o backup.' }); }
+    // O download só é ENCERRADO com sucesso depois do código de saída do tar.
+    // Antes, o fim do stdout fechava a resposta normalmente — um tar que
+    // morria no meio (disco cheio, arquivo sumindo, sinal) entregava um
+    // .tar.gz truncado como se fosse um backup bom (Regra 4.2: sem sucesso
+    // falso). Com o código ≠ 0 depois de os bytes começarem a sair, a conexão
+    // é DERRUBADA: o navegador marca o download como falho em vez de salvar um
+    // arquivo aparentemente completo.
+    tar.on('close', (code, signal) => {
+      cleanup();
+      if (res.destroyed || res.writableEnded) return;
+      if (code === 0) {
+        sendHeaders();
+        res.end();
+        return;
+      }
+      console.error(`[backup] tar terminou com código ${code}${signal ? ` (sinal ${signal})` : ''}: ${tarStderr.trim().slice(0, 500)}`);
+      if (!headersSent) res.status(500).json({ error: 'Falha ao gerar o backup.' });
+      else res.destroy(new Error(`tar terminou com código ${code}`));
     });
 
     await recordAdminAction(req, 'backup.download', {

@@ -44,7 +44,7 @@ import usageDashboardRouter from './routes/usageDashboard.js';
 import reliabilityRouter from './routes/reliability.js';
 import toolProbeRouter from './routes/toolProbe.js';
 import { healthMetrics } from './healthMetrics.js';
-import { sweepStaleUploadTemps } from './uploads.js';
+import { sweepStaleUploadTemps, uploadErrorHandler, cleanupRequestUploads } from './uploads.js';
 import { sweepStalePipelineRuns } from './agent/pipelineRuns.js';
 import { sweepOrphanAgentRuns } from './agent/runLog.js';
 import { sweepExpiredArtifacts, RETENTION_DAYS as DOCLING_RETENTION_DAYS } from './docling/retention.js';
@@ -234,9 +234,15 @@ async function warnIfDoclingUnavailable() {
 // 404 padrão para rotas de API desconhecidas
 app.use('/api', (_, res) => res.status(404).json({ error: 'Rota não encontrada' }));
 
+// Erros do multer (arquivo grande demais, arquivos demais, campo inesperado):
+// 413/400 com mensagem útil e limpeza do staging — ver uploads.js.
+app.use(uploadErrorHandler);
+
 // Tratador global de erros: loga o detalhe no servidor e devolve mensagem
-// limpa ao cliente (sem stack trace).
+// limpa ao cliente (sem stack trace). O staging de upload da requisição é
+// removido também aqui (erro no meio de uma rota de upload).
 app.use((err, req, res, _next) => {
+  cleanupRequestUploads(req);
   console.error('[erro]', req.method, req.path, err);
   if (res.headersSent) return res.end();
   const status = err.type === 'entity.parse.failed' ? 400 : err.status || 500;

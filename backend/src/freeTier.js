@@ -133,7 +133,12 @@ export async function unblockFreeTierUser(userId) {
 }
 
 // ---- Limites e consumo ----
-function dayKey() { return scheduleDateKey(new Date(), TZ); }
+// Chave do "dia" dos contadores do modo gratuito, no fuso do app
+// (APP_TIMEZONE). Exportada para o painel admin consultar o MESMO dia em que o
+// consumo foi gravado — com UTC, entre 21h e 0h (Brasília) o painel mostrava o
+// "hoje" de amanhã, zerado.
+export function freeTierDayKey(date = new Date()) { return scheduleDateKey(date, TZ); }
+function dayKey() { return freeTierDayKey(); }
 
 // Horário (ISO) em que o contador diário zera: a próxima meia-noite no fuso do
 // app. Aproximação por Intl (DST pode deslocar ±1h — aceitável para exibição).

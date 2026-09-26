@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { API, TOOL_INFO, TEMPLATES, emptyForm } from '../constants.js';
+import { assistantModelRef } from '../modelChoice.js';
 
 // Assistentes (lista/seleção) + Assistant Studio (formulário de criar/editar).
 // Recebe as dependências do App por parâmetro e devolve { estado, ações }.
@@ -17,27 +18,27 @@ export function useAssistants({ model, setModel, showToast, askConfirm }) {
       const firstLoad = !assistantId; // ainda não havia assistente selecionado
       setAssistants(rows);
       setAssistantId(prev => (prev && rows.some(a => a.id === prev)) ? prev : (rows[0]?.id || null));
-      // Só alinha o modelo ao assistente no PRIMEIRO carregamento. Recarregar a
-      // lista depois (ex.: após salvar um assistente) NÃO pode sobrescrever um
-      // modelo que o usuário trocou à mão — quem seleciona um assistente é o
-      // pickAssistant, que já cuida do modelo.
+      // Só alinha o modelo ao assistente no PRIMEIRO carregamento, e só se não
+      // houver escolha salva. Recarregar a lista depois (ex.: após salvar um
+      // assistente) NÃO pode sobrescrever um modelo que o usuário trocou à mão —
+      // quem seleciona um assistente é o pickAssistant, que já cuida do modelo.
       if (firstLoad) {
-        const chosen = rows[0];
-        if (chosen?.model) setModel(chosen.model);
+        const ref = assistantModelRef(rows[0]);
+        if (ref) setModel(prev => prev || ref);
       }
     } catch {}
   }
 
   function pickAssistant(id) {
     setAssistantId(id);
-    const a = assistants.find(x => x.id === id);
-    if (a?.model) setModel(a.model);
+    const ref = assistantModelRef(assistants.find(x => x.id === id));
+    if (ref) setModel(ref);
   }
 
   // ---- Assistant Studio ----
   function openStudioNew() { setForm(emptyForm()); setStudioOpen(true); }
   function openStudioEdit(a) {
-    setForm({ id: a.id, name: a.name, emoji: a.emoji || 'bot', color: a.color || '', model: a.model || model, system_prompt: a.system_prompt || '', template: '', tools: Array.isArray(a.tools) ? a.tools : TOOL_INFO.map(t => t.name), personality: { form: 50, det: 50, criat: 20, ...(a.personality || {}) } });
+    setForm({ id: a.id, name: a.name, emoji: a.emoji || 'bot', color: a.color || '', model: assistantModelRef(a) || model, system_prompt: a.system_prompt || '', template: '', tools: Array.isArray(a.tools) ? a.tools : TOOL_INFO.map(t => t.name), personality: { form: 50, det: 50, criat: 20, ...(a.personality || {}) } });
     setStudioOpen(true);
   }
   function applyTemplate(key) {

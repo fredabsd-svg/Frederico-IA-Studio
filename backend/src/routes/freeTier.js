@@ -20,10 +20,21 @@ import { getUserProvider } from '../userProvider.js';
 import { freeQueueSnapshot } from '../freeQueue.js';
 import {
   freeTierConfigured, getFreeTierConfig, freeTierStatusFor, setFreeModeOptIn,
-  blockFreeTierUser, unblockFreeTierUser, saveFreeTierSetting
+  blockFreeTierUser, unblockFreeTierUser, saveFreeTierSetting, freeTierDayKey
 } from '../freeTier.js';
 
 const router = makeRouter();
+
+// Limite diário de mensagens informado pelo administrador: inteiro de 1 a
+// 10.000. Devolve null quando inválido — a rota responde 400. (A versão
+// anterior fazia Math.max(1, …) ANTES de validar: "abc", 0 ou -5 viravam 1 em
+// silêncio e a checagem de inválido nunca disparava.)
+export function parseDailyLimit(value) {
+  if (value === null || value === undefined || value === '' || typeof value === 'boolean' || typeof value === 'object') return null;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1 || n > 10_000) return null;
+  return n;
+}
 
 // ---- Usuário ----
 router.get('/free-tier/status', async (req, res) => {
@@ -52,7 +63,7 @@ router.post('/free-tier/opt-in', async (req, res) => {
 router.get('/admin/free-tier', async (req, res) => {
   if (!await requireAdmin(req, res, 'Apenas o administrador pode acessar este painel.')) return;
   const config = await getFreeTierConfig();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = freeTierDayKey();
   const since30 = new Date(Date.now() - 30 * 86_400_000).toISOString();
 
   // Usuários no modo gratuito, com consumo de hoje e acumulado.
@@ -139,12 +150,12 @@ router.get('/admin/free-tier', async (req, res) => {
 router.put('/admin/free-tier/settings', async (req, res) => {
   if (!await requireAdmin(req, res, 'Apenas o administrador pode acessar este painel.')) return;
   const body = req.body || {};
+  // Valida ANTES de gravar qualquer coisa: um limite inválido não pode deixar
+  // metade da alteração aplicada (ex.: `enabled` salvo e o resto recusado).
+  const msgsPerDay = body.msgsPerDay === undefined ? undefined : parseDailyLimit(body.msgsPerDay);
+  if (msgsPerDay === null) return res.status(400).json({ error: 'Limite diário inválido: informe um número inteiro de 1 a 10.000.' });
   if (body.enabled !== undefined) await saveFreeTierSetting('enabled', body.enabled ? '1' : '0');
-  if (body.msgsPerDay !== undefined) {
-    const value = Math.max(1, Math.min(10_000, Number(body.msgsPerDay) || 0));
-    if (!value) return res.status(400).json({ error: 'Limite diário inválido.' });
-    await saveFreeTierSetting('msgs_per_day', String(value));
-  }
+  if (msgsPerDay !== undefined) await saveFreeTierSetting('msgs_per_day', String(msgsPerDay));
   if (body.disabledModels !== undefined) {
     const list = Array.isArray(body.disabledModels) ? body.disabledModels.map(String).slice(0, 50) : [];
     await saveFreeTierSetting('disabled_models', JSON.stringify(list));
@@ -179,8 +190,8 @@ router.put('/admin/free-tier/user-limit', async (req, res) => {
     await recordAdminAction(req, 'free-tier.user-limit.remove', { alvo: userId });
     return res.json({ ok: true, removed: true });
   }
-  const limit = Math.max(1, Math.min(10_000, Number(value) || 0));
-  if (!limit) return res.status(400).json({ error: 'Limite inválido.' });
+  const limit = parseDailyLimit(value);
+  if (limit === null) return res.status(400).json({ error: 'Limite inválido: informe um número inteiro de 1 a 10.000.' });
   await db.prepare(`INSERT INTO free_tier_user_limits (user_id, msgs_per_day, updated_at) VALUES (?,?,?)
     ON CONFLICT (user_id) DO UPDATE SET msgs_per_day=excluded.msgs_per_day, updated_at=excluded.updated_at`)
     .run(userId, limit, now());

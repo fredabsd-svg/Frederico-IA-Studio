@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { CalendarClock, X, Play, Power } from 'lucide-react';
 import { API, assistantOptionPrefix } from './constants.js';
 import { Drawer } from './components.jsx';
+import { apiJson, apiErrorMessage } from './apiJson.js';
 
 const WEEKDAYS = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
 const emptyRoutine = () => ({ title: '', prompt: '', assistant_id: '', client_id: '', cadence: 'monthly', day: 5, hour: 8, web_search: false });
@@ -34,15 +35,24 @@ export function RoutinesPanel({ assistants = [], clients = [], showToast, onClos
       load();
     } catch (e) { showToast(e.message || 'Não foi possível criar a rotina.'); }
   }
+  // As três ações abaixo só avisam sucesso quando o backend confirma (2xx); a
+  // recusa aparece no aviso de erro em vez de sumir num `catch {}` vazio.
   async function toggle(r) {
-    try { await fetch(`${API}/api/schedules/${r.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: r.enabled ? 0 : 1 }) }); load(); } catch {}
+    try { await apiJson(`${API}/api/schedules/${r.id}`, { method: 'PUT', body: { enabled: r.enabled ? 0 : 1 } }); }
+    catch (e) { showToast(apiErrorMessage(e, r.enabled ? 'Não foi possível pausar a rotina' : 'Não foi possível ativar a rotina')); }
+    load();
   }
   async function runNow(r) {
-    try { await fetch(`${API}/api/schedules/${r.id}/run`, { method: 'POST' }); showToast('Rotina disparada agora — acompanhe em "Tarefas".', 'ok'); } catch {}
+    try {
+      await apiJson(`${API}/api/schedules/${r.id}/run`, { method: 'POST' });
+      showToast('Rotina disparada agora — acompanhe em "Tarefas".', 'ok');
+    } catch (e) { showToast(apiErrorMessage(e, 'Não foi possível disparar a rotina')); }
   }
   async function remove(id) {
     if (!await askConfirm({ title: 'Excluir rotina?', message: 'Ela deixará de ser executada automaticamente.', confirmLabel: 'Excluir', destructive: true })) return;
-    try { await fetch(`${API}/api/schedules/${id}`, { method: 'DELETE' }); load(); } catch {}
+    try { await apiJson(`${API}/api/schedules/${id}`, { method: 'DELETE' }); }
+    catch (e) { showToast(apiErrorMessage(e, 'Não foi possível excluir a rotina')); }
+    load();
   }
 
   return <Drawer title="Rotinas automáticas" icon={<CalendarClock size={18}/>} onClose={onClose} className="routinesDrawer">

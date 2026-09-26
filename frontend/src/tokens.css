@@ -1,0 +1,153 @@
+/* =============================================================================
+   tokens.css — fundação de cor, tipo, forma e movimento do Frederico IA Studio
+   -----------------------------------------------------------------------------
+   Importado ANTES de todas as outras folhas (main.jsx). Os componentes só
+   consomem os tokens semânticos abaixo (--bg, --panel, --text, --accent…);
+   nenhuma folha deve voltar a declarar cor de tema.
+
+   As 7 paletas do seletor "Aparência" (constants.js › THEMES) são geradas a
+   partir de poucos parâmetros em OKLCH:
+     --h   matiz dos neutros (fundo, painéis, linhas) — levemente tingidos
+     --hc  croma dos neutros (0 = cinza puro; 0,02 = "papel")
+     --ha  matiz do acento   --ac  croma do acento   --al  luminosidade do acento
+   Antes desta folha só "Escuro" e "Claro" tinham cores: Ardósia, Índigo,
+   Esmeralda, Âmbar e Sépia apareciam no seletor e eram idênticas às duas.
+
+   Contraste (WCAG 2.2 AA) conferido para as 7 paletas com o check_contrast da
+   skill de design: texto 4,5:1, texto secundário 4,5:1 sobre painel e sobre
+   hover, texto do botão primário 4,5:1, borda de campo e foco 3:1.
+   ========================================================================== */
+
+:root {
+  /* ---- Tipografia: uma família de interface. A pilha do sistema dá Segoe UI
+     no Windows do escritório, SF no Mac e Roboto no Android — sem baixar fonte
+     (o app roda também sem internet). */
+  --font-sans: "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "Cascadia Code", "JetBrains Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
+  --fs-2xs: 11px; --fs-xs: 12px; --fs-sm: 13px; --fs-md: 14px; --fs-lg: 16px; --fs-xl: 20px; --fs-2xl: 26px;
+
+  /* ---- Forma: três níveis por hierarquia (controle pequeno, controle,
+     contêiner) + o de destaque e o de pílula. */
+  --r-sm: 6px; --r-md: 8px; --r-lg: 12px; --r-xl: 16px; --r-full: 999px;
+
+  /* ---- Densidade ---- */
+  --control-h: 36px;
+  --control-h-sm: 28px;
+
+  /* ---- Movimento: curto e só onde explica algo ---- */
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --dur-slow: 240ms;
+  --ease-out: cubic-bezier(.2, .8, .2, 1);
+
+  /* ---- Camadas (tudo o que flutua sobre a tela inteira). Menus dentro da
+     barra superior (60–75) valem só dentro do contexto dela. Ordem:
+     personagem < fundo da barra lateral móvel < gavetas < modais < diálogo
+     sobre modal < aceite LGPD < aviso. */
+  --z-nino: 35; --z-scrim: 40; --z-sidebar: 50; --z-drawer: 80; --z-modal: 100;
+  --z-dialog-top: 120; --z-consent: 1000; --z-toast: 1100;
+
+  font-family: var(--font-sans);
+}
+
+/* ---------- Tema escuro (base de Escuro, Ardósia, Índigo, Esmeralda, Âmbar) */
+body.dark {
+  --h: 262; --hc: .014;
+  --ha: 262; --ac: .15; --al: .70;
+  color-scheme: dark;
+
+  /* Superfícies: a moldura (barra lateral) é a mais baixa e mais quieta; o
+     conteúdo sobe em luminosidade — no escuro, elevação é luz, não sombra. */
+  --side:   oklch(.165 var(--hc) var(--h));
+  --bg:     oklch(.185 var(--hc) var(--h));
+  --panel:  oklch(.215 var(--hc) var(--h));
+  --panel2: oklch(.245 var(--hc) var(--h));
+  --bubble: oklch(.215 var(--hc) var(--h));
+  --line:        oklch(.31 var(--hc) var(--h));
+  --line-strong: oklch(.54 var(--hc) var(--h));
+  --code-bg:   oklch(.145 var(--hc) var(--h));
+  --code-line: oklch(.27 var(--hc) var(--h));
+
+  --text:   oklch(.95 calc(var(--hc) / 3) var(--h));
+  --muted:  oklch(.76 var(--hc) var(--h));
+
+  --accent:      oklch(var(--al) var(--ac) var(--ha));
+  --accent-text: oklch(calc(var(--al) + .06) calc(var(--ac) * .85) var(--ha));
+  --accent-soft: oklch(.30 calc(var(--ac) * .35) var(--ha));
+  --on-accent:   oklch(.17 .03 var(--ha));
+  --focus:       oklch(calc(var(--al) + .04) var(--ac) var(--ha));
+  --bubble-user: oklch(.30 calc(var(--ac) * .32) var(--ha));
+
+  --danger: oklch(.70 .18 25);
+  --warn:   oklch(.82 .14 78);
+  --ok:     oklch(.77 .15 152);
+
+  --shadow-1: 0 1px 2px oklch(0 0 0 / .3);
+  --shadow-2: 0 12px 32px -8px oklch(0 0 0 / .55), 0 2px 6px oklch(0 0 0 / .3);
+}
+
+/* ---------- Tema claro (base de Claro e Sépia) */
+body.light {
+  --h: 262; --hc: .008;
+  --ha: 262; --ac: .19; --al: .50;
+  color-scheme: light;
+
+  --side:   oklch(.965 var(--hc) var(--h));
+  --bg:     oklch(.985 calc(var(--hc) / 2) var(--h));
+  --panel:  oklch(1 0 0);
+  --panel2: oklch(.965 var(--hc) var(--h));
+  --bubble: oklch(1 0 0);
+  --line:        oklch(.91 var(--hc) var(--h));
+  --line-strong: oklch(.64 var(--hc) var(--h));
+  --code-bg:   oklch(.22 .012 var(--h));
+  --code-line: oklch(.32 .012 var(--h));
+
+  --text:   oklch(.24 calc(var(--hc) * 1.6) var(--h));
+  --muted:  oklch(.47 calc(var(--hc) * 1.6) var(--h));
+
+  --accent:      oklch(var(--al) var(--ac) var(--ha));
+  --accent-text: oklch(calc(var(--al) - .02) var(--ac) var(--ha));
+  --accent-soft: oklch(.95 calc(var(--ac) * .18) var(--ha));
+  --on-accent:   oklch(.99 0 0);
+  --focus:       oklch(calc(var(--al) + .04) var(--ac) var(--ha));
+  --bubble-user: oklch(.945 calc(var(--ac) * .16) var(--ha));
+
+  --danger: oklch(.52 .19 27);
+  --warn:   oklch(.52 .12 62);
+  --ok:     oklch(.50 .12 152);
+
+  --shadow-1: 0 1px 2px oklch(.2 .02 var(--h) / .07), 0 1px 1px oklch(.2 .02 var(--h) / .04);
+  --shadow-2: 0 14px 34px -10px oklch(.2 .03 var(--h) / .22), 0 2px 6px oklch(.2 .03 var(--h) / .08);
+}
+
+/* ---------- Paletas: só parâmetros, o resto é derivado acima ---------- */
+body.dark.t-slate   { --h: 245; --hc: .006; --ha: 232; --ac: .12; --al: .76; }
+body.dark.t-indigo  { --h: 285; --hc: .022; --ha: 285; --ac: .15; --al: .72; }
+body.dark.t-emerald { --h: 170; --hc: .012; --ha: 158; --ac: .15; --al: .76; }
+body.dark.t-amber   { --h: 65;  --hc: .012; --ha: 72;  --ac: .15; --al: .80; }
+body.light.t-sepia  { --h: 80;  --hc: .022; --ha: 55;  --ac: .10; --al: .47; }
+/* Sépia é papel: o painel também leva o tom, senão os cartões brancos
+   "acendem" sobre o fundo creme. */
+body.light.t-sepia  { --panel: oklch(.985 .012 85); --bubble: oklch(.985 .012 85); --bg: oklch(.955 .02 82); --side: oklch(.935 .024 80); }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-size: var(--fs-md);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Números comparáveis (tabelas, contadores, horários) não "tremem". */
+.num, .atable td, .stat b, .msgTime, .badge { font-variant-numeric: tabular-nums; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+}

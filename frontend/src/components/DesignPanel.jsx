@@ -41,7 +41,13 @@ export function DesignPanel({ onClose, model = '', allModels = [], askConfirm })
   const menuAbertoNaTecla = useRef(false);
   useEffect(() => {
     function onKeyCapture(e) {
-      if (e.key === 'Escape') menuAbertoNaTecla.current = Boolean(document.querySelector('.mpPanel'));
+      // Um diálogo modal aberto por cima (ex.: "Apagar projeto") também conta:
+      // o Esc é dele, não do Modo Design — antes a tela inteira fechava e a
+      // confirmação ficava órfã.
+      if (e.key !== 'Escape') return;
+      const modalPorCima = [...document.querySelectorAll('[role="dialog"][aria-modal="true"]')]
+        .some(el => !el.classList.contains('dsOverlay'));
+      menuAbertoNaTecla.current = Boolean(document.querySelector('.mpPanel')) || modalPorCima;
     }
     function onKey(e) {
       if (e.key !== 'Escape') return;
@@ -64,7 +70,9 @@ export function DesignPanel({ onClose, model = '', allModels = [], askConfirm })
   }
 
   async function createProject(input) {
-    const project = await design.createProject({ ...input, model });
+    // O modelo escolhido no formulário do projeto vence o do chat: antes o
+    // spread na ordem errada fixava todo projeto novo no modelo do chat.
+    const project = await design.createProject({ ...input, model: input?.model || model });
     if (project) setView('editor');
   }
 

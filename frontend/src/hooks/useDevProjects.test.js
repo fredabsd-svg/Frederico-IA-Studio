@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { developerSessionForConversation, githubWritePermissionFor, newDevProject, permissionsPayloadFor, projectFromServer } from './useDevProjects.js';
+import { developerSessionForConversation, developerSessionFromProject, githubWritePermissionFor, newDevProject, permissionsPayloadFor, projectFromServer } from './useDevProjects.js';
 
 // Regressão do bug "ao reabrir a conversa de dev o repositório some": a sessão de
 // desenvolvedor (vínculo do repositório GitHub, modo e regras) precisa ser
@@ -191,4 +191,36 @@ test('projectFromServer: linha inválida ou incompleta devolve null / defaults',
   assert.deepEqual(minimal.conversationIds, []);
   assert.equal(minimal.binding.type, 'none');
   assert.equal(minimal.permissions.githubWrite, false);
+});
+
+// Fonte única da sessão: abrir tarefa, reabrir conversa e entrar no workspace
+// Desenvolvedor montavam o mesmo objeto em três cópias que divergiam.
+test('developerSessionFromProject herda modo e vínculo do projeto', () => {
+  const s = developerSessionFromProject(REPO_PROJECT, { conversationId: 'conv-9' });
+  assert.equal(s.mode, 'build');
+  assert.deepEqual(s.github, { repo: 'fredabsd-svg/SPED-HUB', branch: 'main' });
+  assert.equal(s.projectId, null);
+  assert.equal(s.devProjectId, 'p_repo');
+  assert.equal(s.conversationId, 'conv-9');
+});
+
+test('developerSessionFromProject aceita modo e vínculo explícitos da tarefa', () => {
+  const s = developerSessionFromProject(REPO_PROJECT, { mode: 'review', binding: { type: 'folder', folderId: 'f1' } });
+  assert.equal(s.mode, 'review');
+  assert.equal(s.github, null);
+  assert.equal(s.projectId, 'f1');
+  assert.equal(s.conversationId, null);
+});
+
+test('developerSessionFromProject sem vínculo explícito "none" não herda o GitHub', () => {
+  const s = developerSessionFromProject(REPO_PROJECT, { binding: { type: 'none' } });
+  assert.equal(s.github, null);
+  assert.equal(s.projectId, null);
+});
+
+test('reabrir conversa e montar do projeto produzem a mesma sessão', () => {
+  assert.deepEqual(
+    developerSessionForConversation([REPO_PROJECT], 'conv-1'),
+    developerSessionFromProject(REPO_PROJECT, { conversationId: 'conv-1' })
+  );
 });

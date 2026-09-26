@@ -32,27 +32,20 @@ test('fromSeq evita reprocessar eventos já vistos', () => {
   assert.deepEqual(got, [3]);
 });
 
-test('assinatura com runId só recebe eventos do MESMO run', () => {
-  // Cenário F-12: o cliente tinha visto seq=5 do run R1; a rede caiu; no
-  // intervalo, o servidor iniciou um run novo (R2) na mesma conversa com
-  // seq começando do 1. Sem filtro de runId, o fromSeq=5 pularia os primeiros
-  // 5 eventos do R2 (texto faltando). Com filtro, o cliente recebe TUDO do
-  // R2 e remonta sem buraco.
+test('cursor impossível (fromSeq além do último seq) no MESMO runId recebe o run inteiro', () => {
+  // Cenário da RETOMADA: /resume reabre o stream com o MESMO runId do run
+  // interrompido e o seq recomeça do 1. O cliente ainda guarda o cursor da
+  // encarnação anterior (seq 5). Respeitar esse cursor pularia os primeiros
+  // eventos da retomada; como nenhum cliente pode ter visto um seq que este
+  // stream ainda não publicou, o cursor é descartado e o replay é completo.
   _resetLiveStreams();
-  const r1 = openLiveStream('c2b', 'R1');
-  r1.publish({ type: 'delta', content: 'r1-a' });
-  r1.publish({ type: 'delta', content: 'r1-b' });
-  // O run novo SUBSTITUI o anterior (openLiveStream limpa o anterior). É
-  // exatamente o caso "POST /chat aconteceu entre desconexão e reconexão".
-  const r2 = openLiveStream('c2b', 'R2');
+  openLiveStream('c2b', 'R1');
+  const r2 = openLiveStream('c2b', 'R1');
   r2.publish({ type: 'delta', content: 'r2-a' });
   r2.publish({ type: 'delta', content: 'r2-b' });
   const got = [];
-  r2.subscribe((rec) => got.push(rec.event.content), { fromSeq: 5, runId: 'R2' });
-  // runId=R2 + fromSeq=5: como o R2 só tem seq 1 e 2 e o filtro é strict,
-  // nada passa (fromSeq=5 > max seq). É o comportamento correto: o cliente
-  // perceberia que errou o cursor e resetaria. O teste importante vem abaixo.
-  assert.deepEqual(got, []);
+  r2.subscribe((rec) => got.push(rec.event.content), { fromSeq: 5, runId: 'R1' });
+  assert.deepEqual(got, ['r2-a', 'r2-b']);
 });
 
 test('cliente que volta ao MESMO run recebe só o que perdeu', () => {
@@ -70,38 +63,61 @@ test('cliente que volta ao MESMO run recebe só o que perdeu', () => {
   assert.deepEqual(got, ['tres', 'quatro']);
 });
 
-test('runId diferente do stream ativo não recebe NADA (sem fallback)', () => {
-  // Se o cliente pediu um runId que não bate com o stream corrente, o filtro
-  // NÃO volta para "replay do começo" — devolvemos vazio e o front decide.
-  // Voltar silenciosamente para o começo mascararia o problema (run novo com
-  // seq reiniciado) e produziria texto aparentemente correto mas incompleto.
+test('runId ANTIGO na reconexão: o cliente recebe o run ATUAL desde o começo (replay + ao vivo)', () => {
+  // Um run novo começou entre a desconexão e a reconexão. O cursor do run
+  // antigo (fromSeq=7) não significa nada no run novo. A versão anterior
+  // descartava o replay inteiro e deixava passar só os eventos AO VIVO, a
+  // partir do meio — resposta remontada sem o começo.
   _resetLiveStreams();
   const s = openLiveStream('c2d', 'CORRENTE');
-  s.publish({ type: 'delta', content: 'a' });
-  s.publish({ type: 'delta', content: 'b' });
+  s.publish({ type: 'delta', content: 'a' }); // seq 1
+  s.publish({ type: 'delta', content: 'b' }); // seq 2
   const got = [];
-  s.subscribe((rec) => got.push(rec.event.content), { fromSeq: 0, runId: 'ANTIGO' });
-  assert.deepEqual(got, []);
+  s.subscribe((rec) => got.push(`${rec.runId}:${rec.seq}:${rec.event.content}`), { fromSeq: 7, runId: 'ANTIGO' });
+  assert.deepEqual(got, ['CORRENTE:1:a', 'CORRENTE:2:b']);
+  s.publish({ type: 'delta', content: 'c' });
+  assert.deepEqual(got, ['CORRENTE:1:a', 'CORRENTE:2:b', 'CORRENTE:3:c'], 'o ao vivo segue na ordem, sem buraco');
 });
 
-test('eventos publicados após o subscribe também passam pelo filtro de runId', () => {
-  // O filtro precisa valer TANTO para o replay (eventos já no buffer) QUANTO
-  // para eventos novos publicados depois do subscribe — sem isto, o filtro
-  // só seguraria o passado e deixaria o cliente ser sobrescrito pelos eventos
-  // errados em tempo real.
+test('eventos AO VIVO passam pelo MESMO filtro do replay (fromSeq vale para os dois caminhos)', () => {
+  // Regressão do defeito: o filtro só era aplicado ao replay; publish()
+  // entregava tudo aos assinantes. Aqui o cursor está no seq 3 de um run com
+  // só 3 eventos: os próximos (4, 5) chegam uma vez cada e em ordem.
   _resetLiveStreams();
-  const s = openLiveStream('c2e', 'LIVE');
+  const s = openLiveStream('c2f', 'RUN');
+  for (const c of ['1', '2', '3']) s.publish({ type: 'delta', content: c });
   const got = [];
-  s.subscribe((rec) => got.push(rec.seq), { fromSeq: 0, runId: 'LIVE' });
-  s.publish({ type: 'delta', content: 'x' }); // seq 1, runId=LIVE → passa
-  assert.deepEqual(got, [1]);
-  // Forçar runId diferente no evento (simula um stream que mudou de run no
-  // meio — não acontece na prática, mas é o tipo de defesa que o filtro
-  // precisa dar). Reabrindo o stream com outro runId:
-  const s2 = openLiveStream('c2e', 'OUTRO');
-  s2.publish({ type: 'delta', content: 'y' });
-  // O subscribe original está em 's' (descartado pelo openLiveStream), então
-  // o segundo publish não chega nele. O importante é o filtro do replay.
+  s.subscribe((rec) => got.push(rec.seq), { fromSeq: 3, runId: 'RUN' });
+  assert.deepEqual(got, []);
+  s.publish({ type: 'delta', content: '4' });
+  s.publish({ type: 'done' });
+  assert.deepEqual(got, [4, 5]);
+});
+
+test('término sem duplicidade: dois assinantes com cursores diferentes recebem cada seq uma vez', () => {
+  _resetLiveStreams();
+  const s = openLiveStream('c2g', 'RUN');
+  s.publish({ type: 'delta', content: 'x' }); // 1
+  s.publish({ type: 'delta', content: 'y' }); // 2
+  const a = [];
+  const b = [];
+  s.subscribe((rec) => a.push(rec.seq), { fromSeq: 0, runId: 'RUN' });
+  s.subscribe((rec) => b.push(rec.seq), { fromSeq: 1, runId: 'RUN' });
+  s.publish({ type: 'done' }); // 3
+  s.finish();
+  assert.deepEqual(a, [1, 2, 3]);
+  assert.deepEqual(b, [2, 3]);
+});
+
+test('isolamento entre conversas: assinar uma conversa não recebe eventos de outra', () => {
+  _resetLiveStreams();
+  const s1 = openLiveStream('conv-1', 'R');
+  const s2 = openLiveStream('conv-2', 'R');
+  const got = [];
+  s1.subscribe((rec) => got.push(rec.event.content));
+  s2.publish({ type: 'delta', content: 'da outra conversa' });
+  s1.publish({ type: 'delta', content: 'desta conversa' });
+  assert.deepEqual(got, ['desta conversa']);
 });
 
 test('getLiveStream devolve o stream ativo e null quando não há', () => {

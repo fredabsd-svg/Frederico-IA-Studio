@@ -66,21 +66,22 @@ export function CompanionConfig({ companion, allModels = [], assistants = [], mo
             ))}
           </div>
           <input value={local.characterName} onChange={e => set({ characterName: e.target.value })} maxLength={40} placeholder="Nome do personagem" />
+          <small>É o nome com que o copiloto se apresenta no chat e nas ações executivas.</small>
         </div>
 
         <div className="cmpField">
           <label>Persona (assistente do Studio)</label>
           <select value={local.assistantId || ''} onChange={e => set({ assistantId: e.target.value || null })}>
-            <option value="">Nenhuma — usa o assistente atual da conversa</option>
+            <option value="">Nenhuma — personalidade padrão do copiloto</option>
             {assistants.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
-          <small>Escolha qual assistente dá voz e personalidade ao personagem.</small>
+          <small>O perfil do assistente escolhido define a especialidade e o estilo das respostas no chat do copiloto.</small>
         </div>
 
         <div className="cmpField">
           <label>Modelo do copiloto</label>
           <ModelPicker models={allModels} value={local.model || model || ''} onChange={id => set({ model: id })} />
-          <small>Deixe em branco para acompanhar o modelo atual da conversa. O chat e a revisão do copiloto usam este modelo.</small>
+          <small>Deixe em branco para acompanhar o modelo da conversa aberta. O chat, a revisão e as ações do copiloto usam este modelo.</small>
         </div>
 
         <div className="cmpField">

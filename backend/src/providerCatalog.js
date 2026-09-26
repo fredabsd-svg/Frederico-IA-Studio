@@ -1,4 +1,8 @@
+import dns from 'node:dns';
+import net from 'node:net';
 import { createAiClient } from './aiClient.js';
+import { isBlockedHost } from './tools.js';
+import { sanitizeUpstreamDetail } from './upstreamDetail.js';
 
 export const PROVIDER_PRESETS = Object.freeze({
   openrouter: { name: 'OpenRouter', baseURL: 'https://openrouter.ai/api/v1', dashboardURL: 'https://openrouter.ai/activity', billingURL: 'https://openrouter.ai/settings/credits', balance: 'openrouter' },
@@ -70,6 +74,75 @@ export function normalizeBaseURL(value, providerType = 'custom') {
   }
   return raw;
 }
+
+// ---- Guarda de SSRF da URL base do provedor ---------------------------------
+// A URL base de um provedor "OpenAI compatível" é digitada pelo usuário, e o
+// BACKEND faz requisições autenticadas a ela (GET /models, saldo, e depois as
+// chamadas de chat). Sem guarda, qualquer usuário apontava a URL para
+// http://169.254.169.254/, http://postgres:5432, http://docling-service:8000 ou
+// o docker-guard e usava o erro devolvido como oráculo da rede interna.
+// Mesma política do web_fetch (tools.js → isBlockedHost): loopback, redes
+// privadas, link-local, CGNAT, multicast, ULA/link-local IPv6 e nomes .local/
+// .internal/localhost são recusados — e o nome é RESOLVIDO e cada IP conferido
+// (anti-DNS-rebinding). Redirecionamentos não são seguidos.
+//
+// Endpoints LOCAIS legítimos (Ollama, LM Studio, vLLM na mesma máquina/rede)
+// exigem opt-in explícito do operador: PROVIDER_ALLOW_PRIVATE_URLS=true. Mesmo
+// com ele, link-local (169.254.0.0/16, fe80::/10 — metadados de nuvem) continua
+// bloqueado.
+export function privateProviderUrlsAllowed() {
+  return String(process.env.PROVIDER_ALLOW_PRIVATE_URLS || '').trim().toLowerCase() === 'true';
+}
+
+function stripBrackets(host) {
+  const h = String(host || '').trim();
+  return h.startsWith('[') && h.endsWith(']') ? h.slice(1, -1) : h;
+}
+
+function isLinkLocal(address) {
+  const h = stripBrackets(address).toLowerCase();
+  if (/^169\.254\./.test(h)) return true;
+  if (/^::ffff:169\.254\./.test(h) || /^::ffff:a9fe:/.test(h)) return true;
+  return /^fe[89ab]/.test(h);
+}
+
+const BLOCKED_PROVIDER_MSG = 'A URL base aponta para um endereço interno ou local, que não é permitido nesta instalação. Use o endereço público da API do provedor (o administrador pode liberar endpoints locais com PROVIDER_ALLOW_PRIVATE_URLS=true).';
+
+function defaultResolve(hostname) {
+  return new Promise((resolve, reject) => {
+    dns.lookup(hostname, { all: true }, (err, result) => (err ? reject(err) : resolve(result)));
+  });
+}
+
+// Lança quando a URL base não pode ser alcançada com segurança. `resolveImpl`
+// é injetável nos testes (sem DNS de verdade).
+export async function assertProviderUrlAllowed(baseURL, { resolveImpl = defaultResolve, allowPrivate = privateProviderUrlsAllowed() } = {}) {
+  let url;
+  try { url = new URL(baseURL); } catch { throw new Error('A URL base do provedor é inválida.'); }
+  const host = stripBrackets(url.hostname);
+  if (isLinkLocal(host)) throw new Error(BLOCKED_PROVIDER_MSG);
+  if (!allowPrivate && isBlockedHost(host)) throw new Error(BLOCKED_PROVIDER_MSG);
+  if (net.isIP(host)) return;
+  let addresses;
+  try { addresses = await resolveImpl(host); }
+  catch { throw new Error('Não foi possível resolver o endereço da URL base do provedor.'); }
+  const list = (Array.isArray(addresses) ? addresses : [addresses]).map(a => (typeof a === 'string' ? a : a?.address)).filter(Boolean);
+  if (!list.length) throw new Error('Não foi possível resolver o endereço da URL base do provedor.');
+  for (const address of list) {
+    if (isLinkLocal(address)) throw new Error(BLOCKED_PROVIDER_MSG);
+    if (!allowPrivate && isBlockedHost(address)) throw new Error(BLOCKED_PROVIDER_MSG);
+  }
+}
+
+// Saneamento do texto de erro do provedor: mora em upstreamDetail.js (folha,
+// reusada pelo agente) e continua exportado daqui para os chamadores atuais.
+export { sanitizeUpstreamDetail };
+
+function isRedirect(response) {
+  return [301, 302, 303, 307, 308].includes(Number(response?.status));
+}
+
+const REDIRECT_MSG = 'O provedor respondeu com um redirecionamento. Informe a URL base FINAL da API (redirecionamentos não são seguidos por segurança).';
 
 function enrichProviderModel(model, providerType) {
   if (providerType !== 'deepseek') return model;
@@ -156,10 +229,11 @@ export function enrichProviderCatalog(models, providerType = 'custom') {
 }
 
 async function responseError(response, providerType = 'custom') {
+  if (isRedirect(response)) return REDIRECT_MSG;
   let detail = '';
   try {
     const body = await response.json();
-    detail = body?.error?.message || body?.message || body?.error || '';
+    detail = sanitizeUpstreamDetail(body?.error?.message || body?.message || body?.error || '');
   } catch {}
   if (response.status === 401) {
     if (providerType === 'alibaba') return 'A chave foi recusada. Confirme que a URL base é o campo openAiCompatible do mesmo CSV, workspace e região.';
@@ -169,22 +243,33 @@ async function responseError(response, providerType = 'custom') {
     if (providerType === 'alibaba' && /unpurchased|accessdenied/i.test(String(detail))) {
       return `A chave foi reconhecida, mas o serviço ou modelo ainda não está habilitado/comprado neste workspace. ${detail}`.slice(0, 300);
     }
-    return String(detail || 'A chave não tem permissão para este recurso no provedor.').slice(0, 300);
+    return detail ? `O provedor recusou o acesso: ${detail}` : 'A chave não tem permissão para este recurso no provedor.';
   }
-  return String(detail || `O provedor respondeu com HTTP ${response.status}.`).slice(0, 300);
+  return detail ? `O provedor respondeu com HTTP ${response.status}: ${detail}` : `O provedor respondeu com HTTP ${response.status}.`;
 }
 
-export async function importProviderCatalog({ apiKey, baseURL, providerType = 'custom', modelHint = '', allowModelValidation = true, fetchImpl = fetch, clientFactory = createAiClient, timeoutMs = 15000 } = {}) {
+export async function importProviderCatalog({ apiKey, baseURL, providerType = 'custom', modelHint = '', allowModelValidation = true, fetchImpl = fetch, clientFactory = createAiClient, timeoutMs = 15000, resolveImpl } = {}) {
   const key = String(apiKey || '').trim();
   if (!key) throw new Error('Informe a chave de API.');
   const type = normalizeProviderType(providerType);
   const base = normalizeBaseURL(baseURL, type);
+  // Antes de QUALQUER requisição (inclusive a validação por chat mais abaixo):
+  // a URL tem de apontar para fora da rede interna.
+  await assertProviderUrlAllowed(base, resolveImpl ? { resolveImpl } : {});
   let listFailure = null;
   try {
     const response = await fetchImpl(`${base}/models`, {
       headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' },
+      redirect: 'manual',
       signal: AbortSignal.timeout(timeoutMs)
     });
+    if (isRedirect(response)) {
+      // Sem fallback de validação por chat: o SDK SEGUE redirecionamentos, e
+      // um host público poderia usar o 30x para mandar o backend à rede interna.
+      const redirect = new Error(REDIRECT_MSG);
+      redirect.code = 'PROVIDER_REDIRECT';
+      throw redirect;
+    }
     if (!response.ok) throw new Error(await responseError(response, type));
     const models = normalizedCatalog(await response.json(), type);
     if (models.length) return { baseURL: base, models, validation: 'catalog' };
@@ -197,6 +282,7 @@ export async function importProviderCatalog({ apiKey, baseURL, providerType = 'c
   // casos só aceitamos um modelo explicitamente informado e comprovamos a
   // credencial com uma chamada mínima; não inventamos um catálogo genérico.
   const hinted = String(modelHint || '').trim();
+  if (listFailure?.code === 'PROVIDER_REDIRECT') throw listFailure;
   if (!allowModelValidation) throw listFailure;
   if (!hinted) throw listFailure;
   try {
@@ -209,7 +295,9 @@ export async function importProviderCatalog({ apiKey, baseURL, providerType = 'c
     }, { timeout: timeoutMs });
     return { baseURL: base, models: [{ id: hinted, name: hinted }], validation: 'model' };
   } catch (error) {
-    const detail = String(error?.message || error?.error?.message || '');
+    // A mensagem do SDK costuma embutir o corpo da resposta do provedor:
+    // passa pela mesma sanitização (curta, sem tags/quebras).
+    const detail = sanitizeUpstreamDetail(String(error?.message || error?.error?.message || ''));
     const status = Number(error?.status || error?.response?.status || 0);
     const message = status === 401
       ? (type === 'alibaba'
@@ -227,15 +315,18 @@ async function balanceResponse(response) {
   return response.json();
 }
 
-export async function fetchProviderBalance({ apiKey, baseURL, providerType, fetchImpl = fetch, timeoutMs = 12000 } = {}) {
+export async function fetchProviderBalance({ apiKey, baseURL, providerType, fetchImpl = fetch, timeoutMs = 12000, resolveImpl } = {}) {
   const type = normalizeProviderType(providerType);
   const preset = PROVIDER_PRESETS[type];
   if (!preset.balance) return { available: false, reason: 'unsupported' };
   const base = normalizeBaseURL(baseURL, type);
   const endpoint = preset.balance === 'openrouter' ? `${base}/credits` : `${base}/user/balance`;
   try {
+    // A URL base de um tipo com saldo também é editável: mesma guarda de SSRF.
+    await assertProviderUrlAllowed(base, resolveImpl ? { resolveImpl } : {});
     const data = await balanceResponse(await fetchImpl(endpoint, {
       headers: { Authorization: `Bearer ${String(apiKey || '').trim()}`, Accept: 'application/json' },
+      redirect: 'manual',
       signal: AbortSignal.timeout(timeoutMs)
     }));
     if (type === 'openrouter') {

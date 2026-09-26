@@ -29,7 +29,12 @@ e o modelo/provedor é escolhido livremente pelo usuário.
 - **Modos de comportamento** (seção 5): silencioso, auxiliar, proativo, foco e
   apresentação. Controlam quando o Companion pode intervir.
 - **Escolha do modelo e da persona** (seção 6.2): qualquer modelo/provedor do
-  catálogo do Studio; qualquer assistente pode virar a "voz" do personagem.
+  catálogo do Studio. Com o modelo do copiloto em branco, ele segue o modelo da
+  conversa aberta (o frontend envia `model` no chat, nas ações e na revisão de
+  escrita). O nome do personagem entra no prompt do copiloto e o perfil do
+  assistente escolhido como persona entra no chat do copiloto, delimitado como
+  `<assistant-profile>` (só assistente do próprio usuário). Chamadas do copiloto pelo modo gratuito passam pelos mesmos limites,
+  fila e contabilização do chat (`freeTierGate.js`).
 - **Alertas proativos com transparência** (seções 8 e 9): cada evento guarda
   origem, data/hora, projeto, nível de importância, dados enviados, ação proposta,
   autorização necessária e resultado. No MVP, tarefas em segundo plano que falham

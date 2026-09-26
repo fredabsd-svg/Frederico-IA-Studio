@@ -204,6 +204,29 @@ export async function scanOrReject(res, files, req = null) {
   }
 }
 
+// Envia um arquivo do disco por STREAM, sem derrubar o processo quando a
+// leitura falha. `createReadStream().pipe(res)` sem ouvinte de 'error' lançava
+// um erro NÃO tratado (o arquivo sumiu entre o existsSync e a abertura, virou
+// diretório, permissão negada) — o Node encerra o processo inteiro por isso.
+// Antes de o primeiro byte sair: 404 (arquivo não existe) ou 500. Depois: a
+// conexão é derrubada, para o download aparecer como falho e não completo.
+export function streamFileToResponse(res, filePath, contentType) {
+  const stream = fs.createReadStream(filePath);
+  stream.once('open', () => { if (contentType) res.type(contentType); });
+  stream.on('error', (err) => {
+    console.error('[download] falha ao ler o arquivo:', err.code || err.message);
+    if (!res.headersSent) {
+      const missing = err.code === 'ENOENT' || err.code === 'EISDIR' || err.code === 'ENOTDIR';
+      res.status(missing ? 404 : 500).json({ error: missing ? 'Arquivo indisponível.' : 'Não foi possível ler o arquivo.' });
+    } else {
+      res.destroy(err);
+    }
+  });
+  res.on('close', () => stream.destroy());
+  stream.pipe(res);
+  return stream;
+}
+
 export function safeParse(s, fallback) { try { return JSON.parse(s); } catch { return fallback; } }
 
 export function looksLikeFailedAssistantReply(content) {

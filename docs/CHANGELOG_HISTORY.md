@@ -23,6 +23,61 @@
 
 ---
 
+## Sistema visual e landing com a skill de design SaaS (2026-09-26)
+
+**Diagnóstico** (capturas antes/depois em 1440 e 390 px, escuro e claro): barra lateral
+com ladrilho em todo item e itens "acesos" sem estar ativos; ênfase espalhada (brilho no
+"Nova conversa", aviso de memória em caixa em toda resposta); `.msg` redefinido seis vezes
+no `styles.css`; `.primary` redefinido por painel; cinco das sete paletas do seletor sem
+nenhuma cor própria; landing em grade de cartões idênticos, sem o produto real.
+
+**Feito.** `tokens.css` em OKLCH com as paletas geradas por matiz e contraste AA conferido;
+`v2.css` reescrito como camada de acabamento única; 218 declarações mortas removidas por
+poda automática (só declarações sobrescritas depois pelo MESMO seletor, fora de `@media`);
+landing nova (herói com captura real rotulada, "o que você pede → o que recebe",
+como funciona, recursos em lista, segurança, dúvidas frequentes, um único chamado). Dois
+bugs achados pelas capturas/E2E: painel do seletor de contexto saía pela direita da
+janela (`useKeepInViewport`) e o botão "Ocultar" do Nino ficava fora da área protegida,
+cobrindo os botões do terminal.
+
+**Refazer as capturas da landing:** `cd e2e && E2E_DATABASE_URL=... npm run
+capturar:landing` (roteiro em `e2e/capturas/`, fora da suíte de testes). Ele cria uma
+conta com o provedor falso da E2E, abre quatro conversas e troca o texto da última
+resposta por um exemplo; grava `frontend/public/landing/produto-{dark,light}.jpg`
+(1280×780, JPEG 82).
+
+---
+
+## Revisão completa do app: remendos, bugs, prompts e seletores (2026-09-26)
+
+**Remendo removido.** O wiring do Modo Desenvolvedor vivia num plugin do Vite
+(`appDevNinoPatchPlugin`) que reescrevia o `App.jsx` por substituição de texto no
+build — se a âncora mudasse, a correção sumia em silêncio. Foi para a fonte; o plugin
+e o `devWorkspaceBootstrap.js` (morto) saíram. A sessão de desenvolvedor passou a ter
+fonte única (`developerSessionFromProject`).
+
+**Frente anterior (Nino/Modo Dev/Design, PR #208)**, registrada aqui ao sair do
+`CONTINUIDADE.md`: botão Ocultar/Mostrar Nino; semeadura da sessão Dev ao entrar no
+workspace; prévia do Modo Design recarregada por query `_v=` (o `#hash` não disparava
+`onLoad` e a prévia ficava em "Carregando…").
+
+**Auditoria em quatro frentes** (prompts, seletores de modelo, telas/CSS, backend),
+cada achado conferido no código e corrigido com teste que falha antes e passa depois.
+Principais: hooks após retorno antecipado no `App.jsx`; subagente sem a tarefa no
+prompt; regras de projeto do usuário embrulhadas como dado não confiável; config
+global de memória/sandbox alterável por qualquer usuário; limites do modo gratuito
+contornáveis (chat com `free::`, `/resume` de pipeline, tarefas, Design, copiloto);
+SSRF pela URL base de provedor personalizado; arquivo em quarentena aceito como anexo;
+importação de memória que nunca funcionou (`req.file.buffer` com multer em disco);
+painel de uso do admin sempre 500; seletor de modelo trocando o modelo sem aviso;
+tema claro com regras mortas (`.app.theme-light` nunca existiu); heurística que
+contava "teste" como ação e alvo ao mesmo tempo.
+
+Versões de prompt: release 2026.09.26.1 (global 4.3.0, tools 3.4.0, developer 2.1.0,
+multiModel 3.2.0) — ver `backend/src/agent/promptRegistry.js`.
+
+---
+
 ## Sonda de tool calling: o modo `--live` nunca chamou provedor (2026-09-03)
 
 **O defeito.** Os dois pontos de entrada do modo live — a rota

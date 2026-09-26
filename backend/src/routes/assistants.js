@@ -31,7 +31,7 @@ async function resolveAssistantModelRef(userId, rawModel) {
 
 // ---- Assistentes (Assistant Studio) ----
 router.get('/assistants', async (req, res) => {
-  res.json((await db.prepare('SELECT * FROM assistants WHERE user_id=? ORDER BY created_at ASC').all(req.userId))
+  res.json((await db.prepare("SELECT * FROM assistants WHERE user_id=? ORDER BY created_at ASC, CASE WHEN name='Assistente geral' THEN 0 ELSE 1 END, name ASC").all(req.userId))
     .map(a => ({ ...a, tools: safeParse(a.tools, []), personality: safeParse(a.personality, {}) })));
 });
 

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { FolderCog, X, Lock, Unlock } from 'lucide-react';
 import { API } from './constants.js';
 import { Drawer } from './components.jsx';
+import { apiJson, apiErrorMessage } from './apiJson.js';
 
 // "Pastas do Computador": libera pastas reais do PC para o assistente acessar
 export function PcFoldersPanel({ showToast, onClose, askConfirm }) {
@@ -29,12 +30,18 @@ export function PcFoldersPanel({ showToast, onClose, askConfirm }) {
       load();
     } catch (e) { showToast(e.message || 'Não foi possível liberar a pasta.'); }
   }
+  // Recusa do backend (ou rede fora) vira aviso: antes o `catch {}` vazio e a
+  // falta de `res.ok` deixavam a pessoa achando que a permissão tinha mudado.
   async function toggleWritable(f) {
-    try { await fetch(`${API}/api/pc-folders/${f.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ writable: f.writable ? 0 : 1 }) }); load(); } catch {}
+    try { await apiJson(`${API}/api/pc-folders/${f.id}`, { method: 'PUT', body: { writable: f.writable ? 0 : 1 } }); }
+    catch (e) { showToast(apiErrorMessage(e, 'Não foi possível mudar a permissão da pasta')); }
+    load();
   }
   async function remove(id) {
     if (!await askConfirm({ title: 'Remover acesso à pasta?', message: 'Os arquivos não serão apagados. O assistente apenas deixará de enxergar esta pasta.', confirmLabel: 'Remover acesso', destructive: true })) return;
-    try { await fetch(`${API}/api/pc-folders/${id}`, { method: 'DELETE' }); load(); } catch {}
+    try { await apiJson(`${API}/api/pc-folders/${id}`, { method: 'DELETE' }); }
+    catch (e) { showToast(apiErrorMessage(e, 'Não foi possível remover o acesso à pasta')); }
+    load();
   }
 
   return <Drawer title="Pastas do computador" icon={<FolderCog size={18}/>} onClose={onClose} className="pcFoldersDrawer">

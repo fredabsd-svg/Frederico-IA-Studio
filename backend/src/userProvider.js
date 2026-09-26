@@ -115,7 +115,23 @@ export async function getUserProvider(userId, requestedRef = '') {
     // Provedor sem chave utilizável não pode ser beco sem saída: sem isto, o
     // modo gratuito — a única credencial que ainda restaria — nunca era tentado.
     if (provider.hasKey) return provider;
-    return (await freeProvider(userId, parsed.modelId)) || provider;
+    const free = await freeProvider(userId, parsed.modelId);
+    if (!free) return provider;
+    // FALLBACK EXPLÍCITO (Regra 5.5): o pedido era para um provedor do usuário,
+    // mas quem vai atender é a chave da PLATAFORMA. O objeto carrega o motivo
+    // para o chamador avisar o usuário, contabilizar no modo gratuito e
+    // registrar a troca — nunca uma substituição silenciosa.
+    return {
+      ...free,
+      fallback: {
+        to: 'free',
+        reason: 'provider_key_unavailable',
+        requestedRef: String(requestedRef || ''),
+        requestedProviderId: row.id,
+        requestedProviderName: row.name || null,
+        message: `A chave do provedor "${row.name || row.id}" não pôde ser lida (removida ou cifrada com outra chave mestra). Esta resposta usa o modo gratuito; recadastre a chave em Configurações → Provedor de IA para voltar a usá-lo.`
+      }
+    };
   }
 
   // O usuário pediu um modelo específico (sem prefixo de provedor) e ele não
@@ -132,6 +148,23 @@ export async function getUserProvider(userId, requestedRef = '') {
   // O modo gratuito é uma escolha explícita. Não há mais fallback implícito
   // para a chave compartilhada do servidor: conta nova sem chave vê zero modelos.
   return (await freeProvider(userId, parsed.modelId)) || none(requestedRef);
+}
+
+// Resolve TODAS as referências de modelo que uma execução vai usar (modelo
+// principal, membros do multimodelo, coordenador, especialistas) e devolve o
+// provedor GRATUITO se QUALQUER uma delas cair na chave da plataforma — ou null
+// quando nenhuma cai. É o que a rota usa para decidir limites, fila e
+// contabilidade do modo gratuito com o MESMO critério do runner: decidir só
+// pelo provedor padrão da conta deixava um usuário com chave própria pedir
+// "free::X" e consumir a chave da casa sem limite nem registro.
+export async function resolveFreeUsage(userId, refs = []) {
+  const list = [...new Set((Array.isArray(refs) ? refs : [refs]).map(ref => String(ref ?? '').trim()))];
+  if (!list.length) list.push('');
+  for (const ref of list) {
+    const provider = await getUserProvider(userId, ref);
+    if (provider.source === 'free') return provider;
+  }
+  return null;
 }
 
 // Todas as credenciais da conta, na ordem de cadastro e já decifradas — só as

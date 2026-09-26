@@ -1,5 +1,34 @@
-import { useCallback, useState } from 'react';
-import { API } from '../constants.js';
+import { useCallback, useRef, useState } from 'react';
+
+// `constants.js` usa import.meta.env (Vite): importado DINAMICAMENTE, dentro das
+// funções de rede, para as funções puras daqui continuarem testáveis no Node
+// (mesmo padrão de useDevProjects.js).
+async function apiUrl(path) {
+  const { API } = await import('../constants.js');
+  return `${API}${path}`;
+}
+
+// Teto da referência de modelo enviada (o backend aplica o mesmo).
+export const MAX_MODEL_REF_CHARS = 360;
+
+// Modelo da conversa atual, no formato que o backend aceita — ou nada. Em
+// Configurações → Companion, "modelo em branco" significa ACOMPANHAR o modelo
+// da conversa; sem este campo, o backend nunca sabia qual era e caía no padrão
+// da conta.
+export function copilotModelField(model) {
+  const ref = typeof model === 'string' ? model.trim() : '';
+  return ref && ref.length <= MAX_MODEL_REF_CHARS ? { model: ref } : {};
+}
+
+// Corpo do POST /api/copilot/chat. Puro para ser testável.
+export function copilotChatBody(text, opts = {}, model = null) {
+  return {
+    text,
+    shareContext: opts.shareContext === true,
+    conversationId: opts.conversationId || null,
+    ...copilotModelField(model),
+  };
+}
 
 // Estado do painel PRÓPRIO do copiloto: chat, memória (notas), preferências,
 // caixa de documentos e as ações que ele executa dentro do Studio.
@@ -8,7 +37,11 @@ import { API } from '../constants.js';
 // preferências e é dono da autorização). Aqui só transportamos a intenção —
 // `shareContext` marca "leve o contexto NESTA mensagem" — e mostramos, depois,
 // o que de fato foi usado (`used`), sem prometer o que não aconteceu.
-export function useCopilotChat() {
+// `model`: o modelo da conversa aberta no chat principal (Companion.jsx já o
+// recebe como prop). Vai junto nas chamadas que usam o provedor de IA.
+export function useCopilotChat({ model = null } = {}) {
+  const modelRef = useRef(model);
+  modelRef.current = model;
   const [messages, setMessages] = useState([]);
   const [documents, setDocuments] = useState([]);
   const [notes, setNotes] = useState([]);
@@ -24,7 +57,7 @@ export function useCopilotChat() {
   const loadChat = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const r = await fetch(`${API}/api/copilot/chat`);
+      const r = await fetch(await apiUrl(`/api/copilot/chat`));
       if (r.ok) { const d = await r.json(); setMessages(Array.isArray(d.messages) ? d.messages : []); }
     } catch { /* offline */ }
     finally { setLoading(false); setLoaded(true); }
@@ -40,13 +73,9 @@ export function useCopilotChat() {
     const optimistic = { id: `tmp-${Date.now()}`, role: 'user', content: body, pending: true };
     setMessages(prev => [...prev, optimistic]);
     try {
-      const r = await fetch(`${API}/api/copilot/chat`, {
+      const r = await fetch(await apiUrl(`/api/copilot/chat`), {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text: body,
-          shareContext: opts.shareContext === true,
-          conversationId: opts.conversationId || null,
-        }),
+        body: JSON.stringify(copilotChatBody(body, opts, modelRef.current)),
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) {
@@ -68,14 +97,14 @@ export function useCopilotChat() {
   }, [sending]);
 
   const clearChat = useCallback(async () => {
-    try { await fetch(`${API}/api/copilot/chat`, { method: 'DELETE' }); } catch {}
+    try { await fetch(await apiUrl(`/api/copilot/chat`), { method: 'DELETE' }); } catch {}
     setMessages([]);
   }, []);
 
   const loadDocuments = useCallback(async () => {
     setDocsLoading(true);
     try {
-      const r = await fetch(`${API}/api/copilot/documents`);
+      const r = await fetch(await apiUrl(`/api/copilot/documents`));
       if (r.ok) setDocuments(await r.json());
     } catch { /* offline */ }
     finally { setDocsLoading(false); }
@@ -83,7 +112,7 @@ export function useCopilotChat() {
 
   const deleteDocument = useCallback(async (id) => {
     setDocuments(prev => prev.filter(d => d.id !== id)); // otimista
-    try { await fetch(`${API}/api/copilot/documents/${encodeURIComponent(id)}`, { method: 'DELETE' }); } catch {}
+    try { await fetch(await apiUrl(`/api/copilot/documents/${encodeURIComponent(id)}`), { method: 'DELETE' }); } catch {}
   }, []);
 
   // ---- Memória e preferências ----------------------------------------------
@@ -92,8 +121,8 @@ export function useCopilotChat() {
     setMemoryLoading(true);
     try {
       const [rn, rp] = await Promise.all([
-        fetch(`${API}/api/copilot/notes`),
-        fetch(`${API}/api/copilot/prefs`),
+        fetch(await apiUrl(`/api/copilot/notes`)),
+        fetch(await apiUrl(`/api/copilot/prefs`)),
       ]);
       if (rn.ok) setNotes(await rn.json());
       if (rp.ok) { const d = await rp.json(); setPrefs(d.prefs); setPrefsOptions(d.options || null); }
@@ -105,7 +134,7 @@ export function useCopilotChat() {
     const next = { ...(prefs || {}), ...patch };
     setPrefs(next); // otimista: os controles respondem na hora
     try {
-      const r = await fetch(`${API}/api/copilot/prefs`, {
+      const r = await fetch(await apiUrl(`/api/copilot/prefs`), {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(next),
       });
@@ -116,7 +145,7 @@ export function useCopilotChat() {
 
   const addNote = useCallback(async (input) => {
     try {
-      const r = await fetch(`${API}/api/copilot/notes`, {
+      const r = await fetch(await apiUrl(`/api/copilot/notes`), {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(input),
       });
@@ -129,7 +158,7 @@ export function useCopilotChat() {
 
   const updateNote = useCallback(async (id, patch) => {
     try {
-      const r = await fetch(`${API}/api/copilot/notes/${encodeURIComponent(id)}`, {
+      const r = await fetch(await apiUrl(`/api/copilot/notes/${encodeURIComponent(id)}`), {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(patch),
       });
@@ -146,7 +175,7 @@ export function useCopilotChat() {
 
   const deleteNote = useCallback(async (id) => {
     setNotes(prev => prev.filter(n => n.id !== id)); // otimista
-    try { await fetch(`${API}/api/copilot/notes/${encodeURIComponent(id)}`, { method: 'DELETE' }); } catch {}
+    try { await fetch(await apiUrl(`/api/copilot/notes/${encodeURIComponent(id)}`), { method: 'DELETE' }); } catch {}
   }, []);
 
   // ---- Ações dentro do Studio ----------------------------------------------
@@ -154,7 +183,7 @@ export function useCopilotChat() {
   // Salva um texto como template de pedido (acervo do chat principal).
   const saveAsTemplate = useCallback(async (name, content) => {
     try {
-      const r = await fetch(`${API}/api/copilot/actions/template`, {
+      const r = await fetch(await apiUrl(`/api/copilot/actions/template`), {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, content }),
       });
@@ -166,7 +195,7 @@ export function useCopilotChat() {
   // Guarda um texto qualquer na caixa de documentos do copiloto.
   const saveAsDocument = useCallback(async (name, content, kind = 'texto') => {
     try {
-      const r = await fetch(`${API}/api/copilot/documents`, {
+      const r = await fetch(await apiUrl(`/api/copilot/documents`), {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, content, kind }),
       });
@@ -181,7 +210,10 @@ export function useCopilotChat() {
   const summarizeChat = useCallback(async () => {
     setError(null);
     try {
-      const r = await fetch(`${API}/api/copilot/actions/summary`, { method: 'POST' });
+      const r = await fetch(await apiUrl('/api/copilot/actions/summary'), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(copilotModelField(modelRef.current)),
+      });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) { setError(d.error || 'Não consegui resumir agora.'); return null; }
       if (d.document) setDocuments(prev => [d.document, ...prev]);
@@ -194,9 +226,9 @@ export function useCopilotChat() {
   const runExecutiveTool = useCallback(async (tool, payload = {}) => {
     setError(null);
     try {
-      const r = await fetch(`${API}/api/copilot/tools/${encodeURIComponent(tool)}`, {
+      const r = await fetch(await apiUrl(`/api/copilot/tools/${encodeURIComponent(tool)}`), {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ ...copilotModelField(modelRef.current), ...payload }),
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) { setError(data.error || 'Não consegui executar a análise.'); return null; }

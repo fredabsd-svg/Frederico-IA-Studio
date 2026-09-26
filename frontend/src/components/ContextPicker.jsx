@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Bot, Users, Cpu, Check, Settings, ChevronDown, Calculator, FilePenLine, Code2, Telescope, Scale, Briefcase, BarChart3, Receipt, Landmark, Megaphone, Lightbulb, ShieldCheck, GraduationCap, Stethoscope, Hammer, Leaf } from 'lucide-react';
 import { ASSISTANT_COLORS } from '../constants.js';
 import { ModelPicker } from '../components.jsx';
+import { modelDisplayName } from '../modelChoice.js';
+import { useKeepInViewport } from '../hooks/useKeepInViewport.js';
 
 // Mapa explícito em vez de Lucide[nome] sobre `import * as Lucide`: o import
 // estrela puxaria os ~1500 ícones da biblioteca para o bundle, porque mata o
@@ -75,6 +77,8 @@ export function ContextPicker({ models, model, onModel, assistants, assistantId,
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState(team ? 'team' : 'assistant');
   const ref = useRef(null);
+  const panelRef = useRef(null);
+  useKeepInViewport(panelRef, open);
 
   useEffect(() => {
     function onDoc(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
@@ -102,11 +106,11 @@ export function ContextPicker({ models, model, onModel, assistants, assistantId,
       {team ? <Users size={15}/> : <AssistantGlyph value={currentAssistant?.emoji} size={15}/>}
       <span className="ctxBtnText">
         <b>{who}</b>
-        <small>{currentModel?.name || model}{currentModel && ` · ${modelCompatibilityLabel(currentModel)}`}</small>
+        <small>{currentModel?.name || modelDisplayName(models, model) || 'Nenhum modelo'}{currentModel && ` · ${modelCompatibilityLabel(currentModel)}`}</small>
       </span>
       <ChevronDown size={14}/>
     </button>
-    {open && <div className="ctxPanel">
+    {open && <div className="ctxPanel" ref={panelRef}>
       <div className="ctxTabs" role="tablist" aria-label="Contexto da conversa">
         <button role="tab" aria-selected={tab === 'assistant'} className={tab === 'assistant' ? 'on' : ''} onClick={() => goTab('assistant')}><Bot size={14}/> Assistente</button>
         <button role="tab" aria-selected={tab === 'team'} className={tab === 'team' ? 'on' : ''} onClick={() => goTab('team')}><Users size={14}/> Equipe</button>

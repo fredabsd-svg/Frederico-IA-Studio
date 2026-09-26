@@ -4,8 +4,8 @@
 
 export const PROMPT_RELEASE = Object.freeze({
   id: 'frederico-prompt-core',
-  version: '2026.07.25.1',
-  date: '2026-07-25'
+  version: '2026.09.26.1',
+  date: '2026-09-26'
 });
 
 export const PROMPT_MODULES = Object.freeze({
@@ -14,13 +14,26 @@ export const PROMPT_MODULES = Object.freeze({
   // assistente de documentos e passou para a base, entrando só quando
   // `run_python` está na chamada; o bloco CONTEXTO DESTA CHAMADA leva a data
   // de hoje, o modelo e o estado da rede.
-  global:       { id: 'global-core',       version: '4.2.0' },
+  // 4.3.0: CICLO DE EXECUÇÃO e SANDBOX só entram quando o assistente tem
+  // ferramentas para usá-los (sem ferramenta nenhuma, contradiziam a nota de
+  // ferramentas); "rode date no bash" só com bash; a hierarquia de conflito põe
+  // as regras de projeto do usuário no degrau do pedido; nome do produto
+  // unificado como "Frederico IA Studio".
+  global:       { id: 'global-core',       version: '4.3.0' },
   profile:      { id: 'assistant-profile', version: '1.0.0' },
   // 3.3.0: o RESULTADO da ferramenta passou a chegar ao modelo embrulhado como
   // dado não confiável (antes ia cru). Muda o que o modelo lê a cada passo.
-  tools:        { id: 'tool-contract',     version: '3.3.0' },
-  developer:    { id: 'developer-mode',    version: '2.0.0' },
-  multiModel:   { id: 'multi-model',       version: '3.1.0' },
+  // 3.4.0: a nota de ferramentas cita só as ferramentas PRESENTES e diz o motivo
+  // real de não haver nenhuma (configuração, turno social ou modelo sem tool
+  // calling); run_python aponta os kits como caminho único para Word/Excel/PDF.
+  tools:        { id: 'tool-contract',     version: '3.4.0' },
+  // 2.1.0: as regras de projeto do usuário saíram de `untrusted-context` e
+  // viraram `<user-project-rules>` (instrução do usuário, delimitada).
+  developer:    { id: 'developer-mode',    version: '2.1.0' },
+  // 3.2.0: pedido do usuário como mensagem normal; só as respostas dos modelos
+  // (e o histórico) como dado; orçamento no system; perfil/estilo do assistente
+  // escolhido; data de hoje; idioma do usuário.
+  multiModel:   { id: 'multi-model',       version: '3.2.0' },
   artifact:     { id: 'artifact-workflow', version: '1.0.0' },
   resume:       { id: 'resume-protocol',   version: '2.0.0' },
   memory:       { id: 'memory-context',    version: '2.0.0' },

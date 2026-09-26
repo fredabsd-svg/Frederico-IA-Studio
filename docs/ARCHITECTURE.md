@@ -60,11 +60,19 @@ Dois canais, ambos em `routes/conversations.js`:
 | Rota | Papel |
 | --- | --- |
 | `POST /api/conversations/:id/chat` | Inicia o run **e** transmite os eventos. |
-| `GET /api/conversations/:id/stream?fromSeq=N` | **Reconecta** a um run em andamento (replay do buffer + ao vivo). 204 quando não há nada. |
+| `GET /api/conversations/:id/stream?runId=R&fromSeq=N` | **Reconecta** a um run em andamento (replay do buffer + ao vivo). 204 quando não há nada. |
 
 - Todo evento passa por `liveStream.publish()` antes de ir à resposta: buffer de replay
   (5.000 eventos / 3 MB, descarta os mais antigos) + fan-out para assinantes.
 - Após `finish()`, o buffer sobrevive **90 s** (`GRACE_MS`) para quem reconecta no último segundo.
+  Reconectar a um run **já terminado** entrega o que faltava e **encerra** a resposta (antes
+  ficava pendurada só com o ping quando o cursor já estava no fim).
+- **Cursor de reconexão** (`runId` + `fromSeq`), com o MESMO filtro no replay e no ao vivo e
+  cada `seq` entregue no máximo uma vez: mesmo run → só o que passou de `fromSeq`; `runId`
+  diferente do run atual (um run novo começou) → o run atual **desde o seq 1**; `fromSeq`
+  maior que o último seq publicado (retomada via `/resume`, que reabre o stream com o mesmo
+  `runId`) → replay completo. O cliente deve comparar o `_runId` recebido com o do cursor e
+  recomeçar o balão quando mudar.
 - Heartbeat `: ping` a cada 15 s (evita corte por idle timeout de proxy).
 - Desconexão do navegador **não** cancela a tarefa (a menos de `CANCEL_ON_DISCONNECT=true`);
   o resultado é persistido e reaparece ao voltar.
@@ -308,7 +316,8 @@ roda no sandbox, não toca arquivo nem rede — só encerra o turno.
 | Frontend | `components/UserInputRequest.jsx` (cartão inline) + `UserInputRequestDialog.jsx` (modal, chunk sob demanda). Fechar não descarta; a pergunta deixa de aparecer como pendente quando existe mensagem posterior do usuário (`executionSessions.js → pendingInputRequest`). |
 | Testes | `backend/src/agent/userInputRequest.test.js`, `agent/repair.awaiting.test.js`, `taskOutcome.test.js`, `frontend/src/executionSessions.test.js`, `e2e/tests/modo-desenvolvedor.spec.js`. |
 - **Persistido:** `messages` (+`execution_meta`, `memory_meta`, `multi_meta`), `files`, `usage`, `usage_daily`, `execution_checkpoints`, `agent_runs`/`agent_run_events` (ADR 0003), `conversation_chunks`.
-- **Erro:** `friendlyApiError` traduz o erro do provedor; `classifyTaskResult` decide se houve falha real.
+- **Erro:** `friendlyApiError` traduz o erro do provedor; `classifyTaskResult` decide se houve falha real. Sinais reconhecidos: `stopped`, `execution.state === 'awaiting_user'`, `compatibility`, `configurationError` (sem chave/provedor utilizável — estado `fatal_error`, nunca "concluída"), `providerFailure` e `incomplete`. O Modo Equipe (`orchestrator.js`) usa os mesmos sinais: erro do provedor no coordenador → `providerFailure`; coordenador sem texto → `incomplete` (não mais "Concluído.").
+- **Fallback/troca de modelo no `execution_meta`:** quando o provedor pedido está sem chave legível e o modo gratuito assume, `execution_meta.providerFallback = { to: 'free', reason, requestedProviderId, requestedProviderName, message }`; quando o modo gratuito substitui o modelo pedido (fallback ou fora da allowlist), `execution_meta.modelSwap = { from, to, reason }` e uma nota sai no texto da resposta. O aviso ao vivo (`status`) sai uma vez por execução — a rota marca `control.providerFallbackNotified` quando já avisou.
 - **Recuperação:** failover de modelo (`MODEL_FALLBACKS`), retomada por checkpoint (`POST /resume`).
 - **Testes:** ~495 casos no backend cobrem prompts, reparo, protocolo, capacidades, controle, checkpoint.
 - **Lacuna:** não há teste ponta a ponta com provedor HTTP simulado completo (F-13).
@@ -447,7 +456,9 @@ mesmos; qualquer outro vira `h_<sha256[0:40]>` — dois usuários nunca caem na 
 ```
 POST /conversations/:id/upload
   1. beginUpload           → 413 pelo Content-Length declarado; 429 por concorrência
-  2. multer diskStorage    → streaming para DATA_DIR/tmp-uploads/req-XXXX (nunca RAM)
+  2. multer diskStorage    → streaming para DATA_DIR/tmp-uploads/req-XXXX (nunca RAM);
+                             teto estourado → uploadErrorHandler: 413 (tamanho) / 400
+                             (quantidade, campo inesperado) + limpeza do staging
   3. ensureConversation    → 404 se a conversa é de outro dono
   4. enforceUploadLimits   → total real da requisição + cota de disco do usuário
   5. scanOrReject          → ClamAV por streaming; infectado é apagado na hora
@@ -768,9 +779,22 @@ main.jsx → AuthGate → App.jsx
   ├─ rodapé do chat: ChatJumpToBottom + ExecutionTerminalDock (chunk sob demanda) +
   │          compositor. As duas faixas publicam a própria altura em `--composer-h` e
   │          `--dock-h`; quem flutua no canto (Companion) soma as duas.
-  └─ CSS: styles.css + v2.css + 8 arquivos temáticos (auth, camera, companion,
-          copilot, docling, landing, nino, design)
+  └─ CSS: tokens.css → styles.css → v2.css + 8 arquivos temáticos (auth, camera,
+          companion, copilot, docling, landing, nino, design)
 ```
+
+**Sistema visual (2026-09-26).** `tokens.css` é a única fonte de cor, tipografia,
+raio, movimento e camadas (z-index). As 7 paletas do seletor "Aparência"
+(`constants.js › THEMES`) são geradas em OKLCH a partir de cinco parâmetros por paleta
+(`--h`, `--hc`, `--ha`, `--ac`, `--al` em `body.dark|light.t-<id>`); o contraste WCAG
+2.2 AA (texto 4,5:1, borda de campo e foco 3:1) foi conferido para as sete. Os
+componentes consomem só os tokens semânticos (`--bg`, `--side`, `--panel`, `--panel2`,
+`--text`, `--muted`, `--line`, `--line-strong`, `--accent`, `--accent-text`,
+`--accent-soft`, `--on-accent`, `--focus`, `--danger`, `--warn`, `--ok`). `styles.css`
+guarda a estrutura (grid, posições); `v2.css` é a camada de acabamento com o sistema de
+botões (`.primary`, padrão, `.ghost`, `.danger`), a moldura calma (barra lateral sem
+ladrilhos, um único item aceso) e os módulos. A landing (`Landing.jsx`) mostra capturas
+reais do app em `public/landing/` (conteúdo da conversa rotulado como ilustrativo).
 
 **A coluna do chat é limitada pela janela.** `.app` é um grid com `height:100vh` e
 `grid-template-rows: minmax(0, 1fr)`; `.chat` tem `min-height: 0; overflow: hidden`. Sem

@@ -135,17 +135,23 @@ export function developerSessionForConversation(projects, conversationId) {
   if (!conversationId || !Array.isArray(projects)) return null;
   const project = projects.find(p => (p.conversationIds || []).includes(conversationId));
   if (!project) return null;
-  const binding = project.binding || { type: 'none' };
-  const github = binding.type === 'github' && binding.repo
-    ? { repo: binding.repo, branch: binding.branch || '' }
-    : null;
-  const projectId = binding.type === 'folder' ? (binding.folderId || null) : null;
+  return developerSessionFromProject(project, { conversationId });
+}
+
+// Fonte ÚNICA do formato da sessão de desenvolvedor (PURA, testável). O vínculo
+// do projeto vira o par (pasta do PC) OU (repositório GitHub) que o backend
+// espera; regras + memória viajam pelo canal `rules`. Antes, três cópias deste
+// objeto (abrir tarefa, reabrir conversa, entrar no workspace) divergiam.
+export function developerSessionFromProject(project, { mode, binding, conversationId = null } = {}) {
+  const bind = binding || project?.binding || { type: 'none' };
   return {
-    mode: project.mode || 'plan',
-    projectId,
-    github,
+    mode: mode || project?.mode || 'plan',
+    projectId: bind.type === 'folder' ? (bind.folderId || null) : null,
+    github: bind.type === 'github' && bind.repo
+      ? { repo: bind.repo, branch: bind.branch || '' }
+      : null,
     rules: projectContextText(project),
-    devProjectId: project.id,
+    devProjectId: project?.id || null,
     conversationId,
     // A autorização de publicação viaja junto: é ela que faz `github_push` e
     // `github_create_pr` continuarem no inventário em turnos seguintes e depois

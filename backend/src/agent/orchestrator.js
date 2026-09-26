@@ -14,12 +14,40 @@ import { STREAM_RECOVERY_LIMIT, STREAM_RESUME_NOTE, STREAM_PAUSE_RESUME_NOTE, is
 import { guardStreamStall, PROVIDER_CONNECT_TIMEOUT_MS } from './streamGuard.js';
 import { acquireConversationControl, releaseConversationControl, beginProviderRequest, releaseProviderRequest, controlInterruptReason, gate } from './control.js';
 import { clientScopeFor, memoryNote, saveMessage } from './persistence.js';
+import { emitExecutionState, finalExecutionState } from './executionState.js';
 import { untrustedContext } from './promptRegistry.js';
+import { userProjectRulesBlock } from './promptPolicy.js';
+import { contextoDaChamadaCurto } from './systemPromptV4.js';
 import { buildDocumentContext } from '../docling/context.js';
 
 const TEAM_TOOL_AWARENESS = `CAPACIDADES DO APP:
-O Frederico AI Studio tem sandbox com Python 3, bash, LibreOffice/soffice, ffmpeg, OCR/PDF, vetores headless, Chromium/Playwright/Xvfb, toolchains C/C++/Go/Rust/Java/.NET/Kotlin, ML leve em CPU, qualidade e diagnóstico, bancos/clients remotos, Node com toolchain frontend, geração de arquivos e ferramentas de imagem/web quando habilitadas. Docker/Compose, GPU e builds nativos Android/iOS continuam deliberadamente fora do sandbox.
+O Frederico IA Studio tem sandbox com Python 3, bash, LibreOffice/soffice, ffmpeg, OCR/PDF, vetores headless, Chromium/Playwright/Xvfb, toolchains C/C++/Go/Rust/Java/.NET/Kotlin, ML leve em CPU, qualidade e diagnóstico, bancos/clients remotos, Node com toolchain frontend, geração de arquivos e ferramentas de imagem/web quando habilitadas. Docker/Compose, GPU e builds nativos Android/iOS continuam deliberadamente fora do sandbox.
 No Modo Equipe, os especialistas individuais desta etapa NÃO executam ferramentas diretamente; eles analisam e orientam. Se a resposta final exigir arquivo, cálculo, conversão ou validação, indique claramente que isso deve ser executado pelas ferramentas do assistente principal.`;
+
+// Executor padrão do Modo Equipe quando nenhum assistente do time serve para
+// executar. Antes ele saía com `tools: []` — que em assistantPolicy.js significa
+// DELIBERADAMENTE "sem ferramentas" — e ainda com `forceExecution`: a execução
+// era exigida de um assistente proibido de executar, e a resposta saía como
+// "este assistente está configurado sem ferramentas". `tools: null` é o
+// conjunto PADRÃO (o mesmo de um assistente sem a lista gravada).
+export function defaultTeamExecutor(coordModel) {
+  return { name: 'Executor', model: coordModel, system_prompt: AGENTS.codigo.prompt, tools: null, personality: {} };
+}
+
+// Escolhe quem executa a tarefa no Modo Equipe: o executor explícito, um
+// assistente do time com perfil de execução ou o executor padrão.
+export function selectTeamExecutor({ executor = null, assistants = [], coordModel = null } = {}) {
+  return executor
+    || assistants.find(a => /program|codigo|codex|desenvolv|document/i.test(`${a.name || ''} ${a.system_prompt || ''}`))
+    || defaultTeamExecutor(coordModel);
+}
+
+// Título de um parecer no texto da equipe. O campo `emoji` dos assistentes
+// guarda hoje o NOME de um ícone Lucide ("bot", "code-2"), não um emoji —
+// interpolá-lo produzia "### bot Assistente geral" no briefing e na resposta.
+export function perspectiveHeading(perspective) {
+  return `### ${String(perspective?.name || 'Especialista')}`;
+}
 
 // Orquestrador: aciona vários assistentes e um coordenador une as respostas
 export async function runOrchestrator({ userId, conversationId, userText, model, assistants = [], executor = null, webSearch = false, effort, developer, onEvent, control: inheritedControl = null }) {
@@ -51,9 +79,13 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
     const finalText = provider.attributionError
       || 'Nenhuma chave de API configurada. Vá em **Configurações → Provedor de IA** e cadastre a sua chave para usar o Modo Equipe.';
     onEvent({ type: 'delta', content: finalText });
-    const assistantMessageId = await saveMessage(userId, conversationId, 'assistant', finalText);
+    // Falha explícita (Regra 4.2), no mesmo formato do runAgent: sem isto o
+    // resultado não tinha marca nenhuma e virava "concluído".
+    const failureMessage = provider.attributionError || 'Nenhuma chave de API configurada para o coordenador do Modo Equipe.';
+    const execution = emitExecutionState(onEvent, 'fatal_error', 'Configuração do provedor necessária', { configuration: 'provider', model: coordModel });
+    const assistantMessageId = await saveMessage(userId, conversationId, 'assistant', finalText, { executionMeta: execution });
     onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId });
-    return { text: finalText, usage, model: coordModel };
+    return { text: finalText, usage, model: coordModel, stopped: false, configurationError: true, failureMessage, execution };
   }
   const lowSignalTurn = isLowSignalTurn(userText);
   const requirement = detectToolRequirement({
@@ -67,7 +99,11 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
   // GitHub — senão respondem "me mande o link do repositório". (A execução real
   // continua no executor, via runAgent, que clona e lê o código.)
   const developerTeamNote = !lowSignalTurn ? developerTeamContextFor(developer, userId) : null;
-  const developerRules = String(developer?.rules || '').trim().slice(0, 6000);
+  // Regras de projeto escritas pelo usuário: mesmo degrau do pedido dele.
+  const developerRules = userProjectRulesBlock(developer?.rules);
+  // Data de hoje para o coordenador e os especialistas (o executor recebe a
+  // sua pelo prompt v4.2 do runAgent).
+  const callContext = contextoDaChamadaCurto({ model: coordModel });
   let memory = null;
   let memoryMeta = null;
   try {
@@ -161,7 +197,7 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
     const requestedMemberModel = member.model || coordModel;
     const memberProvider = await getUserProvider(userId, requestedMemberModel);
     const memberModel = requestedMemberModel.includes('::') ? requestedMemberModel : (memberProvider.modelRef || requestedMemberModel);
-    if (!memberProvider.client) return { error: new Error('A credencial deste provedor não está mais disponível.') };
+    if (!memberProvider.client) return { error: Object.assign(new Error('A credencial deste provedor não está mais disponível.'), { userFacing: true }) };
     const memberUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
     let text = '';
     let truncated = false;
@@ -198,11 +234,9 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
   }
 
   async function executeTeamTask(perspectives) {
-    const selectedExecutor = executor
-      || assistants.find(a => /program|codigo|codex|desenvolv|document/i.test(`${a.name || ''} ${a.system_prompt || ''}`))
-      || { name: 'Executor', emoji: 'code-2', model: coordModel, system_prompt: AGENTS.codigo.prompt, tools: [], personality: {} };
+    const selectedExecutor = selectTeamExecutor({ executor, assistants, coordModel });
     const briefing = perspectives.length
-      ? clipForBriefing(perspectives.map(p => `### ${p.emoji || ''} ${p.name}\n${clipForBriefing(String(p.text || ''), PERSPECTIVE_CHAR_LIMIT)}`).join('\n\n'), BRIEFING_CHAR_LIMIT)
+      ? clipForBriefing(perspectives.map(p => `${perspectiveHeading(p)}\n${clipForBriefing(String(p.text || ''), PERSPECTIVE_CHAR_LIMIT)}`).join('\n\n'), BRIEFING_CHAR_LIMIT)
       : 'Nenhum parecer adicional foi produzido. Execute o pedido original integralmente.';
     onEvent({ type: 'status', content: perspectives.length ? 'Equipe concluiu a análise. Executando a tarefa...' : 'Executando a tarefa solicitada...' });
     const result = await runAgent({
@@ -235,6 +269,13 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
   let finalText = '';
   const perspectives = [];
   let stopped = false;
+  // Mesmos sinais do runAgent (loop.js) para `classifyTaskResult` e a
+  // interface: erro do provedor no coordenador → `providerFailure`; resposta
+  // vazia → `incomplete`. Antes os dois viravam texto comum ("Não foi possível
+  // responder…" / "Concluído.") e a execução terminava como sucesso.
+  let providerFailure = false;
+  let incomplete = false;
+  let failureMessage = null;
 
   if (!consult) {
     if (requirement.required) {
@@ -248,20 +289,27 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
     const directSections = [
       protectedProfilePrompt(lowSignalTurn
         ? LOW_SIGNAL_TURN_NOTE
-        : 'Você coordena um time de assistentes especializados e a conversa já está rolando. Responda direto à nova mensagem, em português do Brasil, usando o histórico e a memória. Nada de se reapresentar, descrever o time ou repetir o que já foi combinado — é só continuar de onde parou, com naturalidade.'),
-      TEAM_TOOL_AWARENESS
+        : 'Você coordena um time de assistentes especializados e a conversa já está rolando. Responda direto à nova mensagem, no idioma do usuário (padrão: português do Brasil), usando o histórico e a memória. Nada de se reapresentar, descrever o time ou repetir o que já foi combinado — é só continuar de onde parou, com naturalidade.'),
+      TEAM_TOOL_AWARENESS,
+      callContext
     ];
     if (developerTeamNote) directSections.push(developerTeamNote);
     const directMsgs = [{ role: 'system', content: directSections.join('\n\n') }];
     const directPrefixEnd = directMsgs.length; // antes de memória/histórico
     if (memory) directMsgs.push({ role: 'user', content: untrustedContext('memory', memory) });
     if (documentContext) directMsgs.push({ role: 'user', content: untrustedContext('document-content', documentContext) });
-    if (developerRules) directMsgs.push({ role: 'user', content: untrustedContext('project-rules', developerRules) });
+    if (developerRules) directMsgs.push({ role: 'user', content: developerRules });
     for (const m of histRows) directMsgs.push({ role: m.role, content: String(m.content).slice(0, 2000) });
     directMsgs.push({ role: 'user', content: userText });
     applyPromptCache(directMsgs, coordModel, directPrefixEnd, provider.baseURL);
     try { finalText = await streamCoordinator(directMsgs); }
-    catch (err) { finalText = `Não foi possível responder: ${friendlyApiError(tagProviderError(err, { providerName: provider.providerName, model: rawModelId(coordModel) }))}`; onEvent({ type: 'delta', content: finalText }); }
+    catch (err) {
+      console.error('[equipe] falha do coordenador:', err?.message);
+      providerFailure = true;
+      failureMessage = friendlyApiError(tagProviderError(err, { providerName: provider.providerName, model: rawModelId(coordModel) }));
+      finalText = `Não foi possível responder: ${failureMessage}`;
+      onEvent({ type: 'delta', content: finalText });
+    }
   } else {
     // Os especialistas são consultados EM PARALELO (antes era em série: a
     // latência somava e, sob carga, cada membro extra aumentava a janela para
@@ -274,11 +322,11 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
       const results = await Promise.all(assistants.map(async (a) => {
         onEvent({ type: 'tool_start', name: a.name });
         const sys = protectedProfilePrompt(`${a.system_prompt || ''}\n\n${TEAM_TOOL_AWARENESS}\n\nVocê faz parte de um time que já está conversando com a pessoa. Olhe o histórico e traga só a sua visão de especialista sobre a nova mensagem, direto ao ponto — sem se apresentar e sem repetir o que o time já disse. Nesta etapa você não gera arquivos nem roda código.`);
-        const msgs = [{ role: 'system', content: developerTeamNote ? `${sys}\n\n${developerTeamNote}` : sys }];
+        const msgs = [{ role: 'system', content: [sys, developerTeamNote, callContext].filter(Boolean).join('\n\n') }];
         const memberPrefixEnd = msgs.length; // antes de memória/histórico
         if (memory) msgs.push({ role: 'user', content: untrustedContext('memory', memory) });
         if (documentContext) msgs.push({ role: 'user', content: untrustedContext('document-content', documentContext) });
-        if (developerRules) msgs.push({ role: 'user', content: untrustedContext('project-rules', developerRules) });
+        if (developerRules) msgs.push({ role: 'user', content: developerRules });
         if (historyText) msgs.push({ role: 'user', content: untrustedContext('conversation-history', historyText) });
         msgs.push({ role: 'user', content: userText });
         applyPromptCache(msgs, a.model || coordModel, memberPrefixEnd, provider.baseURL);
@@ -294,14 +342,14 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
         const text = memberResult.truncated
           ? `${memberResult.text}\n\n_[parecer truncado pelo limite do modelo — pode estar incompleto]_`
           : memberResult.text;
-        perspectives.push({ name: a.name, emoji: a.emoji, text });
+        perspectives.push({ name: a.name, text });
         onEvent({ type: 'tool_result', name: a.name, content: text.slice(0, 600) });
       }
     }
 
     if (stopped || await gate(control, onEvent)) {
       onEvent({ type: 'status', content: 'Interrompido pelo usuário' });
-      finalText = perspectives.length ? perspectives.map(p => `### ${p.emoji || ''} ${p.name}\n${p.text}`).join('\n\n') : '_Processamento interrompido pelo usuário._';
+      finalText = perspectives.length ? perspectives.map(p => `${perspectiveHeading(p)}\n${p.text}`).join('\n\n') : '_Processamento interrompido pelo usuário._';
       onEvent({ type: 'delta', content: finalText });
       const stoppedMsgId = await saveMessage(userId, conversationId, 'assistant', finalText, { memoryMeta });
       onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId: stoppedMsgId });
@@ -315,14 +363,15 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
     }
 
     onEvent({ type: 'status', content: 'Compilando a resposta final da equipe...' });
-    const combined = perspectives.map(p => `### ${p.emoji || ''} ${p.name}\n${p.text}`).join('\n\n');
+    const combined = perspectives.map(p => `${perspectiveHeading(p)}\n${p.text}`).join('\n\n');
     const synthMsgs = [
       { role: 'system', content: [
-        protectedProfilePrompt('Você coordena um time de assistentes especializados, numa conversa em andamento. Junte as perspectivas abaixo em UMA resposta só, coesa e em português do Brasil, que responda direto à nova mensagem da pessoa. Sem se reapresentar, sem descrever o time e sem discurso — vá ao ponto. Use títulos por área quando ajudar e feche com um resumo prático.'),
+        protectedProfilePrompt('Você coordena um time de assistentes especializados, numa conversa em andamento. Junte as perspectivas abaixo em UMA resposta só, coesa e no idioma do usuário (padrão: português do Brasil), que responda direto à nova mensagem da pessoa. Sem se reapresentar, sem descrever o time e sem discurso — vá ao ponto. Use títulos por área quando ajudar e feche com um resumo prático.'),
         TEAM_TOOL_AWARENESS,
-        ...(developerTeamNote ? [developerTeamNote] : [])
+        ...(developerTeamNote ? [developerTeamNote] : []),
+        callContext
       ].join('\n\n') },
-      ...(developerRules ? [{ role: 'user', content: untrustedContext('project-rules', developerRules) }] : []),
+      ...(developerRules ? [{ role: 'user', content: developerRules }] : []),
       ...(historyText ? [{ role: 'user', content: untrustedContext('conversation-history', historyText) }] : []),
       { role: 'user', content: userText },
       { role: 'user', content: untrustedContext('team-perspectives', combined) }
@@ -330,7 +379,13 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
     const synthPrefixEnd = synthMsgs.findIndex(message => message.role !== 'system');
     applyPromptCache(synthMsgs, coordModel, synthPrefixEnd < 0 ? synthMsgs.length : synthPrefixEnd, provider.baseURL);
     try { finalText = await streamCoordinator(synthMsgs); }
-    catch (err) { finalText = `Não foi possível compilar a resposta final: ${friendlyApiError(err)}`; onEvent({ type: 'delta', content: finalText }); }
+    catch (err) {
+      console.error('[equipe] falha na síntese do coordenador:', err?.message);
+      providerFailure = true;
+      failureMessage = friendlyApiError(tagProviderError(err, { providerName: provider.providerName, model: rawModelId(coordModel) }));
+      finalText = `Não foi possível compilar a resposta final: ${failureMessage}`;
+      onEvent({ type: 'delta', content: finalText });
+    }
   }
   try {
     if (stopped) {
@@ -340,13 +395,23 @@ export async function runOrchestrator({ userId, conversationId, userText, model,
         onEvent({ type: 'delta', content: finalText });
       }
     } else if (!finalText.trim()) {
-      finalText = 'Concluído.';
+      // Coordenador sem texto NÃO é "Concluído." (Regra 4.2): é execução
+      // incompleta, com a mesma orientação que o runAgent dá.
+      incomplete = true;
+      failureMessage ||= 'O coordenador terminou sem produzir uma resposta.';
+      finalText = 'O modelo terminou sem gerar uma resposta. Use **Reenviar** ou escolha outro modelo.';
       onEvent({ type: 'delta', content: finalText });
     }
-    const doneMsgId = await saveMessage(userId, conversationId, 'assistant', finalText, { memoryMeta });
+    // Estado final explícito só quando algo deu errado: o caminho de sucesso
+    // segue como antes (a conclusão é sinalizada pelo `done` da rota).
+    const failed = !stopped && (providerFailure || incomplete);
+    const execution = failed
+      ? emitExecutionState(onEvent, finalExecutionState({ stopped, providerFailure, incomplete }), failureMessage, { model: coordModel })
+      : null;
+    const doneMsgId = await saveMessage(userId, conversationId, 'assistant', finalText, { memoryMeta, ...(execution ? { executionMeta: execution } : {}) });
     onEvent({ type: 'saved', userMessageId: userMsgId, assistantMessageId: doneMsgId });
-    indexAfterReply(userId, conversationId, coordModel).catch(() => {});
-    return { text: finalText, usage, model: coordModel, stopped };
+    if (!failed) indexAfterReply(userId, conversationId, coordModel).catch(() => {});
+    return { text: finalText, usage, model: coordModel, stopped, providerFailure, incomplete, failureMessage, ...(execution ? { execution } : {}) };
   } finally {
     releaseConversationControl(conversationId, control);
   }

@@ -91,7 +91,7 @@ export function FreeModeDrawer({ status, onRefresh, onOpenWizard, onClose }) {
       <span className="fieldLabel">Como sua mensagem é atendida</span>
       <div className="freeInfoRows">
         <div><span>Provedor</span><b>{status?.provider || '—'}</b></div>
-        <div><span>Modelo em uso</span><b>{prettyModel(status?.model) || '—'}</b></div>
+        <div><span>Modelo principal do modo gratuito</span><b>{prettyModel(status?.model) || '—'}</b></div>
         <div><span>Modelos de reserva</span><b>{(status?.models || []).slice(1).map(prettyModel).join(', ') || '—'}</b></div>
         <div><span>Fila agora</span><b>{queueBusy ? `${queue.waiting || 0} esperando · ${queue.running || 0} processando` : 'sem fila no momento'}</b></div>
       </div>

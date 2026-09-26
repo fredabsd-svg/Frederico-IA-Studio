@@ -7,7 +7,7 @@
  * fica errado no tema claro. */
 
 .dsOverlay {
-  position: fixed; inset: 0; z-index: 80;
+  position: fixed; inset: 0; z-index: var(--z-drawer); /* tela cheia na camada das gavetas: modais (askConfirm) abrem por cima */
   background: var(--bg);
   display: flex;
 }

@@ -3,19 +3,22 @@ import { Search, ChevronDown, Check, Cpu, Star, SlidersHorizontal, X, Wrench, Ey
 import { ProviderIcon } from './components/ProviderIcon.jsx';
 import { FamilySelect } from './components/FamilySelect.jsx';
 import { findRanking, tierClass, tierScore } from './modelRanking.js';
-import { capabilityOf, filterModels, modelFamily, tierOf } from './modelFilters.js';
+import { capabilityOf, curatedMatch, filterModels, modelFamily, tierOf } from './modelFilters.js';
 import { groupModelVersions, versionStamp } from './modelVersions.js';
+import { useEscapeLayer } from './hooks/useEscapeLayer.js';
 
-// Ids (ou prefixos) dos modelos mais confiáveis para gerar planilhas/arquivos
+// Prefixos (sem o fabricante — ver curatedMatch) dos modelos mais confiáveis
+// para gerar planilhas/arquivos e das recomendações gerais, em ordem de
+// preferência. Conferidos contra o catálogo curado do backend
+// (modelKnowledge.js) em 2026-09-26; modelos com data de desativação ficam de
+// fora automaticamente.
 const BEST_FOR_FILES = [
-  'deepseek/deepseek-chat', 'openai/gpt-4o', 'openai/gpt-4.1',
-  'anthropic/claude-sonnet', 'anthropic/claude-3.5-sonnet', 'anthropic/claude-3.7-sonnet',
-  'google/gemini-2.5-flash', 'google/gemini-2.5-pro', 'mistralai/mistral-large'
+  'claude-sonnet-5', 'claude-opus-4-8', 'claude-fable-5', 'gpt-5.6', 'gpt-5.5',
+  'gemini-3.1-pro', 'gemini-3.6-flash', 'deepseek-v4-pro', 'deepseek-chat', 'mistral-large'
 ];
 const GENERAL_RECOMMENDATIONS = [
-  'anthropic/claude-sonnet', 'openai/gpt-4.1', 'openai/gpt-4o',
-  'google/gemini-2.5-pro', 'google/gemini-2.5-flash',
-  'deepseek/deepseek-v4-pro', 'deepseek/deepseek-chat', 'mistralai/mistral-large'
+  'claude-sonnet-5', 'claude-fable-5', 'gpt-5.6', 'gemini-3.1-pro', 'gemini-3.6-flash',
+  'deepseek-v4-pro', 'deepseek-v4-flash', 'deepseek-chat', 'mistral-large', 'grok-4.5', 'qwen3.7-max'
 ];
 
 // Famílias de modelos (prefixo do id → rótulo amigável)
@@ -26,7 +29,6 @@ const FAMILY_META = {
   microsoft: 'Microsoft (Phi)', nvidia: 'NVIDIA', perplexity: 'Perplexity',
   'z-ai': 'Z.AI', moonshotai: 'Moonshot (Kimi)', 'nousresearch': 'Nous'
 };
-const familyKey = id => { const s = String(id); return s.includes('/') ? s.split('/')[0] : s.split('-')[0]; };
 const familyLabel = key => FAMILY_META[key] || (key.charAt(0).toUpperCase() + key.slice(1));
 const ctxLabel = n => !n ? 'contexto não informado' : n >= 1000000 ? `${(n / 1000000).toLocaleString('pt-BR')}M contexto` : n >= 1000 ? `${Math.round(n / 1000)}k contexto` : `${n} contexto`;
 const usdPerMillion = value => Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 6 });
@@ -121,14 +123,13 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
 
   useEffect(() => {
     function onDoc(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
-    function onKey(e) { if (e.key === 'Escape') setOpen(false); }
     document.addEventListener('mousedown', onDoc);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDoc);
-      document.removeEventListener('keydown', onKey);
-    };
+    return () => document.removeEventListener('mousedown', onDoc);
   }, []);
+  // Esc com a lista aberta fecha SÓ a lista: a tecla não chega ao modal (ou ao
+  // Modo Design) em volta. Antes os dois ouviam o `document` e fechavam juntos.
+  // No modo `inline` quem manda no Esc é o ContextPicker que embute o painel.
+  useEscapeLayer(open && !inline, () => setOpen(false));
   useEffect(() => {
     if (open && !inline) setTimeout(() => searchRef.current?.focus(), 30);
   }, [open, inline]);
@@ -137,8 +138,8 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
   const query = q.trim().toLowerCase();
   const rawId = model => model.providerModelId || model.id;
   const isFree = model => model.free || rawId(model).endsWith(':free');
-  const isBest = model => BEST_FOR_FILES.some(prefix => rawId(model) === prefix || rawId(model).startsWith(prefix));
-  const isRecommended = model => GENERAL_RECOMMENDATIONS.some(prefix => rawId(model) === prefix || rawId(model).startsWith(prefix));
+  const isBest = model => Boolean(curatedMatch(model, BEST_FOR_FILES));
+  const isRecommended = model => Boolean(curatedMatch(model, GENERAL_RECOMMENDATIONS));
   const isFav = id => favs.includes(id);
   const priceValue = model => isFree(model) ? 0 : model.price || Infinity;
   // Modelo sem classificação vai para o fim ao ordenar por "Minha classificação".
@@ -214,7 +215,7 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
     : sort === 'relevance' ? recommendedSort(a, b)
     : String(a.name || a.id).localeCompare(String(b.name || b.id));
   const generalRecommendationRank = model => {
-    const index = GENERAL_RECOMMENDATIONS.findIndex(prefix => rawId(model) === prefix || rawId(model).startsWith(prefix));
+    const index = GENERAL_RECOMMENDATIONS.indexOf(curatedMatch(model, GENERAL_RECOMMENDATIONS));
     return index === -1 ? GENERAL_RECOMMENDATIONS.length : index;
   };
   const recommendedSort = (a, b) => {
@@ -231,7 +232,7 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
   const matchingPurposeModels = filteredModels.filter(selectedPurpose.matches);
   const recommendationFamily = model => {
     const curatedPrefixes = purpose === 'general' ? GENERAL_RECOMMENDATIONS : purpose === 'files' ? BEST_FOR_FILES : [];
-    return curatedPrefixes.find(prefix => rawId(model) === prefix || rawId(model).startsWith(prefix)) || familyKey(rawId(model));
+    return curatedMatch(model, curatedPrefixes) || modelFamily(model);
   };
   const familyRepresentativeSort = (a, b) => purpose === 'economy'
     ? priceValue(a) - priceValue(b) || (b.created || 0) - (a.created || 0)
@@ -344,6 +345,7 @@ export function ModelPicker({ models, value, onChange, inline = false, onPicked 
           </label>
           <label>Família
             <FamilySelect
+              ariaLabel="Família"
               value={fam}
               onChange={setFam}
               options={[
@@ -458,7 +460,13 @@ export function Collapsible({ text, limit = 700, children }) {
   </div>;
 }
 
-function useDialogFocus(ref, onClose) {
+// Comportamento de diálogo modal: foco inicial ([data-autofocus] ou o primeiro
+// focável), Tab preso dentro, Esc fecha, foco devolvido a quem abriu. Só age
+// quando `ref` é o ÚLTIMO [role=dialog][aria-modal=true] do documento — é isso
+// que faz um modal aberto por cima de uma gaveta fechar sozinho no Esc.
+// Exportado para as sobreposições que não usam Modal/Drawer (câmera, tela
+// cheia do multimodelo): elas marcam o próprio painel com role="dialog".
+export function useDialogFocus(ref, onClose) {
   const closeRef = useRef(onClose);
   useEffect(() => { closeRef.current = onClose; }, [onClose]);
 

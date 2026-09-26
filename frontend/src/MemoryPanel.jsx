@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Brain, Search, Pin, PinOff, Pencil, X, Download, Upload, RefreshCw, Trash2, Check } from 'lucide-react';
 import { API, assistantOptionPrefix } from './constants.js';
 import { Drawer } from './components.jsx';
+import { apiJson, apiErrorMessage } from './apiJson.js';
 
 const TYPES = [
   { key: '', label: 'Todas' },
@@ -15,7 +16,7 @@ const TYPE_BADGE = { perfil: '👤 Perfil', preferencia: '⭐ Preferência', pro
 const SOURCE_LABEL = { manual: 'adicionada por você', auto: 'aprendida das conversas', import: 'importada' };
 
 // Cérebro do Assistente: tudo o que o app sabe, com busca, edição e controles
-export function MemoryPanel({ assistants, clients, clientId, showToast, onClose, askConfirm, askPrompt }) {
+export function MemoryPanel({ assistants, clients, clientId, showToast, onClose, askConfirm, askPrompt, isAdmin = false }) {
   const [items, setItems] = useState(null);
   const [suggestions, setSuggestions] = useState([]);
   const [query, setQuery] = useState('');
@@ -72,12 +73,12 @@ export function MemoryPanel({ assistants, clients, clientId, showToast, onClose,
     } catch {}
   }
   async function saveConfig(partial) {
+    // A caixa é controlada por `config`: se o PUT falhar ela volta sozinha ao
+    // valor antigo, mas sem aviso a pessoa achava que o clique não pegou.
     try {
-      const res = await fetch(`${API}/api/memory-config`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(partial) });
-      if (!res.ok) return;
-      const data = await res.json();
+      const data = await apiJson(`${API}/api/memory-config`, { method: 'PUT', body: partial });
       if (data && typeof data.memory_enabled !== 'undefined') setConfig(data);
-    } catch {}
+    } catch (e) { showToast(apiErrorMessage(e, 'Não foi possível salvar a configuração da memória')); }
   }
 
   async function add() {
@@ -93,18 +94,18 @@ export function MemoryPanel({ assistants, clients, clientId, showToast, onClose,
   }
 
   async function patch(id, fields) {
-    try { await fetch(`${API}/api/memories/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(fields) }); await load(); }
-    catch { showToast('Não foi possível atualizar a memória.'); }
+    try { await apiJson(`${API}/api/memories/${id}`, { method: 'PUT', body: fields }); await load(); }
+    catch (e) { showToast(apiErrorMessage(e, 'Não foi possível atualizar a memória')); }
   }
   async function approveSuggestion(s) {
     try {
       const res = await fetch(`${API}/api/memory-suggestions/${s.id}/approve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: s.content, type: s.type, scope: s.scope, importance: s.importance }) });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || '');
-      showToast('Memoria aprovada.', 'ok');
+      showToast('Memória aprovada.', 'ok');
       await loadSuggestions();
       await load();
-    } catch (e) { showToast(e.message || 'Nao foi possivel aprovar.'); }
+    } catch (e) { showToast(e.message || 'Não foi possível aprovar.'); }
   }
   async function editSuggestion(s) {
     const content = await askPrompt({ title: 'Editar sugestão', label: 'Conteúdo da sugestão', initialValue: s.content, confirmLabel: 'Salvar' });
@@ -114,12 +115,12 @@ export function MemoryPanel({ assistants, clients, clientId, showToast, onClose,
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || '');
       await loadSuggestions();
-    } catch (e) { showToast(e.message || 'Nao foi possivel editar a sugestao.'); }
+    } catch (e) { showToast(e.message || 'Não foi possível editar a sugestão.'); }
   }
   async function rejectSuggestion(id) {
     if (!await askConfirm({ title: 'Descartar sugestão?', message: 'Ela não será adicionada à memória do assistente.', confirmLabel: 'Descartar', destructive: true })) return;
-    try { await fetch(`${API}/api/memory-suggestions/${id}/reject`, { method: 'POST' }); await loadSuggestions(); }
-    catch { showToast('Nao foi possivel descartar a sugestao.'); }
+    try { await apiJson(`${API}/api/memory-suggestions/${id}/reject`, { method: 'POST' }); await loadSuggestions(); }
+    catch (e) { showToast(apiErrorMessage(e, 'Não foi possível descartar a sugestão')); }
   }
   async function edit(m) {
     const content = await askPrompt({ title: 'Editar memória', label: 'Conteúdo da memória', initialValue: m.content, confirmLabel: 'Salvar' });
@@ -128,11 +129,13 @@ export function MemoryPanel({ assistants, clients, clientId, showToast, onClose,
   }
   async function remove(id) {
     if (!await askConfirm({ title: 'Apagar memória?', message: 'Essa informação deixará de ser usada nas próximas respostas.', confirmLabel: 'Apagar', destructive: true })) return;
-    try { await fetch(`${API}/api/memories/${id}`, { method: 'DELETE' }); await load(); } catch {}
+    try { await apiJson(`${API}/api/memories/${id}`, { method: 'DELETE' }); await load(); }
+    catch (e) { showToast(apiErrorMessage(e, 'Não foi possível apagar a memória')); }
   }
   async function removeAll() {
     if (!await askConfirm({ title: 'Apagar toda a memória?', message: 'Fatos, preferências e índices de conversas serão removidos. Exporte uma cópia antes, pois esta ação não pode ser desfeita.', confirmLabel: 'Apagar tudo', destructive: true })) return;
-    try { await fetch(`${API}/api/memories`, { method: 'DELETE' }); await load(); showToast('Memória apagada.', 'ok'); } catch {}
+    try { await apiJson(`${API}/api/memories`, { method: 'DELETE' }); await load(); showToast('Memória apagada.', 'ok'); }
+    catch (e) { showToast(apiErrorMessage(e, 'Não foi possível apagar a memória')); }
   }
   async function reindex() {
     setWorkingLabel('Reprocessando embeddings...');
@@ -179,7 +182,7 @@ export function MemoryPanel({ assistants, clients, clientId, showToast, onClose,
   }
 
   const scopeName = (scope) => {
-    if (scope === 'office') return 'Escritorio';
+    if (scope === 'office') return 'Escritório';
     if (scope === 'global') return '🌐 Global';
     if (scope?.startsWith('client:')) { const c = clients.find(x => `client:${x.id}` === scope); return `👤 ${c?.name || 'Cliente'}`; }
     const a = assistants.find(x => x.id === scope);
@@ -208,7 +211,7 @@ export function MemoryPanel({ assistants, clients, clientId, showToast, onClose,
         <input value={newContent} onChange={e => setNewContent(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); add(); } }} placeholder="Adicionar memória manual (ex.: Meu nome é Frederico e prefiro respostas curtas)"/>
         <select value={newScope} onChange={e => setNewScope(e.target.value)} title="Escopo">
           <option value="global">🌐 Global</option>
-          <option value="office">Escritorio</option>
+          <option value="office">Escritório</option>
           {clientId && <option value={`client:${clientId}`}>👤 Cliente atual</option>}
           {assistants.map(a => <option key={a.id} value={a.id}>{assistantOptionPrefix(a.emoji)}{a.name}</option>)}
         </select>
@@ -264,7 +267,7 @@ export function MemoryPanel({ assistants, clients, clientId, showToast, onClose,
         <button onClick={() => window.open(`${API}/api/memories/export`, '_blank')} title="Baixa um JSON com todas as memórias"><Download size={14}/> Exportar memória</button>
         <select className="memScopePicker" value={importScope} onChange={e => setImportScope(e.target.value)} title="Escopo da importação">
           <option value="global">Importar para: Geral</option>
-          <option value="office">Importar para: Escritorio</option>
+          <option value="office">Importar para: Escritório</option>
           {clientId && <option value={`client:${clientId}`}>Importar para: Cliente atual</option>}
         </select>
         <button onClick={() => fileRef.current?.click()} title="Importa .json (Claude/ChatGPT), .txt, .md ou .html"><Upload size={14}/> Importar conversas</button>
@@ -277,16 +280,17 @@ export function MemoryPanel({ assistants, clients, clientId, showToast, onClose,
     {activeTab === 'settings' && <div className="memPanelSection memConfig" role="tabpanel">
       {!config && <div className="working"><span className="spin"/><span>Carregando configurações...</span></div>}
       {config && <>
-        <label className="chk"><input type="checkbox" checked={!!config.economy_mode} onChange={e => saveConfig({ economy_mode: e.target.checked ? 1 : 0 })}/> 💸 <b>Economia de tokens</b> — reduz o contexto enviado e as chamadas extras (mais barato; recomendado)</label>
+        {!isAdmin && <p className="muted" role="note">Estas opções valem para a instalação inteira — somente o administrador pode alterar.</p>}
+        <label className="chk"><input type="checkbox" disabled={!isAdmin} checked={!!config.economy_mode} onChange={e => saveConfig({ economy_mode: e.target.checked ? 1 : 0 })}/> 💸 <b>Economia de tokens</b> — reduz o contexto enviado e as chamadas extras (mais barato; recomendado)</label>
         <div className="panelHint" style={{ padding: '0 2px 4px' }}>Ligado, o app envia bem menos "memória" e histórico em cada mensagem e resume as conversas com menos frequência. Desligue só se precisar que a IA lembre de muitos detalhes de conversas antigas.</div>
-        <label className="chk"><input type="checkbox" checked={!!config.memory_enabled} onChange={e => saveConfig({ memory_enabled: e.target.checked ? 1 : 0 })}/> Memória ativada (o app consulta o passado antes de responder)</label>
-        <label className="chk"><input type="checkbox" checked={!!config.auto_memory} onChange={e => saveConfig({ auto_memory: e.target.checked ? 1 : 0 })}/> Memória automática (aprender fatos das conversas)</label>
-        <label className="chk"><input type="checkbox" checked={!!config.review_auto_memory} onChange={e => saveConfig({ review_auto_memory: e.target.checked ? 1 : 0 })}/> Revisar memórias aprendidas antes de salvar</label>
-        <div className="cfgRow"><span>Limite máximo de contexto (o app reduz automaticamente por modelo)</span><input type="number" min="4000" step="10000" value={config.context_target_tokens} onChange={e => saveConfig({ context_target_tokens: Number(e.target.value) || 0 })}/></div>
-        <div className="cfgRow"><span>Memórias recuperadas por resposta</span><input type="number" min="0" max="50" value={config.max_memories} onChange={e => saveConfig({ max_memories: Number(e.target.value) || 0 })}/></div>
-        <div className="cfgRow"><span>Trechos de conversas antigas por resposta</span><input type="number" min="0" max="50" value={config.max_chunks} onChange={e => saveConfig({ max_chunks: Number(e.target.value) || 0 })}/></div>
-        <div className="cfgRow"><span>Importância mínima para salvar automático (1–5)</span><input type="number" min="1" max="5" value={config.importance_threshold} onChange={e => saveConfig({ importance_threshold: Number(e.target.value) || 1 })}/></div>
+        <label className="chk"><input type="checkbox" disabled={!isAdmin} checked={!!config.memory_enabled} onChange={e => saveConfig({ memory_enabled: e.target.checked ? 1 : 0 })}/> Memória ativada (o app consulta o passado antes de responder)</label>
+        <label className="chk"><input type="checkbox" disabled={!isAdmin} checked={!!config.auto_memory} onChange={e => saveConfig({ auto_memory: e.target.checked ? 1 : 0 })}/> Memória automática (aprender fatos das conversas)</label>
+        <label className="chk"><input type="checkbox" disabled={!isAdmin} checked={!!config.review_auto_memory} onChange={e => saveConfig({ review_auto_memory: e.target.checked ? 1 : 0 })}/> Revisar memórias aprendidas antes de salvar</label>
+        <div className="cfgRow"><span>Limite máximo de contexto (o app reduz automaticamente por modelo)</span><input type="number" disabled={!isAdmin} min="4000" step="10000" value={config.context_target_tokens} onChange={e => saveConfig({ context_target_tokens: Number(e.target.value) || 0 })}/></div>
+        <div className="cfgRow"><span>Memórias recuperadas por resposta</span><input type="number" disabled={!isAdmin} min="0" max="50" value={config.max_memories} onChange={e => saveConfig({ max_memories: Number(e.target.value) || 0 })}/></div>
+        <div className="cfgRow"><span>Trechos de conversas antigas por resposta</span><input type="number" disabled={!isAdmin} min="0" max="50" value={config.max_chunks} onChange={e => saveConfig({ max_chunks: Number(e.target.value) || 0 })}/></div>
+        <div className="cfgRow"><span>Importância mínima para salvar automático (1–5)</span><input type="number" disabled={!isAdmin} min="1" max="5" value={config.importance_threshold} onChange={e => saveConfig({ importance_threshold: Number(e.target.value) || 1 })}/></div>
       </>}
     </div>}
   </Drawer>;
-}
+}

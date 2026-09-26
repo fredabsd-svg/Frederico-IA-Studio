@@ -58,7 +58,8 @@ export function Companion({
   showToast,
 }) {
   const { settings, persona, events } = companion;
-  const copilot = useCopilotChat();
+  // O copiloto segue o modelo da conversa quando a configuração dele está vazia.
+  const copilot = useCopilotChat({ model });
   const [open, setOpen] = useState(false);
   const [minimized, setMinimized] = useState(() => localStorage.getItem('fred_companion_min') === '1');
   const [pos, setPos] = useState(() => parseCompanionPosition(localStorage.getItem('fred_companion_pos')));
@@ -248,7 +249,7 @@ export function Companion({
                 onDismiss={companion.dismissEvent}
                 onOpen={() => setOpen(true)}
               />
-            : <WritingBubble settings={settings} draft={draft} onApply={onApplyDraft} name={characterName} onPhase={setBubblePhase} />
+            : <WritingBubble settings={settings} model={model} draft={draft} onApply={onApplyDraft} name={characterName} onPhase={setBubblePhase} />
         )}
 
         {/* Balão quando minimizado (só a carinha espiando) */}
@@ -264,6 +265,16 @@ export function Companion({
           <div
             className="cmpAvatarWrap"
             onPointerDown={onAvatarPointerDown}
+            // Teclado: antes o personagem só respondia ao mouse/toque e o painel
+            // do copiloto era inalcançável sem apontador.
+            role="button"
+            tabIndex={0}
+            aria-label={`${open ? 'Fechar' : 'Abrir'} ${characterName}`}
+            aria-expanded={open}
+            onKeyDown={e => {
+              if (e.target !== e.currentTarget) return;
+              if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(o => !o); }
+            }}
             title={`${characterName} — ${STATE_CAPTION[state] || ''}. Clique para abrir, arraste para mover`}
           >
             {(hasCritical || hasWarning) && !busy && <span className={`cmpBadge ${hasCritical ? 'crit' : 'warn'}`}>{unread.length}</span>}

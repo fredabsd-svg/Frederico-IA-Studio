@@ -55,6 +55,10 @@ const ambienteBackend = {
   // um timeout próprio bem maior que o do arquivo.
   STREAM_STALL_TIMEOUT_MS: '30000',
   MODEL_STREAM_RECOVERY_LIMIT: '1',
+  // O provedor falso roda em 127.0.0.1: a guarda de SSRF da URL base do
+  // provedor recusa endereço interno por padrão. Este opt-in é o mesmo que uma
+  // instalação com LLM local (Ollama etc.) usa — e só vale no banco de E2E.
+  PROVIDER_ALLOW_PRIVATE_URLS: 'true',
   NODE_ENV: 'test'
 };
 

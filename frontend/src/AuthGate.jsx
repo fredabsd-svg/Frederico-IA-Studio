@@ -26,7 +26,7 @@ export default function AuthGate() {
     return (
       <div className="connError">
         <div className="connErrorCard">
-          <div className="brand" style={{ marginBottom: 0 }}>Frederico <span>AI Studio</span></div>
+          <div className="brand" style={{ marginBottom: 0 }}>Frederico <span>IA Studio</span></div>
           <p>Carregando…</p>
         </div>
       </div>

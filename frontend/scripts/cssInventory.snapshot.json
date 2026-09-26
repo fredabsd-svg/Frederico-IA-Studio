@@ -1,38 +1,38 @@
 {
-  "baselineRemoveCount": 3,
-  "baselineTotalRules": 2117,
-  "baselineTotalBytes": 226904,
-  "generatedAt": "2026-08-06T19:09:42.207Z",
+  "baselineRemoveCount": 0,
+  "baselineTotalRules": 2348,
+  "baselineTotalBytes": 260415,
+  "generatedAt": "2026-09-26T03:26:05.171Z",
   "files": {
     "src/auth.css": {
       "removeCount": 0,
-      "sizeBytes": 6104,
+      "sizeBytes": 6116,
       "totalRules": 46
     },
     "src/camera.css": {
       "removeCount": 0,
-      "sizeBytes": 2275,
+      "sizeBytes": 2383,
       "totalRules": 16
     },
     "src/companion.css": {
-      "removeCount": 1,
-      "sizeBytes": 27853,
-      "totalRules": 248
+      "removeCount": 0,
+      "sizeBytes": 30854,
+      "totalRules": 242
     },
     "src/copilot.css": {
       "removeCount": 0,
-      "sizeBytes": 8504,
-      "totalRules": 78
+      "sizeBytes": 11306,
+      "totalRules": 87
     },
     "src/design.css": {
       "removeCount": 0,
-      "sizeBytes": 22693,
-      "totalRules": 174
+      "sizeBytes": 25408,
+      "totalRules": 197
     },
     "src/docling.css": {
       "removeCount": 0,
-      "sizeBytes": 7463,
-      "totalRules": 59
+      "sizeBytes": 7703,
+      "totalRules": 55
     },
     "src/landing.css": {
       "removeCount": 0,
@@ -45,15 +45,15 @@
       "totalRules": 44
     },
     "src/styles.css": {
-      "removeCount": 2,
-      "sizeBytes": 116279,
-      "totalRules": 1184
+      "removeCount": 0,
+      "sizeBytes": 141017,
+      "totalRules": 1395
     },
     "src/v2.css": {
       "removeCount": 0,
-      "sizeBytes": 16565,
-      "totalRules": 126
+      "sizeBytes": 16460,
+      "totalRules": 124
     }
   },
-  "note": "Catraca: removíveis não pode subir em relação a este snapshot. Linha de base pós-poda da Frente 11."
+  "note": "Catraca: removíveis não pode subir em relação a este snapshot. Zerada na correção de UI de 2026-09 (regras mortas do painel antigo do Nino, do seletor de modo e do toolstep removidas; nino-visibility.css juntado ao companion.css)."
 }

@@ -43,7 +43,11 @@ Garantias do processo:
 - **um backup por vez** (409 no segundo simultâneo — antes ambos disputavam o mesmo
   `/tmp/frederico-db-<data>.sql` e o download saía truncado, sem aviso);
 - diretório temporário exclusivo, removido **sempre** — inclusive se o cliente abortar;
-- falha antes do primeiro byte responde JSON de erro, não um `.tar.gz` truncado.
+- falha antes do primeiro byte responde JSON de erro, não um `.tar.gz` truncado;
+- falha **depois** do primeiro byte (o `tar` terminou com código ≠ 0) derruba a
+  conexão em vez de fechar o download como sucesso: o navegador/`curl -f` mostra
+  erro. Atenção: o GNU tar sai com 1 em "file changed as we read it" — backup feito
+  com workspaces em uso intenso pode falhar e precisa ser repetido.
 
 > **Se `ENCRYPTION_KEY` vem do ambiente**, o pacote **não** a contém.
 > Guarde-a no mesmo cofre do `BETTER_AUTH_SECRET`, com a mesma política de retenção

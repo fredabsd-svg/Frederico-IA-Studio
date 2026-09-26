@@ -3,7 +3,7 @@
 // processamento na interface e permitem auditar/baixar o que foi extraído.
 import fs from 'node:fs';
 import { db, now } from '../db.js';
-import { makeRouter, isAdmin, requireAdmin, recordAdminAction } from './helpers.js';
+import { makeRouter, isAdmin, requireAdmin, recordAdminAction, streamFileToResponse } from './helpers.js';
 import { isDoclingEnabled } from '../docling/config.js';
 import { resolvedOptions, writeOverrides, readOverrides, adminEditable } from '../docling/adminConfig.js';
 import { doclingHealth } from '../docling/runner.js';
@@ -101,8 +101,7 @@ router.get('/docling/documents/:id/pictures/:index', async (req, res) => {
   const arts = readArtifacts(req.userId, row.hash, row.configVersion);
   const pic = (arts.pictures || []).find(p => String(p.index) === String(req.params.index));
   if (!pic?.file || !fs.existsSync(pic.file)) return res.status(404).json({ error: 'Imagem indisponível' });
-  res.type('image/png');
-  fs.createReadStream(pic.file).pipe(res);
+  streamFileToResponse(res, pic.file, 'image/png');
 });
 
 // JSON completo do Docling (a "fonte da verdade" — para auditoria/reprocesso).
@@ -111,8 +110,7 @@ router.get('/docling/documents/:id/json', async (req, res) => {
   if (!row) return res.status(404).json({ error: 'Não encontrado' });
   const arts = readArtifacts(req.userId, row.hash, row.configVersion);
   if (!arts.jsonPath || !fs.existsSync(arts.jsonPath)) return res.status(404).json({ error: 'JSON indisponível' });
-  res.type('application/json');
-  fs.createReadStream(arts.jsonPath).pipe(res);
+  streamFileToResponse(res, arts.jsonPath, 'application/json');
 });
 
 // Reprocessa (ex.: após alterar configuração de OCR): re-dispara em segundo plano.

@@ -27,10 +27,40 @@ export function matchesModality(model, modality) {
   return true;
 }
 
-export function modelFamily(model) {
-  if (model?.family) return String(model.family).toLowerCase();
+// Fabricante do modelo, pela chave que o seletor usa para rótulo e logotipo
+// (`anthropic`, `openai`, `google`...). O `family` do backend é a família
+// CURADA ('Opus', 'Sonnet', 'GPT-5.6', 'Gemini 3'), e usá-lo aqui repartia o
+// mesmo fabricante em várias entradas do filtro — quase todas sem logotipo.
+// Ids nativos (sem `fabricante/` no começo) são reconhecidos pelo nome.
+const VENDOR_BY_NAME = [
+  [/^claude/, 'anthropic'],
+  [/^(gpt|o[1-9]|chatgpt|dall-e|whisper|tts|text-embedding|codex)/, 'openai'],
+  [/^(gemini|gemma|imagen|veo)/, 'google'],
+  [/^deepseek/, 'deepseek'],
+  [/^(llama|meta-llama)/, 'meta-llama'],
+  [/^(mistral|mixtral|codestral|pixtral|magistral|ministral|devstral)/, 'mistralai'],
+  [/^grok/, 'x-ai'],
+  [/^(qwen|qwq|qvq)/, 'qwen'],
+  [/^command/, 'cohere'],
+  [/^(nova|titan)/, 'amazon'],
+  [/^phi/, 'microsoft'],
+  [/^(kimi|moonshot)/, 'moonshotai'],
+  [/^glm/, 'z-ai'],
+  [/^sonar/, 'perplexity']
+];
+
+export function modelVendor(model) {
   const id = String(model?.providerModelId || model?.id || '').toLowerCase();
-  return id.includes('/') ? id.split('/')[0] : id.split('-')[0];
+  const raw = id.includes('::') ? id.slice(id.indexOf('::') + 2) : id;
+  if (raw.includes('/')) return raw.split('/')[0];
+  const hit = VENDOR_BY_NAME.find(([re]) => re.test(raw));
+  if (hit) return hit[1];
+  if (model?.family) return String(model.family).toLowerCase();
+  return raw.split('-')[0];
+}
+
+export function modelFamily(model) {
+  return modelVendor(model);
 }
 
 export function filterModels(models, filters = {}) {
@@ -66,4 +96,23 @@ export function filterModels(models, filters = {}) {
     }
     return true;
   });
+}
+
+// Listas curadas (recomendados / melhores para arquivos) comparam o id SEM o
+// prefixo do fabricante: `anthropic/claude-sonnet-5` (OpenRouter) e
+// `claude-sonnet-5` (chave direta) são o mesmo modelo. Antes as listas só
+// tinham o formato OpenRouter, e quem usava chave direta via "Sugestões" vazia.
+// Modelo aposentado ou em desativação nunca é recomendado.
+const RETIRED_STATUS = new Set(['deprecated', 'legacy', 'inactive', 'retired']);
+
+export function bareModelId(model) {
+  const id = String(model?.providerModelId || model?.id || '').toLowerCase();
+  const raw = id.includes('::') ? id.slice(id.indexOf('::') + 2) : id;
+  return raw.includes('/') ? raw.slice(raw.indexOf('/') + 1) : raw;
+}
+
+export function curatedMatch(model, prefixes) {
+  if (RETIRED_STATUS.has(String(model?.status || '').toLowerCase()) || model?.sunsetOn) return null;
+  const bare = bareModelId(model);
+  return (prefixes || []).find(prefix => bare === prefix || bare.startsWith(prefix)) || null;
 }

@@ -68,3 +68,25 @@ test('o modelRef da conversa vem com prefixo de provedor, e a API recebe só o m
 test('modelo sem prefixo atravessa rawModelId inalterado', () => {
   assert.equal(rawModelId(resolveExtractModel('deepseek/deepseek-chat')), 'deepseek/deepseek-chat');
 });
+
+// Regressão (revisão 2026-09): a importação de conversas mandava
+// `resolveExtractModel(null)` CRU ao provedor — o modelo padrão global, sem
+// `rawModelId` e sem relação com a chave usada. Agora usa o modelo do próprio
+// provedor resolvido, pelo mesmo caminho da extração pós-resposta.
+test('importação usa o modelo do provedor resolvido, sem o prefixo de provedor', async () => {
+  const { importExtractModel } = await import('./indexer.js');
+  delete process.env.EXTRACT_MODEL;
+  assert.equal(importExtractModel({ modelRef: 'prov123::openai/gpt-4o-mini' }), 'openai/gpt-4o-mini');
+  // Sem provedor utilizável, cai no padrão (já sem prefixo).
+  assert.equal(importExtractModel(null), rawModelId(resolveDefaultModelRef()));
+  process.env.EXTRACT_MODEL = 'prov9::modelo-menor';
+  assert.equal(importExtractModel({ modelRef: 'prov123::openai/gpt-4o-mini' }), 'modelo-menor');
+  delete process.env.EXTRACT_MODEL;
+});
+
+test('a memória extraída sai em português do Brasil', async () => {
+  const { EXTRACT_PROMPT } = await import('./indexer.js');
+  assert.match(EXTRACT_PROMPT, /em português do Brasil, mesmo que o trecho esteja em outro idioma/);
+  // A defesa contra injeção do trecho continua no prompt.
+  assert.match(EXTRACT_PROMPT, /DADO não confiável/);
+});

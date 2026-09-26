@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Layers, Plus, X, Check, ChevronDown, Save, Trash2, Users, Coins } from 'lucide-react';
 import { API } from '../constants.js';
 import { MULTI_MODE_LABEL } from '../constants.js';
+import { modelDisplayName, multiModelStatus } from '../modelChoice.js';
+import { useKeepInViewport } from '../hooks/useKeepInViewport.js';
 
 // Seletor MULTIMODELO da barra superior: liga/desliga o modo, escolhe os
 // modelos e a função de cada um, o modo de colaboração, o coordenador, o
@@ -82,6 +84,8 @@ export function MultiModelPicker({ models, value, onChange, showToast }) {
   const [savingPreset, setSavingPreset] = useState(false);
   const [presetName, setPresetName] = useState('');
   const ref = useRef(null);
+  const panelRef = useRef(null);
+  useKeepInViewport(panelRef, open);
 
   const enabled = Boolean(value?.enabled);
   const config = { ...DEFAULT_MULTI_CONFIG, ...(value?.config || {}) };
@@ -112,10 +116,12 @@ export function MultiModelPicker({ models, value, onChange, showToast }) {
   const estimate = estimateMultiCost(config, models);
   const expensive = config.models.some(mm => Number(byId.get(mm.id)?.price || 0) >= EXPENSIVE_PROMPT_PRICE);
   const needsCoordinator = config.mode === 'council' || config.mode === 'debate';
-  const ready = config.models.length >= 2;
+  const status = multiModelStatus(config, models);
+  const ready = status.ready;
 
   function addModel() {
     if (config.models.length >= 6) { showToast?.('Limite de 6 modelos por execução.'); return; }
+    if (!sorted.length) { showToast?.('Nenhum modelo disponível. Configure um provedor de IA primeiro.'); return; }
     const used = new Set(config.models.map(m => m.id));
     const next = sorted.find(m => !used.has(m.id) && m.capabilities?.text !== false)?.id || defaultModelId;
     patch({ models: [...config.models, { id: next, role: config.models.length === 0 ? 'principal' : 'revisor' }] });
@@ -170,11 +176,11 @@ export function MultiModelPicker({ models, value, onChange, showToast }) {
       </span>
       <ChevronDown size={14}/>
     </button>
-    {open && <div className="ctxPanel mmPanel">
+    {open && <div className="ctxPanel mmPanel" ref={panelRef}>
       <div className="mmPanelScroll">
         <label className="mmToggle">
           <input type="checkbox" checked={enabled} onChange={e => onChange({ enabled: e.target.checked, config })}/>
-          <span><b>Usar vários modelos nesta conversa</b><small>Cada modelo é uma chamada independente — o custo aumenta com cada modelo adicionado.</small></span>
+          <span><b>Usar vários modelos nas próximas mensagens</b><small>Cada modelo é uma chamada independente — o custo aumenta com cada modelo adicionado.</small></span>
         </label>
 
         {enabled && <>
@@ -194,11 +200,11 @@ export function MultiModelPicker({ models, value, onChange, showToast }) {
               const info = byId.get(member.id);
               return <div key={i} className="mmMemberRow">
                 <span className="mmMemberIdx">{i + 1}</span>
-                <select value={member.id} onChange={e => setMember(i, { id: e.target.value })} title={member.id}>
-                  {!byId.has(member.id) && <option value={member.id}>{member.id}</option>}
+                <select aria-label={`Modelo ${i + 1}`} value={member.id} onChange={e => setMember(i, { id: e.target.value })} title={info?.name || modelDisplayName(models, member.id)}>
+                  {!byId.has(member.id) && <option value={member.id}>{modelDisplayName(models, member.id) || '—'} (indisponível)</option>}
                   {sorted.map(m => <option key={m.id} value={m.id} disabled={m.capabilities?.text === false}>{m.providerName ? `${m.providerName} · ` : ''}{m.name || m.providerModelId || m.id}{m.free || (m.providerModelId || m.id).endsWith(':free') ? ' · grátis' : ''}</option>)}
                 </select>
-                <select value={member.role || 'livre'} onChange={e => setMember(i, { role: e.target.value })}>
+                <select aria-label={`Função do modelo ${i + 1}`} value={member.role || 'livre'} onChange={e => setMember(i, { role: e.target.value })}>
                   {MULTI_ROLE_OPTIONS.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
                 </select>
                 {Number(info?.price || 0) >= EXPENSIVE_PROMPT_PRICE && <span className="mmPriceyBadge" title="Modelo de custo alto">$$$</span>}
@@ -206,7 +212,8 @@ export function MultiModelPicker({ models, value, onChange, showToast }) {
               </div>;
             })}
             {config.models.length < 6 && <button className="mmAddModel" onClick={addModel}><Plus size={14}/> Adicionar modelo</button>}
-            {!ready && <p className="ctxWarn">Selecione ao menos 2 modelos para ativar o multimodelo.</p>}
+            {status.missing.length > 0 && <p className="ctxWarn">Há modelo indisponível na lista (provedor removido ou sem chave). Troque ou remova para ativar o multimodelo.</p>}
+            {status.missing.length === 0 && !ready && <p className="ctxWarn">Selecione ao menos 2 modelos para ativar o multimodelo.</p>}
           </div>
 
           {needsCoordinator && <div className="mmFieldRow">

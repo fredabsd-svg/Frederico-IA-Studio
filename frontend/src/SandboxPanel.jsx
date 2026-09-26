@@ -29,7 +29,7 @@ const OPTIONS = [
   },
 ];
 
-export function SandboxPanel({ onClose }) {
+export function SandboxPanel({ onClose, isAdmin = false, showToast }) {
   const [policy, setPolicy] = useState(null); // null = carregando
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -52,16 +52,19 @@ export function SandboxPanel({ onClose }) {
     setSaving(true);
     setSaved(false);
     try {
-      const data = await (await fetch(`${API}/api/sandbox-config`, {
+      const res = await fetch(`${API}/api/sandbox-config`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sandbox_network_policy: value }),
-      })).json();
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || 'Não foi possível salvar a política de rede.');
       setPolicy([0, 1, 2].includes(data?.sandbox_network_policy) ? data.sandbox_network_policy : value);
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
-    } catch {
-      setPolicy(prev); // reverte em caso de falha
+    } catch (err) {
+      setPolicy(prev); // reverte em caso de falha — e avisa, em vez de parecer que o clique não pegou
+      showToast?.(err?.message || 'Não foi possível salvar a política de rede.');
     } finally {
       setSaving(false);
     }
@@ -83,6 +86,9 @@ export function SandboxPanel({ onClose }) {
       </span>
     </div>
 
+    {/* A política vale para TODOS os usuários da instalação: só o administrador
+        altera (o backend recusa com 403 para os demais). */}
+    {!isAdmin && <p className="muted" role="note">Configuração da instalação inteira — somente o administrador pode alterar. Abaixo está a política em vigor.</p>}
     {policy === null
       ? <div className="working"><span className="spin"/><span>Carregando...</span></div>
       : <div className="sandboxOptions" role="radiogroup" aria-label="Política de rede do sandbox">
@@ -96,7 +102,7 @@ export function SandboxPanel({ onClose }) {
               aria-checked={sel}
               className={`sandboxOption ${sel ? 'sel' : ''}`}
               onClick={() => choose(opt.value)}
-              disabled={saving}
+              disabled={saving || !isAdmin}
             >
               <span className="sandboxOptIcon"><Icon size={18}/></span>
               <span className="sandboxOptInfo">

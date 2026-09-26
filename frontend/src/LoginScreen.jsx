@@ -83,7 +83,7 @@ export function LoginScreen({ initialMode = 'login', onBack = null }) {
             <ArrowLeft size={15} /> Voltar
           </button>
         )}
-        <div className="brand" style={{ justifyContent: 'center', marginBottom: 4 }}>Frederico <span>AI Studio</span></div>
+        <div className="brand" style={{ justifyContent: 'center', marginBottom: 4 }}>Frederico <span>IA Studio</span></div>
         <p className="loginSub">{isSignup ? 'Crie sua conta para começar.' : 'Entre para continuar.'}</p>
 
         {(provedores === null || provedores.length > 0) && (

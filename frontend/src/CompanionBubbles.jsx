@@ -14,7 +14,7 @@ const BUBBLE_PHRASES = [
   'Posso deixar isso mais claro pra você?',
 ];
 
-export function WritingBubble({ settings, draft, onApply, name, onPhase }) {
+export function WritingBubble({ settings, model, draft, onApply, name, onPhase }) {
   const [phase, setPhase] = useState('idle');
   const [phrase, setPhrase] = useState(BUBBLE_PHRASES[0]);
   const [revised, setRevised] = useState('');
@@ -69,7 +69,7 @@ export function WritingBubble({ settings, draft, onApply, name, onPhase }) {
     try {
       const r = await fetch(`${API}/api/copilot/revise`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, model }),
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) { setErrMsg(d.error || 'Não consegui revisar agora.'); setPhase('error'); return; }

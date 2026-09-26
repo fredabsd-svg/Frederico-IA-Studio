@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { filterModels, tierOf, matchesModality } from './modelFilters.js';
+import { modelVendor, filterModels, tierOf, matchesModality } from './modelFilters.js';
 
 const models = [
   { id: 'p1::vision', providerId: 'p1', providerName: 'A', providerModelId: 'acme/vision', family: 'acme', capabilities: { tools: true, vision: true }, context: 100000, pricingKnown: true, price: 0.000001 },
@@ -50,4 +50,25 @@ test('filtro por modalidade separa multimodal, texto e geração', () => {
   assert.deepEqual(filterModels(mm, { modality: 'text' }).map(m => m.id), ['txt']);
   assert.deepEqual(filterModels(mm, { modality: 'image' }).map(m => m.id), ['img']);
   assert.equal(matchesModality(mm[1], 'vision'), true);
+});
+
+test('fabricante vem do id, não da família curada do backend', () => {
+  assert.equal(modelVendor({ id: 'p1::claude-opus-4-6', family: 'Opus' }), 'anthropic');
+  assert.equal(modelVendor({ id: 'p1::claude-sonnet-4-6', family: 'Sonnet' }), 'anthropic');
+  assert.equal(modelVendor({ id: 'p2::gpt-5.6', family: 'GPT-5.6' }), 'openai');
+  assert.equal(modelVendor({ id: 'p3::gemini-3-pro', family: 'Gemini 3' }), 'google');
+  assert.equal(modelVendor({ providerModelId: 'anthropic/claude-sonnet-4', family: 'Sonnet' }), 'anthropic');
+  assert.equal(modelVendor({ id: 'p4::deepseek-chat' }), 'deepseek');
+  assert.equal(modelVendor({ id: 'p5::modelo-interno', family: 'Acme' }), 'acme');
+});
+
+test('listas curadas casam id nativo e id OpenRouter, sem recomendar aposentado', async () => {
+  const { curatedMatch } = await import('./modelFilters.js');
+  const lista = ['claude-sonnet-5', 'gpt-5.6'];
+  assert.equal(curatedMatch({ id: 'p1::claude-sonnet-5' }, lista), 'claude-sonnet-5');
+  assert.equal(curatedMatch({ id: 'p2::anthropic/claude-sonnet-5', providerModelId: 'anthropic/claude-sonnet-5' }, lista), 'claude-sonnet-5');
+  assert.equal(curatedMatch({ id: 'p3::gpt-5.6-luna' }, lista), 'gpt-5.6');
+  assert.equal(curatedMatch({ id: 'p3::gpt-5.6', status: 'deprecated' }, lista), null);
+  assert.equal(curatedMatch({ id: 'p3::gpt-5.6', sunsetOn: '2026-10-16' }, lista), null);
+  assert.equal(curatedMatch({ id: 'p4::llama-4' }, lista), null);
 });

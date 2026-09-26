@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { modelVendor } from '../modelFilters.js';
 
 // Ícone oficial do provedor (família) do modelo, mostrado antes do nome na
 // lista de modelos. A família é o prefixo do id do modelo (ex.: "anthropic" em
@@ -40,10 +41,9 @@ const SLUG = {
   nousresearch: null,
 };
 
-const familyKey = (id) => {
-  const s = String(id || '');
-  return s.includes('/') ? s.split('/')[0] : s.split('-')[0];
-};
+// Mesma regra do filtro "Família" (modelVendor): reconhece também ids nativos
+// sem prefixo (`claude-…`, `gpt-…`, `gemini-…`), que antes caíam no monograma.
+const familyKey = (id) => modelVendor({ id });
 
 const asset = (slug) => `/providers/${slug}.png`;
 
