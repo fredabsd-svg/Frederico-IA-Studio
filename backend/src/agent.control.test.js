@@ -196,3 +196,26 @@ test('multiconversa: parar UMA conversa não afeta a outra do mesmo usuário', (
     releaseConversationControl('multi-stop-2', c2);
   }
 });
+
+test('fim limpo do stream depois de Parar/Pausar vira o abort que o laço já trata', async () => {
+  const { throwIfInterruptedAfterStream } = await import('./agent/control.js');
+  const id = `stream-clean-end-${Date.now()}`;
+  const c = acquireConversationControl(id);
+  try {
+    const req = beginProviderRequest(c);
+    // Nada interrompeu: segue normal.
+    assert.doesNotThrow(() => throwIfInterruptedAfterStream(c, req));
+    setControl(id, 'pause');
+    assert.throws(() => throwIfInterruptedAfterStream(c, req), e => e.name === 'AbortError' && e.interruptedAfterStream === 'pause');
+    setControl(id, 'resume');
+    const req2 = beginProviderRequest(c);
+    setControl(id, 'stop');
+    assert.throws(() => throwIfInterruptedAfterStream(c, req2), e => e.interruptedAfterStream === 'stop');
+    // Abort por outro motivo (ex.: watchdog de stall) NÃO é tratado aqui.
+    const c2 = { stopped: false, paused: false };
+    const req3 = new AbortController(); req3.abort('stall');
+    assert.doesNotThrow(() => throwIfInterruptedAfterStream(c2, req3));
+  } finally {
+    releaseConversationControl(id, c);
+  }
+});

@@ -63,13 +63,14 @@ export const QUICK_ACTIONS = [
 // O "Documento profissional" só PEDE o kit de documentos do sandbox. As regras
 // de diagramação que viviam aqui (Arial/Calibri, azul-marinho, python-docx na
 // mão) contradiziam o prompt do kit no backend (backend/prompts/docpro/atual.txt,
-// REGRA ZERO: proibido diagramar fora do kit; fonte, cor e capa vêm do PRESET).
+// REGRA ZERO: proibido diagramar fora do kit; fonte e cor vêm do PRESET, capa e
+// sumário só em documento longo).
 // O modelo recebia as duas ordens na mesma chamada.
 
 // "Apps embutidos": fluxos guiados que preparam um pedido forte para a IA
 // executar no sandbox (ler arquivos, calcular e gerar Excel/Word/PDF reais).
 export const EMBEDDED_APPS = [
-  { icon: '📄', title: 'Documento profissional', desc: 'Word bem diagramado (capa, tabelas, cores)', needsFile: false,
+  { icon: '📄', title: 'Documento profissional', desc: 'Word bem diagramado (tabelas, gráficos, cores)', needsFile: false,
     prompt: 'Quero criar um documento Word com diagramação profissional. Me pergunte o tipo (relatório, proposta, carta, manual, apresentação...) e os dados necessários; depois gere o documento pronto com o kit de documentos profissionais do sandbox (docpro), escolhendo o preset que combina com o tipo.' },
   { icon: '📊', title: 'Planilha a partir de dados', desc: 'Seus dados viram uma planilha organizada', needsFile: true,
     prompt: 'Vou anexar um arquivo com dados (CSV, Excel, texto ou PDF). Leia o conteúdo, organize numa planilha .xlsx bem formatada com cabeçalhos, totais e, quando fizer sentido, uma aba de resumo com gráficos. Explique o que fez.' },

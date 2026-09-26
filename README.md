@@ -29,8 +29,8 @@ isolado, não descritos em texto.
 | Você escreve | Você recebe |
 |---|---|
 | *"Monte uma planilha de fluxo de caixa com estes lançamentos"* | `.xlsx` com fórmulas **recalculadas e conferidas** |
-| *"Faça um relatório em Word a partir deste PDF"* | `.docx` com capa, tabelas estilizadas e rodapé paginado |
-| *"Transforme isto numa proposta em PDF para o cliente"* | `.pdf` com capa, sumário, fonte embutida e **auditoria de formatação** antes da entrega |
+| *"Faça um relatório em Word a partir deste PDF"* | `.docx` com tabelas estilizadas, rodapé paginado e capa quando o documento é longo |
+| *"Transforme isto numa proposta em PDF para o cliente"* | `.pdf` com fonte embutida, capa e sumário quando o documento é longo e **auditoria de formatação** antes da entrega |
 | *"Fotografei esta nota fiscal — extraia os dados"* | Leitura por **visão ou OCR**, sem você digitar nada |
 | *"Consulte o CNPJ 00.000.000/0001-91"* | Razão social, situação, CNAE, endereço e sócios (dados oficiais) |
 | *"Pesquise as mudanças da reforma tributária e resuma"* | Busca na web com **miniatura real** das páginas abertas |
@@ -94,7 +94,8 @@ veja **[docs/CONFIGURACAO.md](docs/CONFIGURACAO.md)**.
 
 - **Arquivos reais no chat** — Excel, Word, PDF, CSV, ZIP, imagens, gráficos e OCR.
 - **Documentos com design de agência** — kits prontos e testados na identidade
-  **"Tinta & Latão"** (capa, sumário paginado, tabelas estilizadas com total,
+  **"Tinta & Latão"** (capa e sumário paginado nos documentos longos, cabeçalho
+  enxuto nos curtos, tabelas estilizadas com total,
   listas, indicadores, citação, linha do tempo, gráficos, callouts, assinaturas,
   contracapa e rodapé "Página X de Y"), com modo **sóbrio/registrável** para ata
   e contrato. Word, Excel e PDF seguem **a mesma grade**: uma única aresta de

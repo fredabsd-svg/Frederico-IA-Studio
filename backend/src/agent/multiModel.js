@@ -29,7 +29,7 @@ import { buildRepoDigest } from '../connectors/github.js';
 import { buildDocumentContext } from '../docling/context.js';
 import { STREAM_RECOVERY_LIMIT, STREAM_RESUME_NOTE, STREAM_PAUSE_RESUME_NOTE, isRetryableStreamError, openRouterRouting, retryDelay, addUsage, friendlyApiError, tagProviderError, applyPromptCache } from './provider.js';
 import { guardStreamStall, PROVIDER_CONNECT_TIMEOUT_MS } from './streamGuard.js';
-import { acquireConversationControl, releaseConversationControl, beginProviderRequest, releaseProviderRequest, controlInterruptReason, gate } from './control.js';
+import { acquireConversationControl, releaseConversationControl, beginProviderRequest, releaseProviderRequest, controlInterruptReason, gate, throwIfInterruptedAfterStream } from './control.js';
 import { loadCheckpoint } from './checkpoint.js';
 import { persistAssistantReply, saveMessage } from './persistence.js';
 import { MULTI_ARTIFACT_PROTOCOL, untrustedContext } from './promptRegistry.js';
@@ -480,6 +480,9 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
               onEvent({ type: 'mm_delta', slot: state.slot, content: d });
             }
           }
+          // Parar/Pausar durante a espera do próximo pedaço: sem isto o cartão
+          // do modelo virava "concluído" com o texto cortado.
+          throwIfInterruptedAfterStream(control, activeRequest);
           state.elapsedMs += Date.now() - t0;
           state.truncated = String(finish || '').toLowerCase() === 'length';
           state.text = text;
@@ -565,6 +568,7 @@ export async function runMultiModel({ userId, conversationId, userText, config, 
             const d = chunk.choices?.[0]?.delta?.content || '';
             if (d) { segment += d; text += d; onEvent({ type: 'delta', content: d }); }
           }
+          throwIfInterruptedAfterStream(control, activeRequest);
           return text;
         } catch (err) {
           const interrupted = controlInterruptReason(control, activeRequest);

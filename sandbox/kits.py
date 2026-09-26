@@ -27,8 +27,9 @@ import unicodedata
 from datetime import date, datetime
 from decimal import Decimal
 
-#: Geração dos kits. A v2 fechou os achados da revisão de design de ago/2026.
-VERSAO = "2.0.0"
+#: Geração dos kits. A v2 fechou os achados da revisão de design de ago/2026;
+#: a 2.1 tirou a capa automática dos documentos curtos (ver `decide_capa`).
+VERSAO = "2.1.0"
 
 # ---------------------------------------------------------------------------
 # 1. IDENTIDADE
@@ -56,6 +57,7 @@ PALETA = {
 #: bloco escolhe tamanho de fonte.
 ESCALA = {
     "capa_titulo": 26, "capa_sub": 13, "capa_tipo": 11, "capa_meta": 9,
+    "abertura_titulo": 20,
     "h1": 15, "h2": 12.5, "h3": 10.5,
     "corpo": 10.5, "apoio": 9.5, "pequeno": 9, "legenda": 8, "kicker": 8,
     "rodape": 8, "codigo": 8.5,
@@ -78,6 +80,54 @@ TIPOGRAFIA = {
     # Editorial só para PDF, onde a fonte vai EMBUTIDA no arquivo.
     "editorial": {"serif": "Source Serif 4", "sans": "Source Sans 3"},
 }
+
+
+# ---------------------------------------------------------------------------
+# 1b. ESTRUTURA — quando o documento ganha capa
+# ---------------------------------------------------------------------------
+
+#: A capa AUTOMÁTICA só entra a partir deste número de seções de 1º nível — o
+#: mesmo limiar do sumário automático, para que capa e sumário cheguem juntos.
+#: Antes, os presets gerencial, parecer e proposta punham capa de página
+#: inteira em TODO documento: um relatório de uma página virava duas, sendo a
+#: primeira só o título. Abaixo do limiar o documento abre com um CABEÇALHO na
+#: primeira página (tipo, título, cliente, data), que não gasta folha.
+MINIMO_SECOES_PARA_CAPA = 4
+
+
+def decide_capa(estilo_do_preset, pedido, secoes):
+    """Estilo da capa a gerar ("faixa"/"simples") ou None para nenhuma.
+
+    `pedido` é o `capa=` do construtor: None deixa o preset decidir (capa só
+    em documento longo); True força a capa no estilo do preset; False nunca;
+    uma string ("faixa"/"simples") força aquele estilo. Preset sem capa
+    (carta, sóbrio) só ganha capa quando ela é pedida explicitamente."""
+    if pedido is False:
+        return None
+    if pedido is True:
+        return estilo_do_preset or "simples"
+    if pedido:
+        return str(pedido)
+    if estilo_do_preset and secoes >= MINIMO_SECOES_PARA_CAPA:
+        return estilo_do_preset
+    return None
+
+
+def decide_fechamento(fechamento_do_preset, pedido, tem_capa):
+    """Estilo do fechamento automático ("faixa"/"pagina") ou None.
+
+    A faixa de tinta no fim tem o mesmo peso visual da capa e existe para
+    fechar o que a capa abriu: documento curto, que abriu com cabeçalho, não
+    ganha faixa sozinho. `pedido` (o `contracapa=` do construtor) vence."""
+    if pedido is False:
+        return None
+    if pedido is True:
+        return fechamento_do_preset if fechamento_do_preset in ("faixa", "pagina") else "faixa"
+    if pedido:
+        return str(pedido)
+    if fechamento_do_preset in ("faixa", "pagina") and tem_capa:
+        return fechamento_do_preset
+    return None
 
 
 def paleta_para(cor_marca=None):

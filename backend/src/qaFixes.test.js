@@ -132,6 +132,21 @@ test('as versões anteriores do prompt de documentos estão arquivadas', async (
     'a versão dos kits v2 (presets, antes do v4.2) não está arquivada');
 });
 
+// O arquivamento também vale para a PERSONA — que, desde o v4.2, é tudo o que
+// fica gravado no assistente "Documentos profissionais". A persona do v4.2 não
+// foi arquivada quando a seção de documentos mudou, e nada acusou: o teste
+// acima só enxerga o arquivo inteiro. Esta impressão digital acusa. Mudou a
+// persona? Arquive a ANTERIOR (texto exato de PERSONA_DOCUMENTOS) em vN.txt e
+// atualize o hash aqui.
+test('a persona do assistente de documentos só muda com a anterior arquivada', async () => {
+  const { createHash } = await import('node:crypto');
+  const { PERSONA_DOCUMENTOS } = await import('./agent/systemPromptV4.js');
+  const hash = createHash('sha256').update(PERSONA_DOCUMENTOS).digest('hex').slice(0, 16);
+  assert.equal(hash, 'c63764639afc59a5', 'a persona mudou: arquive a anterior em prompts/docpro/vN.txt e atualize este hash');
+  assert.match(PERSONA_DOCUMENTOS, /Frederico IA Studio/);
+  assert.doesNotMatch(PERSONA_DOCUMENTOS, /Frederico AI Studio/);
+});
+
 // DOC-KIT-2: o PDF entregue em 2026-07-26 saiu com seis arestas de texto na
 // mesma página, 320 marcadores sem glifo e paginação que "andava" — porque o
 // modelo montou reportlab na mão em vez de usar o pdfpro. O prompt tem de

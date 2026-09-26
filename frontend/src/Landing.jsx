@@ -17,7 +17,7 @@ import { LoginScreen } from './LoginScreen.jsx';
 // entregas que o app produz de fato (kits de documento, visão/OCR, CNPJ, web).
 const EXEMPLOS = [
   { pede: 'Monte uma planilha de fluxo de caixa com estes lançamentos', recebe: 'Arquivo .xlsx com fórmulas recalculadas e conferidas' },
-  { pede: 'Faça um relatório em Word a partir deste PDF', recebe: 'Arquivo .docx com capa, tabelas estilizadas e rodapé paginado' },
+  { pede: 'Faça um relatório em Word a partir deste PDF', recebe: 'Arquivo .docx com tabelas estilizadas, rodapé paginado e capa quando o documento é longo' },
   { pede: 'Fotografei esta nota fiscal — extraia os dados', recebe: 'Leitura por visão ou OCR, sem você digitar nada' },
   { pede: 'Consulte o CNPJ desta empresa', recebe: 'Razão social, situação, CNAE, endereço e sócios' },
   { pede: 'Pesquise as mudanças da reforma tributária e resuma', recebe: 'Resumo com as fontes abertas para você conferir' }

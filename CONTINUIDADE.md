@@ -1,4 +1,4 @@
-# CONTINUIDADE — estado atual do Frederico AI Studio
+# CONTINUIDADE — estado atual do Frederico IA Studio
 
 > Arquivo **curto** de propósito. Só o presente: estado, riscos abertos e como retomar.
 > O histórico completo está preservado em `docs/CHANGELOG_HISTORY.md` — nada é apagado,
@@ -8,9 +8,24 @@
 
 ## Estado atual
 
-**Última frente (2026-09-26):** docker-guard recusa root por UID (`"0"`, `"0:0"`,
-`"00"`) no exec e na criação — antes só a string `"root"`; aproveitado do PR #209,
-que foi fechado por repetir o que o #210 já entregou com scripts de patch.
+**Última frente (2026-09-26):** kits de documento sem capa por hábito. Os
+presets gerencial, parecer e proposta punham capa de página inteira em TODO
+documento. Kits 2.1: capa e sumário automáticos só com 4+ seções; o curto abre
+com cabeçalho na página 1 e a faixa de fechamento acompanha a capa. Prompt de
+documentos lapidado (`docpro@14.0.0`): seção "capa é do tamanho, não do
+hábito", exemplos sem data e cidade fixas (o modelo as copiava) e persona com
+"Frederico IA Studio" — a do v4.2 nunca tinha sido arquivada, agora é `v14.txt`
+e um hash no teste acusa a próxima mudança sem arquivo. De passagem, no PDF: o
+cabeçalho da coluna numérica passou a ficar à direita e o TOTAL em negrito.
+
+**Antes (mesmo PR #212):** "Parar" no meio da resposta. Medido com navegador
+real: o texto parava em ~400 ms, mas a resposta cortada era gravada como `completed`
+e a tela não dizia que estava incompleta. Causa no backend (fim "limpo" do stream
+depois do abort) — corrigida nos quatro laços de streaming, com teste de agente,
+multimodelo e E2E. A ideia do #209 (abort local no navegador) foi descartada: o
+atraso real era de ~400 ms e o abort local arriscava mostrar "parado" com o run vivo.
+
+**Antes (PR #211, mesclado):** docker-guard recusa root por UID no exec e na criação.
 
 **Frente anterior (PR #210, mesclado):** revisão completa do app — remendos
 removidos, bugs corrigidos em todas as telas, system prompts, seletores de modelo e
@@ -55,13 +70,12 @@ cliente (`/resume`), não automática no boot. Detalhes e frentes fechadas:
 
 ## Próximos passos (resumo)
 
-1. "Parar" com abort local do stream (ideia do #209): abortar só DEPOIS de o `/control` confirmar e recarregar a conversa do banco; E2E clicando em Parar no meio da resposta.
-2. README reduzido a porta de entrada honesta (selo "apto com restrições"), reescrito sobre o estado pós-#210.
-3. Frontend: exibir `execution_meta.providerFallback`/`modelSwap` como selo na mensagem e `factsSkipped` na importação de memória.
-4. Adotar ESLint só com `react-hooks` no `npm run check`.
-5. Frente 16 — popular `model_tool_capability_cache` com a sonda `--live`.
-6. Frente 13 (Design) — compartilhamento público da prévia por token.
-7. Frente 9 — desmontar o `App.jsx` (etapas 2–4).
+1. README reduzido a porta de entrada honesta (selo "apto com restrições"), reescrito sobre o estado pós-#210.
+2. Frontend: exibir `execution_meta.providerFallback`/`modelSwap` como selo na mensagem e `factsSkipped` na importação de memória.
+3. Adotar ESLint só com `react-hooks` no `npm run check`.
+4. Frente 16 — popular `model_tool_capability_cache` com a sonda `--live`.
+5. Frente 13 (Design) — compartilhamento público da prévia por token.
+6. Frente 9 — desmontar o `App.jsx` (etapas 2–4).
 
 ## Como retomar
 

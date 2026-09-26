@@ -1,6 +1,6 @@
 """xlspro — kit de DESIGN para planilhas Excel (.xlsx) com openpyxl.
 
-Instalado no sandbox do Frederico AI Studio, na mesma identidade
+Instalado no sandbox do Frederico IA Studio, na mesma identidade
 **"Tinta & Latão"** do docpro/pdfpro (a paleta, a escala e a formatação pt-BR
 vêm de `kits.py`): cabeçalho em verde-tinta com filete de latão, zebra, bordas
 horizontais discretas, formatos de número de verdade (R$, %, milhar, data),
@@ -516,7 +516,7 @@ class Planilha:
     def _metadados(self):
         props = self.wb.properties
         props.title = limpa_texto(self.titulo_doc or "Planilha")
-        props.creator = limpa_texto(self.emissor or "Frederico AI Studio")
+        props.creator = limpa_texto(self.emissor or "Frederico IA Studio")
         props.lastModifiedBy = props.creator
         props.subject = limpa_texto(self.cliente)
         props.language = "pt-BR"

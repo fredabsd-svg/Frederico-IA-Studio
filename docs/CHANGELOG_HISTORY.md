@@ -23,6 +23,85 @@
 
 ---
 
+## Kits 2.1: capa só em documento longo e prompt de documentos lapidado (2026-09-26)
+
+**Relato:** os modelos "criavam capa para qualquer relatório". **Causa no kit,
+não no modelo:** `PRESETS` do `docpro` e do `pdfpro` punham capa de página
+inteira em todo documento dos presets gerencial, parecer e proposta. Um resumo
+de duas seções saía com duas páginas, a primeira só com o título, e o prompt
+reforçava ("capa ... sai do PRESET"). Medido no PDF gêmeo: relatório curto
+com 2 páginas antes e 1 depois; a proposta dos exemplos, com 3 seções, caiu de
+3 para 2 páginas.
+
+**Kits (`kits.VERSAO` 2.1.0):**
+- **Capa automática só com 4+ títulos de 1º nível.** O limiar é o mesmo do
+  sumário, então capa e sumário chegam juntos. A regra está em
+  `kits.decide_capa` e é a mesma nos dois kits.
+- **Documento curto abre com cabeçalho na página 1**, e essa página leva o
+  rodapé paginado.
+- **A faixa de fechamento automática acompanha a capa** (`kits.decide_fechamento`).
+- **Parâmetros que sobrescrevem o preset:** `capa=True|False|estilo` força ou
+  tira a capa, e o novo `abertura=False` tira o cabeçalho.
+- **Metadados:** passam a dizer "Frederico IA Studio".
+- **Tabela do `pdfpro`, dois defeitos antigos:**
+  - O cabeçalho da coluna numérica era trocado depois de a `Table` existir, então ficava à esquerda de números alinhados à direita.
+  - O TOTAL saía em fonte normal, porque o `FONTNAME` do `TableStyle` não alcança um `Paragraph`.
+
+**Prompt (`docpro` 13.0.0 → 14.0.0, release 2026.09.26.2):**
+- **Seção nova D2b, "capa é do tamanho, não do hábito":**
+  - `capa=True` só quando a pessoa pede;
+  - não criar seção de "Capa" ou "Apresentação" para inflar o documento;
+  - não dividir em seções para bater o limiar;
+  - planilha não tem aba de capa.
+- **Exemplos sem datas e sem cidade fixas.** Saíram "02 de setembro de 2026", "set/2026", "até 10/09/2026", "Palmas/TO" e o CRC zerado, que o modelo copiava. Os exemplos agora usam `fmt.data_extenso()` e variáveis com dado real.
+- **Texto enxugado:** saíram as justificativas que o modelo não precisa ler.
+- **Nova regra:** pergunta que cabe em poucas linhas vai no chat, sem gerar arquivo.
+- **Persona:** passou a dizer "Frederico IA Studio" e "na medida do conteúdo".
+- **Arquivo esquecido:** a persona do v4.2 nunca tinha sido arquivada.
+  - **Efeito:** quem já tinha o assistente ficaria com o texto antigo para sempre.
+  - **Correção:** ela foi arquivada como `v14.txt`, e a migração compara os textos sem os brancos das pontas.
+  - **Proteção:** `qaFixes.test.js` agora trava um hash da persona, que acusa a próxima mudança feita sem arquivar a anterior.
+- **Interface:** o app "Documento profissional", a landing e o README deixaram de prometer capa em todo documento.
+
+**Testes:**
+- `sandbox/kits_test.py`: `EstruturaTests`.
+- `docpro_test.py` e `pdfpro_test.py`:
+  - relatório curto sem capa e com cabeçalho, nos três presets;
+  - relatório curto em 1 página, medido no PDF;
+  - documento longo com capa e sumário;
+  - capa explícita;
+  - carta sem cabeçalho;
+  - cabeçalho da coluna numérica à direita e TOTAL em negrito.
+- `promptKits.test.js`: o limiar citado no prompt é o mesmo de `kits.py`, e os exemplos não têm ano corrente nem cidade.
+- `seed.docpro.test.js` (Postgres): a persona do v4.2 migra, com ou sem quebra de linha no fim, e o prompt personalizado não é tocado.
+- Todos os testes novos falham com o código anterior.
+
+---
+
+## "Parar" gravava a resposta cortada como concluída (2026-09-26)
+
+**Medição** (navegador real, provedor falso lento): o texto parava ~400 ms após o
+clique e a tela batia com o banco — mas o `execution_meta.state` gravado era
+`completed`, e nada indicava que a resposta estava incompleta. Instrumentado: o
+`/control` marcava `control.stopped = true`, mas o `stopped` local do laço seguia
+`false`.
+
+**Causa.** O abort chega enquanto o laço de streaming espera o próximo pedaço; o SDK
+encerra o stream "limpo" e a única checagem de parada — dentro do laço, ao processar
+um pedaço — não roda. O mesmo valia para a pausa (encerrava a resposta em vez de
+retomar), para os cartões do multimodelo ("concluído" com texto cortado) e para o
+coordenador do Modo Equipe.
+
+**Correção.** `throwIfInterruptedAfterStream` depois de cada um dos quatro laços;
+aviso "Resposta interrompida por você" na mensagem. Testes: `agent/loop.stop.test.js`
+(Parar, Pausar e multimodelo — os três falham no código anterior),
+`agent.control.test.js` e `e2e/tests/parar.spec.js` (falha sem a correção do backend).
+
+**Descartado do PR #209:** abortar o fetch no navegador ao clicar em Parar — resolvia
+~400 ms e podia mostrar "parado" com o run ainda vivo no servidor (Regra 8.1).
+
+---
+
 ## Sistema visual e landing com a skill de design SaaS (2026-09-26)
 
 **Diagnóstico** (capturas antes/depois em 1440 e 390 px, escuro e claro): barra lateral
