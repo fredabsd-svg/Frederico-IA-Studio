@@ -75,7 +75,7 @@ class PdfProTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def _novo(self, **kw):
-        """Documento SEM capa, sumário e fechamento automáticos.
+        """Documento SEM capa, cabeçalho, sumário e fechamento automáticos.
 
         Os presets da v2 acrescentam esses blocos sozinhos; num teste que mede
         UM bloco (a aresta do texto, a numeração da página) eles entrariam como
@@ -84,6 +84,7 @@ class PdfProTests(unittest.TestCase):
         kw.setdefault("capa", False)
         kw.setdefault("sumario", False)
         kw.setdefault("contracapa", False)
+        kw.setdefault("abertura", False)
         return pdfpro.RelatorioPDF(self.path, **kw)
 
     def _assert_pdf(self, minimo=1200):
@@ -467,14 +468,74 @@ class PdfProTests(unittest.TestCase):
     def test_preset_decide_capa_sumario_e_numeracao(self):
         r = pdfpro.RelatorioPDF(self.path, titulo="Proposta", emissor="Escritório",
                                 preset="proposta")
-        r.titulo("Escopo")
-        r.paragrafo("Conteúdo do escopo com tamanho suficiente para a página. " * 6)
+        for nome in ("Apresentação", "Escopo", "Investimento", "Prazo"):
+            r.titulo(nome)
+            r.paragrafo("Conteúdo da seção com tamanho suficiente para a página. " * 6)
         r.salvar()
         paginas = [t for t in _texto_das_paginas(self.path)]
         self.assertGreaterEqual(len(paginas), 2)
-        # Proposta: capa sim, sumário nunca, sem numeração de seção.
+        # Proposta longa: capa sim, sumário nunca, sem numeração de seção.
+        self.assertTrue(r._tem_capa)
         self.assertNotIn("Sumário", "\n".join(paginas))
         self.assertNotIn("SEÇÃO 01", "\n".join(paginas))
+
+    # ---------- 2.1: capa só em documento longo ----------
+    def test_documento_curto_nao_ganha_capa_e_cabe_numa_pagina(self):
+        """O defeito relatado: TODO relatório saía com capa de página inteira —
+        um orçamento de uma seção virava duas páginas, a primeira só com o
+        título. Documento curto abre com cabeçalho na própria página 1."""
+        for preset in ("gerencial", "parecer", "proposta"):
+            with self.subTest(preset=preset):
+                r = pdfpro.RelatorioPDF(self.path, titulo="Orçamento de serviços",
+                                        cliente="ACME LTDA", emissor="Escritório",
+                                        preset=preset)
+                r.titulo("Escopo")
+                r.paragrafo("Conteúdo do escopo com tamanho suficiente. " * 6)
+                r.tabela(["Serviço", "Valor"], [["Contabilidade", 2200]],
+                         moeda=["Valor"], total="soma")
+                rel = r.salvar()
+                self.assertTrue(rel["ok"], rel["achados"])
+                self.assertFalse(r._tem_capa)
+                self.assertTrue(r._tem_abertura)
+                self.assertFalse(r._contracapa_feita, "sem capa, sem faixa de fechamento")
+                paginas = _texto_das_paginas(self.path)
+                self.assertEqual(len(paginas), 1)
+                self.assertIn("Orçamento de serviços", paginas[0])
+                self.assertIn("ACME LTDA", paginas[0])
+                self.assertIn("Página 1 de 1", paginas[0],
+                              "sem capa, a página 1 é conteúdo e leva rodapé")
+
+    def test_cabecalho_numerico_a_direita_e_total_em_negrito(self):
+        """O rótulo "Valor" ficava à esquerda de uma coluna de números à
+        direita (a célula era trocada DEPOIS de a Table existir) e o TOTAL saía
+        em fonte normal (FONTNAME do TableStyle não alcança um Paragraph)."""
+        from reportlab.lib.enums import TA_RIGHT
+        r = self._novo()
+        r.tabela(["Serviço", "Valor"], [["Contabilidade", 2200], ["Pessoal", 800]],
+                 moeda=["Valor"], total="soma")
+        tabela = [f for f in r.story if hasattr(f, "_content")][0]._content[0]
+        celulas = tabela._cellvalues
+        self.assertEqual(celulas[0][1].style.alignment, TA_RIGHT)
+        self.assertNotEqual(celulas[0][0].style.alignment, TA_RIGHT)
+        self.assertEqual(celulas[-1][0].style.fontName, r.fonte_bold)
+        self.assertEqual(celulas[-1][1].style.fontName, r.fonte_bold)
+        self.assertNotEqual(celulas[1][0].style.fontName, r.fonte_bold)
+
+    def test_capa_explicita_vence_o_limiar_e_carta_nao_ganha_cabecalho(self):
+        r = pdfpro.RelatorioPDF(self.path, titulo="Relatório", emissor="Escritório",
+                                capa=True)
+        r.titulo("Único")
+        r.paragrafo("Conteúdo com tamanho suficiente para a página. " * 6)
+        r.salvar()
+        self.assertTrue(r._tem_capa)
+        self.assertEqual(len(_texto_das_paginas(self.path)), 2)
+
+        c = pdfpro.RelatorioPDF(self.path, titulo="Comunicado", emissor="Escritório",
+                                preset="carta")
+        c.paragrafo("Prezado cliente, segue a comunicação solicitada. " * 4)
+        c.salvar()
+        self.assertFalse(c._tem_abertura)
+        self.assertNotIn("Comunicado", "\n".join(_texto_das_paginas(self.path)))
 
     def test_parecer_numera_em_decimal_e_o_gerencial_em_secao(self):
         r = pdfpro.RelatorioPDF(self.path, titulo="Parecer", emissor="Escritório",

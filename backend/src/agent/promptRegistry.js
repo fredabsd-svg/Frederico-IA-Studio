@@ -4,7 +4,7 @@
 
 export const PROMPT_RELEASE = Object.freeze({
   id: 'frederico-prompt-core',
-  version: '2026.09.26.1',
+  version: '2026.09.26.2',
   date: '2026-09-26'
 });
 
@@ -52,7 +52,13 @@ export const PROMPT_MODULES = Object.freeze({
   // levanta `KitError` no achado grave; o Word ganhou o sumário com as páginas
   // REAIS (segundo passo pelo PDF gêmeo). A API mudou: `sumario([(t, pág)])`,
   // `subtitulos=` e `estilo="sobrio"` saíram do que se ensina.
-  docpro:       { id: 'docpro',            version: '13.0.0' }
+  // 14.0.0: kits 2.1. Capa e sumário automáticos só em documento LONGO (4+
+  // títulos de 1º nível); o curto abre com cabeçalho na página 1. O prompt
+  // ganhou a seção D2b (capa é do tamanho, não do hábito: `capa=True` só a
+  // pedido), perdeu as datas e a cidade fixas dos exemplos — que o modelo
+  // copiava para o documento do cliente — e a persona passou a dizer
+  // "Frederico IA Studio" (a do v4.2 foi arquivada como v14.txt).
+  docpro:       { id: 'docpro',            version: '14.0.0' }
 });
 
 export function moduleRef(name) {

@@ -73,6 +73,22 @@ export function controlInterruptReason(control, request) {
   return control?.paused ? 'pause' : 'abort';
 }
 
+// O abort do Parar/Pausar costuma chegar enquanto o laço de streaming ESPERA o
+// próximo pedaço do provedor. Aí o stream termina "limpo" — sem erro e sem outro
+// pedaço — e a checagem feita dentro do laço nunca roda: o texto cortado era
+// tratado como resposta completa (gravado como "completed"; o cartão do
+// multimodelo virava "concluído"; a pausa encerrava a resposta ali). Chamada
+// logo DEPOIS do laço, esta função transforma esse fim limpo no mesmo erro de
+// abort que o `catch` de cada laço já sabe tratar (parar ou pausar e retomar).
+export function throwIfInterruptedAfterStream(control, request) {
+  const reason = controlInterruptReason(control, request);
+  if (reason !== 'stop' && reason !== 'pause') return;
+  const err = new Error(`stream encerrado por ${reason === 'stop' ? 'Parar' : 'Pausar'}`);
+  err.name = 'AbortError';
+  err.interruptedAfterStream = reason;
+  throw err;
+}
+
 function abortActiveProviderRequest(control, reason) {
   for (const request of control?.activeRequests || []) {
     if (request && !request.signal.aborted) request.abort(reason);

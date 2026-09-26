@@ -1,6 +1,6 @@
 """docpro — kit de DESIGN para documentos Word (.docx) com python-docx.
 
-Instalado no sandbox do Frederico AI Studio, na identidade **"Tinta & Latão"**
+Instalado no sandbox do Frederico IA Studio, na identidade **"Tinta & Latão"**
 (verde-tinta #0C3A30 com acento em latão #A9812F). A paleta, a escala
 tipográfica, a formatação pt-BR e a auditoria vêm de `kits.py` — os três kits
 partilham a mesma base, então Word, Excel e PDF do mesmo pacote formatam igual.
@@ -87,7 +87,10 @@ LIMITE_TABELA_INDIVISIVEL = 15
 LIMITE_SUMARIO_SEM_PAGINA = 10
 
 #: Registro por tipo de documento: o modelo escolhe o preset e o kit decide
-#: capa, sumário, numeração, alinhamento do corpo e fechamento.
+#: capa, sumário, numeração, alinhamento do corpo e fechamento. `capa` é o
+#: ESTILO da capa quando ela entra — e ela só entra sozinha em documento longo
+#: (`kits.MINIMO_SECOES_PARA_CAPA`); o curto abre com cabeçalho. `fechamento`
+#: automático acompanha a capa (`kits.decide_fechamento`).
 PRESETS = {
     "gerencial": {"capa": "faixa", "sumario": "auto", "numeracao": "secao",
                   "corpo": "esquerda", "fechamento": "auto",
@@ -340,13 +343,20 @@ class Relatorio:
 
     `preset=` decide capa, sumário, numeração de seção, alinhamento do corpo e
     fechamento (ver `PRESETS`). Qualquer um pode ser sobrescrito
-    explicitamente: `capa=False`, `sumario=False`, `contracapa="faixa"`.
+    explicitamente: `capa=True`, `capa=False`, `sumario=False`,
+    `contracapa="faixa"`.
+
+    Capa e sumário automáticos só em documento LONGO (4+ seções de 1º nível).
+    O documento curto abre com um cabeçalho na primeira página — tipo,
+    título, cliente e data — em vez de gastar uma folha só com o título.
+    `abertura=False` desliga esse cabeçalho.
     """
 
     def __init__(self, titulo, cliente="", emissor="", subtitulo="",
                  tipo=None, data_str=None, margem_cm=2.0, cor_marca=None,
                  confidencial=True, preset="gerencial", tipografia="office",
-                 capa=None, sumario=None, contracapa=None, idioma="pt-BR"):
+                 capa=None, sumario=None, contracapa=None, idioma="pt-BR",
+                 abertura=None):
         if preset not in PRESETS:
             raise KitError("preset desconhecido: %r (use %s)"
                            % (preset, " | ".join(sorted(PRESETS))))
@@ -371,7 +381,9 @@ class Relatorio:
         self._quer_capa = capa
         self._quer_sumario = sumario
         self._quer_contracapa = contracapa
+        self._quer_abertura = abertura
         self._capa_feita = False
+        self._abertura_feita = False
         self._sumario_feito = False
         self._contracapa_feita = False
         self._sec = 0     # numeração automática de seção
@@ -610,6 +622,60 @@ class Relatorio:
                  serif=True, italico=True)
         self._barra(cor=self.pal["latao"], tamanho=12)
         self._gap(3.4)
+
+    def _pede_abertura(self):
+        """Cabeçalho de abertura: só em documento SEM capa cujo preset é de
+        relatório (gerencial, parecer, proposta). Carta não tem título — abre
+        com local, data e destinatário."""
+        if self._capa_feita or self._abertura_feita or self._quer_abertura is False:
+            return False
+        return bool(self._quer_abertura) or self.regras["capa"] is not None
+
+    def _abertura(self):
+        """Cabeçalho da primeira página do documento curto: emissor e tipo em
+        versalete de latão, o título em serifa, subtítulo, cliente, data e a
+        marca de sigilo, fechados por um filete. Ocupa o topo da página — o
+        conteúdo começa logo abaixo, na mesma folha.
+
+        Parágrafos comuns, não "Heading": o título do documento não é uma
+        seção e não pode entrar no sumário nem no painel de navegação."""
+        def novo(depois=2):
+            p = self.doc.add_paragraph()
+            pf = p.paragraph_format
+            pf.left_indent = Pt(RECUO_PT)
+            pf.space_before = Pt(0)
+            pf.space_after = Pt(depois)
+            pf.keep_with_next = True
+            return p
+
+        topo = " · ".join(x for x in (self.emissor, self.tipo) if x)
+        if topo:
+            _run(novo(6), topo, size=ESCALA["kicker"], cor=self.pal["latao"],
+                 bold=True, caps=True, spacing=44)
+        _run(novo(4), self.titulo_doc, size=ESCALA["abertura_titulo"],
+             cor=self.pal["tinta"], bold=True, serif=True)
+        if self.subtitulo:
+            _run(novo(4), self.subtitulo, size=ESCALA["capa_sub"],
+                 cor=self.pal["cinza"], serif=True, italico=True)
+        meta = [(rot, val) for rot, val in (("Cliente", self.cliente),
+                                              ("Data", self.data_str)) if val]
+        if meta or self.confidencial:
+            p = novo(0)
+            p.paragraph_format.space_before = Pt(4)
+            for i, (rot, val) in enumerate(meta):
+                if i:
+                    _run(p, "   ·   ", size=ESCALA["capa_meta"], cor=self.pal["cinza"])
+                _run(p, rot + ": ", bold=True, size=ESCALA["capa_meta"], cor=self.pal["cinza"])
+                _run(p, val, size=ESCALA["capa_meta"], cor=self.pal["cinza"])
+            if self.confidencial:
+                if meta:
+                    _run(p, "   ·   ", size=ESCALA["capa_meta"], cor=self.pal["cinza"])
+                _run(p, "CONFIDENCIAL", bold=True, size=ESCALA["kicker"],
+                     cor=self.pal["latao"], spacing=48)
+        filete = self._barra(cor=self.pal["latao"], tamanho=12)
+        filete.paragraph_format.space_after = Pt(18)
+        self._abertura_feita = True
+        return self
 
     def _meta_da_capa(self):
         for rot, val in (("Cliente", self.cliente), ("Data", self.data_str),
@@ -1294,7 +1360,7 @@ class Relatorio:
         nome do arquivo na barra e o PDF gêmeo sai sem /Title."""
         props = self.doc.core_properties
         props.title = limpa_texto(self.titulo_doc)
-        props.author = limpa_texto(self.emissor or "Frederico AI Studio")
+        props.author = limpa_texto(self.emissor or "Frederico IA Studio")
         props.subject = limpa_texto(self.tipo or self.subtitulo)
         props.keywords = limpa_texto(self.cliente)
         props.language = self.idioma
@@ -1345,12 +1411,15 @@ class Relatorio:
                 self.doc.add_page_break()
             self._mover_para_o_inicio(marca)
 
-        quer_capa = self._quer_capa
-        if quer_capa is None:
-            quer_capa = self.regras["capa"] is not None
-        if quer_capa and not self._capa_feita:
+        estilo_capa = None if self._capa_feita else \
+            kits.decide_capa(self.regras["capa"], self._quer_capa, secoes)
+        if estilo_capa:
             marca = len(_elementos_do_corpo(self.doc))
-            self.capa(estilo=None if quer_capa is True else quer_capa)
+            self.capa(estilo=estilo_capa)
+            self._mover_para_o_inicio(marca)
+        elif self._pede_abertura():
+            marca = len(_elementos_do_corpo(self.doc))
+            self._abertura()
             self._mover_para_o_inicio(marca)
 
         pendente = self._fecho_pendente
@@ -1362,9 +1431,8 @@ class Relatorio:
             p.paragraph_format.left_indent = Pt(RECUO_PT)
             _run(p, pendente)
 
-        fechamento = self._quer_contracapa
-        if fechamento is None:
-            fechamento = self.regras["fechamento"]
+        fechamento = kits.decide_fechamento(self.regras["fechamento"],
+                                            self._quer_contracapa, self._capa_feita)
         if fechamento in ("faixa", "pagina") and not self._contracapa_feita:
             self.contracapa(estilo=fechamento)
 
@@ -1779,7 +1847,7 @@ class Sobrio:
     def _metadados(self):
         props = self.doc.core_properties
         props.title = limpa_texto(self.titulo_doc or "Documento")
-        props.author = "Frederico AI Studio"
+        props.author = "Frederico IA Studio"
         props.subject = "documento registrável"
         props.language = self.idioma
         props.created = props.modified = datetime.now()
