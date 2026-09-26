@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState, lazy, Suspense } from 'rea
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Download, FileText, FileSpreadsheet, FilePenLine, Plus, ArrowUp, Upload, Trash2, Bot, Brain, X, BarChart3, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench, CalendarClock, Inbox, Palette, Gauge, SlidersHorizontal, Paperclip, MoreHorizontal, FolderOpen, Code2, ChevronRight, ShieldCheck, LogOut, KeyRound, Camera, Cable, LayoutTemplate, MessageCircleQuestion, Bug, PanelRight, Lock, Unlock, Maximize2, Minimize2 } from 'lucide-react';
+import { Download, FileText, FileSpreadsheet, FilePenLine, Plus, ArrowUp, Upload, Trash2, Bot, Brain, X, BarChart3, Pause, Play, Square, Mic, Globe, Menu, RefreshCw, Sparkles, Copy, Check, Pencil, BookMarked, BookmarkPlus, FileDown, HardDriveDownload, Hourglass, ListTodo, FolderCog, Search, PanelLeft, Wrench, CalendarClock, Inbox, Palette, Gauge, SlidersHorizontal, Paperclip, MoreHorizontal, FolderOpen, Code2, ChevronRight, ShieldCheck, LogOut, KeyRound, Camera, Cable, LayoutTemplate, MessageCircleQuestion, Bug, PanelRight, Lock, Unlock, Maximize2, Minimize2, ArrowLeftRight } from 'lucide-react';
 import { API, TOOL_INFO, TEMPLATES, QUICK_ACTIONS, THEMES, WORKSPACES, EFFORTS, EFFORT_DESC, ASSISTANT_ICONS, ASSISTANT_COLORS, isAssistantIcon, DEV_WORK_MODES, MAX_ASSISTANT_PROFILE_CHARS } from './constants.js';
 import { signOut } from './authClient.js';
 import { Slider, Modal, Drawer, Collapsible, useAppDialog, ModelPicker } from './components.jsx';
@@ -97,7 +97,7 @@ import { useDevProjects, developerSessionForConversation, developerSessionFromPr
 import { LAYOUT_KEY, normalizeLayoutLevel, resolveLayout, sessionContextItems } from './devWorkspaceLayout.js';
 import { COMPANION_CONTROL_MODES, companionControlMode, settingsForCompanionMode } from './companionMode.js';
 import { useComposerHeight } from './hooks/useComposerHeight.js';
-import { MODEL_STORAGE_KEY, modelDisplayName, multiModelStatus, resolveModelChoice } from './modelChoice.js';
+import { MODEL_STORAGE_KEY, modelDisplayName, modelNotices, multiModelStatus, resolveModelChoice } from './modelChoice.js';
 
 const QUICK_ACTION_ICON = {
   document: FileText,
@@ -1362,6 +1362,11 @@ export default function App({ user } = {}) {
               <AssistantTile assistant={currentAssistant} index={Math.max(0, assistants.findIndex(a => a.id === assistantId))} size={22} icon={12}/>
               <b>{currentAssistant?.name || 'Assistente'}</b>
               {msgTime(m.created_at) && <span className="msgTime">{msgTime(m.created_at)}</span>}
+              {/* Quem de fato respondeu, quando não foi o modelo escolhido
+                  (modo gratuito ou modelo de reserva). Vem do execution_meta. */}
+              {modelNotices(m.execution, allModels).map(n => <span key={n.kind} className={`msgNotice ${n.kind}`} title={n.detail}>
+                <ArrowLeftRight size={11} aria-hidden="true"/><span>{n.label}</span><span className="srOnly">: {n.detail}</span>
+              </span>)}
             </div>}
             <div className="msgActions">
               {m.role === 'user' && !busy && <button onClick={() => editMessage(m, idx)} title="Editar e regravar a conversa a partir daqui" aria-label="Editar mensagem"><Pencil size={13}/></button>}

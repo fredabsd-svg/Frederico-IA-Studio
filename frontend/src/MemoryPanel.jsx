@@ -3,6 +3,7 @@ import { Brain, Search, Pin, PinOff, Pencil, X, Download, Upload, RefreshCw, Tra
 import { API, assistantOptionPrefix } from './constants.js';
 import { Drawer } from './components.jsx';
 import { apiJson, apiErrorMessage } from './apiJson.js';
+import { importDoneLabel, importProgressLabel } from './memoryImport.js';
 
 const TYPES = [
   { key: '', label: 'Todas' },
@@ -151,14 +152,14 @@ export function MemoryPanel({ assistants, clients, clientId, showToast, onClose,
       try {
         const s = await (await fetch(`${API}/api/memories/import-status`)).json();
         if (s.running) {
-          setWorkingLabel(`Importando "${s.file}": conversa ${s.processed} de ${s.total} · ${s.chunks} trechos · ${s.facts} fatos aprendidos...`);
+          setWorkingLabel(importProgressLabel(s));
           return;
         }
         clearInterval(importTimer.current);
         setWorkingLabel('');
         if (s.done) {
           if (s.error) showToast(`Importação falhou: ${s.error}`);
-          else showToast(`✅ Importado: ${s.total} conversa(s), ${s.chunks} trechos indexados, ${s.facts} fatos aprendidos.`, 'ok');
+          else showToast(`✅ ${importDoneLabel(s)}`, 'ok');
           await loadSuggestions();
           await load();
         }

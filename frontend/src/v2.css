@@ -107,9 +107,12 @@ a{color:var(--accent-text)}
    cabeçalho (assistente + hora) já diz quem fala. */
 .msg.assistant{background:transparent;border:0;border-radius:0;padding:2px 0;line-height:1.65;width:100%}
 .msgActions button{border-radius:var(--r-sm);background:var(--panel);border-color:var(--line)}
-.msgHead{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.msgHead{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:8px}
 .msgHead b{font-size:var(--fs-sm);font-weight:600;color:var(--text)}
 .msgTime{font-size:var(--fs-2xs);color:var(--muted);margin-left:2px}
+.msgNotice{display:inline-flex;align-items:center;gap:4px;min-width:0;max-width:100%;padding:1px 8px;border:1px solid var(--line);border-radius:var(--r-full);background:var(--panel2);font-size:var(--fs-2xs);color:var(--muted);cursor:help}
+.msgNotice svg{flex:none;color:var(--warn)}
+.msgNotice>span:not(.srOnly){overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* Sem balão, as ações da resposta ficam na linha do cabeçalho, à direita. */
 .msg.assistant .msgActions{top:-2px;right:0}
 .dayDivider{display:flex;align-items:center;gap:12px;margin:2px 0;color:var(--muted);font-size:var(--fs-2xs);font-weight:500}

@@ -23,6 +23,28 @@
 
 ---
 
+## Selo "quem de fato respondeu" na mensagem (2026-09-26)
+
+**Antes:**
+- **Troca de modelo:** quando o modo gratuito trocava o modelo pedido (`modelSwap`), ou quando o modelo caía no meio da execução e a tarefa terminava num modelo de reserva, a única marca era uma nota em itálico no fim do texto. É fácil de não ver.
+- **Troca só de provedor:** quando o modelo era o mesmo mas atendido pela chave da plataforma (`providerFallback`), não aparecia nada.
+- **Troca no meio da execução:** nem era gravada de forma estruturada.
+
+**Agora:**
+- **Backend:** `loop.js` grava `execution_meta.modelFailover = { from, to }` quando o modelo final difere do inicial.
+- **Frontend:** `modelNotices(execution, models)` (`modelChoice.js`, pura) transforma os três registros em selos no cabeçalho da mensagem: "Modo gratuito · modelo" ou "Modelo de reserva · modelo".
+  - O motivo vai no `title` e em texto para leitor de tela.
+  - O nome é o do catálogo, nunca a referência `<provedor>::<modelo>`.
+  - A nota em itálico continua no texto, porque serve à cópia e à exportação.
+- **Importação de memória:** no modo gratuito, ou sem chave, "0 fatos aprendidos" virou o motivo real (`factsSkipped`), pelas funções de `memoryImport.js`.
+
+**Testes:**
+- `loop.modelFailover.test.js` (Postgres): usa um provedor falso que devolve 503 para o modelo escolhido e falha sem a mudança do backend.
+- `modelChoice.test.js` e `memoryImport.test.js`.
+- `e2e/tests/selo-modelo.spec.js`: com navegador real, verifica que a resposta normal fica sem selo e que a resposta registrada com a troca mostra o selo.
+
+---
+
 ## Kits 2.1: capa só em documento longo e prompt de documentos lapidado (2026-09-26)
 
 **Relato:** os modelos "criavam capa para qualquer relatório". **Causa no kit,
