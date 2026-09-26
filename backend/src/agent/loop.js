@@ -1886,7 +1886,13 @@ export async function runAgent({ userId, conversationId, userText, model, assist
     // Rastreabilidade do fallback (Regra 5.5): quem atendeu e por quê. Sem
     // chave, sem segredo — só o motivo, o provedor pedido e a mensagem.
     ...(provider.fallback ? { providerFallback: providerFallbackMeta(provider.fallback) } : {}),
-    ...(modelSwap ? { modelSwap } : {})
+    ...(modelSwap ? { modelSwap } : {}),
+    // Troca por modelo de reserva NO MEIO da execução: antes ficava só na nota
+    // em itálico do texto. Registrada aqui, vira o selo da mensagem — ao vivo
+    // e ao reabrir a conversa.
+    ...(rawModelId(chosenModel) !== rawModelId(startedModel)
+      ? { modelFailover: { from: startedModel, to: chosenModel } }
+      : {})
   });
   // Persistência e cartões só acontecem depois da validação. O estado gravado
   // é a fonte de verdade quando a conversa for reaberta.

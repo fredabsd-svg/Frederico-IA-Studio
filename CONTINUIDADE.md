@@ -8,7 +8,15 @@
 
 ## Estado atual
 
-**Última frente (2026-09-26):** kits de documento sem capa por hábito. Os
+**Última frente (2026-09-26):** selo "quem de fato respondeu" na mensagem. A troca
+de modelo (modo gratuito ou modelo de reserva no meio da execução) só aparecia
+como nota em itálico no fim do texto, e a troca de provedor nem isso. Agora o
+cabeçalho da mensagem mostra "Modo gratuito · modelo" ou "Modelo de reserva ·
+modelo", ao vivo e ao reabrir; o backend passou a gravar `modelFailover` no
+`execution_meta`. Na importação de memória, "0 fatos aprendidos" no modo
+gratuito virou o motivo real (`factsSkipped`).
+
+**Antes (PR #212, mesclado):** kits de documento sem capa por hábito. Os
 presets gerencial, parecer e proposta punham capa de página inteira em TODO
 documento. Kits 2.1: capa e sumário automáticos só com 4+ seções; o curto abre
 com cabeçalho na página 1 e a faixa de fechamento acompanha a capa. Prompt de
@@ -18,7 +26,7 @@ hábito", exemplos sem data e cidade fixas (o modelo as copiava) e persona com
 e um hash no teste acusa a próxima mudança sem arquivo. De passagem, no PDF: o
 cabeçalho da coluna numérica passou a ficar à direita e o TOTAL em negrito.
 
-**Antes (mesmo PR #212):** "Parar" no meio da resposta. Medido com navegador
+**Também no #212:** "Parar" no meio da resposta. Medido com navegador
 real: o texto parava em ~400 ms, mas a resposta cortada era gravada como `completed`
 e a tela não dizia que estava incompleta. Causa no backend (fim "limpo" do stream
 depois do abort) — corrigida nos quatro laços de streaming, com teste de agente,
@@ -71,11 +79,10 @@ cliente (`/resume`), não automática no boot. Detalhes e frentes fechadas:
 ## Próximos passos (resumo)
 
 1. README reduzido a porta de entrada honesta (selo "apto com restrições"), reescrito sobre o estado pós-#210.
-2. Frontend: exibir `execution_meta.providerFallback`/`modelSwap` como selo na mensagem e `factsSkipped` na importação de memória.
-3. Adotar ESLint só com `react-hooks` no `npm run check`.
-4. Frente 16 — popular `model_tool_capability_cache` com a sonda `--live`.
-5. Frente 13 (Design) — compartilhamento público da prévia por token.
-6. Frente 9 — desmontar o `App.jsx` (etapas 2–4).
+2. Adotar ESLint só com `react-hooks` no `npm run check`.
+3. Frente 16 — popular `model_tool_capability_cache` com a sonda `--live`.
+4. Frente 13 (Design) — compartilhamento público da prévia por token.
+5. Frente 9 — desmontar o `App.jsx` (etapas 2–4).
 
 ## Como retomar
 

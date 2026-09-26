@@ -75,3 +75,48 @@ export function multiModelStatus(config, models) {
   const missing = members.filter(m => !m?.id || !ids.has(m.id)).map(m => m?.id || '');
   return { total: members.length, missing, ready: members.length >= 2 && missing.length === 0 };
 }
+
+// Selos da mensagem: quem de fato respondeu, quando não foi o modelo escolhido.
+// Lê só o que o backend gravou no execution_meta (ao vivo pelo run_state, ou do
+// banco ao reabrir) — a tela nunca deduz troca de modelo por conta própria.
+//   * `modelFailover`: o modelo escolhido caiu NO MEIO da execução e a tarefa
+//     terminou num modelo de reserva;
+//   * `modelSwap`: antes do primeiro passo, o modo gratuito trocou o modelo
+//     pedido (fora da lista gratuita ou com a chave do provedor ilegível);
+//   * `providerFallback` sem `modelSwap`: o mesmo modelo, mas atendido pela
+//     chave da plataforma (modo gratuito) em vez da chave da pessoa.
+// Antes, essas trocas só existiam como nota em itálico no fim do texto — fácil
+// de não ver — e a troca pelo provedor nem isso tinha.
+export function modelNotices(execution, models = []) {
+  const ex = execution || {};
+  const nome = (ref) => modelDisplayName(models, ref);
+  const notices = [];
+  if (ex.modelSwap?.to) {
+    const { from, to, reason } = ex.modelSwap;
+    const porque = reason === 'provider_key_unavailable'
+      ? `a chave do provedor de ${nome(from)} não pôde ser lida`
+      : `${nome(from)} não está entre os modelos do modo gratuito`;
+    notices.push({
+      kind: 'gratuito',
+      label: `Modo gratuito · ${nome(to)}`,
+      detail: `Respondido por ${nome(to)} no modo gratuito, porque ${porque}.`
+    });
+  } else if (ex.providerFallback) {
+    const pedido = ex.providerFallback.requestedProviderName;
+    notices.push({
+      kind: 'gratuito',
+      label: 'Modo gratuito',
+      detail: ex.providerFallback.message
+        || `Respondido com a chave da plataforma${pedido ? ` porque a chave de ${pedido} não pôde ser usada` : ''}.`
+    });
+  }
+  if (ex.modelFailover?.to) {
+    const { from, to } = ex.modelFailover;
+    notices.push({
+      kind: 'reserva',
+      label: `Modelo de reserva · ${nome(to)}`,
+      detail: `${nome(from)} ficou indisponível durante a execução; a resposta foi concluída com ${nome(to)}.`
+    });
+  }
+  return notices;
+}
